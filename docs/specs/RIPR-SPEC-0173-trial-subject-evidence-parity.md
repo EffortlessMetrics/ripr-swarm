@@ -89,15 +89,21 @@ widening directions, each fail-closed:
 Macro input is skipped wholesale for method scanning (assertion macros
 still classify themselves), matching what parsed method-call nodes could
 see on the ordinary path: a method token inside `println!(...)` never
-classifies. A dormant `macro_rules!` definition inside the claimed span
-or inside a helper body is a template that never executes: no token
-inside it — assertion macro, method call, or otherwise — classifies as
-oracle evidence, at the token level (a definition inside another macro's
-token tree carries no node to query) and at the file level (the same
-ancestor authority that keeps dormant templates from becoming subjects),
-and helper-body oracle evidence drops template-line ranges. Closures,
-path callbacks, unresolved names, ambiguous names, and shadowed names
-contribute nothing beyond the invocation span.
+classifies. Qualified assertion invocations slice from the full
+contiguous macro path (`insta::assert_snapshot![...]`, including `crate`,
+`self`, and `super` segments), byte-for-byte like the ordinary parser's
+macro-call slice. A dormant `macro_rules!` definition inside the claimed
+span or inside a helper body is a template that never executes: nothing
+inside it — assertion macro, method call, call fact, or literal — joins
+the subject's evidence, at the token level (a definition inside another
+macro's token tree carries no node to query) and at the file level (the
+same ancestor authority that keeps dormant templates from becoming
+subjects), and the template's source span is erased from every merged
+lexical extraction so live same-line evidence survives. Lexical call and
+literal extraction masks comments (line and nested block) and string
+contents before scanning, so commented-out code is never evidence.
+Closures, path callbacks, unresolved names, ambiguous names, and
+shadowed names contribute nothing beyond the invocation span.
 
 ## Non-Goals
 
@@ -143,10 +149,18 @@ contribute nothing beyond the invocation span.
   path-shaped `Result::unwrap(...)` call, and method tokens inside
   non-assertion macro input never classify;
 - dormant-template controls: a `macro_rules!` definition inside a trial
-  closure and inside a helper body contribute no oracle from the
-  template (the full expected oracle set, exactly) while the subject
-  still classifies and live surrounding helper evidence still admits;
-  the helper-path template line ranges are pinned as a mechanism;
+  closure and inside a helper body contributes no oracle, call, or
+  literal from the template (the full expected evidence set, exactly)
+  while the subject still classifies and live surrounding helper
+  evidence still admits; the template spans and masking are pinned as a
+  mechanism, and live calls, literals, and assertions sharing the
+  template's line survive;
+- comment-masking controls: block-commented calls and numbers inside a
+  helper body contribute no evidence while live surrounding evidence
+  still admits;
+- qualified-path parity: `insta::assert_snapshot![...]` and
+  `crate::snap::assert_json_snapshot!(...)` oracle texts carry the full
+  macro path and match the ordinary parser's slice;
 - a warm-cache regression: a classified-seam envelope seeded under the
   previous generation must miss the current generation's key with
   identical identity fields, and the schema-generation pin moves in the
@@ -179,7 +193,10 @@ contribute nothing beyond the invocation span.
 - `crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_oracle_receivers_carry_keyword_and_chained_forms`
 - `crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_dormant_macro_rules_template_when_trial_scanned_then_no_smoke_oracle_from_template`
 - `crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_dormant_macro_rules_template_in_helper_callback_then_no_oracle_either`
-- `crates/ripr/src/analysis/facts/harness_registry/tests.rs::dormant_macro_rules_line_ranges_span_the_parsed_definition`
+- `crates/ripr/src/analysis/facts/harness_registry/tests.rs::dormant_template_spans_cover_the_parsed_definition_and_mask_exactly`
+- `crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_block_commented_helper_evidence_then_calls_and_literals_stay_inert`
+- `crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_one_line_dormant_macro_then_live_same_line_evidence_survives`
+- `crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_qualified_assertions_keep_the_full_path`
 - `crates/ripr/src/analysis/seam_cache.rs::tests::previous_generation_classified_seam_envelope_with_identical_identity_is_a_miss`
 - `crates/ripr/src/analysis/seam_cache.rs::tests::schema_versions_pin_the_role_composition_generation`
 

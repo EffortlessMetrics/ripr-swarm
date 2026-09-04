@@ -967,9 +967,10 @@ fn trials() -> Vec<Trial> {
         .find(|test| test.name == "helper_template")
         .ok_or("helper_template test missing")?;
 
-    // The live helper assertion (line 10) stays; only the template's
-    // oracle (line 7, inside the `macro_rules!` definition spanning
-    // lines 5-9) is dropped — the full expected set.
+    // The live helper assertion (line 10) stays; the template's oracle
+    // (line 7, inside the `macro_rules!` definition spanning lines 5-9)
+    // is dropped — the full expected set. The template's calls and
+    // literals are equally inert (#3603 round-5, ICPS-adjacent scope).
     let texts = subject_test
         .assertions
         .iter()
@@ -981,7 +982,8 @@ fn trials() -> Vec<Trial> {
         "{:?}",
         texts
     );
-    // The helper's live call evidence still admits (one-level parity).
+    // The helper's live call evidence still admits (one-level parity);
+    // the template's calls and literals never join.
     assert!(
         subject_test
             .calls
@@ -990,16 +992,255 @@ fn trials() -> Vec<Trial> {
         "{:?}",
         subject_test.calls
     );
+    assert!(
+        !subject_test.calls.iter().any(|call| call.name == "ready"),
+        "{:?}",
+        subject_test.calls
+    );
+    assert!(
+        !subject_test
+            .literals
+            .iter()
+            .any(|literal| literal.line >= 5 && literal.line <= 9),
+        "{:?}",
+        subject_test.literals
+    );
     Ok(())
 }
 
 #[test]
-fn dormant_macro_rules_line_ranges_span_the_parsed_definition()
+fn given_block_commented_helper_evidence_then_calls_and_literals_stay_inert()
 -> Result<(), Box<dyn std::error::Error>> {
-    // Mechanism pin for the helper-path template filter: the ranges come
-    // from the parsed `ast::MacroRules` node, offset by the function's
-    // start line, so a definition at body lines 2-6 of a helper starting
-    // at file line 8 spans 9..=13 — and live code after it is outside.
+    // #3603 review (devin ICNY): the lexical call and literal extractors
+    // scanned block comments as live text, so commented-out calls and
+    // numbers joined the trial subject. Both extractors now mask
+    // comments (and string contents) before scanning, at the shared
+    // extractor, so ordinary `#[test]` bodies get the same guarantee.
+    let root = temp_dir("trial-block-comment-evidence")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/block_comment.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn check_commented() -> Result<(), String> {
+    /* other_call(9);
+    let n = 7; */
+    live_call(3);
+    let live = 5;
+    assert_eq!(live, 5);
+    Ok(())
+}
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("comment_case", check_commented)]
+}
+"#,
+        )],
+    )?;
+    let files = [PathBuf::from("tests/block_comment.rs")];
+    let registrations = [custom_target_registration("tests/block_comment.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "comment_case")
+        .ok_or("comment_case subject missing")?;
+
+    let call_names = subject
+        .calls
+        .iter()
+        .map(|call| call.name.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !call_names.contains(&"other_call"),
+        "block-commented call must not join the subject: {call_names:?}"
+    );
+    assert!(
+        call_names.contains(&"live_call"),
+        "live call still admits: {call_names:?}"
+    );
+    let literal_values = subject
+        .literals
+        .iter()
+        .map(|literal| literal.value.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !literal_values.contains(&"9") && !literal_values.contains(&"7"),
+        "commented numbers must not join the subject: {literal_values:?}"
+    );
+    assert!(
+        literal_values.contains(&"5") && literal_values.contains(&"3"),
+        "live literals still admit: {literal_values:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_one_line_dormant_macro_then_live_same_line_evidence_survives()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (devin ICOI): the dormant filter compared by line, so
+    // a one-line `macro_rules!` definition erased live facts sharing the
+    // line. Span masking erases only the definition's bytes; live code
+    // before and after it on the same line keeps its evidence.
+    let root = temp_dir("trial-one-line-dormant")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/one_line_dormant.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn check_inline() -> Result<(), String> {
+    macro_rules! m { () => { template_call(9); } } live_call(3); more(5); assert_eq!(2, 2); Ok(())
+}
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("inline_case", check_inline)]
+}
+"#,
+        )],
+    )?;
+    let files = [PathBuf::from("tests/one_line_dormant.rs")];
+    let registrations = [custom_target_registration("tests/one_line_dormant.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "inline_case")
+        .ok_or("inline_case subject missing")?;
+
+    let call_names = subject
+        .calls
+        .iter()
+        .map(|call| call.name.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !call_names.contains(&"template_call"),
+        "template call must not join: {call_names:?}"
+    );
+    assert!(
+        call_names.contains(&"live_call") && call_names.contains(&"more"),
+        "live calls sharing the template's line survive: {call_names:?}"
+    );
+    let literal_values = subject
+        .literals
+        .iter()
+        .map(|literal| literal.value.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !literal_values.contains(&"9"),
+        "template literal must not join: {literal_values:?}"
+    );
+    assert!(
+        literal_values.contains(&"3")
+            && literal_values.contains(&"5")
+            && literal_values.contains(&"2"),
+        "live literals sharing the line survive: {literal_values:?}"
+    );
+    assert!(
+        subject
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text.contains("assert_eq!(2, 2)")),
+        "the live same-line assertion survives: {:?}",
+        subject.assertions
+    );
+    Ok(())
+}
+
+#[test]
+fn trial_qualified_assertions_keep_the_full_path() -> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (devin ICPS): qualified assertion invocations
+    // (`insta::assert_snapshot!`) classified on their leaf but sliced
+    // their text from the leaf, dropping the path prefix. The scanner
+    // now slices from the full contiguous macro path, matching the
+    // ordinary parser's macro-call slice byte for byte.
+    let root = temp_dir("trial-qualified-assertions")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/qualified_assertions.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![
+        libtest_mimic::Trial::test("qualified_insta", || {
+            let value = create();
+            insta::assert_snapshot![value];
+            Ok(())
+        }),
+        libtest_mimic::Trial::test("qualified_json", || {
+            let value = create();
+            crate::snap::assert_json_snapshot!(value);
+            Ok(())
+        }),
+    ]
+}
+"#,
+        )],
+    )?;
+    let files = [PathBuf::from("tests/qualified_assertions.rs")];
+    let registrations = [custom_target_registration("tests/qualified_assertions.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    // Ordinary-parser parity for the same qualified spelling.
+    let ordinary =
+        "fn ordinary() {\n    let value = create();\n    insta::assert_snapshot![value];\n}";
+    let ordinary_oracles =
+        parser_oracles_for_function(ordinary, 1).ok_or("ordinary fixture must parse")?;
+    let ordinary_oracle = ordinary_oracles
+        .iter()
+        .find(|oracle| oracle.text.contains("assert_snapshot"))
+        .ok_or("ordinary qualified oracle missing")?;
+
+    let insta = index
+        .tests
+        .iter()
+        .find(|test| test.name == "qualified_insta")
+        .ok_or("qualified_insta test missing")?;
+    let insta_oracle = insta
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.contains("assert_snapshot"))
+        .ok_or("qualified insta oracle missing")?;
+    assert_eq!(insta_oracle.text, "insta::assert_snapshot![value];");
+    assert_eq!(insta_oracle.text, ordinary_oracle.text, "ordinary parity");
+    assert_eq!(insta_oracle.kind, ordinary_oracle.kind);
+    assert_eq!(insta_oracle.strength, ordinary_oracle.strength);
+    assert_eq!(
+        insta_oracle.observed_tokens,
+        ordinary_oracle.observed_tokens
+    );
+    assert_eq!(insta_oracle.line, 8, "{insta_oracle:?}");
+
+    let json = index
+        .tests
+        .iter()
+        .find(|test| test.name == "qualified_json")
+        .ok_or("qualified_json test missing")?;
+    let json_oracle = json
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.contains("assert_json_snapshot"))
+        .ok_or("qualified json oracle missing")?;
+    assert_eq!(
+        json_oracle.text,
+        "crate::snap::assert_json_snapshot!(value);"
+    );
+    assert_eq!(json_oracle.line, 13, "{json_oracle:?}");
+    Ok(())
+}
+
+#[test]
+fn dormant_template_spans_cover_the_parsed_definition_and_mask_exactly()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Mechanism pin for the helper-path template filter: the spans come
+    // from the parsed `ast::MacroRules` node, and masking erases exactly
+    // those bytes (spaces, newlines preserved) while live code around
+    // the template survives for extraction.
     let body = "fn check() {
     macro_rules! dormant {
         () => {
@@ -1008,13 +1249,30 @@ fn dormant_macro_rules_line_ranges_span_the_parsed_definition()
     }
     assert_eq!(2, 2);
 }";
-    let ranges = dormant_macro_rules_line_ranges(body, 8);
-    assert_eq!(ranges, vec![(9, 13)], "{:?}", ranges);
-    // A body without definitions yields no ranges: nothing is dropped.
+    let spans = dormant_template_parse_spans(body);
+    assert_eq!(spans.len(), 1, "{spans:?}");
+    let (start, end) = spans[0];
+    let masked = mask_dormant_template_spans(body, &spans);
+    assert!(
+        !masked.contains("assert_eq!(1, 1)"),
+        "template contents must be erased: {masked}"
+    );
+    assert!(
+        masked.contains("assert_eq!(2, 2);"),
+        "live code outside the template survives: {masked}"
+    );
+    assert_eq!(
+        masked.lines().count(),
+        body.lines().count(),
+        "masking preserves line structure"
+    );
+    assert!(end > start);
+    // A body without definitions yields no spans: nothing is masked.
     let plain = "fn check() {
     assert_eq!(1, 1);
 }";
-    assert!(dormant_macro_rules_line_ranges(plain, 3).is_empty());
+    assert!(dormant_template_parse_spans(plain).is_empty());
+    assert_eq!(mask_dormant_template_spans(plain, &[]), plain);
     Ok(())
 }
 
@@ -1046,6 +1304,13 @@ fn trials() -> Vec<Trial> {
             let value = 41u16;
             let expected = 41u16;
             assert!{value == expected}
+            Ok(())
+        }),
+        libtest_mimic::Trial::test("newline_semi", || {
+            let value = 42u16;
+            let expected = 42u16;
+            assert!{value == expected}
+            ;
             Ok(())
         }),
     ]
@@ -1105,6 +1370,21 @@ fn trials() -> Vec<Trial> {
         ordinary_oracle.observed_tokens
     );
     assert_eq!(brace_oracle.line, 15, "{brace_oracle:?}");
+
+    // A semicolon on the NEXT line is not part of the invocation: the
+    // oracle text ends at the group close (IDV7).
+    let newline_semi = index
+        .tests
+        .iter()
+        .find(|test| test.name == "newline_semi")
+        .ok_or("newline_semi test missing")?;
+    let newline_oracle = newline_semi
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.contains("assert!"))
+        .ok_or("newline_semi oracle missing")?;
+    assert_eq!(newline_oracle.text, "assert!{value == expected}");
+    assert_eq!(newline_oracle.line, 21, "{newline_oracle:?}");
     Ok(())
 }
 
@@ -1145,11 +1425,25 @@ fn trials() -> Vec<Trial> {
         .find(|test| test.name == "alt_delim_templates")
         .ok_or("alt_delim_templates test missing")?;
 
-    // The full expected oracle set is exactly empty.
+    // The full expected oracle set is exactly empty — and the templates'
+    // calls and literals are equally inert (IDV-).
     assert!(
         subject_test.assertions.is_empty(),
         "dormant paren/bracket templates must not gain oracles: {:?}",
         subject_test.assertions
+    );
+    assert!(
+        !subject_test.calls.iter().any(|call| call.name == "ready"),
+        "{:?}",
+        subject_test.calls
+    );
+    assert!(
+        !subject_test
+            .literals
+            .iter()
+            .any(|literal| literal.value == "1" || literal.value == "2"),
+        "{:?}",
+        subject_test.literals
     );
     // The subject itself still classifies.
     assert!(

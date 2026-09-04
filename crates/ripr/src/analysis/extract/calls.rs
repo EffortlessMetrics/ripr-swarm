@@ -1,21 +1,27 @@
+use super::mask_comments_and_strings;
 use crate::analysis::facts::CallFact;
 
 pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact> {
+    // Comments (line and block, nested) and string contents are erased
+    // before scanning so commented-out calls never become evidence.
+    // Masking preserves newlines and byte layout, so line attribution
+    // stays exact; the fact text keeps the original source line.
+    let masked = mask_comments_and_strings(body);
     let mut calls = Vec::new();
-    for (offset, line) in body.lines().enumerate() {
-        let scan_line = call_scan_line(line);
+    for (offset, (masked_line, original_line)) in masked.lines().zip(body.lines()).enumerate() {
+        let scan_line = masked_line;
         let bytes = scan_line.as_bytes();
         let mut i = 0usize;
         while i < bytes.len() {
             if bytes[i] == b'('
-                && let Some((start, end)) = call_name_bounds_before_paren(&scan_line, i)
+                && let Some((start, end)) = call_name_bounds_before_paren(scan_line, i)
             {
                 let name = &scan_line[start..end];
                 if is_call_name(name) {
                     calls.push(CallFact {
                         line: start_line + offset,
                         name: name.to_string(),
-                        text: line.trim().to_string(),
+                        text: original_line.trim().to_string(),
                     });
                 }
             }
@@ -65,36 +71,6 @@ fn turbofish_start(line: &str, end: usize) -> Option<usize> {
         }
     }
     None
-}
-
-fn call_scan_line(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut chars = line.chars().peekable();
-    let mut in_string = false;
-    let mut escaped = false;
-    while let Some(ch) = chars.next() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            out.push(' ');
-            continue;
-        }
-        if ch == '/' && chars.peek().is_some_and(|next| *next == '/') {
-            break;
-        }
-        if ch == '"' {
-            in_string = true;
-            out.push(' ');
-        } else {
-            out.push(ch);
-        }
-    }
-    out
 }
 
 fn is_call_name(name: &str) -> bool {

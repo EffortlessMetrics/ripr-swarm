@@ -279,8 +279,20 @@ fn apply_libtest_mimic_target(
         let start_line = line_index.line(start);
         let end_line = line_index.line_for_range_end(TextSize::new(end_offset));
         let body = slice_text(source, start, TextSize::new(end_offset));
-        let mut calls = extract_call_facts(&body, start_line);
-        let mut literals = extract_literal_facts(&body, start_line);
+        // Dormant `macro_rules!` templates inside the claimed span never
+        // execute: their spans are erased from the lexical extraction
+        // (spaces keep line attribution exact) so template calls and
+        // values never join the subject while live same-line evidence
+        // survives (#3603 review).
+        let template_spans = dormant_template_token_spans(
+            &tokens,
+            matched.name_token_index,
+            matched.open_paren_index,
+            start,
+        );
+        let masked_body = mask_dormant_template_spans(&body, &template_spans);
+        let mut calls = extract_call_facts(&masked_body, start_line);
+        let mut literals = extract_literal_facts(&masked_body, start_line);
         let mut assertions =
             parser_oracles_for_node_tokens(source, &tokens, matched.name_token_index, &line_index);
         // #3603: a bare-identifier callback (`Trial::test("name",
@@ -303,33 +315,27 @@ fn apply_libtest_mimic_target(
                     )
                 })
         {
-            calls.extend(extract_call_facts(&helper.body, helper.start_line));
-            assertions.extend(
-                parser_oracles_for_function(&helper.body, helper.start_line)
-                    .unwrap_or_else(|| extract_assertions(&helper.body, helper.start_line)),
-            );
-            literals.extend(extract_literal_facts(&helper.body, helper.start_line));
             // A `macro_rules!` definition in the helper body is a dormant
             // token tree: its template never executes, so nothing inside
             // it joins the subject — not oracles, not calls, not literals.
-            // The ordinary parser path today keeps definition token trees
-            // unstructured (no nested macro-call nodes), so it emits
-            // nothing from the template; the retains keep that guarantee
-            // under parser behavior drift and cover the lexical
-            // extractors, which line-scan raw text and would credit the
-            // template's calls, values, and assertions (under-emit;
-            // #3603 review).
-            let dormant = dormant_macro_rules_line_ranges(&helper.body, helper.start_line);
-            if !dormant.is_empty() {
-                let line_is_dormant = |line: usize| {
-                    dormant
-                        .iter()
-                        .any(|(start, end)| line >= *start && line <= *end)
-                };
-                assertions.retain(|oracle| !line_is_dormant(oracle.line));
-                calls.retain(|call| !line_is_dormant(call.line));
-                literals.retain(|literal| !line_is_dormant(literal.line));
-            }
+            // The template spans are erased from every merged evidence
+            // extraction (spaces keep line attribution exact), so live
+            // same-line evidence survives while template facts cannot be
+            // extracted at all — including from the lexical fallback,
+            // which line-scans raw text (under-emit; #3603 review).
+            let dormant_spans = dormant_template_parse_spans(&helper.body);
+            let helper_evidence_body = mask_dormant_template_spans(&helper.body, &dormant_spans);
+            calls.extend(extract_call_facts(&helper_evidence_body, helper.start_line));
+            assertions.extend(
+                parser_oracles_for_function(&helper_evidence_body, helper.start_line)
+                    .unwrap_or_else(|| {
+                        extract_assertions(&helper_evidence_body, helper.start_line)
+                    }),
+            );
+            literals.extend(extract_literal_facts(
+                &helper_evidence_body,
+                helper.start_line,
+            ));
             calls.sort_by(|left, right| {
                 left.line
                     .cmp(&right.line)
@@ -736,10 +742,57 @@ fn parser_oracles_for_node_tokens(
                     }
                 };
                 // assert!(..) / assert_eq![..] — the token tree follows; the
-                // assertion text is the complete macro invocation in every
-                // delimiter Rust permits, classified and token-extracted
-                // exactly like the ordinary parser slices it for `#[test]`
-                // functions (including a same-line trailing semicolon).
+                // assertion text is the complete macro invocation — full
+                // qualified path, every delimiter Rust permits — classified
+                // and token-extracted exactly like the ordinary parser
+                // slices it for `#[test]` functions (including a same-line
+                // trailing semicolon).
+                //
+                // Qualified forms (`insta::assert_snapshot![..]`) classify
+                // on the leaf but slice from the whole contiguous path:
+                // walk back over `::`-separated identifiers without
+                // crossing an expression boundary. Inside another macro's
+                // token tree the separator reaches the walk as two COLON
+                // tokens, so both spellings participate.
+                let mut text_start_token = index;
+                while let Some(last_separator) = previous_significant(tokens, text_start_token) {
+                    let double = match tokens[last_separator].kind() {
+                        ra_ap_syntax::SyntaxKind::COLON2 => true,
+                        ra_ap_syntax::SyntaxKind::COLON => {
+                            matches!(
+                                previous_significant(tokens, last_separator),
+                                Some(first) if tokens[first].kind() == ra_ap_syntax::SyntaxKind::COLON
+                            )
+                        }
+                        _ => false,
+                    };
+                    if !double && tokens[last_separator].kind() != ra_ap_syntax::SyntaxKind::COLON2
+                    {
+                        break;
+                    }
+                    let segment = if double {
+                        previous_significant(tokens, last_separator)
+                            .and_then(|first| previous_significant(tokens, first))
+                    } else {
+                        previous_significant(tokens, last_separator)
+                    };
+                    match segment {
+                        // `crate`, `self`, and `super` are keyword path
+                        // segments, not identifiers.
+                        Some(segment)
+                            if matches!(
+                                tokens[segment].kind(),
+                                ra_ap_syntax::SyntaxKind::IDENT
+                                    | ra_ap_syntax::SyntaxKind::CRATE_KW
+                                    | ra_ap_syntax::SyntaxKind::SELF_KW
+                                    | ra_ap_syntax::SyntaxKind::SUPER_KW
+                            ) =>
+                        {
+                            text_start_token = segment;
+                        }
+                        _ => break,
+                    }
+                }
                 let group = next_significant(tokens, bang_index + 1)
                     .filter(|next| {
                         matches!(
@@ -757,16 +810,17 @@ fn parser_oracles_for_node_tokens(
                     Some((_open_index, close_index)) => {
                         // Same-line trailing semicolon parity: the ordinary
                         // parser's macro-call slice extends over a `;` on
-                        // the same line; a comment or newline before one
-                        // keeps the text at the group close.
+                        // the same line. The probe walks the raw trivia so
+                        // a newline — in whitespace or a comment — before
+                        // the semicolon keeps the text at the group close.
                         let mut end = tokens[close_index].text_range().end();
-                        let mut probe = next_significant(tokens, close_index + 1);
-                        while let Some(candidate) = probe {
-                            let inner = &tokens[candidate];
-                            if inner.kind() == ra_ap_syntax::SyntaxKind::WHITESPACE
-                                && !inner.text().contains('\n')
-                            {
-                                probe = next_significant(tokens, candidate + 1);
+                        let mut probe = close_index + 1;
+                        while let Some(inner) = tokens.get(probe) {
+                            if is_trivia(inner.kind()) {
+                                if inner.text().contains('\n') {
+                                    break;
+                                }
+                                probe += 1;
                                 continue;
                             }
                             if inner.kind() == ra_ap_syntax::SyntaxKind::SEMICOLON {
@@ -774,7 +828,7 @@ fn parser_oracles_for_node_tokens(
                             }
                             break;
                         }
-                        slice_text(source, tokens[index].text_range().start(), end)
+                        slice_text(source, tokens[text_start_token].text_range().start(), end)
                     }
                     None => format!("{name}!"),
                 };
@@ -787,7 +841,7 @@ fn parser_oracles_for_node_tokens(
                 };
                 let classification = classify_assertion(&text);
                 assertions.push(OracleFact {
-                    line: line_index.line(tokens[index].text_range().start()),
+                    line: line_index.line(tokens[text_start_token].text_range().start()),
                     kind: classification.kind,
                     strength: classification.strength,
                     observed_tokens: extract_identifier_tokens(&text),
@@ -1138,19 +1192,15 @@ fn node_binding_name(node: &ra_ap_syntax::SyntaxNode) -> Option<String> {
     Some(name.text().to_string())
 }
 
-/// Inclusive 1-based line ranges of the dormant `macro_rules!` definitions
-/// in `function_text` (offset by `start_line`), or empty. The ranges come
-/// from the parsed `ast::MacroRules` nodes — real parsed structure, no
-/// brace balancing — so a template's oracle evidence can be dropped
-/// without touching live code around it. An unparseable body yields no
-/// ranges: the oracle producers already fail closed on their own.
-fn dormant_macro_rules_line_ranges(function_text: &str, start_line: usize) -> Vec<(usize, usize)> {
-    let parse = SourceFile::parse(function_text, Edition::CURRENT);
+/// Byte spans of the dormant `macro_rules!` definitions in `text`, from
+/// the parsed `ast::MacroRules` nodes — real parsed structure, no brace
+/// balancing. An unparseable body yields no spans: the oracle producers
+/// already fail closed on their own.
+fn dormant_template_parse_spans(text: &str) -> Vec<(usize, usize)> {
+    let parse = SourceFile::parse(text, Edition::CURRENT);
     if !parse.errors().is_empty() {
         return Vec::new();
     }
-    let line_index = LineIndex::new(function_text);
-    let offset = start_line.saturating_sub(1);
     parse
         .tree()
         .syntax()
@@ -1159,11 +1209,68 @@ fn dormant_macro_rules_line_ranges(function_text: &str, start_line: usize) -> Ve
         .map(|definition| {
             let range = definition.syntax().text_range();
             (
-                line_index.line(range.start()) + offset,
-                line_index.line_for_range_end(range.end()) + offset,
+                u32::from(range.start()) as usize,
+                u32::from(range.end()) as usize,
             )
         })
         .collect()
+}
+
+/// Erase the dormant-template byte spans from `text` by replacing their
+/// non-newline bytes with spaces: template evidence can no longer be
+/// extracted, while line offsets and live same-line evidence outside the
+/// spans stay exact. Span edges are character boundaries, so only whole
+/// characters are replaced.
+fn mask_dormant_template_spans(text: &str, spans: &[(usize, usize)]) -> String {
+    if spans.is_empty() {
+        return text.to_string();
+    }
+    let mut masked = text.as_bytes().to_vec();
+    for (start, end) in spans {
+        let range = (*start).min(masked.len())..(*end).min(masked.len());
+        for byte in &mut masked[range] {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    // See the note above: masked regions cover whole characters, so the
+    // masked bytes are always valid UTF-8; the fallback keeps the input
+    // rather than panicking on a defect.
+    String::from_utf8(masked).unwrap_or_else(|_| text.to_string())
+}
+
+/// Byte spans (relative to the claimed-span body text, which starts at
+/// `body_start`) of the dormant `macro_rules!` definitions between the
+/// trial's name argument and its balanced close, for trials registered
+/// inside another macro's token tree where no `MacroRules` nodes exist.
+fn dormant_template_token_spans(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    name_token_index: usize,
+    open_paren_index: usize,
+    body_start: TextSize,
+) -> Vec<(usize, usize)> {
+    let Some(close_index) = matching_group_close(tokens, open_paren_index) else {
+        return Vec::new();
+    };
+    let mut spans = Vec::new();
+    let mut walk = name_token_index + 1;
+    while walk < close_index {
+        if tokens[walk].kind() == ra_ap_syntax::SyntaxKind::IDENT
+            && tokens[walk].text() == "macro_rules"
+            && let Some(next) = skip_macro_rules_definition(tokens, walk)
+        {
+            let span_start =
+                u32::from(tokens[walk].text_range().start()).saturating_sub(u32::from(body_start));
+            let span_end = u32::from(tokens[next - 1].text_range().end())
+                .saturating_sub(u32::from(body_start));
+            spans.push((span_start as usize, span_end as usize));
+            walk = next;
+            continue;
+        }
+        walk += 1;
+    }
+    spans
 }
 
 /// Index of the next non-trivia token at or after `from`.
