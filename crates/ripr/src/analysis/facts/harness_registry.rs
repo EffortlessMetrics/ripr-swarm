@@ -385,7 +385,30 @@ fn apply_libtest_mimic_target(
         // line attribution. Closures already scan through the claimed
         // span; shadowed names, imports, paths, and unresolved or
         // ambiguous names contribute nothing.
-        let enclosing_function = enclosing_function(index, &target, start_line);
+        // The enclosing scope for the shadow scan: resolved from the
+        // invocation token's Fn ancestor when the trial is written as
+        // plain code, and from the innermost line-span function fact
+        // only when the tokens carry no Fn ancestor (a trial collected
+        // inside another macro's token tree). Resolving by ancestors
+        // first keeps two functions sharing one source line from picking
+        // the wrong scope (#3603 review, My3M).
+        let enclosing_scope: Option<(String, usize)> =
+            match tokens[position].parent_ancestors().find_map(ast::Fn::cast) {
+                Some(fn_node) => {
+                    let fn_start = fn_node
+                        .fn_token()
+                        .map(|token| token.text_range().start())
+                        .unwrap_or_else(|| fn_node.syntax().text_range().start());
+                    let fn_end = fn_node.syntax().text_range().end();
+                    Some((
+                        slice_text(source, fn_start, fn_end),
+                        line_index.line(fn_start),
+                    ))
+                }
+                None => enclosing_function(index, &target, start_line)
+                    .map(|function| (function.body.clone(), function.start_line)),
+            };
+        let enclosing_body = enclosing_scope.as_ref().map(|(body, _)| body.as_str());
         if let Some(helper) =
             bare_ident_callback(&tokens, matched.name_token_index, matched.open_paren_index)
                 .and_then(|ident_index| {
@@ -393,7 +416,7 @@ fn apply_libtest_mimic_target(
                         index,
                         &target,
                         &file_syntax,
-                        enclosing_function,
+                        enclosing_body,
                         tokens[ident_index].text(),
                     )
                 })
@@ -1219,11 +1242,11 @@ fn resolve_helper_function<'a>(
     index: &'a RustIndex,
     target: &Path,
     file_syntax: &ra_ap_syntax::SyntaxNode,
-    enclosing: Option<&FunctionFact>,
+    enclosing_body: Option<&str>,
     name: &str,
 ) -> Option<&'a FunctionFact> {
-    if let Some(function) = enclosing
-        && enclosing_body_binds_name(function, name)
+    if let Some(body) = enclosing_body
+        && enclosing_body_binds_name(body, name)
     {
         return None;
     }
@@ -1264,8 +1287,10 @@ fn resolve_helper_function<'a>(
 }
 
 /// The innermost function fact whose span contains `line`, if any — the
-/// body whose local bindings could shadow a file-level fn for an
-/// invocation on that line.
+/// line-based fallback for invocations whose tokens carry no Fn ancestor
+/// (a trial collected inside another macro's token tree). Ancestor-based
+/// resolution is preferred; this heuristic can pick the wrong scope when
+/// two functions share one source line.
 fn enclosing_function<'a>(
     index: &'a RustIndex,
     target: &Path,
@@ -1286,8 +1311,8 @@ fn enclosing_function<'a>(
 /// shadows the file-level fn just like a `let`), or any `use` item inside
 /// the body that binds the name. An unparseable body counts as bound
 /// (fail closed).
-fn enclosing_body_binds_name(function: &FunctionFact, name: &str) -> bool {
-    let parse = SourceFile::parse(&function.body, Edition::CURRENT);
+fn enclosing_body_binds_name(body_text: &str, name: &str) -> bool {
+    let parse = SourceFile::parse(body_text, Edition::CURRENT);
     if !parse.errors().is_empty() {
         return true;
     }

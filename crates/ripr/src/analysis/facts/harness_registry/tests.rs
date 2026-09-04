@@ -1583,6 +1583,63 @@ fn trials() -> Vec<Trial> {
 }
 
 #[test]
+fn given_same_line_functions_then_ast_scope_resolves_shadow()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (devin My3M): two functions sharing one source line
+    // made the line-span fallback pick the wrong enclosing scope, so the
+    // shadow scan missed the second function's local binding and credited
+    // the top-level helper's evidence. The scope now resolves from the
+    // invocation token's Fn ancestor: the local shadow fails the callback
+    // closed.
+    let root = temp_dir("same-line-functions")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/same_line_fns.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn shadow_target() -> u16 { production_call(4) }
+
+fn side_a() -> u16 { live_marker(1) } fn side_b() -> Trial { let shadow_target = || 1u16; Trial::test("same_line_shadow", shadow_target) }
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "same_line_fns", "tests/same_line_fns.rs")?;
+    let files = [PathBuf::from("tests/same_line_fns.rs")];
+    let registrations = [custom_target_registration("tests/same_line_fns.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "same_line_shadow")
+        .ok_or("same_line_shadow subject missing")?;
+
+    // The trial's own enclosing scope (side_b) binds the callback name
+    // locally, so the top-level shadow_target fn's evidence is never
+    // credited.
+    assert!(
+        !subject
+            .calls
+            .iter()
+            .any(|call| call.name == "production_call"),
+        "the same-line local shadow must fail the callback closed: {:?}",
+        subject.calls
+    );
+    assert!(
+        !subject
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text.contains("production_call")),
+        "{:?}",
+        subject.assertions
+    );
+    // The subject itself still classifies.
+    assert_eq!(subject.claim, HarnessSubjectClaim::NamedInvocation);
+    Ok(())
+}
+
+#[test]
 fn given_const_or_static_shadow_then_callback_fails_closed()
 -> Result<(), Box<dyn std::error::Error>> {
     // #3603 review (devin EEaa): `const`/`static` bindings carry a Name,

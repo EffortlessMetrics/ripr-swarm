@@ -44,6 +44,21 @@ are scoped or reviewed.
   — and degrades to per-function behavior
   ([#3608](https://github.com/EffortlessMetrics/ripr-swarm/issues/3608)).
 
+- Registered libtest-mimic trial subjects now carry evidence parity
+  with equivalent ordinary `#[test]` functions: a bare-identifier
+  callback contributes its resolved helper's parsed body evidence one
+  level deep (calls, oracles, literals with real line attribution)
+  only when binding identity is provable — local, import, const/static,
+  and nested-module shadows fail closed; method-position `.unwrap()` /
+  `.expect()` calls register smoke oracles with receiver-ful text
+  (keyword, indexed, cast, operator, and negation receiver forms);
+  assertion macros keep their complete invocation text in every
+  delimiter and full qualified path; and dormant `macro_rules!`
+  templates in any delimiter — and commented-out code — contribute no
+  evidence while live surrounding evidence still admits. Warm caches
+  are invalidated by the changed extraction generations
+  ([#3603](https://github.com/EffortlessMetrics/ripr-swarm/issues/3603)).
+
 - New `ripr mcp --stdio [--root PATH]` command: a bounded, read-only
   Model Context Protocol server that exposes exact workspace status
   (`ripr_workspace_status` tool and `ripr://workspace/status` resource)
