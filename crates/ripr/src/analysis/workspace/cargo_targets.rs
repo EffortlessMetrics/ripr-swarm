@@ -396,7 +396,7 @@ impl ManifestInventory {
                     }
                     candidates.retain(|candidate| {
                         !excluded.iter().any(|excluded_pattern| {
-                            workspace_member_glob_matches(excluded_pattern, candidate)
+                            exclusion_pattern_excludes(excluded_pattern, candidate)
                         })
                     });
                     for candidate in candidates {
@@ -432,9 +432,10 @@ impl ManifestInventory {
                     }
                     for dependency_dir in member_path_dependency_dirs(&value, &root) {
                         // Exclusion semantics apply to path dependencies
-                        // too (review round six, I4dv): compare the
-                        // normalized workspace-relative dependency
-                        // directory against the same exclude patterns.
+                        // too (review round six, I4dv; round seven, Jhjw):
+                        // the normalized workspace-relative dependency
+                        // directory is checked against the same exclude
+                        // patterns, including their directory prefixes.
                         let relative_directory = normalize(&dependency_dir)
                             .strip_prefix(&normalized_root)
                             .ok()
@@ -443,7 +444,7 @@ impl ManifestInventory {
                             // Outside the analysis root: not a member.
                             None => true,
                             Some(relative) => excluded.iter().any(|excluded_pattern| {
-                                workspace_member_glob_matches(excluded_pattern, &relative)
+                                exclusion_pattern_excludes(excluded_pattern, &relative)
                             }),
                         };
                         if excluded_dependency {
@@ -769,6 +770,43 @@ fn expand_member_pattern_walk(base: &Path, components: &[&str], matched: &mut Ve
             }
         }
     }
+}
+
+/// Whether one `[workspace.exclude]` pattern excludes one
+/// workspace-relative directory (review round seven, Jhjw/Jlb0): either
+/// the pattern glob-matches the directory, or the directory sits below
+/// the pattern's directory prefix — Cargo's exclude covers the named
+/// directory and everything under it, so `dep` excludes `dep` and
+/// `dep/sub` alike while never matching unrelated components. Prefix
+/// semantics live in this helper only: the same matcher also serves
+/// `[workspace.members]` patterns, where a prefix rule would wrongly
+/// widen membership.
+fn exclusion_pattern_excludes(pattern: &str, relative_directory: &str) -> bool {
+    let normalized_pattern = pattern.trim().replace('\\', "/");
+    let trimmed = normalized_pattern.trim_end_matches('/');
+    if trimmed.is_empty() || workspace_member_glob_matches(trimmed, relative_directory) {
+        return true;
+    }
+    let mut directory = relative_directory;
+    for prefix in trimmed.split('/') {
+        match directory.split('/').next() {
+            Some(component) if workspace_member_glob_matches(prefix, component) => {
+                // Consume the matched directory component; the rest of the
+                // pattern continues against the rest of the directory (an
+                // empty remainder means the directory ended exactly at the
+                // consumed prefix).
+                if directory.len() > component.len() {
+                    directory = &directory[component.len() + 1..];
+                } else {
+                    directory = "";
+                }
+            }
+            _ => return false,
+        }
+    }
+    // Every pattern component matched a directory component: the
+    // directory sits below (or equals) the pattern's directory prefix.
+    true
 }
 
 /// Whether one path component matches one glob component: `*` matches any
@@ -2156,5 +2194,84 @@ mod context_tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    /// #3608 review round seven (Jhjw/Jlb0): exclusion semantics are
+    /// directory-prefix aware. `exclude = ['dep']` excludes `dep/sub`
+    /// exactly as Cargo does (verified against `cargo metadata`), so a
+    /// nested path dependency's harness declarations grant no authority.
+    #[test]
+    fn exclusion_prefix_covers_nested_path_dependencies() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-excl-prefix-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("main")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("dep/sub")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = ['main']\nexclude = ['dep']\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("main/Cargo.toml"),
+            "[package]\nname='main'\nedition='2024'\n\n[dependencies]\nsub = { path = '../dep/sub' }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("dep/sub/Cargo.toml"),
+            "[package]\nname='sub'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=true\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+
+        // The nested excluded dependency's declaration validates nothing.
+        assert_eq!(
+            verdict("shared/mimic.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "dep/sub is excluded through its parent directory prefix"
+        );
+
+        // And it conflicts with nothing: a member declaration with the
+        // opposite flag stays deterministic instead of becoming ambiguous.
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname='ws'\nedition='2024'\n\n\
+             [workspace]\nmembers = ['main']\nexclude = ['dep']\n\n\
+             [[test]]\nname='mimic'\npath='shared/mimic.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("shared/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the nested excluded dependency's conflicting flag creates no ambiguity"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round seven (Jhjw/Jlb0): the exclusion helper's
+    /// exact contract — prefix coverage, component-boundary strictness,
+    /// glob components inside prefixes, and preserved exact matches.
+    #[test]
+    fn exclusion_patterns_exclude_directory_prefixes() {
+        assert!(exclusion_pattern_excludes("dep", "dep"));
+        assert!(exclusion_pattern_excludes("dep", "dep/sub"));
+        assert!(exclusion_pattern_excludes("dep", "dep/sub/deeper"));
+        assert!(exclusion_pattern_excludes("a/b", "a/b/c"));
+        assert!(exclusion_pattern_excludes(
+            "crates/skip*",
+            "crates/skip-x/deep"
+        ));
+        assert!(
+            !exclusion_pattern_excludes("dep", "deposit"),
+            "a prefix never matches an unrelated longer component"
+        );
+        assert!(!exclusion_pattern_excludes("a/b", "a/c"));
+        assert!(!exclusion_pattern_excludes("a/b/c", "a/b"));
     }
 }
