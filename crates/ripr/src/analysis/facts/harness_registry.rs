@@ -98,8 +98,9 @@ use std::path::Path;
 /// `cargo metadata` itself, and the `harness` flag from the owning
 /// manifest, because metadata output omits the flag (#3634). A target
 /// missing from Cargo metadata, still harness-enabled, or an
-/// unresolvable validation premise (an unreadable owning manifest, or
-/// cargo metadata that is unavailable for the analyzed workspace)
+/// unresolvable validation premise (an unreadable owning manifest,
+/// cargo metadata that is unavailable for the analyzed workspace, or
+/// owning manifests that disagree on the target's `harness` flag)
 /// records a typed limitation and the registration degrades to
 /// per-function behavior — the file keeps its ordinary classification
 /// instead of receiving file-wide evidence role.
@@ -202,7 +203,7 @@ fn cargo_metadata_conflict_limitation(
             "the registered custom-harness target `{displayed}` does not match any Cargo `[[test]]` target (declared or autodiscovered) in the owning package manifest; no file-wide evidence role, demotion, or trial subjects are granted and the file keeps its ordinary per-function classification"
         ),
         CargoHarnessVerdict::ManifestUnavailable => format!(
-            "the Cargo metadata premise for `{displayed}` could not be established (the owning package manifest could not be read or parsed, or the workspace's `cargo metadata` was unavailable), so the `harness = false` premise of the registration is not confirmed; no file-wide evidence role, demotion, or trial subjects are granted and the file keeps its ordinary per-function classification"
+            "the Cargo metadata premise for `{displayed}` could not be established (the owning package manifest could not be read or parsed, the workspace's `cargo metadata` was unavailable, or the owning manifests disagree on the target's `harness` flag), so the `harness = false` premise of the registration is not confirmed; no file-wide evidence role, demotion, or trial subjects are granted and the file keeps its ordinary per-function classification"
         ),
         CargoHarnessVerdict::HarnessDisabled => return None,
     };

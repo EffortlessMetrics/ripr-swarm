@@ -104,11 +104,16 @@ pub(crate) struct DeclaredCargoTestTarget {
 /// `harness` flag (#3608). Two entry shapes contribute:
 ///
 /// - an explicit `path = ...` entry contributes exactly its resolved path;
-/// - a name-only entry (no `path`) contributes its default path
-///   `tests/<name>.rs` (review HAla: only the file layout; the directory
-///   layout `tests/<name>/main.rs` is a separate autodiscovered target
-///   governed by the autodiscovery rules), so a registration on the
-///   conventional layout still matches the declaration that governs it.
+/// - a name-only entry (no `path`) contributes both of cargo's name-only
+///   layouts, `tests/<name>.rs` and `tests/<name>/main.rs` (#3637 review,
+///   verified against `cargo metadata` 1.95.0: with only the directory
+///   layout on disk, cargo reports the entry's target source path as
+///   `tests/<name>/main.rs` — the directory shape is that entry's target,
+///   not a separate autodiscovered one), so a registration on either
+///   layout still matches the declaration that governs it. With both
+///   layouts on disk cargo drops the ambiguous target from its inventory
+///   entirely, so the extra candidate can never credit a second,
+///   independently-governed target.
 ///
 /// The flag is the entry's `harness` key when present, Cargo's `true`
 /// default otherwise. Entries with neither a name nor a path contribute
@@ -164,15 +169,18 @@ fn declared_test_targets_with_harness_from_value(
         if name.is_empty() {
             continue;
         }
-        // A name-only entry defaults to exactly `tests/<name>.rs` (review
-        // HAla): the directory shape `tests/<name>/main.rs` is a separate
-        // autodiscovered target whose premise comes from the autodiscovery
-        // rules (package presence, edition, `autotests`), not from this
-        // entry's `harness` flag.
-        targets.push(DeclaredCargoTestTarget {
-            path: lexical(&normalize(&manifest_dir.join(format!("tests/{name}.rs")))),
-            harness,
-        });
+        // A name-only entry governs both of cargo's name-only layouts
+        // (#3637 review): `tests/<name>.rs` and `tests/<name>/main.rs`.
+        // The metadata inventory decides which shape (if any) actually
+        // compiles — with both on disk cargo drops the target — so the
+        // second candidate cannot over-credit an independently governed
+        // file.
+        for relative in [format!("tests/{name}.rs"), format!("tests/{name}/main.rs")] {
+            targets.push(DeclaredCargoTestTarget {
+                path: lexical(&normalize(&manifest_dir.join(relative))),
+                harness,
+            });
+        }
     }
     targets
 }
@@ -742,11 +750,14 @@ mod extraction {
             vec![
                 ("/ws/pkg/src/contract_test.rs".to_string(), false),
                 ("/ws/pkg/tests/plain.rs".to_string(), false),
+                ("/ws/pkg/tests/plain/main.rs".to_string(), false),
                 ("/ws/pkg/tests/flagged.rs".to_string(), true),
+                ("/ws/pkg/tests/flagged/main.rs".to_string(), true),
                 ("/ws/pkg/tests/defaults_on.rs".to_string(), true),
+                ("/ws/pkg/tests/defaults_on/main.rs".to_string(), true),
                 ("/ws/pkg/tests/explicit_only.rs".to_string(), true),
             ],
-            "name-only entries default to exactly tests/<name>.rs (review HAla)"
+            "name-only entries cover both cargo layouts (#3637 review); explicit paths stay exact"
         );
         assert!(
             declared_test_targets_with_harness_from_manifest("not [ valid toml", Path::new("/ws"))
@@ -1459,26 +1470,62 @@ mod harness_verdict {
         Ok(())
     }
 
-    /// #3608 review round five (HAla): a name-only `[[test]]` entry
-    /// defaults to exactly `tests/<name>.rs`; the directory layout
-    /// `tests/<name>/main.rs` is a separate autodiscovered target in
-    /// cargo's inventory that does not inherit the entry's `harness` flag.
+    /// #3608 review round five (HAla), corrected by the #3637 review: a
+    /// name-only `[[test]]` entry governs both of cargo's name-only
+    /// layouts. With only `tests/<name>.rs` on disk cargo reports that
+    /// path; with only `tests/<name>/main.rs` cargo reports the directory
+    /// shape as the entry's target (verified against `cargo metadata`
+    /// 1.95.0) and it inherits the entry's flag; with both, cargo drops
+    /// the ambiguous target from its inventory entirely, so neither
+    /// layout is credited.
     #[test]
-    fn name_only_entry_credits_only_the_file_layout() -> Result<(), String> {
+    fn name_only_entry_credits_both_cargo_layouts() -> Result<(), String> {
         let dir = unique_workspace("name-only");
         make_dir(&dir, "pkg/tests/suite")?;
-        write_file(&dir, "Cargo.toml", "[workspace]\nmembers = ['pkg']\n")?;
+        write_file(&dir, "pkg/src/lib.rs", "")?;
+        write_file(&dir, "pkg/tests/suite/main.rs", "")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[workspace]
+members = ['pkg']
+",
+        )?;
         write_member_package(
             &dir,
             "pkg",
-            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='suite'\nharness=false\n",
+            "[package]
+name='p'
+version='0.1.0'
+edition='2024'
+
+[[test]]
+name='suite'
+harness=false
+",
         )?;
-        write_file(&dir, "pkg/tests/suite.rs", "")?;
         let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+
+        // Sole directory layout (#3637 review): cargo reports
+        // `tests/suite/main.rs` as the name-only entry's target, so the
+        // `harness = false` premise holds for it. The file layout is not
+        // in cargo's inventory at all and stays NotDeclared.
+        assert_eq!(
+            verdict("pkg/tests/suite/main.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the sole directory layout is the name-only entry's target and inherits its flag"
+        );
         assert_eq!(
             verdict("pkg/tests/suite.rs"),
-            CargoHarnessVerdict::HarnessDisabled,
-            "the name-only entry defaults to the file layout"
+            CargoHarnessVerdict::NotDeclared,
+            "a layout cargo did not compile is not credited even though the entry governs it"
+        );
+
+        write_file(&dir, "pkg/tests/suite.rs", "")?;
+        assert_eq!(
+            verdict("pkg/tests/suite.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "with both layouts on disk cargo drops the ambiguous target entirely"
         );
 
         // With BOTH layouts on disk, cargo's inventory drops the
@@ -1508,7 +1555,7 @@ mod harness_verdict {
         assert_eq!(
             verdict("pkg/tests/suite/main.rs"),
             CargoHarnessVerdict::HarnessEnabled,
-            "the directory layout is a separate autodiscovered target: it does not inherit the flag"
+            "without the declaration the autodiscovered directory layout is harness-enabled"
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
