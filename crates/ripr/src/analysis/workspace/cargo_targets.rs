@@ -1722,6 +1722,98 @@ harness=false
         Ok(())
     }
 
+    /// #3637 review (devin, refuted with evidence and pinned): cargo
+    /// metadata echoes the path family it was given — through a junction
+    /// alias it reports alias-form workspace/package/source paths (1.95.0,
+    /// verified) — and `std::path::absolute` likewise preserves the alias.
+    /// Alias-form roots therefore compare against alias-form inventory
+    /// keys and resolve. Canonicalizing either side would BREAK this:
+    /// cargo's output is plain (never `\\?\` verbatim) while
+    /// `fs::canonicalize` returns verbatim paths on Windows. The pin
+    /// guards against a later canonicalize "fix".
+    /// Create a directory alias (Windows junction, Unix symlink) for the
+    /// alias-form inventory pin. Returns the OS error when aliases are
+    /// unavailable on this host so the caller can skip without a false
+    /// pass.
+    fn create_filesystem_alias(
+        real: &std::path::Path,
+        alias: &std::path::Path,
+    ) -> std::io::Result<()> {
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(alias)
+                .arg(real)
+                .status()?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other("mklink junction creation failed"))
+            }
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(real, alias)
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = (real, alias);
+            Err(std::io::Error::other("no filesystem alias support"))
+        }
+    }
+
+    #[test]
+    fn alias_form_roots_still_match_cargo_alias_form_output() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let temp = std::env::temp_dir();
+        let real = temp.join(format!("harness-alias-real-{stamp}"));
+        let alias = temp.join(format!("harness-alias-link-{stamp}"));
+        std::fs::create_dir_all(real.join("pkg/tests")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            real.join("Cargo.toml"),
+            "[workspace]
+members = ['pkg']
+",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            real.join("pkg/Cargo.toml"),
+            "[package]
+name='p'
+version='0.1.0'
+edition='2024'
+
+[[test]]
+name='mimic'
+harness=false
+",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(real.join("pkg/src.rs"), "").map_err(|error| error.to_string())?;
+        std::fs::write(real.join("pkg/tests/mimic.rs"), "").map_err(|error| error.to_string())?;
+        let alias_created = create_filesystem_alias(&real, &alias);
+        if alias_created.is_err() {
+            // Alias creation can be unavailable (no symlink privilege on
+            // this host): the invariant is still pinned wherever aliases
+            // exist, and skipping is not a pass for the alias path itself.
+            let _ = std::fs::remove_dir_all(&real);
+            return Ok(());
+        }
+        let verdict = cargo_test_target_harness_verdict(&alias, Path::new("pkg/tests/mimic.rs"));
+        let _ = std::fs::remove_dir_all(&alias);
+        let _ = std::fs::remove_dir_all(&real);
+        assert_eq!(
+            verdict,
+            CargoHarnessVerdict::HarnessDisabled,
+            "an alias-form root compares against cargo's alias-form inventory output"
+        );
+        Ok(())
+    }
+
     /// #3608 review round five (HAkg): membership gating. A malformed
     /// manifest that is NOT a workspace member is ignored by cargo
     /// metadata — it neither rejects a valid member registration nor
