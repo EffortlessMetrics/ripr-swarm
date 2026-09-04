@@ -44,6 +44,22 @@ are scoped or reviewed.
   — and degrades to per-function behavior
   ([#3608](https://github.com/EffortlessMetrics/ripr-swarm/issues/3608)).
 
+- Registered `custom_harness` target validation now sources workspace
+  membership and the test-target inventory from `cargo metadata`
+  itself instead of a bounded manifest TOML emulation: a member's
+  workspace-inherited (`[workspace.dependencies]`) path dependency
+  validates its declarations, character-class member globs expand as
+  cargo expands them, and `[workspace.exclude]` patterns match as
+  cargo's literal path prefixes (a wildcard exclude component
+  excludes nothing; a bare directory prefix excludes its subtree). The
+  `harness` flag still comes from the owning manifest because metadata
+  output omits it, every registration batch runs one bounded offline
+  probe, and every unresolvable state - no cargo binary, a workspace
+  cargo rejects, an unreachable probe deadline - fails closed to
+  `manifest_unavailable`; the classified-seam caches bump their schema
+  generations so pre-change entries cannot serve the flipped verdicts
+  ([#3634](https://github.com/EffortlessMetrics/ripr-swarm/issues/3634)).
+
 - Registered libtest-mimic trial subjects now carry evidence parity
   with equivalent ordinary `#[test]` functions: a bare-identifier
   callback contributes its resolved helper's parsed body evidence one
