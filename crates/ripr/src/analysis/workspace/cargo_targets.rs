@@ -370,6 +370,11 @@ impl ManifestInventory {
         // no members at all.
         let mut queue: Vec<PathBuf> = Vec::new();
         let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+        // The root's exclusion patterns stay in scope for the whole scan:
+        // a path dependency of a member that matches [workspace.exclude]
+        // is not a workspace member either (review round six, I4dv;
+        // verified against cargo metadata).
+        let mut excluded: Vec<String> = Vec::new();
         let enqueue = |dir: PathBuf, queue: &mut Vec<PathBuf>, seen: &mut BTreeSet<PathBuf>| {
             if !dir.starts_with(&normalized_root) {
                 return;
@@ -384,7 +389,7 @@ impl ManifestInventory {
                     enqueue(normalize(workspace_root), &mut queue, &mut seen);
                 }
                 if let Some(workspace) = value.get("workspace") {
-                    let excluded = collect_string_array(workspace.get("exclude"));
+                    excluded = collect_string_array(workspace.get("exclude"));
                     let mut candidates: Vec<String> = Vec::new();
                     for pattern in collect_string_array(workspace.get("members")) {
                         candidates.extend(expand_member_pattern(workspace_root, &pattern));
@@ -426,6 +431,24 @@ impl ManifestInventory {
                         }
                     }
                     for dependency_dir in member_path_dependency_dirs(&value, &root) {
+                        // Exclusion semantics apply to path dependencies
+                        // too (review round six, I4dv): compare the
+                        // normalized workspace-relative dependency
+                        // directory against the same exclude patterns.
+                        let relative_directory = normalize(&dependency_dir)
+                            .strip_prefix(&normalized_root)
+                            .ok()
+                            .map(|relative| relative.to_string_lossy().to_string());
+                        let excluded_dependency = match relative_directory {
+                            // Outside the analysis root: not a member.
+                            None => true,
+                            Some(relative) => excluded.iter().any(|excluded_pattern| {
+                                workspace_member_glob_matches(excluded_pattern, &relative)
+                            }),
+                        };
+                        if excluded_dependency {
+                            continue;
+                        }
                         enqueue(dependency_dir, &mut queue, &mut seen);
                     }
                 }
@@ -2069,6 +2092,67 @@ mod context_tests {
             verdict("shared/build.rs"),
             CargoHarnessVerdict::HarnessDisabled,
             "the build-dependency member's declaration is honored"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round six (I4dv): exclusion semantics apply to path
+    /// dependencies of members. A member depending on an excluded package
+    /// by path does not give that package harness authority: its
+    /// declarations validate nothing and conflict with nothing.
+    #[test]
+    fn excluded_path_dependency_gains_no_harness_authority() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-excl-dep-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("main")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("dep")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = ['main']\nexclude = ['dep']\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("main/Cargo.toml"),
+            "[package]\nname='main'\nedition='2024'\n\n[dependencies]\ndep = { path = '../dep' }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("dep/Cargo.toml"),
+            "[package]\nname='dep'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../shared/mimic.rs'\nharness=true\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+
+        // The excluded dependency's harness = true declaration validates
+        // nothing: the shared target matches no member declaration.
+        assert_eq!(
+            verdict("shared/mimic.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "the excluded dependency's declaration grants no authority"
+        );
+
+        // And it conflicts with nothing: a member declaration with the
+        // opposite flag stays deterministic instead of becoming ambiguous.
+        // The root here is a package so its own [[test]] declaration is
+        // one a broken exclusion would have to clash with.
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname='ws'\nedition='2024'\n\n\
+             [workspace]\nmembers = ['main']\nexclude = ['dep']\n\n\
+             [[test]]\nname='mimic'\npath='shared/mimic.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("shared/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the excluded dependency's conflicting flag creates no ambiguity"
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
