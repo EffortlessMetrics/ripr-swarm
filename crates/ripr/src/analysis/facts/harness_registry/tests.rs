@@ -3058,13 +3058,14 @@ fn shared_target_declared_from_a_sibling_package_is_accepted()
             (
                 "shared/mimic.rs",
                 &with_harness_main(
-                r#"
+                    r#"
 use libtest_mimic::Trial;
 
 fn trials() -> Vec<Trial> {
     vec![Trial::test("shared_case", || Ok(()))]
 }
 "#,
+                    "trials()",
                 ),
             ),
         ],
@@ -3531,9 +3532,13 @@ fn warm_file_fact_cache_applies_reachability_identically() -> Result<(), Box<dyn
 {
     let root = temp_dir("warm-reachability")?;
     fs::create_dir_all(root.0.join("src"))?;
+    // A standalone `[workspace]` table makes the fixture its own
+    // workspace root: cargo's metadata probe must not walk ancestors,
+    // where a host temp dir can sit inside an unrelated workspace tree
+    // (#3637 metadata validation).
     fs::write(
         root.0.join("Cargo.toml"),
-        "[package]\nname = 'harness-fixture'\nversion = '0.1.0'\nedition = '2024'\n",
+        "[package]\nname = 'harness-fixture'\nversion = '0.1.0'\nedition = '2024'\n\n[workspace]\n",
     )?;
     let file = PathBuf::from("src/dead_reachability.rs");
     let source = br#"
