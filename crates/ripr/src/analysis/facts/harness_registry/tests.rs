@@ -66,6 +66,27 @@ fn attribute_registration(target: &str, marker: &str) -> TestHarnessRegistration
     )
 }
 
+/// Append a standard libtest-mimic run entry (#3636) so a fixture's
+/// trials resolve into the run argument and stay in the
+/// executable-test denominator. Appending at the end keeps every
+/// existing source-line assertion exact; `trials_expr` is the
+/// expression the appended main binds the trial collection from. A
+/// bare-identifier call resolves as a one-level builder; anything the
+/// bounded resolver cannot follow (e.g. a method call) leaves the
+/// subject admitted as reachability-unknown with the aggregate
+/// disclosure.
+fn with_harness_main(source: &str, trials_expr: &str) -> String {
+    format!(
+        "{source}
+fn main() {{
+    let arguments = libtest_mimic::Arguments::from_args();
+    let all_trials = {trials_expr};
+    libtest_mimic::run(&arguments, &all_trials);
+}}
+"
+    )
+}
+
 fn write_workspace(
     root: &TempDir,
     files: &[(&str, &str)],
@@ -138,7 +159,8 @@ fn harness_false_target_is_evidence_role_with_exact_trial_subjects()
             ),
             (
                 "tests/price_mimic.rs",
-                r#"
+                &with_harness_main(
+                    r#"
 use libtest_mimic::{Arguments, Trial};
 
 fn parse_args(args: &[String]) -> usize {
@@ -173,6 +195,8 @@ fn ordinary_test_attribute_is_inert_without_the_harness() {
     assert_eq!(parse_args(&[]), 0);
 }
 "#,
+                    "static_trials()",
+                ),
             ),
             (
                 "tests/ordinary.rs",
@@ -243,7 +267,8 @@ fn ordinary_test_attribute_is_inert_without_the_harness() {
         "inert attributes must not enter the executable-test denominator"
     );
 
-    // Dynamic shapes remain typed limitations.
+    // Dynamic shapes remain typed limitations; the run-resolved trials
+    // are admitted with no reachability limitation recorded (#3636).
     let codes = index
         .harness_limitations
         .iter()
@@ -251,6 +276,11 @@ fn ordinary_test_attribute_is_inert_without_the_harness() {
         .collect::<Vec<_>>();
     assert!(codes.contains(&"dynamic_trial_name"), "{codes:?}");
     assert!(codes.contains(&"dynamic_trial_registration"), "{codes:?}");
+    assert!(
+        !codes.contains(&"registration_unreachable")
+            && !codes.contains(&"registration_reachability_unknown"),
+        "run-resolved trials must not carry reachability limitations: {codes:?}"
+    );
 
     // The ordinary libtest target beside the custom target keeps its
     // executable test.
@@ -385,7 +415,10 @@ fn fully_qualified_trial_calls_match_the_marker_path() -> Result<(), Box<dyn std
         &root,
         &[(
             "tests/qualified.rs",
-            "fn trials() -> Vec<libtest_mimic::Trial> {\n    vec![libtest_mimic::Trial::test(\"qualified_case\", || Ok(()))]\n}\n",
+            &with_harness_main(
+                "fn trials() -> Vec<libtest_mimic::Trial> {\n    vec![libtest_mimic::Trial::test(\"qualified_case\", || Ok(()))]\n}\n",
+                "trials()",
+            ),
         )],
     )?;
     let files = [PathBuf::from("tests/qualified.rs")];
@@ -419,7 +452,10 @@ fn qualified_trial_with_bare_import_emits_one_subject_and_no_false_limitation()
         &root,
         &[(
             "tests/both_forms.rs",
-            "use libtest_mimic::Trial;\n\nfn trials() -> Vec<Trial> {\n    vec![libtest_mimic::Trial::test(\"both_case\", || Ok(()))]\n}\n",
+            &with_harness_main(
+                "use libtest_mimic::Trial;\n\nfn trials() -> Vec<Trial> {\n    vec![libtest_mimic::Trial::test(\"both_case\", || Ok(()))]\n}\n",
+                "trials()",
+            ),
         )],
     )?;
     let files = [PathBuf::from("tests/both_forms.rs")];
@@ -450,7 +486,10 @@ fn plain_idents_inside_trial_bodies_never_become_oracles() -> Result<(), Box<dyn
         &root,
         &[(
             "tests/ident_noise.rs",
-            "fn trials() -> Vec<libtest_mimic::Trial> {\n    vec![libtest_mimic::Trial::test(\"noise_case\", || {\n        let snapshots = load();\n        assert_eq!(snapshots, 1);\n        Ok(())\n    })]\n}\nfn load() -> i32 {\n    1\n}\n",
+            &with_harness_main(
+                "fn trials() -> Vec<libtest_mimic::Trial> {\n    vec![libtest_mimic::Trial::test(\"noise_case\", || {\n        let snapshots = load();\n        assert_eq!(snapshots, 1);\n        Ok(())\n    })]\n}\nfn load() -> i32 {\n    1\n}\n",
+                "trials()",
+            ),
         )],
     )?;
     let files = [PathBuf::from("tests/ident_noise.rs")];
@@ -484,7 +523,8 @@ fn snapshot_named_helpers_never_become_oracles_but_snapshot_asserts_do()
         &root,
         &[(
             "tests/leaf_boundary.rs",
-            "fn trials() -> Vec<libtest_mimic::Trial> {
+            &with_harness_main(
+                "fn trials() -> Vec<libtest_mimic::Trial> {
     vec![libtest_mimic::Trial::test(\"leaf_case\", || {
         snapshot_helper!();
         assert_snapshot!(1);
@@ -492,6 +532,8 @@ fn snapshot_named_helpers_never_become_oracles_but_snapshot_asserts_do()
     })]
 }
 ",
+                "trials()",
+            ),
         )],
     )?;
     let files = [PathBuf::from("tests/leaf_boundary.rs")];
@@ -532,7 +574,8 @@ fn helper_callback_bodies_contribute_one_level_of_subject_evidence()
         &root,
         &[(
             "tests/helper_body.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 fn parse_config(raw: &str) -> u16 {
@@ -552,6 +595,8 @@ fn trials() -> Vec<Trial> {
     ]
 }
 "#,
+                "trials()",
+            ),
         )],
     )?;
     declare_harness_false_target(&root, "helper_body", "tests/helper_body.rs")?;
@@ -834,7 +879,8 @@ fn trial_method_oracle_receivers_carry_keyword_and_chained_forms()
         &root,
         &[(
             "tests/keyword_receivers.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 struct Reader;
@@ -856,6 +902,8 @@ impl Reader {
     }
 }
 "#,
+                "Reader.trials()",
+            ),
         )],
     )?;
     declare_harness_false_target(&root, "keyword_receivers", "tests/keyword_receivers.rs")?;
@@ -913,7 +961,8 @@ fn given_dormant_macro_rules_template_when_trial_scanned_then_no_smoke_oracle_fr
         &root,
         &[(
             "tests/dormant_macro.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 fn trials() -> Vec<Trial> {
@@ -927,6 +976,8 @@ fn trials() -> Vec<Trial> {
     })]
 }
 "#,
+                "trials()",
+            ),
         )],
     )?;
     declare_harness_false_target(&root, "dormant_macro", "tests/dormant_macro.rs")?;
@@ -972,7 +1023,8 @@ fn given_dormant_macro_rules_template_in_helper_callback_then_no_oracle_either()
         &root,
         &[(
             "tests/dormant_template_helper.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 fn check_template() -> Result<(), String> {
@@ -993,6 +1045,8 @@ fn trials() -> Vec<Trial> {
     vec![Trial::test("helper_template", check_template)]
 }
 "#,
+                "trials()",
+            ),
         )],
     )?;
     declare_harness_false_target(
@@ -1208,7 +1262,8 @@ fn trial_qualified_assertions_keep_the_full_path() -> Result<(), Box<dyn std::er
         &root,
         &[(
             "tests/qualified_assertions.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 fn trials() -> Vec<Trial> {
@@ -1226,6 +1281,8 @@ fn trials() -> Vec<Trial> {
     ]
 }
 "#,
+                "trials()",
+            ),
         )],
     )?;
     declare_harness_false_target(
@@ -1340,7 +1397,8 @@ fn trial_alternative_delimiters_keep_invocation_evidence() -> Result<(), Box<dyn
         &root,
         &[(
             "tests/alt_delims.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 fn trials() -> Vec<Trial> {
@@ -1367,6 +1425,8 @@ fn trials() -> Vec<Trial> {
     ]
 }
 "#,
+                "trials()",
+            ),
         )],
     )?;
     declare_harness_false_target(&root, "alt_delims", "tests/alt_delims.rs")?;
@@ -1451,7 +1511,8 @@ fn trial_dormant_alternative_delimiters_stay_inert() -> Result<(), Box<dyn std::
         &root,
         &[(
             "tests/dormant_alt_delims.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 fn trials() -> Vec<Trial> {
@@ -1466,6 +1527,8 @@ fn trials() -> Vec<Trial> {
     })]
 }
 "#,
+                "trials()",
+            ),
         )],
     )?;
     declare_harness_false_target(&root, "dormant_alt_delims", "tests/dormant_alt_delims.rs")?;
@@ -1751,7 +1814,8 @@ fn trial_method_oracle_receivers_carry_indexed_cast_operator_forms()
         &root,
         &[(
             "tests/receiver_forms.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 fn trials() -> Vec<Trial> {
@@ -1770,6 +1834,8 @@ fn trials() -> Vec<Trial> {
     })]
 }
 "#,
+                "trials()",
+            ),
         )],
     )?;
     declare_harness_false_target(&root, "receiver_forms", "tests/receiver_forms.rs")?;
@@ -1826,7 +1892,8 @@ fn trial_receiver_walk_stops_at_comparison_operators() -> Result<(), Box<dyn std
         &root,
         &[(
             "tests/comparison_receivers.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 fn parse_u16(raw: &str) -> u16 {
@@ -1846,6 +1913,8 @@ fn trials() -> Vec<Trial> {
     })]
 }
 "#,
+                "trials()",
+            ),
         )],
     )?;
     declare_harness_false_target(
@@ -1905,7 +1974,8 @@ fn trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers()
         &root,
         &[(
             "tests/method_oracles.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 fn parse_port(raw: &str) -> Result<u16, String> {
@@ -1934,6 +2004,8 @@ struct Config {
     expect: u8,
 }
 "#,
+                "trials()",
+            ),
         )],
     )?;
     declare_harness_false_target(&root, "method_oracles", "tests/method_oracles.rs")?;
@@ -2396,6 +2468,12 @@ fn trials() -> Vec<Trial> {
 fn inert_test_in_harness_target() {
     assert_eq!(1, 1);
 }
+
+fn main() {
+    let arguments = libtest_mimic::Arguments::from_args();
+    let all_trials = trials();
+    libtest_mimic::run(&arguments, &all_trials);
+}
 "#
     .to_vec();
     let files = [(file.clone(), source)];
@@ -2697,13 +2775,16 @@ fn explicit_harness_false_declaration_on_conventional_layout_is_accepted()
         &root,
         &[(
             "tests/suite.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 fn trials() -> Vec<Trial> {
     vec![Trial::test("declared_case", || Ok(()))]
 }
 "#,
+                "trials()",
+            ),
         )],
     )?;
     declare_harness_false_target(&root, "suite", "tests/suite.rs")?;
@@ -2764,13 +2845,16 @@ fn nonconventional_directory_target_declared_harness_false_is_accepted()
         &root,
         &[(
             "qa/mimic.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 fn trials() -> Vec<Trial> {
     vec![Trial::test("qa_case", || Ok(()))]
 }
 "#,
+                "trials()",
+            ),
         )],
     )?;
     declare_harness_false_target(&root, "mimic", "qa/mimic.rs")?;
@@ -2920,13 +3004,16 @@ fn root_declaration_claims_a_target_below_a_nested_manifest()
         &root,
         &[(
             "below/nested/manifest/dir/mimic.rs",
-            r#"
+            &with_harness_main(
+                r#"
 use libtest_mimic::Trial;
 
 fn trials() -> Vec<Trial> {
     vec![Trial::test("root_claimed_case", || Ok(()))]
 }
 "#,
+                "trials()",
+            ),
         )],
     )?;
     // The nested manifest directory declares nothing for the target.
@@ -2970,6 +3057,7 @@ fn shared_target_declared_from_a_sibling_package_is_accepted()
             ("src/lib.rs", ""),
             (
                 "shared/mimic.rs",
+                &with_harness_main(
                 r#"
 use libtest_mimic::Trial;
 
@@ -2977,6 +3065,7 @@ fn trials() -> Vec<Trial> {
     vec![Trial::test("shared_case", || Ok(()))]
 }
 "#,
+                ),
             ),
         ],
     )?;
@@ -3011,19 +3100,19 @@ fn trials() -> Vec<Trial> {
     Ok(())
 }
 
-/// #3604: the adapter's discovery scan is syntactic and bounded by the
-/// registered target, so a trial constructor that never reaches the
-/// harness's run entry point — one inside an `if false` branch, one built
-/// in a helper nothing calls — still claims
-/// `HarnessSubjectClaim::NamedInvocation` and still enters the
-/// executable-test denominator, together with the dead constructor's
-/// calls and oracles. This pin keeps the over-credit boundary named
-/// instead of silent: the claim type is the annotation, and the boundary
-/// text lives on the claim variant, in `docs/OUTPUT_SCHEMA.md`, and in
-/// RIPR-SPEC-0173. Statically separating dead from reachable construction
-/// is the reachability trace this adapter generation does not perform,
-/// so the claim stays uniform and no per-subject deadness annotation is
-/// emitted.
+/// #3604/#3636: the adapter's discovery scan is syntactic and bounded by
+/// the registered target, so a trial constructor that never reaches the
+/// harness's run entry point — one inside an `if false` branch, one
+/// built in a helper nothing calls, in a target with no run entry call
+/// at all — still claims `HarnessSubjectClaim::NamedInvocation` together
+/// with the dead constructor's calls and oracles. The #3636 reachability
+/// authority closes the #3635 over-credit boundary from the other side:
+/// with no run entry call in the target, the construction cannot reach a
+/// run argument, so the subject keeps its syntactic claim and its
+/// subject fact but its `TestFact` does not enter the executable-test
+/// denominator, and a per-trial `registration_unreachable` limitation
+/// names it. The claim stays uniform (no per-subject reachability
+/// field); the exclusion is disclosed by the typed limitation.
 #[test]
 fn given_dead_construction_then_subjects_still_claim_named_invocation()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -3080,19 +3169,7 @@ fn never_called_trials() -> Vec<Trial> {
         assert_eq!(subject.claim.as_str(), "named_invocation");
     }
 
-    // The credit is real: both subjects join the executable-test
-    // denominator with the dead constructors' own evidence.
-    let test_names = {
-        let mut names = index
-            .tests
-            .iter()
-            .filter(|test| test.file.ends_with(Path::new("tests/dead_construction.rs")))
-            .map(|test| test.name.as_str())
-            .collect::<Vec<_>>();
-        names.sort_unstable();
-        names
-    };
-    assert_eq!(test_names, vec!["dead_branch_trial", "unused_helper_trial"]);
+    // The dead constructors' own evidence still joins the subject facts.
     for subject in [dead_branch, unused_helper] {
         assert!(
             subject
@@ -3112,13 +3189,391 @@ fn never_called_trials() -> Vec<Trial> {
         );
     }
 
-    // The boundary is named on the claim, not per subject: no limitation
-    // is recorded for these subjects, because the scan establishes the
-    // invocation and the claim text carries the reachability limit.
+    // #3636: with no run entry call in the target, neither construction
+    // can reach a run argument, so neither enters the executable-test
+    // denominator — while both subject facts stay.
     assert!(
-        index.harness_limitations.is_empty(),
-        "dead construction is a documented claim boundary, not a per-subject limitation: {:?}",
+        index
+            .tests
+            .iter()
+            .all(|test| !test.file.ends_with(Path::new("tests/dead_construction.rs"))),
+        "dead constructions must leave the executable-test denominator: {:?}",
+        index
+            .tests
+            .iter()
+            .filter(|test| test.file.ends_with(Path::new("tests/dead_construction.rs")))
+            .collect::<Vec<_>>()
+    );
+
+    // The exclusion is named per trial: one typed limitation each,
+    // recording that the run entry point is absent.
+    let exclusions: Vec<_> = index
+        .harness_limitations
+        .iter()
+        .filter(|limitation| limitation.code == "registration_unreachable")
+        .collect();
+    assert_eq!(exclusions.len(), 2, "{:?}", index.harness_limitations);
+    for (name, line) in [("dead_branch_trial", 8), ("unused_helper_trial", 16)] {
+        let limitation = exclusions
+            .iter()
+            .find(|limitation| limitation.detail.contains(&format!("trial `{name}`")))
+            .ok_or_else(|| {
+                format!(
+                    "missing exclusion for {name}: {:?}",
+                    index.harness_limitations
+                )
+            })?;
+        assert_eq!(limitation.line, line, "{limitation:?}");
+        assert!(
+            limitation
+                .detail
+                .contains("no call to the registered harness run entry point"),
+            "{limitation:?}"
+        );
+    }
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .all(|limitation| limitation.code != "registration_reachability_unknown"),
+        "an absent run entry is a proof, not an unknown: {:?}",
         index.harness_limitations
     );
+    Ok(())
+}
+
+/// #3636: every supported run-argument form admits its trials — a
+/// direct `vec![]` literal, an array literal, an immutable let-bound
+/// chain, a `&local[..]` index, and a one-level builder function — with
+/// no reachability limitation recorded.
+#[test]
+fn given_run_entry_then_supported_argument_forms_admit_trials()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("reachability-admitted")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/admitted_forms.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn build_helper() -> Vec<Trial> {
+    vec![Trial::test("helper_built", || Ok(()))]
+}
+
+fn main() {
+    let arguments = libtest_mimic::Arguments::from_args();
+    let chained = vec![Trial::test("let_chained", || Ok(()))];
+    libtest_mimic::run(&arguments, &vec![Trial::test("inline_vec", || Ok(()))]);
+    libtest_mimic::run(&arguments, &[Trial::test("array_literal", || Ok(()))]);
+    libtest_mimic::run(&arguments, &chained);
+    libtest_mimic::run(&arguments, &chained[..]);
+    let built = build_helper();
+    libtest_mimic::run(&arguments, &built);
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "admitted_forms", "tests/admitted_forms.rs")?;
+    let files = [PathBuf::from("tests/admitted_forms.rs")];
+    let registrations = [custom_target_registration("tests/admitted_forms.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    let mut names = index
+        .harness_subjects
+        .iter()
+        .map(|subject| subject.name.as_str())
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        vec!["array_literal", "helper_built", "inline_vec", "let_chained"]
+    );
+    for subject in &index.harness_subjects {
+        assert_eq!(subject.claim, HarnessSubjectClaim::NamedInvocation);
+    }
+    // Every admitted trial keeps its executable-test denominator entry.
+    let mut test_names = index
+        .tests
+        .iter()
+        .filter(|test| test.file.ends_with(Path::new("tests/admitted_forms.rs")))
+        .map(|test| test.name.as_str())
+        .collect::<Vec<_>>();
+    test_names.sort_unstable();
+    assert_eq!(
+        test_names,
+        vec!["array_literal", "helper_built", "inline_vec", "let_chained"]
+    );
+    assert!(
+        index.harness_limitations.is_empty(),
+        "supported forms must not record reachability limitations: {:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}
+
+/// #3636: a dead constructor beside a completely resolved run argument
+/// is provably exclusive — the admitted trial stays in the denominator,
+/// the excluded one keeps its subject fact, syntactic claim, and
+/// evidence but leaves the denominator under a typed limitation naming
+/// it.
+#[test]
+fn given_dead_constructor_beside_resolved_argument_then_it_leaves_the_denominator()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("reachability-excluded")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/mixed_reachability.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn production_call(value: u16) -> u16 { value }
+
+fn never_called() -> Vec<Trial> {
+    vec![Trial::test("excluded_helper_trial", || {
+        assert_eq!(production_call(1), 1);
+    })]
+}
+
+fn main() {
+    let arguments = libtest_mimic::Arguments::from_args();
+    let all_trials = vec![Trial::test("admitted_trial", || Ok(()))];
+    libtest_mimic::run(&arguments, &all_trials);
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "mixed_reachability", "tests/mixed_reachability.rs")?;
+    let files = [PathBuf::from("tests/mixed_reachability.rs")];
+    let registrations = [custom_target_registration("tests/mixed_reachability.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    // Both subjects exist under the syntactic claim.
+    let excluded = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "excluded_helper_trial")
+        .ok_or("excluded subject fact must stay")?;
+    assert_eq!(excluded.claim, HarnessSubjectClaim::NamedInvocation);
+    assert!(
+        excluded
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text.starts_with("assert_eq!")),
+        "the dead constructor's evidence still joins the subject fact: {:?}",
+        excluded.assertions
+    );
+    assert!(
+        index
+            .harness_subjects
+            .iter()
+            .any(|subject| subject.name == "admitted_trial")
+    );
+
+    // Only the admitted trial enters the executable-test denominator.
+    let test_names: Vec<_> = index
+        .tests
+        .iter()
+        .filter(|test| {
+            test.file
+                .ends_with(Path::new("tests/mixed_reachability.rs"))
+        })
+        .map(|test| test.name.as_str())
+        .collect();
+    assert_eq!(test_names, vec!["admitted_trial"], "{test_names:?}");
+
+    // The exclusion is a typed limitation naming the trial and the
+    // complete-resolution proof.
+    let limitation = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_unreachable")
+        .ok_or("missing registration_unreachable limitation")?;
+    assert!(
+        limitation.detail.contains("excluded_helper_trial"),
+        "{limitation:?}"
+    );
+    assert!(
+        limitation
+            .detail
+            .contains("resolved completely through the supported resolution forms"),
+        "{limitation:?}"
+    );
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .all(|limitation| limitation.code != "registration_reachability_unknown"),
+        "a complete resolution leaves nothing unknown: {:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}
+
+/// #3636: when the bounded resolver cannot connect a trial to the run
+/// argument, the trial stays in the denominator (today's behavior) and
+/// the gap is disclosed by one aggregate typed limitation naming the
+/// trials — never by a fabricated per-subject field, and never by
+/// concluding unreachability.
+#[test]
+fn given_unresolvable_run_argument_then_trials_stay_admitted_and_disclosed()
+-> Result<(), Box<dyn std::error::Error>> {
+    // A `mut` collection built by push cannot be resolved: the run
+    // argument's final value is not provable, so the trial stays with an
+    // explicit unknown disclosure.
+    let root = temp_dir("reachability-unknown")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/unknown_reachability.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn main() {
+    let arguments = libtest_mimic::Arguments::from_args();
+    let mut all_trials = Vec::new();
+    all_trials.push(Trial::test("pushed_trial", || Ok(())));
+    libtest_mimic::run(&arguments, &all_trials);
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(
+        &root,
+        "unknown_reachability",
+        "tests/unknown_reachability.rs",
+    )?;
+    let files = [PathBuf::from("tests/unknown_reachability.rs")];
+    let registrations = [custom_target_registration("tests/unknown_reachability.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    assert!(
+        index
+            .harness_subjects
+            .iter()
+            .any(|subject| subject.name == "pushed_trial"),
+        "an unknown must stay admitted: {:?}",
+        index.harness_subjects
+    );
+    assert!(
+        index.tests.iter().any(|test| test.name == "pushed_trial"),
+        "an unknown keeps today's denominator behavior"
+    );
+    let disclosure = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_reachability_unknown")
+        .ok_or("missing aggregate unknown disclosure")?;
+    assert!(
+        disclosure.detail.contains("pushed_trial"),
+        "the disclosure names the unknown trials: {disclosure:?}"
+    );
+    assert!(
+        disclosure.detail.contains("bound `mut`"),
+        "the disclosure names its reason: {disclosure:?}"
+    );
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .all(|limitation| limitation.code != "registration_unreachable"),
+        "unknown must not degrade into an exclusion: {:?}",
+        index.harness_limitations
+    );
+
+    // An unsupported run-entry spelling (`run_tests`) never lets the
+    // authority conclude absence: the trial stays and the gap is
+    // disclosed.
+    let root = temp_dir("reachability-run-tests")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/run_tests_spelling.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn main() {
+    let arguments = libtest_mimic::Arguments::from_args();
+    let all_trials = vec![Trial::test("run_tests_trial", || Ok(()))];
+    libtest_mimic::run_tests(&arguments, &all_trials);
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "run_tests_spelling", "tests/run_tests_spelling.rs")?;
+    let files = [PathBuf::from("tests/run_tests_spelling.rs")];
+    let registrations = [custom_target_registration("tests/run_tests_spelling.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(
+        index
+            .tests
+            .iter()
+            .any(|test| test.name == "run_tests_trial"),
+        "an unsupported entry spelling keeps the trial admitted: {:?}",
+        index.tests
+    );
+    let disclosure = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_reachability_unknown")
+        .ok_or("missing disclosure for unsupported entry spelling")?;
+    assert!(disclosure.detail.contains("run_tests"), "{disclosure:?}");
+    Ok(())
+}
+
+/// #3636 cache discipline: the reachability decision is part of the
+/// registry, which re-applies after the file-fact cache loads on every
+/// build, so the exclusion is identical on the warm path — a warm hit
+/// cannot serve the pre-#3636 denominator.
+#[test]
+fn warm_file_fact_cache_applies_reachability_identically() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = temp_dir("warm-reachability")?;
+    fs::create_dir_all(root.0.join("src"))?;
+    fs::write(
+        root.0.join("Cargo.toml"),
+        "[package]\nname = 'harness-fixture'\nversion = '0.1.0'\nedition = '2024'\n",
+    )?;
+    let file = PathBuf::from("src/dead_reachability.rs");
+    let source = br#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("dead_warm_case", || Ok(()))]
+}
+"#
+    .to_vec();
+    declare_harness_false_target(&root, "dead_reachability", "src/dead_reachability.rs")?;
+    let files = [(file.clone(), source)];
+    let registrations = [custom_target_registration("src/dead_reachability.rs")];
+
+    let cold = crate::analysis::facts::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        &root.0,
+        &files,
+        &registrations,
+    )?;
+    let warm = crate::analysis::facts::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        &root.0,
+        &files,
+        &registrations,
+    )?;
+    assert_eq!(
+        warm.file_fact_cache.hits, 1,
+        "the warm run must be a cache hit"
+    );
+    for (label, index) in [("cold", &cold.index), ("warm", &warm.index)] {
+        assert_eq!(index.harness_subjects.len(), 1, "{label}");
+        assert_eq!(index.tests.len(), 0, "{label}: dead trials never admit");
+        let limitation = index
+            .harness_limitations
+            .iter()
+            .find(|limitation| limitation.code == "registration_unreachable")
+            .ok_or_else(|| format!("{label}: missing registration_unreachable limitation"))?;
+        assert!(
+            limitation.detail.contains("dead_warm_case"),
+            "{label}: {limitation:?}"
+        );
+    }
     Ok(())
 }

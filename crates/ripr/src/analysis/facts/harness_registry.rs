@@ -51,21 +51,29 @@
 //! ordinary parser path, and method oracles are smoke-strength by
 //! construction.
 //!
-//! ## Named-invocation reachability boundary (#3604)
+//! ## Named-invocation reachability boundary (#3604, #3636)
 //!
 //! [`HarnessSubjectClaim::NamedInvocation`] is a syntactic claim bounded
 //! by the registered target: a named invocation exists in the registered
 //! target. It is not a claim that the harness registers or executes the
-//! trial. Dead construction — a trial constructor in an unused helper,
-//! an `if false` branch, or a collection never passed to the harness's
-//! run entry point — still claims the subject and still enters the
-//! executable-test denominator. Static reachability from the constructor
-//! into the run entry point is not established: discovery is a token
-//! scan over the whole file, and trials collected inside macro token
-//! trees carry no parsed expression nodes to trace. The over-credit
-//! boundary is named on the claim, in `docs/OUTPUT_SCHEMA.md`, and in
-//! RIPR-SPEC-0173 rather than silently absorbed; a reachability trace
-//! into the run input stays out of scope for this adapter generation.
+//! trial. What the invocation contributes to the executable-test
+//! denominator is decided by the bounded reachability authority
+//! (`reachability.rs`, #3636), which anchors the registered run entry
+//! point and resolves its trial argument through supported forms:
+//!
+//! - a construction provably excluded from every resolved run argument
+//!   — or a target with no run entry call at all — keeps its subject
+//!   fact and claim but does not enter the executable-test denominator;
+//!   a per-trial `registration_unreachable` limitation names it;
+//! - a construction the bounded resolver can neither connect nor
+//!   exclude stays admitted (the #3604 posture) and is disclosed by one
+//!   aggregate `registration_reachability_unknown` limitation naming
+//!   the trials — unknown is the bias, because a false unreachable
+//!   silently drops a real subject;
+//! - admitted-but-unknown subjects still carry only the syntactic
+//!   claim; there is no per-subject reachability field, because
+//!   per-subject attribution is exactly what the unknown bucket cannot
+//!   establish.
 
 use super::model::{FunctionFact, FunctionSourceRole, RustIndex, TestFact};
 use super::test_styles::normalized_test_attribute_path as normalized_attribute_path;
@@ -257,11 +265,14 @@ pub(crate) fn validated_file_wide_harness_targets(
 /// Every established subject claims
 /// [`HarnessSubjectClaim::NamedInvocation`]: a syntactic claim bounded by
 /// the registered target, not a claim that the harness registers or
-/// executes the trial (#3604). Dead construction — an unused helper, an
-/// `if false` branch, a collection never passed to the harness's run
-/// entry point — still claims the subject and enters the
-/// executable-test denominator; see the module-level reachability
-/// boundary note.
+/// executes the trial (#3604). Whether an established subject enters the
+/// executable-test denominator is decided afterwards by the bounded
+/// reachability authority (#3636): constructions excluded from every
+/// resolved run argument — or a target with no run entry call — keep
+/// their subject fact but withhold their `TestFact` under a
+/// `registration_unreachable` limitation, unresolved reachability stays
+/// admitted under an aggregate `registration_reachability_unknown`
+/// disclosure, and everything else is admitted as before.
 fn apply_libtest_mimic_target(
     index: &mut RustIndex,
     registration: &TestHarnessRegistration,
@@ -298,6 +309,10 @@ fn apply_libtest_mimic_target(
     // re-processing the same call and emitting a false
     // duplicate_subject/unanchored_trial_path limitation.
     let mut claimed_invocations = BTreeSet::new();
+    // Established subjects are held pending until the scan completes:
+    // denominator admission is decided per trial by the reachability
+    // authority (#3636), which needs the whole trial set first.
+    let mut pending: Vec<PendingSubject> = Vec::new();
 
     for position in 0..tokens.len() {
         let Some(matched) = match_trial_path(&tokens, position, &registration.marker) else {
@@ -386,9 +401,10 @@ fn apply_libtest_mimic_target(
         }
         // The subject span runs from the trial path to the balanced
         // closing parenthesis of the registration call.
-        let Some(end_offset) = balanced_call_end(&tokens, matched.open_paren_index) else {
+        let Some(close_index) = matching_group_close(&tokens, matched.open_paren_index) else {
             continue;
         };
+        let end_offset: u32 = tokens[close_index].text_range().end().into();
         let start: TextSize = tokens[position].text_range().start();
         let start_line = line_index.line(start);
         let end_line = line_index.line_for_range_end(TextSize::new(end_offset));
@@ -492,37 +508,153 @@ fn apply_libtest_mimic_target(
             });
             literals.dedup_by(|left, right| left.line == right.line && left.value == right.value);
         }
-        let subject = HarnessSubjectFact {
-            registration_id: registration.registration_id.clone(),
-            harness_kind: registration.kind.as_str().to_string(),
-            adapter: registration.adapter.as_str().to_string(),
-            marker: registration.marker.clone(),
-            name: name.clone(),
-            file: target.clone(),
-            start_line,
-            end_line,
-            body: body.clone(),
-            calls: calls.clone(),
-            assertions: assertions.clone(),
-            literals: literals.clone(),
-            selector: HarnessSelectorCapability::NamedUnexecuted,
-            claim: HarnessSubjectClaim::NamedInvocation,
-            provenance: TestHarnessRegistration::provenance().to_string(),
-        };
-        let test = TestFact {
-            name,
-            file: target.clone(),
-            start_line,
-            end_line,
-            body,
-            calls,
-            assertions,
-            literals,
-            attrs: Vec::new(),
-        };
-        subjects.push(subject);
-        push_file_test(index, &target, test.clone());
-        index.tests.push(test);
+        pending.push(PendingSubject {
+            subject: HarnessSubjectFact {
+                registration_id: registration.registration_id.clone(),
+                harness_kind: registration.kind.as_str().to_string(),
+                adapter: registration.adapter.as_str().to_string(),
+                marker: registration.marker.clone(),
+                name: name.clone(),
+                file: target.clone(),
+                start_line,
+                end_line,
+                body: body.clone(),
+                calls: calls.clone(),
+                assertions: assertions.clone(),
+                literals: literals.clone(),
+                selector: HarnessSelectorCapability::NamedUnexecuted,
+                claim: HarnessSubjectClaim::NamedInvocation,
+                provenance: TestHarnessRegistration::provenance().to_string(),
+            },
+            test: TestFact {
+                name,
+                file: target.clone(),
+                start_line,
+                end_line,
+                body,
+                calls,
+                assertions,
+                literals,
+                attrs: Vec::new(),
+            },
+            span_start: position,
+            span_end: close_index,
+        });
+    }
+    let token_starts: Vec<u32> = tokens
+        .iter()
+        .map(|token| token.text_range().start().into())
+        .collect();
+    let scan = reachability::TargetScan {
+        target: &target,
+        source,
+        file_syntax: &file_syntax,
+        tokens: &tokens,
+        token_starts: &token_starts,
+        line_index: &line_index,
+    };
+    let admission = SubjectAdmission {
+        scan,
+        registration_id: &registration.registration_id,
+        marker: &registration.marker,
+    };
+    admit_pending_subjects(&admission, index, pending, subjects, limitations);
+}
+
+/// One established subject awaiting the reachability decision (#3636):
+/// the subject fact and its mirrored `TestFact`, plus the trial
+/// invocation's inclusive token-index span for containment checks.
+struct PendingSubject {
+    subject: HarnessSubjectFact,
+    test: TestFact,
+    span_start: usize,
+    span_end: usize,
+}
+
+/// Decide denominator admission for the scan's established subjects
+/// (#3636) and publish them. Admitted subjects (reachable or unknown
+/// reachability) register their `TestFact` as before; provably
+/// unreachable subjects keep only the subject fact and record a
+/// per-trial `registration_unreachable` limitation; an unknown outcome
+/// records one aggregate `registration_reachability_unknown` disclosure
+/// naming the unknown trials.
+/// The registration context the admission decision reads: the target
+/// scan (index, source, tokens) plus the registration identity and
+/// marker that limitations are recorded under.
+struct SubjectAdmission<'a> {
+    scan: reachability::TargetScan<'a>,
+    registration_id: &'a str,
+    marker: &'a str,
+}
+
+fn admit_pending_subjects(
+    admission: &SubjectAdmission,
+    index: &mut RustIndex,
+    pending: Vec<PendingSubject>,
+    subjects: &mut Vec<HarnessSubjectFact>,
+    limitations: &mut Vec<HarnessLimitationFact>,
+) {
+    let SubjectAdmission {
+        scan,
+        registration_id,
+        marker,
+    } = admission;
+    let target = scan.target;
+    let marker = *marker;
+    let registration_id = *registration_id;
+    if pending.is_empty() {
+        return;
+    }
+    let spans: Vec<reachability::PendingTrialSpan> = pending
+        .iter()
+        .map(|entry| reachability::PendingTrialSpan {
+            name: entry.subject.name.clone(),
+            start: entry.span_start,
+            end: entry.span_end,
+        })
+        .collect();
+    let outcome = reachability::classify_trial_reachability(scan, index, marker, &spans);
+    for (entry, verdict) in pending.into_iter().zip(outcome.verdicts) {
+        match verdict {
+            reachability::TrialReachability::Reachable
+            | reachability::TrialReachability::Unknown => {
+                subjects.push(entry.subject);
+                push_file_test(index, target, entry.test.clone());
+                index.tests.push(entry.test);
+            }
+            reachability::TrialReachability::Unreachable(reason) => {
+                let detail_suffix = match reason {
+                    reachability::UnreachableReason::RunEntryAbsent => format!(
+                        "no call to the registered harness run entry point (`{marker}::run`, or a top-level import of `run` bound from `{marker}`) exists in this target; the construction has no path into a run argument through the supported resolution forms",
+                        marker = marker
+                    ),
+                    reachability::UnreachableReason::ExcludedByResolvedArguments => format!(
+                        "every anchored `{marker}::run` argument resolved completely through the supported resolution forms (direct trial collections, `&`/`vec!`/array literals, immutable let-bound chains, one-level builder functions) and the trial does not appear in any of them",
+                        marker = marker
+                    ),
+                };
+                limitations.push(HarnessLimitationFact {
+                    registration_id: registration_id.to_string(),
+                    code: "registration_unreachable".to_string(),
+                    file: target.to_path_buf(),
+                    line: entry.subject.start_line,
+                    detail: format!(
+                        "trial `{name}` is constructed in the registered target, but {detail_suffix}; its executable-test fact does not join the denominator (the syntactic subject claim is retained) (#3636)",
+                        name = entry.subject.name,
+                    ),
+                });
+                subjects.push(entry.subject);
+            }
+        }
+    }
+    if let Some(detail) = outcome.unknown_detail {
+        limitations.push(HarnessLimitationFact {
+            registration_id: registration_id.to_string(),
+            code: "registration_reachability_unknown".to_string(),
+            file: target.to_path_buf(),
+            line: outcome.disclosure_line,
+            detail,
+        });
     }
 }
 
@@ -719,27 +851,6 @@ fn previous_significant_is_colon(tokens: &[ra_ap_syntax::SyntaxToken], from: usi
         );
     }
     false
-}
-
-/// Offset just past the `)` balancing the `(` at `open_paren_index`,
-/// bounded to the token stream. `None` (unbalanced) means the span is not
-/// provable and the match is skipped.
-fn balanced_call_end(tokens: &[ra_ap_syntax::SyntaxToken], open_paren_index: usize) -> Option<u32> {
-    let mut depth: usize = 0;
-    for token in &tokens[open_paren_index..] {
-        match token.kind() {
-            ra_ap_syntax::SyntaxKind::L_PAREN => depth += 1,
-            ra_ap_syntax::SyntaxKind::R_PAREN => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    let end: u32 = token.text_range().end().into();
-                    return Some(end);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 /// Assertion evidence for one trial subject: the exact assertion-macro and
@@ -1907,6 +2018,11 @@ fn string_literal_token_text(token: &ra_ap_syntax::SyntaxToken) -> Option<String
 
 /// The one escape character this bounded parser refuses to guess about.
 const BACKSLASH: char = '\\';
+
+/// The bounded fail-closed reachability authority for trial subjects
+/// (#3636): run-entry anchoring, argument resolution, and the
+/// reachable/unknown/unreachable verdicts.
+mod reachability;
 
 #[cfg(test)]
 mod tests;
