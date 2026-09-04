@@ -86,6 +86,26 @@ are scoped or reviewed.
   that dead construction does not suppress the named-invocation claim
   ([#3604](https://github.com/EffortlessMetrics/ripr-swarm/issues/3604)).
 
+- Registered libtest-mimic trial subjects gain a bounded, fail-closed
+  reachability authority: the adapter anchors the registered run entry
+  point (`<marker>::run` or a marker-anchored `run` import) and
+  resolves its trial argument through supported forms — direct
+  `vec![]`/array literals (including trials inside macro token trees),
+  `&`/`&mut`/`local[..]` container peeling, immutable let-bound chains
+  in the same function body, and one level of builder-function
+  resolution. A trial construction provably excluded from every
+  resolved run argument — or a target with no run entry call at all —
+  keeps its subject fact and syntactic claim but no longer enters the
+  executable-test denominator, and a per-trial
+  `registration_unreachable` limitation names it. Reachability the
+  bounded resolver cannot establish keeps today's denominator behavior
+  and is disclosed by one aggregate `registration_reachability_unknown`
+  limitation naming the trials — never a fabricated per-subject field,
+  and never a silent exclusion: unknown is the bias. Classified-seam
+  cache generations bump so pre-change caches cannot serve the old
+  denominator
+  ([#3636](https://github.com/EffortlessMetrics/ripr-swarm/issues/3636)).
+
 - New `ripr mcp --stdio [--root PATH]` command: a bounded, read-only
   Model Context Protocol server that exposes exact workspace status
   (`ripr_workspace_status` tool and `ripr://workspace/status` resource)
