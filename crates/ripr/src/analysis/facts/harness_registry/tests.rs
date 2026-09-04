@@ -3310,6 +3310,74 @@ fn main() {
     Ok(())
 }
 
+/// #3639 review (devin): trivia between the final path segment and the
+/// call parenthesis does not hide the entry — both the bare and the
+/// qualified spellings anchor across whitespace and comments, so the
+/// trials they resolve stay reachable with no reachability limitation.
+#[test]
+fn trivia_before_call_parenthesis_still_anchors() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("trivia-paren")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/trivia_paren.rs",
+            r#"
+use libtest_mimic::{run, Trial};
+
+fn dead_elsewhere() -> Vec<Trial> {
+    vec![Trial::test("trivia_dead_trial", || Ok(()))]
+}
+
+fn main() {
+    let arguments = libtest_mimic::Arguments::from_args();
+    libtest_mimic::run /* trials */ (&arguments, &vec![
+        Trial::test("trivia_qualified_trial", || Ok(())),
+    ]);
+    run /* bare */ (&arguments, &vec![
+        Trial::test("trivia_bare_trial", || Ok(())),
+    ]);
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "trivia_paren", "tests/trivia_paren.rs")?;
+    let files = [PathBuf::from("tests/trivia_paren.rs")];
+    let registrations = [custom_target_registration("tests/trivia_paren.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    let mut admitted: Vec<_> = index
+        .tests
+        .iter()
+        .filter(|test| test.file.ends_with(Path::new("tests/trivia_paren.rs")))
+        .map(|test| test.name.as_str())
+        .collect();
+    admitted.sort_unstable();
+    assert_eq!(
+        admitted,
+        vec!["trivia_bare_trial", "trivia_qualified_trial"],
+        "trivia before the parenthesis anchors both spellings: {:?}",
+        index.harness_limitations
+    );
+    let exclusion = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_unreachable")
+        .ok_or_else(|| format!("missing exclusion: {:?}", index.harness_limitations))?;
+    assert!(
+        exclusion.detail.contains("trivia_dead_trial"),
+        "{exclusion:?}"
+    );
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .all(|limitation| limitation.code != "registration_reachability_unknown"),
+        "trivia-tolerant anchoring is complete, not unknown: {:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}
+
 /// #3639 review (devin): an aliased run entry (`use
 /// libtest_mimic::run as execute;` plus an `execute(..)` call) cannot be
 /// anchored, so it must never conclude unreachability — the trials stay
@@ -3435,6 +3503,14 @@ fn main() {
     assert!(
         unknown.detail.contains("reexport_entry_trial"),
         "{unknown:?}"
+    );
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .all(|limitation| limitation.code != "registration_unreachable"),
+        "a re-exported entry is unknown, never an exclusion: {:?}",
+        index.harness_limitations
     );
     Ok(())
 }

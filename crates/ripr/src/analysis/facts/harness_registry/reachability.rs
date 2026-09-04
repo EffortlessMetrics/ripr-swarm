@@ -407,52 +407,6 @@ fn run_tests_call_present(tokens: &[SyntaxToken]) -> bool {
     false
 }
 
-/// Whether a full `<marker>::run (` suffix match starts at `position`
-/// (segments joined by the tolerated `::`/`:` `:` separators), returning
-/// the open-paren token index — the foreign-suffix probe for mid-path
-/// qualified matches (#3639 review).
-fn foreign_suffix_run_paren(
-    tokens: &[SyntaxToken],
-    position: usize,
-    marker: &str,
-) -> Option<usize> {
-    let is_ident_eq =
-        |index: usize, expected: &str| tokens.get(index).map(SyntaxToken::text) == Some(expected);
-    let separator_width = |index: usize| -> Option<usize> {
-        match tokens.get(index).map(SyntaxToken::kind) {
-            Some(SyntaxKind::COLON2) => Some(1),
-            Some(SyntaxKind::COLON)
-                if matches!(
-                    tokens.get(index + 1).map(SyntaxToken::kind),
-                    Some(SyntaxKind::COLON)
-                ) =>
-            {
-                Some(2)
-            }
-            _ => None,
-        }
-    };
-    let mut segments: Vec<&str> = marker.split("::").collect();
-    segments.push("run");
-    let mut cursor = position;
-    let mut matched_segments = 0usize;
-    for segment in &segments {
-        if !is_ident_eq(cursor, segment) {
-            return None;
-        }
-        cursor += 1;
-        matched_segments += 1;
-        if matched_segments < segments.len() {
-            let width = separator_width(cursor)?;
-            cursor += width;
-        }
-    }
-    tokens
-        .get(cursor)
-        .filter(|token| token.kind() == SyntaxKind::L_PAREN)
-        .map(|_| cursor)
-}
-
 struct RunPathMatch {
     qualified: bool,
     /// The path matched `<marker>::run (` textually but began mid-path —
@@ -501,20 +455,6 @@ fn match_run_path(tokens: &[SyntaxToken], position: usize, marker: &str) -> Opti
             if !at_path_start(tokens, position, false) {
                 continue;
             }
-        } else if !at_path_start(tokens, position, false) {
-            // A qualified marker suffix mid-path (`wrapper::
-            // libtest_mimic::run(`) is a foreign item, not the registered
-            // entry: report it as foreign so the caller keeps it as
-            // unsupported entry evidence instead of anchoring or
-            // concluding absence (#3639 review).
-            if let Some(open_paren_index) = foreign_suffix_run_paren(tokens, position, marker) {
-                return Some(RunPathMatch {
-                    qualified,
-                    foreign: true,
-                    open_paren_index,
-                });
-            }
-            continue;
         }
         let mut segments: Vec<&str> = if qualified {
             marker.split("::").collect()
@@ -537,19 +477,91 @@ fn match_run_path(tokens: &[SyntaxToken], position: usize, marker: &str) -> Opti
                 cursor += width;
             }
         }
-        if matched_segments == segments.len()
-            && tokens
-                .get(cursor)
-                .is_some_and(|token| token.kind() == SyntaxKind::L_PAREN)
-        {
+        // Trivia between the final path segment and the call parenthesis
+        // (`run /* args */ (..)`) does not change the call shape
+        // (#3639 review).
+        let paren = (matched_segments == segments.len()).then(|| {
+            next_significant(tokens, cursor)
+                .filter(|index| tokens[*index].kind() == SyntaxKind::L_PAREN)
+        });
+        if let Some(Some(paren)) = paren {
+            if qualified && !at_path_start(tokens, position, false) {
+                // The marker suffix matched but began mid-path
+                // (`wrapper::libtest_mimic::run(`) — a foreign item, not
+                // the registered entry: report it as foreign so the
+                // caller keeps it as unsupported entry evidence instead
+                // of anchoring or concluding absence (#3639 review).
+                return Some(RunPathMatch {
+                    qualified,
+                    foreign: true,
+                    open_paren_index: paren,
+                });
+            }
             return Some(RunPathMatch {
                 qualified,
                 foreign: false,
-                open_paren_index: cursor,
+                open_paren_index: paren,
             });
         }
     }
+    // Neither shape matched: a clean path-start path whose final segment
+    // is `run` (e.g. `adapter::run (`) is still possibly the harness
+    // entry through a re-export — record it as foreign evidence rather
+    // than letting absence conclude (#3639 review). Mid-path positions
+    // of legitimate calls never reach this branch, because the bare
+    // arm's own path-start gate continues first and the qualified walk
+    // of a real call anchored from an earlier position already returned.
+    if at_path_start(tokens, position, false)
+        && let Some(open_paren_index) = run_path_paren(tokens, position)
+    {
+        return Some(RunPathMatch {
+            qualified: true,
+            foreign: true,
+            open_paren_index,
+        });
+    }
     None
+}
+
+/// The open-paren token index when the tokens from `position` walk a
+/// path of identifier segments whose final segment is exactly `run`
+/// (`adapter::run (`) — the probe behind unsupported entry evidence for
+/// non-marker-prefixed and mid-path qualified run calls (#3639 review).
+fn run_path_paren(tokens: &[SyntaxToken], position: usize) -> Option<usize> {
+    let mut cursor = position;
+    loop {
+        match tokens.get(cursor).map(SyntaxToken::kind) {
+            Some(SyntaxKind::IDENT) => cursor += 1,
+            _ => return None,
+        }
+        let Some(width) = separator_width_at(tokens, cursor) else {
+            break;
+        };
+        cursor += width;
+    }
+    // The previous significant token is the walked path's final segment.
+    let paren = next_significant(tokens, cursor)?;
+    let last_ident_is_run =
+        previous_significant(tokens, paren).is_some_and(|index| tokens[index].text() == "run");
+    tokens
+        .get(paren)
+        .filter(|token| token.kind() == SyntaxKind::L_PAREN && last_ident_is_run)
+        .map(|_| paren)
+}
+
+fn separator_width_at(tokens: &[SyntaxToken], index: usize) -> Option<usize> {
+    match tokens.get(index).map(SyntaxToken::kind) {
+        Some(SyntaxKind::COLON2) => Some(1),
+        Some(SyntaxKind::COLON)
+            if matches!(
+                tokens.get(index + 1).map(SyntaxToken::kind),
+                Some(SyntaxKind::COLON)
+            ) =>
+        {
+            Some(2)
+        }
+        _ => None,
+    }
 }
 
 enum RunBindingResolution {
