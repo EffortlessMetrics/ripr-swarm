@@ -23,12 +23,28 @@
 //!   named risk of #3283).
 //! - Paths are workspace-relative-resolved against the manifest's
 //!   directory, then normalized so Windows and POSIX compare equal.
+//!
+//! ## Metadata-sourced harness validation (#3608, reworked by #3634)
+//!
+//! The `custom_harness` verdict sources its workspace membership and its
+//! test-target inventory from `cargo metadata` itself instead of a
+//! manifest TOML emulation: one bounded `cargo metadata --no-deps
+//! --offline` probe per batch reports cargo's own member resolution
+//! (glob and character-class member patterns, exclude handling, and
+//! every path-dependency form including `[workspace.dependencies]`
+//! inheritance) and every test target cargo would compile. The `harness`
+//! flag is absent from metadata output by construction (verified on the
+//! pinned toolchain), so the flag premise still comes from parsing the
+//! owning package manifest. An unavailable probe — no cargo binary, a
+//! workspace cargo rejects, or an unreadable probe output — fails closed
+//! to `manifest_unavailable`: a registration grants nothing, never
+//! over-credits.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use super::source_role::{SourceRoleContext, cargo_discoverable_under};
+use super::source_role::SourceRoleContext;
 
 /// Declared explicit target paths for one workspace, keyed by nothing —
 /// a flat set is all the role model needs.
@@ -82,17 +98,26 @@ fn collect_explicit_paths(
 pub(crate) struct DeclaredCargoTestTarget {
     pub(crate) path: PathBuf,
     pub(crate) harness: bool,
+    /// The declared target name for a name-only entry. The cargo target
+    /// name is the identity that proves cargo retained this entry: a
+    /// name-only declaration whose ambiguous dual layout made cargo drop
+    /// the target never reaches the flag matcher, even when another
+    /// explicit entry claims one of the same layout paths (#3637 review).
+    pub(crate) name: Option<String>,
 }
 
 /// Enumerate every `[[test]]` target of one manifest with its effective
 /// `harness` flag (#3608). Two entry shapes contribute:
 ///
-/// - an explicit `path = ...` entry contributes exactly its resolved path;
-/// - a name-only entry (no `path`) contributes its default path
-///   `tests/<name>.rs` (review HAla: only the file layout; the directory
-///   layout `tests/<name>/main.rs` is a separate autodiscovered target
-///   governed by the autodiscovery rules), so a registration on the
-///   conventional layout still matches the declaration that governs it.
+/// - an explicit `path = ...` entry contributes exactly its resolved path
+///   and matches the metadata target by that path;
+/// - a name-only entry (no `path`) carries its declared name and matches
+///   the metadata target by that name (#3637 review): cargo resolves the
+///   entry itself to `tests/<name>.rs` or `tests/<name>/main.rs` — with
+///   only the directory layout on disk it reports the directory shape as
+///   the entry's source path (verified against `cargo metadata` 1.95.0) —
+///   and with both layouts on disk it drops the target entirely, so only
+///   the name match can prove cargo retained the entry.
 ///
 /// The flag is the entry's `harness` key when present, Cargo's `true`
 /// default otherwise. Entries with neither a name nor a path contribute
@@ -106,22 +131,20 @@ pub(crate) fn declared_test_targets_with_harness_from_manifest(
     manifest_dir: &Path,
 ) -> Vec<DeclaredCargoTestTarget> {
     match toml::from_str::<toml::Value>(manifest_text) {
-        Ok(value) => declared_test_targets_with_harness_from_value(&value, manifest_dir, false),
+        Ok(value) => declared_test_targets_with_harness_from_value(&value, manifest_dir),
         Err(_) => Vec::new(),
     }
 }
 
 /// The parsed-manifest core of [`declared_test_targets_with_harness_from_manifest`].
-/// The verdict path parses each manifest exactly once and reuses the value
-/// here (#3608 review). `explicit_only` restricts the result to explicit
-/// `path = ...` entries: the ancestor declaration walk matches only those
-/// (a name-only entry resolves to autodiscovery shapes under its own
-/// manifest and must not claim targets governed by a deeper manifest),
-/// while nearest-manifest matching includes both shapes.
+/// The verdict path parses each owning manifest once and reuses the value
+/// here (#3608 review): the manifest is only the `harness`-flag source —
+/// target identity itself comes from the `cargo metadata` inventory
+/// (#3634) — so both explicit `path = ...` entries and name-only entries
+/// resolved to their autodiscovery shape contribute.
 fn declared_test_targets_with_harness_from_value(
     value: &toml::Value,
     manifest_dir: &Path,
-    explicit_only: bool,
 ) -> Vec<DeclaredCargoTestTarget> {
     let Some(entries) = value.get("test").and_then(|value| value.as_array()) else {
         return Vec::new();
@@ -140,10 +163,8 @@ fn declared_test_targets_with_harness_from_value(
             targets.push(DeclaredCargoTestTarget {
                 path: lexical(&normalize(&manifest_dir.join(path))),
                 harness,
+                name: None,
             });
-            continue;
-        }
-        if explicit_only {
             continue;
         }
         let Some(name) = entry.get("name").and_then(|value| value.as_str()) else {
@@ -153,66 +174,24 @@ fn declared_test_targets_with_harness_from_value(
         if name.is_empty() {
             continue;
         }
-        // A name-only entry defaults to exactly `tests/<name>.rs` (review
-        // HAla): the directory shape `tests/<name>/main.rs` is a separate
-        // autodiscovered target whose premise comes from the autodiscovery
-        // rules (package presence, edition, `autotests`), not from this
-        // entry's `harness` flag.
+        // A name-only entry matches cargo's retained target by NAME, not
+        // by a synthesized layout path (#3637 review): cargo resolves the
+        // entry to `tests/<name>.rs` or `tests/<name>/main.rs` itself and
+        // reports that src_path; with both on disk it drops the target
+        // entirely, and only the metadata-side name proves the entry was
+        // retained. The path field stays the conventional file layout for
+        // display and test ergonomics only.
         targets.push(DeclaredCargoTestTarget {
             path: lexical(&normalize(&manifest_dir.join(format!("tests/{name}.rs")))),
             harness,
+            name: Some(name.to_string()),
         });
     }
     targets
 }
 
-/// Cargo's test-autodiscovery default for one parsed manifest (#3608
-/// review). An explicit `package.autotests` flag wins. Otherwise the
-/// default is `false` only for Cargo's backward-compatibility rule —
-/// edition 2015 (explicit or omitted, Cargo's own default) combined with
-/// at least one manually declared `[[test]]` target — and `true` in every
-/// other combination. `inherited_workspace_edition` carries the
-/// `[workspace.package]` edition of the analysis-root manifest: a member
-/// declaring `edition.workspace = true` inherits its effective edition
-/// from there, and an unresolvable root conservatively keeps the 2015
-/// default.
-fn test_autodiscovery_default(
-    value: &toml::Value,
-    inherited_workspace_edition: Option<&str>,
-) -> bool {
-    let package = value.get("package");
-    if let Some(flag) = package
-        .and_then(|package| package.get("autotests"))
-        .and_then(|value| value.as_bool())
-    {
-        return flag;
-    }
-    let raw_edition = package.and_then(|package| package.get("edition"));
-    // `edition.workspace = true` parses either as a `{ workspace = true }`
-    // table (TOML dotted key) or — defensively — as a bare boolean.
-    let edition_is_inherited = match raw_edition {
-        Some(toml::Value::Table(table)) => {
-            table.get("workspace").and_then(|value| value.as_bool()) == Some(true)
-        }
-        Some(toml::Value::Boolean(true)) => true,
-        _ => false,
-    };
-    let edition = if edition_is_inherited {
-        inherited_workspace_edition.unwrap_or("2015")
-    } else {
-        raw_edition
-            .and_then(|value| value.as_str())
-            .unwrap_or("2015")
-    };
-    let manual_test_target = value
-        .get("test")
-        .and_then(|value| value.as_array())
-        .is_some_and(|entries| !entries.is_empty());
-    !(edition == "2015" && manual_test_target)
-}
-
-/// The verdict of one registered harness target against the parsed Cargo
-/// target metadata of its owning package (#3608).
+/// The verdict of one registered harness target against the workspace's
+/// Cargo target metadata (#3608; metadata-sourced since #3634).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CargoHarnessVerdict {
     /// The path is a declared `[[test]]` target whose effective
@@ -223,38 +202,42 @@ pub(crate) enum CargoHarnessVerdict {
     /// libtest harness still collects the file, so the `harness = false`
     /// premise of a custom-harness registration does not hold.
     HarnessEnabled,
-    /// The parsed manifest declares no Cargo test target for this path:
-    /// the target is missing from Cargo metadata.
+    /// The workspace's Cargo metadata declares no test target for this
+    /// path: nothing in the workspace compiles the file as a test.
     NotDeclared,
-    /// No premise about the target can be established from metadata: no
-    /// manifest resolves for it, a workspace manifest could not be read
-    /// or parsed (the declaration map is incomplete), or two manifests
-    /// declare the path with conflicting `harness` flags.
+    /// No premise about the target can be established: the metadata
+    /// probe was unavailable (no cargo binary, a workspace cargo rejects,
+    /// or an unreadable probe output), an owning manifest could not be
+    /// read or parsed, or the same path is claimed by manifests with
+    /// conflicting `harness` flags.
     ManifestUnavailable,
 }
 
-/// One analysis pass's parsed owning manifests (#3608 review): each
-/// manifest is read and parsed at most once per batch, so a batch of
-/// registrations in one package costs one manifest parse, not one per
-/// registration.
+/// One analysis pass's parsed owning manifests plus the metadata probe:
+/// `cargo metadata` runs at most once per batch and each manifest is read
+/// and parsed at most once, so a batch of registrations in one workspace
+/// costs one probe, not one per registration.
 #[derive(Default)]
 pub(crate) struct ManifestInventory {
     manifests: BTreeMap<PathBuf, OwnedManifest>,
-    workspace_scan: Option<WorkspaceScan>,
+    metadata: MetadataState,
 }
 
-/// The per-batch workspace manifest inventory (#3608 review): whether
-/// every discovered manifest could be read and parsed, and the map of
-/// lexically resolved explicit `[[test]] path = ...` declarations to the
-/// `harness` flags of every package manifest declaring each path.
+/// The lazily initialized `cargo metadata` view of the analyzed workspace
+/// (#3634). `Failed` records an unavailable probe so the whole batch
+/// fails closed instead of re-spawning per verdict.
 #[derive(Default)]
-struct WorkspaceScan {
-    any_unresolvable: bool,
-    declarations: BTreeMap<PathBuf, Vec<bool>>,
+enum MetadataState {
+    #[default]
+    Unloaded,
+    Failed,
+    /// Workspace test targets keyed by their lexically resolved source
+    /// path; each entry lists the owning package manifest directories
+    /// with the cargo target name (#3637 review).
+    Loaded(BTreeMap<PathBuf, Vec<(PathBuf, String)>>),
 }
 
-/// The memoized parse outcome for one manifest directory on the ownership
-/// walk.
+/// The memoized parse outcome for one owning manifest directory.
 #[derive(Clone)]
 enum OwnedManifest {
     /// No manifest exists at this directory.
@@ -269,234 +252,129 @@ enum OwnedManifest {
 
 impl ManifestInventory {
     /// The Cargo target metadata verdict for one registered harness
-    /// target path. `workspace_root` anchors the ownership resolution;
-    /// the registration target is workspace-relative.
+    /// target path. `workspace_root` anchors the metadata probe; the
+    /// registration target is workspace-relative.
     ///
-    /// Explicit-target ownership is declaration-driven across the whole
-    /// workspace (#3608 review): every parsed package manifest's
-    /// `[[test]] path = ...` entries are resolved against their own
-    /// manifest directory (lexically, `..` collapsed), and any manifest
-    /// declaring the exact normalized target path claims it — so a
-    /// sibling package's `../shared/mimic.rs` declaration and a
-    /// workspace-root declaration below a nested manifest directory both
-    /// resolve. Agreeing declarations are deterministic; conflicting
-    /// `harness` flags on one path are ambiguous and fail closed.
-    /// Nearest-manifest resolution then governs the autodiscovery
-    /// premise alone (package-root `tests/**` shape, package presence,
-    /// effective edition, `autotests` flag).
+    /// Ownership is cargo's own (#3634): the batch runs one bounded
+    /// `cargo metadata --no-deps --offline` probe against the analysis
+    /// root, and its `packages[].targets[]` inventory is the authority
+    /// for both workspace membership and test-target identity. This
+    /// resolves exactly the shapes the previous manifest TOML emulation
+    /// approximated — `[workspace.members]` globs including
+    /// character classes, `[workspace.exclude]` (cargo treats exclude
+    /// patterns as literal path prefixes; a wildcard component matches no
+    /// member), `[workspace.dependencies]` inheritance, and dev- and
+    /// build-path dependencies. A target missing from the inventory is
+    /// `NotDeclared`; a target present in it resolves its `harness` flag
+    /// from the owning manifest's `[[test]]` entries (explicit `path`
+    /// spellings and name-only defaults alike), because metadata output
+    /// omits the `harness` field by construction. Conflicting flags
+    /// across owning manifests — the same path claimed by two packages —
+    /// are ambiguous and fail closed.
     pub(crate) fn verdict(
         &mut self,
         workspace_root: &Path,
         registration_target: &Path,
     ) -> CargoHarnessVerdict {
-        let anchored = lexical(&normalize(&workspace_root.join(registration_target)));
-        self.ensure_workspace_scan(workspace_root);
-        let scan = match self.workspace_scan.as_ref() {
-            Some(scan) => scan,
-            None => return CargoHarnessVerdict::ManifestUnavailable,
-        };
-        if scan.any_unresolvable {
-            // The declaration map is incomplete: a manifest that could not
-            // be read or parsed may declare this target, so no ownership
-            // or autodiscovery premise is provable.
-            return CargoHarnessVerdict::ManifestUnavailable;
-        }
-        if let Some(flags) = scan.declarations.get(&anchored) {
-            let harness = flags[0];
-            if flags.iter().all(|flag| *flag == harness) {
-                return if harness {
-                    CargoHarnessVerdict::HarnessEnabled
-                } else {
-                    CargoHarnessVerdict::HarnessDisabled
-                };
+        // The inventory keys are cargo's absolute source paths, so the
+        // anchored target must be resolved in the same terms. Two forms
+        // are tried: the as-given absolute path, and the real path
+        // behind any symlinks. Cargo echoes the path family it was
+        // given on Windows (a junction root yields alias-form keys,
+        // verified 1.95.0) but canonicalizes symlinks on Unix (#3637
+        // review, demonstrated by the Linux CI run of the alias pin), so one
+        // form alone cannot cover both hosts. Missing on both forms is
+        // the fail-closed NotDeclared.
+        let joined = workspace_root.join(registration_target);
+        let absolute = std::path::absolute(&joined).unwrap_or(joined);
+        let anchored = lexical(&normalize(&absolute));
+        self.ensure_workspace_metadata(workspace_root);
+        let owners = match &self.metadata {
+            MetadataState::Loaded(targets) => {
+                targets.get(&anchored).cloned().or_else(|| {
+                    // `fs::canonicalize` returns verbatim `\\?\`
+                    // paths on Windows; those can only match
+                    // verbatim keys cargo never echoes, so a miss
+                    // there is harmless — the alias-form lookup
+                    // above already covered the Windows behavior.
+                    let real = std::fs::canonicalize(&absolute).ok()?;
+                    targets.get(&lexical(&normalize(&real))).cloned()
+                })
             }
-            // Two manifests declare the same path with different harness
-            // flags; which compilation unit collects the file is not
-            // statically decidable here.
-            return CargoHarnessVerdict::ManifestUnavailable;
-        }
-        // Autodiscovery stays a nearest-manifest premise.
-        let Some((root, value)) = self.nearest_parsed_manifest(workspace_root, &anchored) else {
-            return CargoHarnessVerdict::ManifestUnavailable;
-        };
-        let inherited_edition = self.workspace_inherited_edition(workspace_root);
-        self.verdict_from_parsed(inherited_edition.as_deref(), &anchored, &root, &value)
-    }
-
-    /// The first parsed manifest on the anchored target's ancestor chain,
-    /// bounded at the workspace root.
-    fn nearest_parsed_manifest(
-        &mut self,
-        workspace_root: &Path,
-        anchored: &Path,
-    ) -> Option<(PathBuf, toml::Value)> {
-        let normalized_root = normalize(workspace_root);
-        let mut cursor = anchored.parent();
-        while let Some(dir) = cursor {
-            let normalized_dir = normalize(dir);
-            if !normalized_dir.starts_with(&normalized_root) {
-                break;
-            }
-            if let OwnedManifest::Parsed { root, value } = self.manifest_at(dir) {
-                return Some((root, value));
-            }
-            if normalized_dir == normalized_root {
-                break;
-            }
-            cursor = dir.parent();
-        }
-        None
-    }
-
-    /// Enumerate the workspace's manifests once per batch (the same scan
-    /// the cache key and #3616 manifest attribution use) and build the
-    /// explicit-declaration map: lexically resolved declared path to the
-    /// `harness` flags of every package manifest declaring it. A manifest
-    /// without `[package]` contributes nothing (review FhIA).
-    fn ensure_workspace_scan(&mut self, workspace_root: &Path) {
-        if self.workspace_scan.is_some() {
-            return;
-        }
-        let mut scan = WorkspaceScan::default();
-        let normalized_root = normalize(workspace_root);
-        // Membership (review HAkg): the analysis-root manifest defines the
-        // workspace — its own package when it has `[package]`, plus the
-        // declared `[workspace.members]` (globs matched lexically; explicit
-        // literal entries beat parent-prefix exclusions while glob-expanded
-        // matches yield to them, cargo metadata parity) minus
-        // `[workspace.exclude]`, plus package manifests reached through
-        // members' regular path dependencies. Manifests outside this
-        // member set are not part of the analyzed workspace: their
-        // declarations never enter the map and their malformed state is
-        // not this workspace's premise. An absent root manifest defines
-        // no members at all.
-        let mut queue: Vec<PathBuf> = Vec::new();
-        let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
-        // The root's exclusion patterns stay in scope for the whole scan:
-        // a path dependency of a member that matches [workspace.exclude]
-        // is not a workspace member either (review round six, I4dv;
-        // verified against cargo metadata).
-        let mut excluded: Vec<String> = Vec::new();
-        let enqueue = |dir: PathBuf, queue: &mut Vec<PathBuf>, seen: &mut BTreeSet<PathBuf>| {
-            if !dir.starts_with(&normalized_root) {
-                return;
-            }
-            if seen.insert(dir.clone()) {
-                queue.push(dir);
+            // No metadata premise is available (probe failed or was never
+            // loadable): the registration grants nothing. Fail closed —
+            // under-credit, never over-credit (#3634).
+            MetadataState::Unloaded | MetadataState::Failed => {
+                return CargoHarnessVerdict::ManifestUnavailable;
             }
         };
-        match self.manifest_at(workspace_root) {
-            OwnedManifest::Parsed { value, .. } => {
-                if value.get("package").is_some() {
-                    enqueue(normalize(workspace_root), &mut queue, &mut seen);
-                }
-                if let Some(workspace) = value.get("workspace") {
-                    excluded = collect_string_array(workspace.get("exclude"));
-                    // Each candidate carries its pattern's form (review
-                    // round eight): explicit literal entries are named
-                    // directly by the manifest and beat parent-prefix
-                    // exclusions, while glob-expanded matches yield to
-                    // them — cargo metadata parity for members =
-                    // ["dep/sub"] versus ["dep/*"] under exclude =
-                    // ["dep"].
-                    let mut candidates: Vec<(PathBuf, bool)> = Vec::new();
-                    for pattern in collect_string_array(workspace.get("members")) {
-                        let normalized_pattern = pattern.trim().replace('\\', "/");
-                        let trimmed = normalized_pattern.trim_end_matches('/');
-                        if member_pattern_has_wildcard(trimmed) {
-                            for candidate in expand_member_pattern(workspace_root, trimmed) {
-                                candidates
-                                    .push((normalize(&workspace_root.join(&candidate)), false));
-                            }
-                        } else {
-                            // Named directly by the manifest: enrolled even
-                            // when the directory does not exist yet, so the
-                            // absent-member rule fails closed on it.
-                            candidates.push((normalize(&workspace_root.join(trimmed)), true));
-                        }
-                    }
-                    candidates.retain(|(dir, from_literal_entry)| {
-                        let relative_directory = normalize(dir)
-                            .strip_prefix(&normalized_root)
-                            .ok()
-                            .map(|relative| relative.to_string_lossy().to_string());
-                        let excluded_member = match relative_directory {
-                            // Outside the analysis root: not a member.
-                            None => true,
-                            Some(relative) => excluded.iter().any(|excluded_pattern| {
-                                if *from_literal_entry {
-                                    // Explicit entries beat parent-prefix
-                                    // exclusions: only a match of the entry
-                                    // itself (still glob-shaped) excludes it.
-                                    let normalized_excluded = excluded_pattern
-                                        .trim()
-                                        .replace('\\', "/")
-                                        .trim_end_matches('/')
-                                        .to_string();
-                                    workspace_member_glob_matches(&normalized_excluded, &relative)
-                                } else {
-                                    exclusion_pattern_excludes(excluded_pattern, &relative)
-                                }
-                            }),
-                        };
-                        !excluded_member
-                    });
-                    for (dir, _) in candidates {
-                        enqueue(dir, &mut queue, &mut seen);
-                    }
-                }
-            }
-            OwnedManifest::Unresolvable => scan.any_unresolvable = true,
-            OwnedManifest::Absent => {}
-        }
-        let mut index = 0usize;
-        while index < queue.len() {
-            let dir = queue[index].clone();
-            index += 1;
-            match self.manifest_at(&dir) {
-                // A queued member directory without a manifest is a broken
-                // workspace (Cargo rejects it too): the declaration map is
-                // incomplete and the scan fails closed (review round five,
-                // IZc5). Nonmembers never reach this queue.
-                OwnedManifest::Absent => scan.any_unresolvable = true,
-                OwnedManifest::Unresolvable => scan.any_unresolvable = true,
+        let Some(owners) = owners else {
+            // Cargo's own target inventory has no test target for this
+            // path: nothing in the workspace compiles it as a test.
+            return CargoHarnessVerdict::NotDeclared;
+        };
+        let mut flags: Vec<bool> = Vec::new();
+        for (manifest_dir, target_name) in &owners {
+            match self.manifest_at(manifest_dir) {
                 OwnedManifest::Parsed { root, value } => {
-                    if value.get("package").is_some() {
-                        for target in
-                            declared_test_targets_with_harness_from_value(&value, &root, true)
-                        {
-                            scan.declarations
-                                .entry(target.path)
-                                .or_default()
-                                .push(target.harness);
-                        }
-                    }
-                    for dependency_dir in member_path_dependency_dirs(&value, &root) {
-                        // Exclusion semantics apply to path dependencies
-                        // too (review round six, I4dv; round seven, Jhjw):
-                        // the normalized workspace-relative dependency
-                        // directory is checked against the same exclude
-                        // patterns, including their directory prefixes.
-                        let relative_directory = normalize(&dependency_dir)
-                            .strip_prefix(&normalized_root)
-                            .ok()
-                            .map(|relative| relative.to_string_lossy().to_string());
-                        let excluded_dependency = match relative_directory {
-                            // Outside the analysis root: not a member.
-                            None => true,
-                            Some(relative) => excluded.iter().any(|excluded_pattern| {
-                                exclusion_pattern_excludes(excluded_pattern, &relative)
-                            }),
+                    for target in declared_test_targets_with_harness_from_value(&value, &root) {
+                        // Identity, not tokens (#3637 review): a
+                        // name-only entry matches by its declared name —
+                        // the cargo target name proves cargo retained it
+                        // — while an explicit-path entry matches by its
+                        // exact path (the metadata src_path of an
+                        // explicit target is its declared path). A
+                        // declaration cargo dropped from the inventory
+                        // (ambiguous dual layout) therefore cannot
+                        // contribute its flag to a live target that
+                        // another entry owns.
+                        let matched = match &target.name {
+                            Some(name) => name == target_name,
+                            None => target.path == anchored,
                         };
-                        if excluded_dependency {
-                            continue;
+                        if matched {
+                            flags.push(target.harness);
                         }
-                        enqueue(dependency_dir, &mut queue, &mut seen);
                     }
+                }
+                // The owning manifest cannot be read or parsed: the
+                // `harness` premise is unestablishable even though
+                // metadata names the target.
+                OwnedManifest::Absent | OwnedManifest::Unresolvable => {
+                    return CargoHarnessVerdict::ManifestUnavailable;
                 }
             }
         }
-        self.workspace_scan = Some(scan);
+        let Some(first) = flags.first().copied() else {
+            // Metadata credits the target through package autodiscovery
+            // and no manifest entry names it: the libtest harness default
+            // applies, so the `harness = false` premise does not hold.
+            return CargoHarnessVerdict::HarnessEnabled;
+        };
+        if flags.iter().all(|flag| *flag == first) {
+            if first {
+                CargoHarnessVerdict::HarnessEnabled
+            } else {
+                CargoHarnessVerdict::HarnessDisabled
+            }
+        } else {
+            // Two owning manifests declare the same path with different
+            // `harness` flags; which compilation unit collects the file
+            // is not statically decidable here.
+            CargoHarnessVerdict::ManifestUnavailable
+        }
+    }
+
+    /// Initialize the metadata probe once per batch. A failed probe is
+    /// recorded as [`MetadataState::Failed`] so every verdict in the
+    /// batch fails closed deterministically instead of re-spawning.
+    fn ensure_workspace_metadata(&mut self, workspace_root: &Path) {
+        if matches!(self.metadata, MetadataState::Unloaded) {
+            self.metadata = match run_workspace_cargo_metadata(workspace_root) {
+                Some(targets) => MetadataState::Loaded(targets),
+                None => MetadataState::Failed,
+            };
+        }
     }
 
     fn manifest_at(&mut self, dir: &Path) -> OwnedManifest {
@@ -519,76 +397,158 @@ impl ManifestInventory {
         self.manifests.insert(dir.to_path_buf(), parsed.clone());
         parsed
     }
+}
 
-    /// The `[workspace.package]` edition of the analysis-root manifest,
-    /// when one exists (#3608 review): member manifests declaring
-    /// `edition.workspace = true` inherit their effective edition from
-    /// there, and the edition-2015 autodiscovery rule consumes the
-    /// effective edition. Bounded to the analysis root's own manifest —
-    /// an analysis root below a larger workspace cannot see past its
-    /// root, and an absent or unresolvable root keeps the conservative
-    /// 2015 default downstream.
-    fn workspace_inherited_edition(&mut self, workspace_root: &Path) -> Option<String> {
-        match self.manifest_at(workspace_root) {
-            OwnedManifest::Parsed { value, .. } => value
-                .get("workspace")
-                .and_then(|workspace| workspace.get("package"))
-                .and_then(|package| package.get("edition"))
-                .and_then(|edition| edition.as_str())
-                .map(str::to_string),
-            _ => None,
-        }
+/// Process-wide probe sequence: parallel batches (test suites, LSP
+/// refreshes) must never share a stdout capture file even when their
+/// timestamps land in the same clock tick.
+static METADATA_PROBE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The deadline for the one bounded `cargo metadata` probe per batch.
+/// `--no-deps --offline` parses workspace manifests only — no network,
+/// no dependency resolution, no build scripts — so the deadline exists
+/// to fail closed instead of stalling an interactive refresh on a
+/// pathological workspace.
+const CARGO_METADATA_PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_mins(2);
+
+/// Run `cargo metadata --no-deps --offline` against the analysis root and
+/// extract the workspace test-target inventory (#3634). `None` on any
+/// unresolvable state: no root manifest, a cargo binary that cannot be
+/// spawned, a workspace cargo rejects, a probe that outlives the
+/// deadline (terminated and reaped by the shared deadline-aware wait),
+/// or output that cannot be read or parsed. Stdout is captured through a
+/// temp file rather than a pipe so a large workspace cannot fill the OS
+/// pipe buffer and deadlock against the poll; the file is removed on
+/// every path.
+fn run_workspace_cargo_metadata(
+    workspace_root: &Path,
+) -> Option<BTreeMap<PathBuf, Vec<(PathBuf, String)>>> {
+    let manifest_path = workspace_root.join("Cargo.toml");
+    if !manifest_path.is_file() {
+        return None;
     }
-
-    fn verdict_from_parsed(
-        &self,
-        inherited_workspace_edition: Option<&str>,
-        anchored: &Path,
-        root: &Path,
-        value: &toml::Value,
-    ) -> CargoHarnessVerdict {
-        // Cargo rejects target tables in virtual manifests (review FhIA):
-        // a TOML-valid `[[test]]` in a manifest without `[package]`
-        // declares nothing.
-        if value.get("package").is_none() {
-            return CargoHarnessVerdict::NotDeclared;
-        }
-        let declared = declared_test_targets_with_harness_from_value(value, root, false);
-        for target in &declared {
-            if target.path == *anchored {
-                return if target.harness {
-                    CargoHarnessVerdict::HarnessEnabled
-                } else {
-                    CargoHarnessVerdict::HarnessDisabled
-                };
+    let stdout_path = std::env::temp_dir().join(format!(
+        "ripr-cargo-metadata-{}-{}-{}.json",
+        std::process::id(),
+        METADATA_PROBE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+    ));
+    let parsed = std::fs::File::create(&stdout_path)
+        .ok()
+        .and_then(|stdout_file| {
+            std::process::Command::new("cargo")
+                .args([
+                    "metadata",
+                    "--no-deps",
+                    "--format-version",
+                    "1",
+                    "--offline",
+                ])
+                .arg("--manifest-path")
+                // Bare `Cargo.toml`: the process directory below is the
+                // workspace root, and a root-prefixed `manifest_path`
+                // would be re-resolved against that new directory — a
+                // relative analysis root (`some/dir`) would probe
+                // `some/dir/some/dir/Cargo.toml` and fail every
+                // registration's premise (#3637 review). An absolute path
+                // would work, but canonicalize emits `\\?\` verbatim
+                // paths on Windows that would leak into the inventory
+                // keys.
+                .arg("Cargo.toml")
+                // Cargo resolves the workspace from the process directory
+                // too: without this anchor, a probe for a bare-package
+                // root inherits the caller's enclosing workspace and cargo
+                // rejects the manifest as "believes it's in a workspace
+                // when it's not" (#3634).
+                .current_dir(workspace_root)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::from(stdout_file))
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .ok()
+        })
+        .and_then(|mut child| {
+            let outcome = crate::git::poll_child(
+                &mut child,
+                Some(CARGO_METADATA_PROBE_DEADLINE),
+                "cargo metadata",
+            );
+            match outcome {
+                crate::git::ChildWait::Exited(status) if status.success() => {
+                    std::fs::read(&stdout_path)
+                        .ok()
+                        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                        .map(|value| workspace_test_target_owners(&value))
+                }
+                _ => None,
             }
+        });
+    let _ = std::fs::remove_file(&stdout_path);
+    parsed
+}
+
+/// The workspace test-target inventory from parsed `cargo metadata`
+/// (#3634). With `--no-deps`, `packages` is exactly the workspace member
+/// set — cargo's own membership resolution. Each `kind: ["test"]` target
+/// contributes its lexically resolved `src_path` (cargo keeps declared
+/// `..` segments as spelled, so both sides resolve lexically) mapped to
+/// the owning package's manifest directory and the cargo target name —
+/// the name is the identity that ties a metadata target back to the
+/// manifest entry cargo retained, so a declaration cargo dropped from
+/// its inventory cannot contribute its flag to a live target (#3637
+/// review).
+fn workspace_test_target_owners(
+    value: &serde_json::Value,
+) -> BTreeMap<PathBuf, Vec<(PathBuf, String)>> {
+    let mut owners: BTreeMap<PathBuf, Vec<(PathBuf, String)>> = BTreeMap::new();
+    let Some(packages) = value.get("packages").and_then(serde_json::Value::as_array) else {
+        return owners;
+    };
+    for package in packages {
+        let manifest_dir = package
+            .get("manifest_path")
+            .and_then(serde_json::Value::as_str)
+            .map(|manifest_path| normalize(Path::new(manifest_path)))
+            .and_then(|manifest_path| manifest_path.parent().map(Path::to_path_buf));
+        let Some(manifest_dir) = manifest_dir else {
+            continue;
+        };
+        let Some(targets) = package.get("targets").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for target in targets {
+            let is_test = target
+                .get("kind")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|kinds| {
+                    kinds
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .any(|kind| kind == "test")
+                });
+            if !is_test {
+                continue;
+            }
+            let Some(src_path) = target.get("src_path").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let Some(name) = target.get("name").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            owners
+                .entry(lexical(&normalize(Path::new(src_path))))
+                .or_default()
+                .push((manifest_dir.clone(), name.to_string()));
         }
-        // No explicit entry matched. Cargo still knows the target through
-        // package autodiscovery when the path has the conventional test
-        // shape directly at the package root, autodiscovery is enabled,
-        // and the manifest is a package manifest (autodiscovery is a
-        // package behavior; a virtual workspace root declares nothing).
-        // The index-0 guard keeps nested `src/tests/case.rs` module files
-        // out: the shared layout predicate classifies any `tests`
-        // component for source-role purposes, but Cargo only ever
-        // autodiscovers `tests/**` at the package root.
-        let relative_is_root_test_target = anchored
-            .strip_prefix(normalize(root))
-            .map(|relative| {
-                let components = relative.components().collect::<Vec<_>>();
-                components
-                    .first()
-                    .is_some_and(|component| component.as_os_str().to_string_lossy() == "tests")
-                    && cargo_discoverable_under(&components, "tests")
-            })
-            .unwrap_or(false);
-        if test_autodiscovery_default(value, inherited_workspace_edition)
-            && relative_is_root_test_target
-        {
-            return CargoHarnessVerdict::HarnessEnabled;
-        }
-        CargoHarnessVerdict::NotDeclared
     }
+    for entry in owners.values_mut() {
+        entry.sort();
+        entry.dedup();
+    }
+    owners
 }
 
 /// Resolve the Cargo target metadata verdict for one registered harness
@@ -733,198 +693,6 @@ fn normalize(path: &Path) -> PathBuf {
     PathBuf::from(path.to_string_lossy().replace('\\', "/"))
 }
 
-/// Collect the string entries of one optional TOML array value (the
-/// `[workspace.members]` / `[workspace.exclude]` shape).
-fn collect_string_array(value: Option<&toml::Value>) -> Vec<String> {
-    value
-        .and_then(|value| value.as_array())
-        .map(|entries| {
-            entries
-                .iter()
-                .filter_map(|entry| entry.as_str())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Expand one `[workspace.members]` glob pattern into the
-/// workspace-relative directories it matches (review HAkg). Lexical
-/// approximation documented in place of full Cargo glob semantics:
-/// `**` matches any number of path components, `*` matches any characters
-/// within one component, `?` matches one character; no symlink,
-/// canonicalization, or case-folding behavior. Only directories that
-/// exist on disk are returned; whether a match actually carries a
-/// manifest is decided by the caller.
-fn expand_member_pattern(workspace_root: &Path, pattern: &str) -> Vec<String> {
-    let normalized = pattern.trim().replace('\\', "/");
-    let trimmed = normalized.trim_end_matches('/');
-    let components: Vec<&str> = match trimmed {
-        "" | "." => Vec::new(),
-        _ => trimmed.split('/').collect(),
-    };
-    let mut matched = Vec::new();
-    expand_member_pattern_walk(workspace_root, &components, &mut matched);
-    let normalized_root = normalize(workspace_root);
-    matched
-        .into_iter()
-        .filter_map(|dir| {
-            normalize(&dir)
-                .strip_prefix(&normalized_root)
-                .ok()
-                .map(|relative| relative.to_string_lossy().to_string())
-        })
-        .collect()
-}
-
-fn expand_member_pattern_walk(base: &Path, components: &[&str], matched: &mut Vec<PathBuf>) {
-    match components.split_first() {
-        None => matched.push(base.to_path_buf()),
-        Some((&"**", rest)) => {
-            // `**` spans zero or more directories at this position (review
-            // round five, IZb_): match the remainder here, then descend
-            // into each child KEEPING the `**` component so arbitrarily
-            // deep levels still match. Recursion is bounded by directory
-            // depth.
-            expand_member_pattern_walk(base, rest, matched);
-            let Ok(entries) = std::fs::read_dir(base) else {
-                return;
-            };
-            for entry in entries.flatten() {
-                if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
-                    expand_member_pattern_walk(&entry.path(), components, matched);
-                }
-            }
-        }
-        Some((component, rest)) => {
-            let Ok(entries) = std::fs::read_dir(base) else {
-                return;
-            };
-            for entry in entries.flatten() {
-                if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
-                    continue;
-                }
-                let name = entry.file_name().to_string_lossy().to_string();
-                if workspace_member_glob_matches(component, &name) {
-                    expand_member_pattern_walk(&entry.path(), rest, matched);
-                }
-            }
-        }
-    }
-}
-
-/// Whether a `[workspace.members]` pattern contains glob components —
-/// glob-expanded member candidates yield to parent-prefix exclusions
-/// while explicit literal entries beat them (review round eight).
-fn member_pattern_has_wildcard(trimmed_pattern: &str) -> bool {
-    trimmed_pattern
-        .split('/')
-        .any(|component| component.contains('*') || component.contains('?'))
-}
-
-/// Whether one `[workspace.exclude]` pattern excludes one
-/// workspace-relative directory (review round seven, Jhjw/Jlb0): either
-/// the pattern glob-matches the directory, or the directory sits below
-/// the pattern's directory prefix — Cargo's exclude covers the named
-/// directory and everything under it, so `dep` excludes `dep` and
-/// `dep/sub` alike while never matching unrelated components. Prefix
-/// semantics live in this helper only: the same matcher also serves
-/// `[workspace.members]` patterns, where a prefix rule would wrongly
-/// widen membership.
-fn exclusion_pattern_excludes(pattern: &str, relative_directory: &str) -> bool {
-    let normalized_pattern = pattern.trim().replace('\\', "/");
-    let trimmed = normalized_pattern.trim_end_matches('/');
-    if trimmed.is_empty() || workspace_member_glob_matches(trimmed, relative_directory) {
-        return true;
-    }
-    let mut directory = relative_directory;
-    for prefix in trimmed.split('/') {
-        match directory.split('/').next() {
-            Some(component) if workspace_member_glob_matches(prefix, component) => {
-                // Consume the matched directory component; the rest of the
-                // pattern continues against the rest of the directory (an
-                // empty remainder means the directory ended exactly at the
-                // consumed prefix).
-                if directory.len() > component.len() {
-                    directory = &directory[component.len() + 1..];
-                } else {
-                    directory = "";
-                }
-            }
-            _ => return false,
-        }
-    }
-    // Every pattern component matched a directory component: the
-    // directory sits below (or equals) the pattern's directory prefix.
-    true
-}
-
-/// Whether one path component matches one glob component: `*` matches any
-/// characters, `?` exactly one character, everything else is literal.
-fn workspace_member_glob_matches(pattern: &str, name: &str) -> bool {
-    match pattern.chars().next() {
-        None => name.is_empty(),
-        Some('*') => {
-            let rest = &pattern[1..];
-            (0..=name.chars().count()).any(|skip| {
-                let tail: String = name.chars().skip(skip).collect();
-                workspace_member_glob_matches(rest, &tail)
-            })
-        }
-        Some('?') => {
-            let mut name_chars = name.chars();
-            match name_chars.next() {
-                None => false,
-                Some(_) => workspace_member_glob_matches(&pattern[1..], name_chars.as_str()),
-            }
-        }
-        Some(first) => {
-            let mut name_chars = name.chars();
-            match name_chars.next() {
-                Some(candidate) if candidate == first => {
-                    workspace_member_glob_matches(&pattern[first.len_utf8()..], name_chars.as_str())
-                }
-                _ => false,
-            }
-        }
-    }
-}
-
-/// The lexically resolved directories of the parsed manifest's path
-/// dependencies across every dependency section Cargo folds into
-/// workspace membership — `[dependencies]`, `[dev-dependencies]`,
-/// `[build-dependencies]`, and their `[target.*]`-specific forms
-/// (verified against `cargo metadata`: a member's dev- or build-path
-/// dependency becomes a workspace member). Workspace-inherited
-/// (`{ workspace = true }`) dependencies are not resolved in this
-/// bounded model and contribute nothing.
-fn member_path_dependency_dirs(value: &toml::Value, manifest_dir: &Path) -> Vec<PathBuf> {
-    let mut dependency_tables = Vec::new();
-    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        if let Some(dependencies) = value.get(section).and_then(|value| value.as_table()) {
-            dependency_tables.push(dependencies);
-        }
-    }
-    if let Some(targets) = value.get("target").and_then(|value| value.as_table()) {
-        for (_, target_table) in targets {
-            for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-                if let Some(dependencies) =
-                    target_table.get(section).and_then(|value| value.as_table())
-                {
-                    dependency_tables.push(dependencies);
-                }
-            }
-        }
-    }
-    dependency_tables
-        .iter()
-        .flat_map(|dependencies| dependencies.iter())
-        .filter_map(|(_, entry)| entry.get("path").and_then(|path| path.as_str()))
-        .filter(|path| !path.trim().is_empty())
-        .map(|path| lexical(&normalize(&manifest_dir.join(path.trim()))))
-        .collect()
-}
-
 /// Lexically resolve one normalized path (#3608 review): collapse CurDir
 /// components and ParentDir/preceding-segment pairs without touching the
 /// filesystem, so a declared path like `generated/../qa/mimic.rs` (or a
@@ -954,7 +722,7 @@ fn lexical(path: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
+mod extraction {
     use super::*;
 
     /// Crate-root identity extraction (#3533 review): `[lib]` tables and
@@ -1016,6 +784,9 @@ mod tests {
 
     /// #3608: the harness-flag extraction names every `[[test]]` target and
     /// carries the effective flag (absent key = Cargo's `true` default).
+    /// The manifest is only the flag source (#3634): target identity comes
+    /// from the metadata inventory, so this extraction must list every
+    /// entry shape the inventory can resolve back to.
     #[test]
     fn test_targets_with_harness_cover_explicit_name_resolved_and_defaults() {
         let manifest = "[package]\nname='x'\nversion='0.1.0'\n\
@@ -1032,745 +803,37 @@ mod tests {
                 (
                     target.path.to_string_lossy().replace('\\', "/"),
                     target.harness,
+                    target.name.clone(),
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(
             rendered,
             vec![
-                ("/ws/pkg/src/contract_test.rs".to_string(), false),
-                ("/ws/pkg/tests/plain.rs".to_string(), false),
-                ("/ws/pkg/tests/flagged.rs".to_string(), true),
-                ("/ws/pkg/tests/defaults_on.rs".to_string(), true),
-                ("/ws/pkg/tests/explicit_only.rs".to_string(), true),
+                ("/ws/pkg/src/contract_test.rs".to_string(), false, None),
+                (
+                    "/ws/pkg/tests/plain.rs".to_string(),
+                    false,
+                    Some("plain".to_string()),
+                ),
+                (
+                    "/ws/pkg/tests/flagged.rs".to_string(),
+                    true,
+                    Some("flagged".to_string()),
+                ),
+                (
+                    "/ws/pkg/tests/defaults_on.rs".to_string(),
+                    true,
+                    Some("defaults_on".to_string()),
+                ),
+                ("/ws/pkg/tests/explicit_only.rs".to_string(), true, None,),
             ],
-            "name-only entries default to exactly tests/<name>.rs (review HAla)"
+            "explicit entries carry no name (path-matched); name-only entries carry their declared name (name-matched, #3637 review)"
         );
         assert!(
             declared_test_targets_with_harness_from_manifest("not [ valid toml", Path::new("/ws"))
                 .is_empty()
         );
-    }
-
-    /// #3608: the verdict discriminates declared-harness-false targets from
-    /// harness-enabled targets (explicit or autodiscovered), undeclared
-    /// paths, and unreadable manifests.
-    #[test]
-    fn harness_verdict_discriminates_declared_enabled_and_missing_targets() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-verdict-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        let write_manifest = |text: &str| -> Result<(), String> {
-            std::fs::write(dir.join("pkg/Cargo.toml"), text).map_err(|error| error.to_string())
-        };
-        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-        // The analyzed root declares a real workspace whose member is pkg;
-        // only member manifests feed the declaration map (review HAkg).
-        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = ['pkg']\n")
-            .map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("pkg/src")).map_err(|error| error.to_string())?;
-        // The declared member carries a valid manifest from the start: a
-        // declared member without one is a broken workspace (review round
-        // five, IZc5).
-        write_manifest("[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n")?;
-        std::fs::create_dir_all(dir.join("orphan/src")).map_err(|error| error.to_string())?;
-        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
-
-        // orphan is not a member and declares nothing: the nearest
-        // manifest (the virtual root) declares no target for the path.
-        assert_eq!(
-            verdict("orphan/src/mimic.rs"),
-            CargoHarnessVerdict::NotDeclared
-        );
-
-        // Manifest A: autotests disabled, one explicit harness = false target
-        // with a custom path, one explicit harness = true name target.
-        write_manifest(
-            "[package]\nname='p'\nversion='0.1.0'\nautotests=false\n\n\
-         [[test]]\nname='custom'\npath='src/contract_test.rs'\nharness=false\n\n\
-         [[test]]\nname='enabled'\nharness=true\n",
-        )?;
-        // Explicit [[test]] with harness = false and a custom path: the
-        // custom-harness premise holds.
-        assert_eq!(
-            verdict("pkg/src/contract_test.rs"),
-            CargoHarnessVerdict::HarnessDisabled
-        );
-        // Name-resolved autodiscovery shape with an explicit harness = true
-        // entry: the target is known and its harness stays enabled.
-        assert_eq!(
-            verdict("pkg/tests/enabled.rs"),
-            CargoHarnessVerdict::HarnessEnabled
-        );
-        // Conventional tests/ layout without any entry while autotests =
-        // false: Cargo does not discover the target.
-        assert_eq!(
-            verdict("pkg/tests/undiscovered.rs"),
-            CargoHarnessVerdict::NotDeclared
-        );
-        // A typo'd or swapped path matches nothing.
-        assert_eq!(
-            verdict("pkg/src/contract_tset.rs"),
-            CargoHarnessVerdict::NotDeclared
-        );
-        // loose.rs matches no declaration and no autodiscovery shape at
-        // its nearest manifest (the virtual workspace root).
-        assert_eq!(verdict("loose.rs"), CargoHarnessVerdict::NotDeclared);
-
-        // Manifest B: plain package, no [[test]] entries — autodiscovery on.
-        write_manifest("[package]\nname='p'\nversion='0.1.0'\n")?;
-        assert_eq!(
-            verdict("pkg/tests/discovered.rs"),
-            CargoHarnessVerdict::HarnessEnabled
-        );
-        // Without the explicit entry the custom-path target is no longer declared.
-        assert_eq!(
-            verdict("pkg/src/contract_test.rs"),
-            CargoHarnessVerdict::NotDeclared
-        );
-
-        // Manifest C: an explicit harness = false declaration on the
-        // conventional layout (name-only entry) confirms the premise.
-        write_manifest(
-            "[package]\nname='p'\nversion='0.1.0'\n\n\
-         [[test]]\nname='discovered'\nharness=false\n",
-        )?;
-        assert_eq!(
-            verdict("pkg/tests/discovered.rs"),
-            CargoHarnessVerdict::HarnessDisabled
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        Ok(())
-    }
-
-    /// #3608: a virtual workspace manifest (no `[package]` table) declares no
-    /// autodiscovered targets.
-    #[test]
-    fn virtual_manifest_root_declares_no_autodiscovered_targets() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-virtual-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("tests")).map_err(|error| error.to_string())?;
-        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = []\n")
-            .map_err(|error| error.to_string())?;
-        assert_eq!(
-            cargo_test_target_harness_verdict(&dir, Path::new("tests/it.rs")),
-            CargoHarnessVerdict::NotDeclared
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        Ok(())
-    }
-
-    /// #3608 review (FhIA): Cargo rejects target tables in virtual
-    /// manifests, so a TOML-valid `[[test]]` entry in a manifest without
-    /// `[package]` declares nothing — the verdict stays NotDeclared even
-    /// though the entry would otherwise match.
-    #[test]
-    fn virtual_manifest_declares_no_targets_even_with_a_test_table() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-virtual-decl-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("tests")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[workspace]\nmembers = []\n\n[[test]]\nname = 'mimic'\nharness = false\n",
-        )
-        .map_err(|error| error.to_string())?;
-        assert_eq!(
-            cargo_test_target_harness_verdict(&dir, Path::new("tests/mimic.rs")),
-            CargoHarnessVerdict::NotDeclared
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        Ok(())
-    }
-
-    /// #3608 review (Fe25): declaration-driven ownership — a
-    /// workspace-root package's explicit `[[test]] path = ...` entry claims
-    /// its target even when the path sits below a directory containing
-    /// another (undeclaring) Cargo.toml, while nearest-manifest resolution
-    /// still governs autodiscovery credit.
-    #[test]
-    fn workspace_root_declaration_claims_a_target_below_a_nested_manifest() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-root-decl-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("below/nested/manifest/dir"))
-            .map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("below/nested/manifest/tests"))
-            .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[package]\nname='ws'\nedition='2024'\n\n[workspace]\nmembers = ['below/nested/manifest']\n\n\
-             [[test]]\nname='mimic'\npath='below/nested/manifest/dir/mimic.rs'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
-        // The nested manifest directory declares nothing for the target.
-        std::fs::write(
-            dir.join("below/nested/manifest/Cargo.toml"),
-            "[package]\nname='nested'\nedition='2024'\n",
-        )
-        .map_err(|error| error.to_string())?;
-        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
-
-        // The root declaration wins for the explicit target.
-        assert_eq!(
-            verdict("below/nested/manifest/dir/mimic.rs"),
-            CargoHarnessVerdict::HarnessDisabled
-        );
-        // Nearest-manifest resolution still governs autodiscovery credit:
-        // the nested package's own conventional tests/ file is discovered.
-        assert_eq!(
-            verdict("below/nested/manifest/tests/other.rs"),
-            CargoHarnessVerdict::HarnessEnabled
-        );
-
-        // Round 4 (Gajt): two manifests declaring the same path with
-        // conflicting `harness` flags is ambiguous ownership — which
-        // compilation unit collects the file is not statically decidable —
-        // so the verdict fails closed instead of picking a winner.
-        std::fs::write(
-            dir.join("below/nested/manifest/Cargo.toml"),
-            "[package]\nname='nested'\nedition='2024'\n\n\
-             [[test]]\nname='mimic'\npath='dir/mimic.rs'\nharness=true\n",
-        )
-        .map_err(|error| error.to_string())?;
-        assert_eq!(
-            verdict("below/nested/manifest/dir/mimic.rs"),
-            CargoHarnessVerdict::ManifestUnavailable,
-            "conflicting declarations fail closed"
-        );
-
-        // Agreeing declarations remain deterministic.
-        std::fs::write(
-            dir.join("below/nested/manifest/Cargo.toml"),
-            "[package]\nname='nested'\nedition='2024'\n\n\
-             [[test]]\nname='mimic'\npath='dir/mimic.rs'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
-        assert_eq!(
-            verdict("below/nested/manifest/dir/mimic.rs"),
-            CargoHarnessVerdict::HarnessDisabled,
-            "agreeing declarations keep the deterministic verdict"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        Ok(())
-    }
-
-    /// #3608 review round four (Gajt): Cargo permits an explicit
-    /// `[[test]]` path to resolve outside the declaring package's
-    /// directory, so a sibling package's `../shared/mimic.rs`
-    /// harness = false declaration claims the shared target even though
-    /// the declaring manifest is not an ancestor of it; the
-    /// nearest-manifest autodiscovery fallback is unchanged for
-    /// undeclared paths.
-    #[test]
-    fn shared_target_declared_from_a_sibling_package_resolves() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-shared-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("crates/a")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[package]
-name='ws'
-edition='2024'
-
-[workspace]
-members = ['crates/a']
-",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("crates/a/Cargo.toml"),
-            "[package]
-name='a'
-edition='2024'
-
-             [[test]]
-name='mimic'
-path='../../shared/mimic.rs'
-harness=false
-",
-        )
-        .map_err(|error| error.to_string())?;
-        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
-        // The sibling package's declaration claims the shared target.
-        assert_eq!(
-            verdict("shared/mimic.rs"),
-            CargoHarnessVerdict::HarnessDisabled
-        );
-        // Undeclared sibling paths keep the ordinary fallback.
-        assert_eq!(verdict("shared/other.rs"), CargoHarnessVerdict::NotDeclared);
-
-        // Ambiguity: a second package declaring the same shared path with
-        // a conflicting harness flag fails closed. The second package is
-        // declared as a member when its manifest appears.
-        std::fs::create_dir_all(dir.join("crates/b")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[package]
-name='ws'
-edition='2024'
-
-[workspace]
-members = ['crates/a', 'crates/b']
-",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("crates/b/Cargo.toml"),
-            "[package]
-name='b'
-edition='2024'
-
-             [[test]]
-name='mimic'
-path='../../shared/mimic.rs'
-harness=true
-",
-        )
-        .map_err(|error| error.to_string())?;
-        assert_eq!(
-            verdict("shared/mimic.rs"),
-            CargoHarnessVerdict::ManifestUnavailable,
-            "conflicting declarations of one shared path are ambiguous"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        Ok(())
-    }
-
-    /// #3608 review round four (GalA): declared paths and registration
-    /// targets compare on the lexically resolved identity — ParentDir and
-    /// CurDir segments collapse without touching the filesystem, and a
-    /// leading escape chain stays as spelled so outside-root declarations
-    /// resolve consistently.
-    #[test]
-    fn parent_segments_lexically_resolve_on_both_sides() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-lexical-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("pkg")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[package]
-name='ws'
-edition='2024'
-
-[workspace]
-members = ['pkg']
-",
-        )
-        .map_err(|error| error.to_string())?;
-        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
-
-        // In-package `..` declaration: `generated/../qa/mimic.rs` resolves
-        // to `pkg/qa/mimic.rs` (the generated/ directory need not exist).
-        std::fs::write(
-            dir.join("pkg/Cargo.toml"),
-            "[package]
-name='p'
-edition='2024'
-
-             [[test]]
-name='mimic'
-path='generated/../qa/mimic.rs'
-harness=false
-",
-        )
-        .map_err(|error| error.to_string())?;
-        assert_eq!(
-            verdict("pkg/qa/mimic.rs"),
-            CargoHarnessVerdict::HarnessDisabled
-        );
-        // The un-collapsed spelling of the same target matches too.
-        assert_eq!(
-            verdict("pkg/generated/../qa/mimic.rs"),
-            CargoHarnessVerdict::HarnessDisabled
-        );
-
-        // The reviewer's shape: a sibling `../shared/x.rs` declaration
-        // matches a target that spells the same location with a `..`
-        // segment.
-        std::fs::write(
-            dir.join("pkg/Cargo.toml"),
-            "[package]
-name='p'
-edition='2024'
-
-             [[test]]
-name='shared'
-path='../shared/x.rs'
-harness=false
-",
-        )
-        .map_err(|error| error.to_string())?;
-        assert_eq!(
-            verdict("shared/../shared/x.rs"),
-            CargoHarnessVerdict::HarnessDisabled
-        );
-        assert_eq!(verdict("shared/x.rs"), CargoHarnessVerdict::HarnessDisabled);
-
-        // An escape above the workspace root stays outside: the
-        // declaration resolves outside and never claims an in-workspace
-        // target spelled as if it were inside.
-        std::fs::write(
-            dir.join("pkg/Cargo.toml"),
-            "[package]
-name='p'
-edition='2024'
-
-             [[test]]
-name='escape'
-path='../../outside/x.rs'
-harness=false
-",
-        )
-        .map_err(|error| error.to_string())?;
-        assert_eq!(
-            verdict("outside/x.rs"),
-            CargoHarnessVerdict::NotDeclared,
-            "a root-escaping declaration does not clamp onto an in-workspace path"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        Ok(())
-    }
-
-    /// #3608 review (Fe4d): a member declaring `edition.workspace = true`
-    /// inherits the workspace root's `[workspace.package]` edition before
-    /// the edition-2015 autodiscovery rule applies — workspace edition
-    /// 2024 keeps a second conventional tests/*.rs autodiscovered instead
-    /// of degrading to NotDeclared.
-    #[test]
-    fn workspace_inherited_edition_governs_autodiscovery() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-ws-edition-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("member/tests")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[workspace]\nmembers = ['member']\n\n[workspace.package]\nedition = '2024'\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("member/Cargo.toml"),
-            "[package]\nname='m'\nversion='0.1.0'\nedition.workspace=true\n\n\
-             [[test]]\nname='declared'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
-        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
-        assert_eq!(
-            verdict("member/tests/declared.rs"),
-            CargoHarnessVerdict::HarnessDisabled
-        );
-        assert_eq!(
-            verdict("member/tests/other.rs"),
-            CargoHarnessVerdict::HarnessEnabled,
-            "the member inherits edition 2024, so autodiscovery stays on"
-        );
-
-        // Without the workspace edition the member's inherited edition is
-        // unknown and conservatively keeps the 2015 default.
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[workspace]\nmembers = ['member']\n",
-        )
-        .map_err(|error| error.to_string())?;
-        assert_eq!(
-            verdict("member/tests/other.rs"),
-            CargoHarnessVerdict::NotDeclared,
-            "no inherited edition resolves to the conservative 2015 default"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        Ok(())
-    }
-
-    fn parse_manifest(text: &str) -> Result<toml::Value, String> {
-        toml::from_str::<toml::Value>(text).map_err(|error| error.to_string())
-    }
-
-    /// #3608 review: Cargo's test-autodiscovery default is `false` only
-    /// for the backward-compatibility combination — edition 2015 (explicit
-    /// or omitted) with at least one manually declared `[[test]]` target —
-    /// and an explicit `package.autotests` flag always wins.
-    #[test]
-    fn edition_2015_with_manual_test_target_disables_test_autodiscovery() -> Result<(), String> {
-        let enabled = |manifest: &str, inherited: Option<&str>| -> Result<bool, String> {
-            Ok(test_autodiscovery_default(
-                &parse_manifest(manifest)?,
-                inherited,
-            ))
-        };
-        // Explicit flags always win.
-        assert!(
-            !enabled(
-                "[package]\nname='p'\nedition='2015'\nautotests=false\n\n[[test]]\nname='a'\n",
-                None
-            )?,
-            "an explicit autotests = false wins over every default"
-        );
-        assert!(
-            enabled(
-                "[package]\nname='p'\nedition='2015'\nautotests=true\n\n[[test]]\nname='a'\n",
-                None
-            )?,
-            "an explicit autotests = true wins over the 2015 backward-compatibility default"
-        );
-        // Backward-compatibility combination: edition 2015 + manual target.
-        assert!(
-            !enabled(
-                "[package]\nname='p'\nedition='2015'\n\n[[test]]\nname='a'\n",
-                None
-            )?,
-            "edition 2015 with a manual [[test]] disables autodiscovery"
-        );
-        assert!(
-            !enabled("[package]\nname='p'\n\n[[test]]\nname='a'\n", None)?,
-            "an omitted edition defaults to 2015, so a manual [[test]] disables autodiscovery"
-        );
-        // Every other combination keeps autodiscovery enabled.
-        assert!(
-            enabled("[package]\nname='p'\nedition='2015'\n", None)?,
-            "edition 2015 without a manual [[test]] keeps autodiscovery"
-        );
-        assert!(
-            enabled(
-                "[package]\nname='p'\nedition='2021'\n\n[[test]]\nname='a'\n",
-                None
-            )?,
-            "edition 2021 with a manual [[test]] keeps autodiscovery"
-        );
-        assert!(
-            enabled(
-                "[package]\nname='p'\nedition='2024'\n\n[[test]]\nname='a'\n",
-                None
-            )?,
-            "edition 2024 with a manual [[test]] keeps autodiscovery"
-        );
-        // Workspace inheritance (review Fe4d): `edition.workspace = true`
-        // resolves to the inherited effective edition before the rule
-        // applies.
-        assert!(
-            enabled(
-                "[package]\nname='p'\nedition.workspace=true\n\n[[test]]\nname='a'\n",
-                Some("2024")
-            )?,
-            "a member inheriting workspace edition 2024 keeps autodiscovery"
-        );
-        assert!(
-            !enabled(
-                "[package]\nname='p'\nedition.workspace=true\n\n[[test]]\nname='a'\n",
-                Some("2015")
-            )?,
-            "a member inheriting workspace edition 2015 disables autodiscovery"
-        );
-        assert!(
-            !enabled(
-                "[package]\nname='p'\nedition.workspace=true\n\n[[test]]\nname='a'\n",
-                None
-            )?,
-            "an unresolvable workspace root keeps the conservative 2015 default"
-        );
-        Ok(())
-    }
-
-    /// #3608 review: verdict-level pin of the same rule — under edition
-    /// 2015 with a manual `[[test]]` entry, the declared entry still
-    /// matches (explicit declarations are independent of autodiscovery)
-    /// while a sibling conventional-layout file is no longer discovered.
-    #[test]
-    fn edition_2015_manual_declaration_keeps_explicit_match_and_drops_discovery()
-    -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-edition-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("pkg/tests")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("pkg/Cargo.toml"),
-            "[package]\nname='p'\nedition='2015'\n\n[[test]]\nname='declared'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
-        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
-        assert_eq!(
-            verdict("pkg/tests/declared.rs"),
-            CargoHarnessVerdict::HarnessDisabled,
-            "the explicit declaration matches regardless of the autodiscovery default"
-        );
-        assert_eq!(
-            verdict("pkg/tests/other.rs"),
-            CargoHarnessVerdict::NotDeclared,
-            "edition 2015 with a manual [[test]] disables autodiscovery of siblings"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        Ok(())
-    }
-
-    /// #3608 review: a readable but malformed owning manifest cannot
-    /// establish any premise about its targets — the verdict is
-    /// ManifestUnavailable, never a target-typo NotDeclared.
-    #[test]
-    fn malformed_readable_manifest_is_manifest_unavailable() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-malformed-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("pkg/src")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("pkg/tests")).map_err(|error| error.to_string())?;
-        std::fs::write(dir.join("pkg/Cargo.toml"), "not [ valid toml")
-            .map_err(|error| error.to_string())?;
-        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
-        assert_eq!(
-            verdict("pkg/src/mimic.rs"),
-            CargoHarnessVerdict::ManifestUnavailable
-        );
-        assert_eq!(
-            verdict("pkg/tests/mimic.rs"),
-            CargoHarnessVerdict::ManifestUnavailable,
-            "even the autodiscovery premise cannot be established from a malformed manifest"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        Ok(())
-    }
-
-    /// #3608 review: target ownership follows manifest presence, not
-    /// source-layout components. A `[[test]] path = "qa/mimic.rs"`
-    /// harness = false target outside the conventional directories
-    /// resolves against the nearest (deepest) owning manifest, and a
-    /// nested workspace's package manifest owns before the workspace root.
-    #[test]
-    fn nonconventional_directory_target_resolves_to_the_nearest_manifest() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-nonconventional-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("crates/a/qa")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("qa_root")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[package]\nname='ws'\nedition='2024'\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(dir.join("qa_root/mimic.rs"), "fn trials() {}\n")
-            .map_err(|error| error.to_string())?;
-        let write_pkg_manifest = |text: &str| -> Result<(), String> {
-            std::fs::write(dir.join("crates/a/Cargo.toml"), text).map_err(|error| error.to_string())
-        };
-        write_pkg_manifest(
-            "[package]\nname='a'\nedition='2024'\n\n\
-             [[test]]\nname='mimic'\npath='qa/mimic.rs'\nharness=false\n",
-        )?;
-        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
-
-        // Longest ownership: the nested package manifest declares the
-        // nonconventional target, so the premise holds.
-        assert_eq!(
-            verdict("crates/a/qa/mimic.rs"),
-            CargoHarnessVerdict::HarnessDisabled
-        );
-        // The root package's own nonconventional path matches nothing and
-        // is not an autodiscovery shape either.
-        assert_eq!(
-            verdict("qa_root/mimic.rs"),
-            CargoHarnessVerdict::NotDeclared
-        );
-
-        // Dropping the nested declaration: the nearest manifest (crates/a)
-        // no longer declares the target, and the workspace root cannot own
-        // it across the nested package boundary.
-        write_pkg_manifest("[package]\nname='a'\nedition='2024'\n")?;
-        assert_eq!(
-            verdict("crates/a/qa/mimic.rs"),
-            CargoHarnessVerdict::NotDeclared
-        );
-
-        // A top-level nonconventional target resolves against the root
-        // manifest when no deeper manifest exists.
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[package]\nname='ws'\nedition='2024'\n\n[workspace]\nmembers = ['crates/a']\n\n\
-             [[test]]\nname='mimic'\npath='qa_root/mimic.rs'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
-        assert_eq!(
-            verdict("qa_root/mimic.rs"),
-            CargoHarnessVerdict::HarnessDisabled
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        Ok(())
-    }
-
-    /// #3608 review: Cargo never autodiscovers tests below `src/tests/`;
-    /// the package-root guard keeps nested module files out of the
-    /// autodiscovery premise without changing the shared layout
-    /// predicate's source-role behavior.
-    #[test]
-    fn nested_src_tests_module_file_is_not_an_autodiscovered_target() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-nested-tests-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("pkg/src/tests")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("pkg/tests")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("pkg/Cargo.toml"),
-            "[package]\nname='p'\nedition='2024'\n",
-        )
-        .map_err(|error| error.to_string())?;
-        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
-        assert_eq!(
-            verdict("pkg/src/tests/case.rs"),
-            CargoHarnessVerdict::NotDeclared,
-            "a module file below src/tests/ is not a package-root test target"
-        );
-        assert_eq!(
-            verdict("pkg/tests/case.rs"),
-            CargoHarnessVerdict::HarnessEnabled,
-            "the package-root tests/ shape stays autodiscovered"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        Ok(())
     }
 
     #[test]
@@ -1801,8 +864,21 @@ harness=false
     }
 }
 
+/// A unique temp directory outside the repo tree for one fixture
+/// workspace.
 #[cfg(test)]
-mod context_tests {
+fn unique_workspace(tag: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "ripr-harness-{tag}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+    ))
+}
+
+#[cfg(test)]
+mod context {
     use super::*;
 
     #[test]
@@ -1810,13 +886,7 @@ mod context_tests {
         // #3283 discriminating test for the aggregation itself: a real
         // manifest on disk contributes its declared targets, workspace
         // relative, while an unrelated package contributes nothing.
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-targets-ctx-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
+        let dir = unique_workspace("targets-ctx");
         std::fs::create_dir_all(dir.join("pkg-a/src")).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(dir.join("pkg-b/src")).map_err(|e| e.to_string())?;
         std::fs::write(
@@ -1855,73 +925,928 @@ mod context_tests {
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
+}
 
-    /// #3608 review round five (HAla): a name-only `[[test]]` entry
-    /// defaults to exactly `tests/<name>.rs`; the directory layout
-    /// `tests/<name>/main.rs` stays governed by the autodiscovery rules
-    /// and does not inherit the entry's `harness` flag.
-    #[test]
-    fn name_only_entry_credits_only_the_file_layout() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-name-only-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("pkg/tests/suite")).map_err(|error| error.to_string())?;
-        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = ['pkg']\n")
+/// Harness-verdict fixtures. Every fixture is a real Cargo workspace:
+/// the verdict sources workspace membership and the test-target
+/// inventory from `cargo metadata` (#3634), so member packages carry the
+/// `src/lib.rs` target file cargo requires and the asserted outcomes are
+/// cargo's own resolution, not an emulation of it. Autodiscovered and
+/// name-only targets appear in the inventory only when their files exist
+/// (verified against `cargo metadata`, #3634), so fixtures write those
+/// files; explicit `path = ...` targets are reported regardless.
+#[cfg(test)]
+mod harness_verdict {
+    use super::*;
+
+    /// One member package: a manifest plus the `src/lib.rs` target file
+    /// cargo requires of every workspace package.
+    fn write_member_package(dir: &Path, relative: &str, manifest: &str) -> Result<(), String> {
+        let package_dir = dir.join(relative);
+        std::fs::create_dir_all(package_dir.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(package_dir.join("Cargo.toml"), manifest)
             .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("pkg/Cargo.toml"),
-            "[package]\nname='p'\nedition='2024'\n\n[[test]]\nname='suite'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
+        std::fs::write(package_dir.join("src/lib.rs"), "").map_err(|error| error.to_string())
+    }
+
+    /// One directory without a manifest or target file (the
+    /// broken-workspace shapes).
+    fn make_dir(dir: &Path, relative: &str) -> Result<(), String> {
+        std::fs::create_dir_all(dir.join(relative)).map_err(|error| error.to_string())
+    }
+
+    fn write_file(dir: &Path, relative: &str, contents: &str) -> Result<(), String> {
+        let path = dir.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(path, contents).map_err(|error| error.to_string())
+    }
+
+    /// #3608: the verdict discriminates declared-harness-false targets from
+    /// harness-enabled targets (explicit or autodiscovered), undeclared
+    /// paths, and non-test target kinds — sourced from `cargo metadata`'s
+    /// own target inventory (#3634).
+    #[test]
+    fn harness_verdict_discriminates_declared_enabled_and_missing_targets() -> Result<(), String> {
+        let dir = unique_workspace("verdict");
+        // The analyzed root declares a real workspace whose member is pkg;
+        // metadata's member set and target inventory are the authority
+        // (review HAkg, #3634).
+        write_file(&dir, "Cargo.toml", "[workspace]\nmembers = ['pkg']\n")?;
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        make_dir(&dir, "pkg/tests")?;
+        write_file(&dir, "pkg/tests/enabled.rs", "")?;
+        write_file(&dir, "pkg/tests/discovered.rs", "")?;
+        make_dir(&dir, "orphan/src")?;
         let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+
+        // orphan is not a member: metadata's inventory names no target for
+        // the path.
         assert_eq!(
-            verdict("pkg/tests/suite.rs"),
-            CargoHarnessVerdict::HarnessDisabled,
-            "the name-only entry defaults to the file layout"
+            verdict("orphan/src/mimic.rs"),
+            CargoHarnessVerdict::NotDeclared
         );
+
+        // Manifest A: autotests disabled, one explicit harness = false target
+        // with a custom path, one explicit harness = true name target.
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nautotests=false\n\n\
+         [[test]]\nname='custom'\npath='src/contract_test.rs'\nharness=false\n\n\
+         [[test]]\nname='enabled'\nharness=true\n",
+        )?;
+        // Explicit [[test]] with harness = false and a custom path: the
+        // custom-harness premise holds.
         assert_eq!(
-            verdict("pkg/tests/suite/main.rs"),
-            CargoHarnessVerdict::HarnessEnabled,
-            "the directory layout is a separate autodiscovered target: it does not inherit the flag"
+            verdict("pkg/src/contract_test.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        // Name-resolved autodiscovery shape with an explicit harness = true
+        // entry: the target is known and its harness stays enabled.
+        assert_eq!(
+            verdict("pkg/tests/enabled.rs"),
+            CargoHarnessVerdict::HarnessEnabled
+        );
+        // Conventional tests/ layout without any entry while autotests =
+        // false: cargo's inventory has no such target.
+        assert_eq!(
+            verdict("pkg/tests/undiscovered.rs"),
+            CargoHarnessVerdict::NotDeclared
+        );
+        // A typo'd or swapped path matches nothing.
+        assert_eq!(
+            verdict("pkg/src/contract_tset.rs"),
+            CargoHarnessVerdict::NotDeclared
+        );
+        // loose.rs matches no declaration and no autodiscovery shape at
+        // the workspace root.
+        assert_eq!(verdict("loose.rs"), CargoHarnessVerdict::NotDeclared);
+        // The package's lib target is in metadata but is not a test
+        // target: kind filtering keeps the registration uncredited.
+        assert_eq!(verdict("pkg/src/lib.rs"), CargoHarnessVerdict::NotDeclared);
+
+        // Manifest B: plain package, no [[test]] entries — autodiscovery on.
+        write_member_package(&dir, "pkg", "[package]\nname='p'\nversion='0.1.0'\n")?;
+        assert_eq!(
+            verdict("pkg/tests/discovered.rs"),
+            CargoHarnessVerdict::HarnessEnabled
+        );
+        // Without the explicit entry the custom-path target is no longer declared.
+        assert_eq!(
+            verdict("pkg/src/contract_test.rs"),
+            CargoHarnessVerdict::NotDeclared
+        );
+
+        // Manifest C: an explicit harness = false declaration on the
+        // conventional layout (name-only entry) confirms the premise.
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\n\n\
+         [[test]]\nname='discovered'\nharness=false\n",
+        )?;
+        assert_eq!(
+            verdict("pkg/tests/discovered.rs"),
+            CargoHarnessVerdict::HarnessDisabled
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
 
-    /// #3608 review round five (HAkg): membership gating. A malformed
-    /// manifest that is NOT a workspace member is skipped — it neither
-    /// rejects a valid member registration nor conflicts with it — while
-    /// a malformed MEMBER manifest leaves the declaration map incomplete
-    /// and fails closed.
+    /// #3608: a virtual workspace manifest (no `[package]` table) declares no
+    /// autodiscovered targets; cargo metadata succeeds on the empty member
+    /// set and the inventory is empty.
     #[test]
-    fn membership_gates_the_declaration_map() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-membership-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("member")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("stray")).map_err(|error| error.to_string())?;
+    fn virtual_manifest_root_declares_no_autodiscovered_targets() -> Result<(), String> {
+        let dir = unique_workspace("virtual");
+        std::fs::create_dir_all(dir.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = []\n")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("tests/it.rs")),
+            CargoHarnessVerdict::NotDeclared
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3634: a virtual manifest carrying a `[[test]]` table is rejected by
+    /// cargo itself ("this virtual manifest specifies a `test` section"),
+    /// so the metadata probe is unavailable and every verdict fails closed
+    /// to ManifestUnavailable — never to a fabricated declaration.
+    #[test]
+    fn virtual_manifest_with_a_test_section_fails_metadata_closed() -> Result<(), String> {
+        let dir = unique_workspace("virtual-decl");
+        std::fs::create_dir_all(dir.join("tests")).map_err(|error| error.to_string())?;
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
         std::fs::write(
             dir.join("Cargo.toml"),
-            "[workspace]\nmembers = ['member']\n",
+            "[workspace]\nmembers = ['pkg']\n\n[[test]]\nname = 'mimic'\nharness = false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("tests/mimic.rs")),
+            CargoHarnessVerdict::ManifestUnavailable,
+            "cargo rejects the manifest outright: no metadata premise exists"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3634: no workspace manifest at the analysis root means no metadata
+    /// probe is possible — every registration fails closed to
+    /// ManifestUnavailable instead of guessing from stray manifests.
+    #[test]
+    fn absent_workspace_manifest_fails_closed() -> Result<(), String> {
+        let dir = unique_workspace("no-root");
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='mimic'\npath='target.rs'\nharness=false\n",
+        )?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("pkg/target.rs"),
+            CargoHarnessVerdict::ManifestUnavailable,
+            "no root manifest: the metadata premise cannot be established"
+        );
+        assert_eq!(
+            verdict("pkg/tests/other.rs"),
+            CargoHarnessVerdict::ManifestUnavailable
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review (Fe25): declaration ownership is cargo's own — a
+    /// workspace-root package's explicit `[[test]] path = ...` entry claims
+    /// its target even when the path sits below a directory containing
+    /// another Cargo.toml, and two packages claiming one path with
+    /// conflicting `harness` flags stay ambiguous and fail closed (the
+    /// inventory lists the path under both owning packages, #3634).
+    #[test]
+    fn workspace_root_declaration_claims_a_target_below_a_nested_manifest() -> Result<(), String> {
+        let dir = unique_workspace("root-decl");
+        make_dir(&dir, "below/nested/manifest/dir")?;
+        make_dir(&dir, "below/nested/manifest/tests")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[package]\nname='ws'\nversion='0.1.0'\nedition='2024'\n\n[workspace]\nmembers = ['below/nested/manifest']\n\n\
+             [[test]]\nname='mimic'\npath='below/nested/manifest/dir/mimic.rs'\nharness=false\n",
+        )?;
+        // The root package and the nested member both need target files.
+        make_dir(&dir, "src")?;
+        write_file(&dir, "src/lib.rs", "")?;
+        write_member_package(
+            &dir,
+            "below/nested/manifest",
+            "[package]\nname='nested'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write_file(&dir, "below/nested/manifest/tests/other.rs", "")?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+
+        // The root declaration wins for the explicit target.
+        assert_eq!(
+            verdict("below/nested/manifest/dir/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        // Nearest-manifest resolution still governs autodiscovery credit:
+        // the nested package's own conventional tests/ file is discovered.
+        assert_eq!(
+            verdict("below/nested/manifest/tests/other.rs"),
+            CargoHarnessVerdict::HarnessEnabled
+        );
+
+        // Round 4 (Gajt): two manifests declaring the same path with
+        // conflicting `harness` flags is ambiguous ownership — which
+        // compilation unit collects the file is not statically decidable —
+        // so the verdict fails closed instead of picking a winner.
+        write_member_package(
+            &dir,
+            "below/nested/manifest",
+            "[package]\nname='nested'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='mimic'\npath='dir/mimic.rs'\nharness=true\n",
+        )?;
+        assert_eq!(
+            verdict("below/nested/manifest/dir/mimic.rs"),
+            CargoHarnessVerdict::ManifestUnavailable,
+            "conflicting declarations fail closed"
+        );
+
+        // Agreeing declarations remain deterministic.
+        write_member_package(
+            &dir,
+            "below/nested/manifest",
+            "[package]\nname='nested'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='mimic'\npath='dir/mimic.rs'\nharness=false\n",
+        )?;
+        assert_eq!(
+            verdict("below/nested/manifest/dir/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "agreeing declarations keep the deterministic verdict"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round four (Gajt): Cargo permits an explicit
+    /// `[[test]]` path to resolve outside the declaring package's
+    /// directory, so a sibling package's `../shared/mimic.rs`
+    /// harness = false declaration claims the shared target even though
+    /// the declaring manifest is not an ancestor of it; the metadata
+    /// inventory records the target under the declaring package (#3634).
+    #[test]
+    fn shared_target_declared_from_a_sibling_package_resolves() -> Result<(), String> {
+        let dir = unique_workspace("shared");
+        write_member_package(
+            &dir,
+            "crates/a",
+            "[package]\nname='a'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=false\n",
+        )?;
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[package]\nname='ws'\nversion='0.1.0'\nedition='2024'\n\n[workspace]\nmembers = ['crates/a']\n",
+        )?;
+        make_dir(&dir, "src")?;
+        write_file(&dir, "src/lib.rs", "")?;
+        make_dir(&dir, "shared")?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        // The sibling package's declaration claims the shared target.
+        assert_eq!(
+            verdict("shared/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        // Undeclared sibling paths keep the ordinary fallback.
+        assert_eq!(verdict("shared/other.rs"), CargoHarnessVerdict::NotDeclared);
+
+        // Ambiguity: a second package declaring the same shared path with
+        // a conflicting harness flag fails closed. The second package is
+        // declared as a member when its manifest appears.
+        make_dir(&dir, "crates/b")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[package]\nname='ws'\nversion='0.1.0'\nedition='2024'\n\n[workspace]\nmembers = ['crates/a', 'crates/b']\n",
+        )?;
+        write_member_package(
+            &dir,
+            "crates/b",
+            "[package]\nname='b'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=true\n",
+        )?;
+        assert_eq!(
+            verdict("shared/mimic.rs"),
+            CargoHarnessVerdict::ManifestUnavailable,
+            "conflicting declarations of one shared path are ambiguous"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round four (GalA): declared paths and registration
+    /// targets compare on the lexically resolved identity — ParentDir and
+    /// CurDir segments collapse without touching the filesystem, and a
+    /// leading escape chain stays as spelled. `cargo metadata` keeps `..`
+    /// segments in `src_path` as spelled too (verified #3634), so both
+    /// sides resolve the same way.
+    #[test]
+    fn parent_segments_lexically_resolve_on_both_sides() -> Result<(), String> {
+        let dir = unique_workspace("lexical");
+        make_dir(&dir, "pkg")?;
+        make_dir(&dir, "shared")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[package]\nname='ws'\nversion='0.1.0'\nedition='2024'\n\n[workspace]\nmembers = ['pkg']\n",
+        )?;
+        make_dir(&dir, "src")?;
+        write_file(&dir, "src/lib.rs", "")?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+
+        // In-package `..` declaration: `generated/../qa/mimic.rs` resolves
+        // to `pkg/qa/mimic.rs` (the generated/ directory need not exist;
+        // metadata still reports the declared target, verified #3634).
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='mimic'\npath='generated/../qa/mimic.rs'\nharness=false\n",
+        )?;
+        assert_eq!(
+            verdict("pkg/qa/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        // The un-collapsed spelling of the same target matches too.
+        assert_eq!(
+            verdict("pkg/generated/../qa/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+
+        // The reviewer's shape: a sibling `../shared/x.rs` declaration
+        // matches a target that spells the same location with a `..`
+        // segment.
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='shared'\npath='../shared/x.rs'\nharness=false\n",
+        )?;
+        assert_eq!(
+            verdict("shared/../shared/x.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        assert_eq!(verdict("shared/x.rs"), CargoHarnessVerdict::HarnessDisabled);
+
+        // An escape above the workspace root stays outside: the
+        // declaration resolves outside and never claims an in-workspace
+        // target spelled as if it were inside.
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='escape'\npath='../../outside/x.rs'\nharness=false\n",
+        )?;
+        assert_eq!(
+            verdict("outside/x.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "a root-escaping declaration does not clamp onto an in-workspace path"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review (Fe4d), metadata-sourced (#3634): a member declaring
+    /// `edition.workspace = true` autodiscovers through cargo's own
+    /// edition resolution — workspace edition 2024 keeps a second
+    /// conventional `tests/*.rs` in metadata's target inventory. When the
+    /// inherited edition cannot resolve, cargo rejects the manifest and
+    /// the whole workspace fails closed instead of approximating a
+    /// default.
+    #[test]
+    fn workspace_inherited_edition_governs_autodiscovery() -> Result<(), String> {
+        let dir = unique_workspace("ws-edition");
+        make_dir(&dir, "member/tests")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[workspace]\nmembers = ['member']\n\n[workspace.package]\nedition = '2024'\n",
+        )?;
+        write_member_package(
+            &dir,
+            "member",
+            "[package]\nname='m'\nversion='0.1.0'\nedition.workspace=true\n\n\
+             [[test]]\nname='declared'\nharness=false\n",
+        )?;
+        write_file(&dir, "member/tests/declared.rs", "")?;
+        write_file(&dir, "member/tests/other.rs", "")?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("member/tests/declared.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        assert_eq!(
+            verdict("member/tests/other.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "the member inherits edition 2024, so autodiscovery stays on"
+        );
+
+        // Without the workspace edition the member manifest is invalid
+        // (`edition.workspace = true` dangles): cargo metadata fails and
+        // every verdict fails closed.
+        write_file(&dir, "Cargo.toml", "[workspace]\nmembers = ['member']\n")?;
+        assert_eq!(
+            verdict("member/tests/other.rs"),
+            CargoHarnessVerdict::ManifestUnavailable,
+            "an unresolvable workspace fails closed rather than guessing an edition"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review: edition 2015 with a manual `[[test]]` entry — the
+    /// declared entry still matches while the sibling conventional-layout
+    /// file is no longer discovered. Cargo's own autodiscovery rule
+    /// decides: the sibling is absent from metadata's inventory (#3634).
+    #[test]
+    fn edition_2015_manual_declaration_keeps_explicit_match_and_drops_discovery()
+    -> Result<(), String> {
+        let dir = unique_workspace("edition");
+        make_dir(&dir, "pkg/tests")?;
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2015'\n\n[[test]]\nname='declared'\nharness=false\n",
+        )?;
+        write_file(&dir, "pkg/tests/declared.rs", "")?;
+        write_file(&dir, "Cargo.toml", "[workspace]\nmembers = ['pkg']\n")?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("pkg/tests/declared.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the explicit declaration matches regardless of the autodiscovery default"
+        );
+        assert_eq!(
+            verdict("pkg/tests/other.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "edition 2015 with a manual [[test]] disables autodiscovery of siblings"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review: a readable but malformed owning manifest cannot
+    /// establish any premise about its targets — the verdict is
+    /// ManifestUnavailable, never a target-typo NotDeclared. With no root
+    /// manifest at all the metadata probe is unavailable first (#3634).
+    #[test]
+    fn malformed_readable_manifest_is_manifest_unavailable() -> Result<(), String> {
+        let dir = unique_workspace("malformed");
+        make_dir(&dir, "pkg/src")?;
+        make_dir(&dir, "pkg/tests")?;
+        write_file(&dir, "pkg/Cargo.toml", "not [ valid toml")?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("pkg/src/mimic.rs"),
+            CargoHarnessVerdict::ManifestUnavailable
+        );
+        assert_eq!(
+            verdict("pkg/tests/mimic.rs"),
+            CargoHarnessVerdict::ManifestUnavailable,
+            "even the autodiscovery premise cannot be established from a malformed manifest"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3634: ownership follows cargo metadata's member set, not manifest
+    /// presence. A `[[test]]` declaration in a manifest that is NOT a
+    /// workspace member grants no authority (the pre-#3634 emulation
+    /// credited it through a nearest-manifest walk — an over-credit); once
+    /// the same package joins the workspace its declaration claims the
+    /// target.
+    #[test]
+    fn metadata_membership_governs_target_ownership() -> Result<(), String> {
+        let dir = unique_workspace("nonconventional");
+        make_dir(&dir, "crates/a/qa")?;
+        make_dir(&dir, "qa_root")?;
+        // The empty [workspace] table makes the root package a
+        // standalone workspace root: under a test-process temp dir that
+        // sits inside an enclosing workspace, cargo would otherwise
+        // reject the bare package outright.
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[package]\nname='ws'\nversion='0.1.0'\nedition='2024'\n\n[workspace]\n",
+        )?;
+        make_dir(&dir, "src")?;
+        write_file(&dir, "src/lib.rs", "")?;
+        write_member_package(
+            &dir,
+            "crates/a",
+            "[package]\nname='a'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='mimic'\npath='qa/mimic.rs'\nharness=false\n",
+        )?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+
+        // crates/a is not a member (the root package forms its own
+        // single-package workspace): its declaration grants nothing.
+        assert_eq!(
+            verdict("crates/a/qa/mimic.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "a nonmember manifest's declaration grants no harness authority (#3634)"
+        );
+        // The root package's own nonconventional path matches nothing and
+        // is not an autodiscovery shape either.
+        assert_eq!(
+            verdict("qa_root/mimic.rs"),
+            CargoHarnessVerdict::NotDeclared
+        );
+
+        // Once crates/a joins the workspace its declaration claims the
+        // target, and a root declaration claims the root-level path.
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[package]\nname='ws'\nversion='0.1.0'\nedition='2024'\n\n[workspace]\nmembers = ['crates/a']\n\n\
+             [[test]]\nname='root_mimic'\npath='qa_root/mimic.rs'\nharness=false\n",
+        )?;
+        assert_eq!(
+            verdict("crates/a/qa/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the member's declaration is honored through metadata membership"
+        );
+        assert_eq!(
+            verdict("qa_root/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the root package's declaration is honored"
+        );
+
+        // Dropping the nested declaration: the member no longer declares
+        // the target and the inventory drops it.
+        write_member_package(
+            &dir,
+            "crates/a",
+            "[package]\nname='a'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        assert_eq!(
+            verdict("crates/a/qa/mimic.rs"),
+            CargoHarnessVerdict::NotDeclared
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review: Cargo never autodiscovers tests below `src/tests/`;
+    /// cargo's inventory simply has no such target, so the module file
+    /// stays uncredited without changing the shared layout predicate's
+    /// source-role behavior.
+    #[test]
+    fn nested_src_tests_module_file_is_not_an_autodiscovered_target() -> Result<(), String> {
+        let dir = unique_workspace("nested-tests");
+        make_dir(&dir, "pkg/src/tests")?;
+        make_dir(&dir, "pkg/tests")?;
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write_file(&dir, "pkg/tests/case.rs", "")?;
+        write_file(&dir, "Cargo.toml", "[workspace]\nmembers = ['pkg']\n")?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("pkg/src/tests/case.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "a module file below src/tests/ is not a package-root test target"
+        );
+        assert_eq!(
+            verdict("pkg/tests/case.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "the package-root tests/ shape stays autodiscovered"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round five (HAla), corrected by the #3637 review: a
+    /// name-only `[[test]]` entry governs both of cargo's name-only
+    /// layouts. With only `tests/<name>.rs` on disk cargo reports that
+    /// path; with only `tests/<name>/main.rs` cargo reports the directory
+    /// shape as the entry's target (verified against `cargo metadata`
+    /// 1.95.0) and it inherits the entry's flag; with both, cargo drops
+    /// the ambiguous target from its inventory entirely, so neither
+    /// layout is credited.
+    #[test]
+    fn name_only_entry_credits_both_cargo_layouts() -> Result<(), String> {
+        let dir = unique_workspace("name-only");
+        make_dir(&dir, "pkg/tests/suite")?;
+        write_file(&dir, "pkg/src/lib.rs", "")?;
+        write_file(&dir, "pkg/tests/suite/main.rs", "")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[workspace]
+members = ['pkg']
+",
+        )?;
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]
+name='p'
+version='0.1.0'
+edition='2024'
+
+[[test]]
+name='suite'
+harness=false
+",
+        )?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+
+        // Sole directory layout (#3637 review): cargo reports
+        // `tests/suite/main.rs` as the name-only entry's target, so the
+        // `harness = false` premise holds for it. The file layout is not
+        // in cargo's inventory at all and stays NotDeclared.
+        assert_eq!(
+            verdict("pkg/tests/suite/main.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the sole directory layout is the name-only entry's target and inherits its flag"
+        );
+        assert_eq!(
+            verdict("pkg/tests/suite.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "a layout cargo did not compile is not credited even though the entry governs it"
+        );
+
+        write_file(&dir, "pkg/tests/suite.rs", "")?;
+        assert_eq!(
+            verdict("pkg/tests/suite.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "with both layouts on disk cargo drops the ambiguous target entirely"
+        );
+
+        // With BOTH layouts on disk, cargo's inventory drops the
+        // ambiguous `suite` target entirely (verified against
+        // `cargo metadata`, #3634): neither layout inherits the flag.
+        write_file(&dir, "pkg/tests/suite/main.rs", "")?;
+        assert_eq!(
+            verdict("pkg/tests/suite.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "the dual file/directory shape is cargo-rejected, so nothing is credited"
+        );
+        assert_eq!(
+            verdict("pkg/tests/suite/main.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "the directory layout does not inherit the entry's flag"
+        );
+
+        // Without the entry, once the conflicting file is gone the
+        // directory layout is its own autodiscovered target with no
+        // flag to inherit.
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        std::fs::remove_file(dir.join("pkg/tests/suite.rs")).map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("pkg/tests/suite/main.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "without the declaration the autodiscovered directory layout is harness-enabled"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3637 review (devin): with both name-only layouts on disk cargo
+    /// drops the ambiguous `suite` target entirely, but an explicit entry
+    /// claiming the directory path stays in cargo's inventory. The
+    /// dropped declaration must not contribute its flag to the live
+    /// target — name-based matching skips it, so the explicit entry's
+    /// `harness = true` alone decides and the verdict is HarnessEnabled,
+    /// never a false flag conflict.
+    #[test]
+    fn dropped_dual_declaration_cannot_conflict_with_a_live_explicit_target() -> Result<(), String>
+    {
+        let dir = unique_workspace("dual-explicit");
+        make_dir(&dir, "pkg/tests/suite")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[workspace]
+members = ['pkg']
+",
+        )?;
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]
+name='p'
+version='0.1.0'
+edition='2024'
+
+[[test]]
+name='suite'
+harness=false
+
+[[test]]
+name='suite_main'
+path='tests/suite/main.rs'
+harness=true
+",
+        )?;
+        write_file(&dir, "pkg/src/lib.rs", "")?;
+        write_file(&dir, "pkg/tests/suite.rs", "")?;
+        write_file(&dir, "pkg/tests/suite/main.rs", "")?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("pkg/tests/suite/main.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "only the explicit entry cargo retained decides the live target's flag"
+        );
+        assert_eq!(
+            verdict("pkg/tests/suite.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "the dropped dual-layout declaration compiles nothing"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3637 review (devin): a relative analysis root must not invalidate
+    /// the metadata probe. The probe anchors the child process in the
+    /// workspace root, so the manifest path it passes must be resolved in
+    /// that root, not re-prefixed with it; the fixture lives under the
+    /// test process cwd (`target/`, gitignored) and the verdict is driven
+    /// with a purely relative root.
+    #[test]
+    fn relative_analysis_root_still_resolves_the_workspace() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let relative_root = PathBuf::from("target").join(format!("harness-relative-{stamp}"));
+        let pkg_tests = relative_root.join("pkg/tests");
+        std::fs::create_dir_all(&pkg_tests).map_err(|error| error.to_string())?;
+        std::fs::write(
+            relative_root.join("Cargo.toml"),
+            "[workspace]
+members = ['pkg']
+",
         )
         .map_err(|error| error.to_string())?;
         std::fs::write(
-            dir.join("member/Cargo.toml"),
-            "[package]\nname='m'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='target.rs'\nharness=false\n",
+            relative_root.join("pkg/Cargo.toml"),
+            "[package]
+name='p'
+version='0.1.0'
+edition='2024'
+
+[[test]]
+name='mimic'
+harness=false
+",
         )
         .map_err(|error| error.to_string())?;
+        std::fs::write(relative_root.join("pkg/src.rs"), "").map_err(|error| error.to_string())?;
+        std::fs::write(pkg_tests.join("mimic.rs"), "").map_err(|error| error.to_string())?;
+
+        let verdict =
+            cargo_test_target_harness_verdict(&relative_root, Path::new("pkg/tests/mimic.rs"));
+        assert_eq!(
+            verdict,
+            CargoHarnessVerdict::HarnessDisabled,
+            "a relative root resolves the same workspace premise as an absolute one"
+        );
+        let _ = std::fs::remove_dir_all(&relative_root);
+        Ok(())
+    }
+
+    /// #3637 review (devin), pinned across both cargo behaviors: cargo
+    /// metadata echoes the path family it was given on Windows (a
+    /// junction root yields alias-form keys, verified 1.95.0) but
+    /// canonicalizes symlinks on Unix (demonstrated by the Linux CI run of the
+    /// first version of this pin). The verdict therefore resolves the
+    /// anchored target under BOTH forms, and the alias root stays valid
+    /// on either host. Canonicalizing unconditionally would break the
+    /// Windows side (verbatim \?\ output never matches cargo's plain
+    /// echo); skipping canonicalization would break Unix.
+    /// Create a directory alias (Windows junction, Unix symlink) for the
+    /// alias-form inventory pin. Returns the OS error when aliases are
+    /// unavailable on this host so the caller can skip without a false
+    /// pass.
+    fn create_filesystem_alias(
+        real: &std::path::Path,
+        alias: &std::path::Path,
+    ) -> std::io::Result<()> {
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(alias)
+                .arg(real)
+                .status()?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other("mklink junction creation failed"))
+            }
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(real, alias)
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = (real, alias);
+            Err(std::io::Error::other("no filesystem alias support"))
+        }
+    }
+
+    #[test]
+    fn alias_form_roots_still_match_cargo_alias_form_output() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let temp = std::env::temp_dir();
+        let real = temp.join(format!("harness-alias-real-{stamp}"));
+        let alias = temp.join(format!("harness-alias-link-{stamp}"));
+        std::fs::create_dir_all(real.join("pkg/tests")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            real.join("Cargo.toml"),
+            "[workspace]
+members = ['pkg']
+",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            real.join("pkg/Cargo.toml"),
+            "[package]
+name='p'
+version='0.1.0'
+edition='2024'
+
+[[test]]
+name='mimic'
+harness=false
+",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(real.join("pkg/src.rs"), "").map_err(|error| error.to_string())?;
+        std::fs::write(real.join("pkg/tests/mimic.rs"), "").map_err(|error| error.to_string())?;
+        let alias_created = create_filesystem_alias(&real, &alias);
+        if alias_created.is_err() {
+            // Alias creation can be unavailable (no symlink privilege on
+            // this host): the invariant is still pinned wherever aliases
+            // exist, and skipping is not a pass for the alias path itself.
+            let _ = std::fs::remove_dir_all(&real);
+            return Ok(());
+        }
+        let verdict = cargo_test_target_harness_verdict(&alias, Path::new("pkg/tests/mimic.rs"));
+        let _ = std::fs::remove_dir_all(&alias);
+        let _ = std::fs::remove_dir_all(&real);
+        assert_eq!(
+            verdict,
+            CargoHarnessVerdict::HarnessDisabled,
+            "an alias-form root compares against cargo's alias-form inventory output"
+        );
+        Ok(())
+    }
+
+    /// #3608 review round five (HAkg): membership gating. A malformed
+    /// manifest that is NOT a workspace member is ignored by cargo
+    /// metadata — it neither rejects a valid member registration nor
+    /// conflicts with it — while a malformed MEMBER manifest makes the
+    /// whole workspace unresolvable and every verdict fails closed.
+    #[test]
+    fn membership_gates_the_declaration_map() -> Result<(), String> {
+        let dir = unique_workspace("membership");
+        make_dir(&dir, "member")?;
+        make_dir(&dir, "stray")?;
+        write_file(&dir, "Cargo.toml", "[workspace]\nmembers = ['member']\n")?;
+        write_member_package(
+            &dir,
+            "member",
+            "[package]\nname='m'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='target.rs'\nharness=false\n",
+        )?;
         // A standalone nested manifest outside the member set is
-        // malformed: it is not a member, so it is ignored entirely.
-        std::fs::write(dir.join("stray/Cargo.toml"), "not [ valid toml")
-            .map_err(|error| error.to_string())?;
+        // malformed: it is not a member, so cargo metadata ignores it.
+        write_file(&dir, "stray/Cargo.toml", "not [ valid toml")?;
         let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
         assert_eq!(
             verdict("member/target.rs"),
@@ -1931,20 +1856,20 @@ mod context_tests {
 
         // Even a nonmember declaring the same path with a conflicting
         // flag cannot create ambiguity: it is not part of the workspace.
-        std::fs::write(
-            dir.join("stray/Cargo.toml"),
-            "[package]\nname='s'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../member/target.rs'\nharness=true\n",
-        )
-        .map_err(|error| error.to_string())?;
+        write_member_package(
+            &dir,
+            "stray",
+            "[package]\nname='s'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../member/target.rs'\nharness=true\n",
+        )?;
         assert_eq!(
             verdict("member/target.rs"),
             CargoHarnessVerdict::HarnessDisabled,
             "nonmember declarations cannot conflict with member targets"
         );
 
-        // A malformed MEMBER manifest leaves the premise unprovable.
-        std::fs::write(dir.join("member/Cargo.toml"), "not [ valid toml")
-            .map_err(|error| error.to_string())?;
+        // A malformed MEMBER manifest leaves the whole workspace
+        // unresolvable: cargo metadata rejects it.
+        write_file(&dir, "member/Cargo.toml", "not [ valid toml")?;
         assert_eq!(
             verdict("member/target.rs"),
             CargoHarnessVerdict::ManifestUnavailable,
@@ -1959,31 +1884,19 @@ mod context_tests {
     /// harness declaration is honored.
     #[test]
     fn path_dependency_members_join_the_declaration_map() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-pathdep-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("crates/a")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("crates/b")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[workspace]\nmembers = ['crates/a']\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("crates/a/Cargo.toml"),
-            "[package]\nname='a'\nedition='2024'\n\n[dependencies]\nb = { path = '../b' }\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("crates/b/Cargo.toml"),
-            "[package]\nname='b'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
+        let dir = unique_workspace("pathdep");
+        write_member_package(
+            &dir,
+            "crates/a",
+            "[package]\nname='a'\nversion='0.1.0'\nedition='2024'\n\n[dependencies]\nb = { path = '../b' }\n",
+        )?;
+        write_member_package(
+            &dir,
+            "crates/b",
+            "[package]\nname='b'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=false\n",
+        )?;
+        make_dir(&dir, "shared")?;
+        write_file(&dir, "Cargo.toml", "[workspace]\nmembers = ['crates/a']\n")?;
         assert_eq!(
             cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
             CargoHarnessVerdict::HarnessDisabled,
@@ -1993,31 +1906,23 @@ mod context_tests {
         Ok(())
     }
 
-    /// #3608 review round five (HAkg): `[workspace.exclude]` removes glob
-    /// matches from the member set, and glob expansion (`crates/*`)
-    /// honors declared members.
+    /// #3608 review round five (HAkg): `[workspace.exclude]` removes
+    /// members and glob expansion (`crates/*`) honors declared members.
     #[test]
     fn glob_members_honor_excludes() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-glob-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("crates/kept")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("crates/dropped")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
+        let dir = unique_workspace("glob");
+        write_member_package(
+            &dir,
+            "crates/kept",
+            "[package]\nname='kept'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=false\n",
+        )?;
+        make_dir(&dir, "crates/dropped")?;
+        make_dir(&dir, "shared")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
             "[workspace]\nmembers = ['crates/*']\nexclude = ['crates/dropped']\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("crates/kept/Cargo.toml"),
-            "[package]\nname='kept'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
         assert_eq!(
             cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
             CargoHarnessVerdict::HarnessDisabled,
@@ -2025,11 +1930,11 @@ mod context_tests {
         );
         // The excluded package declares the same path with a conflicting
         // flag: excluded from the member set, it cannot create ambiguity.
-        std::fs::write(
-            dir.join("crates/dropped/Cargo.toml"),
-            "[package]\nname='dropped'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=true\n",
-        )
-        .map_err(|error| error.to_string())?;
+        write_member_package(
+            &dir,
+            "crates/dropped",
+            "[package]\nname='dropped'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=true\n",
+        )?;
         assert_eq!(
             cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
             CargoHarnessVerdict::HarnessDisabled,
@@ -2041,104 +1946,84 @@ mod context_tests {
 
     /// #3608 review round five (IZb_): a mid-pattern `**` spans
     /// arbitrarily deep directories — a harness-declaring package several
-    /// directories below a `crates/**/pkg` member pattern resolves.
+    /// directories below a `crates/**/pkg` member pattern resolves. Cargo
+    /// rejects a glob match without a manifest exactly as the
+    /// pre-#3634 emulation did: metadata fails closed.
     #[test]
     fn recursive_member_glob_reaches_deep_packages() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-deep-glob-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("crates/x/y/pkg")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
+        let dir = unique_workspace("deep-glob");
+        write_member_package(
+            &dir,
+            "crates/x/y/pkg",
+            "[package]\nname='deep'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../../../shared/mimic.rs'\nharness=false\n",
+        )?;
+        make_dir(&dir, "shared")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
             "[workspace]\nmembers = ['crates/**/pkg']\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("crates/x/y/pkg/Cargo.toml"),
-            "[package]\nname='deep'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../../../shared/mimic.rs'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
         assert_eq!(
             cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
             CargoHarnessVerdict::HarnessDisabled,
             "the deep package's declaration is honored through the recursive glob"
         );
-        // A trailing `**` reaches every depth — and, matching Cargo, a
-        // glob match landing on a manifest-less directory is a broken
-        // workspace that fails closed (Cargo errors on such members
-        // identically). Every matched directory here carries a manifest,
-        // so the declaration resolves.
-        std::fs::write(
-            dir.join("crates/x/Cargo.toml"),
-            "[package]\nname='x'\nedition='2024'\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("crates/x/y/Cargo.toml"),
-            "[package]\nname='y'\nedition='2024'\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("crates/x/y/nested"))
-            .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("crates/x/y/nested/Cargo.toml"),
-            "[package]\nname='nested'\nedition='2024'\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
+        // A trailing `**` reaches every manifest-carrying directory
+        // below its base — including member `src/` directories, which
+        // never carry manifests. Cargo rejects the whole shape (verified
+        // against `cargo metadata`, #3634), so the verdict fails closed
+        // even though `crates/x/y/pkg` itself is a valid declaring
+        // member; the pre-#3634 emulation only failed closed once a
+        // manifest-less directory was created by hand.
+        write_member_package(
+            &dir,
+            "crates/x",
+            "[package]\nname='x'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write_member_package(
+            &dir,
+            "crates/x/y",
+            "[package]\nname='y'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        make_dir(&dir, "crates/x/y/nested")?;
+        write_member_package(
+            &dir,
+            "crates/x/y/nested",
+            "[package]\nname='nested'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write_file(
+            &dir,
+            "Cargo.toml",
             "[workspace]\nmembers = ['crates/x/**']\n",
-        )
-        .map_err(|error| error.to_string())?;
-        assert_eq!(
-            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
-            CargoHarnessVerdict::HarnessDisabled
-        );
-        // One manifest-less glob match (an in-package src/ directory) is
-        // a broken workspace: the verdict fails closed, mirroring Cargo's
-        // rejection of such members.
-        std::fs::create_dir_all(dir.join("crates/x/y/nested/src"))
-            .map_err(|error| error.to_string())?;
+        )?;
         assert_eq!(
             cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
             CargoHarnessVerdict::ManifestUnavailable,
-            "a manifest-less glob match fails closed like Cargo's own rejection"
+            "a trailing ** glob over real packages matches manifest-less src/ directories: cargo rejects the shape"
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
 
     /// #3608 review round five (IZc5): a declared member whose manifest
-    /// does not exist is a broken workspace — the declaration map is
-    /// incomplete and every custom-harness verdict fails closed, even
-    /// when another member declares the registered target.
+    /// does not exist is a broken workspace — cargo metadata rejects it
+    /// and every custom-harness verdict fails closed, even when another
+    /// member declares the registered target.
     #[test]
     fn missing_member_manifest_fails_closed() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-absent-member-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("ghost")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("real")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
+        let dir = unique_workspace("absent-member");
+        make_dir(&dir, "ghost")?;
+        write_member_package(
+            &dir,
+            "real",
+            "[package]\nname='real'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='target.rs'\nharness=false\n",
+        )?;
+        write_file(
+            &dir,
+            "Cargo.toml",
             "[workspace]\nmembers = ['ghost', 'real']\n",
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
         // ghost/ is deliberately left without a Cargo.toml.
-        std::fs::write(
-            dir.join("real/Cargo.toml"),
-            "[package]\nname='real'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='target.rs'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
         assert_eq!(
             cargo_test_target_harness_verdict(&dir, Path::new("real/target.rs")),
             CargoHarnessVerdict::ManifestUnavailable,
@@ -2154,34 +2039,24 @@ mod context_tests {
     /// dependency is the only route to the package.
     #[test]
     fn dev_and_build_path_dependencies_join_the_member_set() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-devbuild-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("main")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("devdep")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("builddep")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
-        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = ['main']\n")
-            .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("main/Cargo.toml"),
-            "[package]\nname='main'\nedition='2024'\n\n[dev-dependencies]\ndevdep = { path = '../devdep' }\n\n[build-dependencies]\nbuilddep = { path = '../builddep' }\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("devdep/Cargo.toml"),
-            "[package]\nname='devdep'\nedition='2024'\n\n[[test]]\nname='dev_mimic'\npath='../shared/dev.rs'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("builddep/Cargo.toml"),
-            "[package]\nname='builddep'\nedition='2024'\n\n[[test]]\nname='build_mimic'\npath='../shared/build.rs'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
+        let dir = unique_workspace("devbuild");
+        write_member_package(
+            &dir,
+            "main",
+            "[package]\nname='main'\nversion='0.1.0'\nedition='2024'\n\n[dev-dependencies]\ndevdep = { path = '../devdep' }\n\n[build-dependencies]\nbuilddep = { path = '../builddep' }\n",
+        )?;
+        write_member_package(
+            &dir,
+            "devdep",
+            "[package]\nname='devdep'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='dev_mimic'\npath='../shared/dev.rs'\nharness=false\n",
+        )?;
+        write_member_package(
+            &dir,
+            "builddep",
+            "[package]\nname='builddep'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='build_mimic'\npath='../shared/build.rs'\nharness=false\n",
+        )?;
+        make_dir(&dir, "shared")?;
+        write_file(&dir, "Cargo.toml", "[workspace]\nmembers = ['main']\n")?;
         let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
         assert_eq!(
             verdict("shared/dev.rs"),
@@ -2197,37 +2072,33 @@ mod context_tests {
         Ok(())
     }
 
-    /// #3608 review round six (I4dv): exclusion semantics apply to path
-    /// dependencies of members. A member depending on an excluded package
-    /// by path does not give that package harness authority: its
-    /// declarations validate nothing and conflict with nothing.
+    /// #3608 review round six (I4dv), pinned as cargo's own behavior
+    /// (#3634; empirically verified on the pinned toolchain against
+    /// `cargo metadata`: an excluded direct path dependency stays outside
+    /// `workspace_members`). A member depending on an excluded package by
+    /// path does not give that package harness authority: its declarations
+    /// validate nothing and conflict with nothing. The exclude x path-dep
+    /// precedence is contested upstream; cargo's exclude-wins resolution
+    /// is also the under-credit direction, so the pin is safe.
     #[test]
     fn excluded_path_dependency_gains_no_harness_authority() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-excl-dep-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("main")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("dep")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
+        let dir = unique_workspace("excl-dep");
+        write_member_package(
+            &dir,
+            "main",
+            "[package]\nname='main'\nversion='0.1.0'\nedition='2024'\n\n[dependencies]\ndep = { path = '../dep' }\n",
+        )?;
+        write_member_package(
+            &dir,
+            "dep",
+            "[package]\nname='dep'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../shared/mimic.rs'\nharness=true\n",
+        )?;
+        make_dir(&dir, "shared")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
             "[workspace]\nmembers = ['main']\nexclude = ['dep']\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("main/Cargo.toml"),
-            "[package]\nname='main'\nedition='2024'\n\n[dependencies]\ndep = { path = '../dep' }\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("dep/Cargo.toml"),
-            "[package]\nname='dep'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../shared/mimic.rs'\nharness=true\n",
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
         let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
 
         // The excluded dependency's harness = true declaration validates
@@ -2242,13 +2113,15 @@ mod context_tests {
         // opposite flag stays deterministic instead of becoming ambiguous.
         // The root here is a package so its own [[test]] declaration is
         // one a broken exclusion would have to clash with.
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[package]\nname='ws'\nedition='2024'\n\n\
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[package]\nname='ws'\nversion='0.1.0'\nedition='2024'\n\n\
              [workspace]\nmembers = ['main']\nexclude = ['dep']\n\n\
              [[test]]\nname='mimic'\npath='shared/mimic.rs'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
+        make_dir(&dir, "src")?;
+        write_file(&dir, "src/lib.rs", "")?;
         assert_eq!(
             verdict("shared/mimic.rs"),
             CargoHarnessVerdict::HarnessDisabled,
@@ -2258,37 +2131,30 @@ mod context_tests {
         Ok(())
     }
 
-    /// #3608 review round seven (Jhjw/Jlb0): exclusion semantics are
-    /// directory-prefix aware. `exclude = ['dep']` excludes `dep/sub`
-    /// exactly as Cargo does (verified against `cargo metadata`), so a
-    /// nested path dependency's harness declarations grant no authority.
+    /// #3608 review round seven (Jhjw/Jlb0), pinned as cargo's own
+    /// behavior (#3634; empirically verified against `cargo metadata`):
+    /// exclusion is directory-prefix aware, so `exclude = ['dep']` keeps a
+    /// nested `dep/sub` path dependency outside the member set and its
+    /// harness declarations grant no authority.
     #[test]
     fn exclusion_prefix_covers_nested_path_dependencies() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-excl-prefix-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("main")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("dep/sub")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
+        let dir = unique_workspace("excl-prefix");
+        write_member_package(
+            &dir,
+            "main",
+            "[package]\nname='main'\nversion='0.1.0'\nedition='2024'\n\n[dependencies]\nsub = { path = '../dep/sub' }\n",
+        )?;
+        write_member_package(
+            &dir,
+            "dep/sub",
+            "[package]\nname='sub'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=true\n",
+        )?;
+        make_dir(&dir, "shared")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
             "[workspace]\nmembers = ['main']\nexclude = ['dep']\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("main/Cargo.toml"),
-            "[package]\nname='main'\nedition='2024'\n\n[dependencies]\nsub = { path = '../dep/sub' }\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("dep/sub/Cargo.toml"),
-            "[package]\nname='sub'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=true\n",
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
         let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
 
         // The nested excluded dependency's declaration validates nothing.
@@ -2300,13 +2166,15 @@ mod context_tests {
 
         // And it conflicts with nothing: a member declaration with the
         // opposite flag stays deterministic instead of becoming ambiguous.
-        std::fs::write(
-            dir.join("Cargo.toml"),
-            "[package]\nname='ws'\nedition='2024'\n\n\
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[package]\nname='ws'\nversion='0.1.0'\nedition='2024'\n\n\
              [workspace]\nmembers = ['main']\nexclude = ['dep']\n\n\
              [[test]]\nname='mimic'\npath='shared/mimic.rs'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
+        make_dir(&dir, "src")?;
+        write_file(&dir, "src/lib.rs", "")?;
         assert_eq!(
             verdict("shared/mimic.rs"),
             CargoHarnessVerdict::HarnessDisabled,
@@ -2316,62 +2184,29 @@ mod context_tests {
         Ok(())
     }
 
-    /// #3608 review round seven (Jhjw/Jlb0): the exclusion helper's
-    /// exact contract — prefix coverage, component-boundary strictness,
-    /// glob components inside prefixes, and preserved exact matches.
-    #[test]
-    fn exclusion_patterns_exclude_directory_prefixes() {
-        assert!(exclusion_pattern_excludes("dep", "dep"));
-        assert!(exclusion_pattern_excludes("dep", "dep/sub"));
-        assert!(exclusion_pattern_excludes("dep", "dep/sub/deeper"));
-        assert!(exclusion_pattern_excludes("a/b", "a/b/c"));
-        assert!(exclusion_pattern_excludes(
-            "crates/skip*",
-            "crates/skip-x/deep"
-        ));
-        assert!(
-            !exclusion_pattern_excludes("dep", "deposit"),
-            "a prefix never matches an unrelated longer component"
-        );
-        assert!(!exclusion_pattern_excludes("a/b", "a/c"));
-        assert!(!exclusion_pattern_excludes("a/b/c", "a/b"));
-    }
-
-    /// #3608 review round eight: Cargo's explicit-literal versus glob
-    /// precedence over parent-prefix exclusions, pinned per shape against
-    /// cargo metadata parity (verified on this toolchain: members =
-    /// ["dep/sub"] with exclude = ["dep"] retains sub as a workspace
-    /// member; members = ["dep/*"] with the same exclusion removes it).
-    ///
-    /// Shape A — explicit literal entry: `dep/sub` keeps its harness
-    /// authority, so its `harness = false` declaration claims the target.
+    /// #3608 review round eight, shape A — explicit literal entry:
+    /// `dep/sub` stays a member under `exclude = ['dep']` (verified
+    /// against `cargo metadata`), so its `harness = false` declaration
+    /// claims the target.
     #[test]
     fn explicit_literal_member_beats_parent_prefix_exclusion() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-literal-member-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("main")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("dep/sub")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
+        let dir = unique_workspace("literal-member");
+        write_member_package(
+            &dir,
+            "main",
+            "[package]\nname='main'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write_member_package(
+            &dir,
+            "dep/sub",
+            "[package]\nname='sub'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=false\n",
+        )?;
+        make_dir(&dir, "shared")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
             "[workspace]\nmembers = ['dep/sub']\nexclude = ['dep']\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("main/Cargo.toml"),
-            "[package]\nname='main'\nedition='2024'\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("dep/sub/Cargo.toml"),
-            "[package]\nname='sub'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=false\n",
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
         assert_eq!(
             cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
             CargoHarnessVerdict::HarnessDisabled,
@@ -2382,39 +2217,155 @@ mod context_tests {
     }
 
     /// #3608 review round eight, shape B — glob-discovered member: the
-    /// same nested package reached through `dep/*` yields to the parent
-    /// prefix exclusion, so its declaration grants no authority.
+    /// nested package reached through `dep/*` yields to the parent-prefix
+    /// exclusion `dep`, so its declaration grants no authority. The
+    /// declared path resolves inside the workspace
+    /// (`../../shared/mimic.rs`), so the assertion actually discriminates:
+    /// a regression that kept the member would surface its harness-enabled
+    /// target as HarnessEnabled (round-eight review; fixture path fixed
+    /// for #3634).
     #[test]
     fn glob_discovered_member_yields_to_parent_prefix_exclusion() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!(
-            "ripr-harness-glob-member-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(dir.join("main")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("dep/sub")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("Cargo.toml"),
+        let dir = unique_workspace("glob-member");
+        write_member_package(
+            &dir,
+            "main",
+            "[package]\nname='main'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write_member_package(
+            &dir,
+            "dep/sub",
+            "[package]\nname='sub'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=true\n",
+        )?;
+        make_dir(&dir, "shared")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
             "[workspace]\nmembers = ['dep/*']\nexclude = ['dep']\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("main/Cargo.toml"),
-            "[package]\nname='main'\nedition='2024'\n",
-        )
-        .map_err(|error| error.to_string())?;
-        std::fs::write(
-            dir.join("dep/sub/Cargo.toml"),
-            "[package]\nname='sub'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../../shared/mimic.rs'\nharness=true\n",
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
         assert_eq!(
             cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
             CargoHarnessVerdict::NotDeclared,
             "the glob-discovered member is dropped: its declaration grants no authority"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3634 edge case 1: a member depending on a path through
+    /// `[workspace.dependencies]` inheritance is a workspace member per
+    /// `cargo metadata`, so the inherited dependency's `harness = false`
+    /// declaration claims its target. The pre-#3634 emulation left the
+    /// inherited dependency unresolved and under-credited the
+    /// registration.
+    #[test]
+    fn workspace_inherited_path_dependency_joins_the_member_set() -> Result<(), String> {
+        let dir = unique_workspace("ws-inherited");
+        write_member_package(
+            &dir,
+            "crates/app",
+            "[package]\nname='app'\nversion='0.1.0'\nedition='2024'\n\n[dependencies]\ndep = { workspace = true }\n",
+        )?;
+        write_member_package(
+            &dir,
+            "dep",
+            "[package]\nname='dep'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../shared/mimic.rs'\nharness=false\n",
+        )?;
+        make_dir(&dir, "shared")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[workspace]\nmembers = ['crates/app']\n\n[workspace.dependencies]\ndep = { path = 'dep' }\n",
+        )?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the workspace-inherited path dependency is a member: its declaration claims the target"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3634 edge case 2 (round-eight review): cargo treats
+    /// `[workspace.exclude]` patterns as literal path prefixes — a
+    /// wildcard component matches no member directory, verified against
+    /// `cargo metadata` on the pinned toolchain. `exclude = ['dep/*']`
+    /// therefore excludes nothing: the glob-matched member keeps its
+    /// harness authority (shape: `members = ['dep/*']`), and so does the
+    /// literal member under the same exclusion (shape:
+    /// `members = ['dep/sub']`). The pre-#3634 emulation glob-matched
+    /// exclude patterns and wrongly dropped both.
+    #[test]
+    fn exclude_wildcard_pattern_excludes_no_member() -> Result<(), String> {
+        let dir = unique_workspace("exclude-wildcard");
+        write_member_package(
+            &dir,
+            "main",
+            "[package]\nname='main'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write_member_package(
+            &dir,
+            "dep/sub",
+            "[package]\nname='sub'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=false\n",
+        )?;
+        make_dir(&dir, "shared")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[workspace]\nmembers = ['dep/*']\nexclude = ['dep/*']\n",
+        )?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
+            CargoHarnessVerdict::HarnessDisabled,
+            "exclude = dep/* matches no member: dep/sub keeps its harness authority"
+        );
+
+        // The same holds for a literal member entry under the wildcard
+        // exclusion: a literal prefix `dep/*` does not cover `dep/sub`.
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[workspace]\nmembers = ['dep/sub']\nexclude = ['dep/*']\n",
+        )?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the literal member is retained under the wildcard exclusion"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3634 (round-eight review): cargo expands character-class member
+    /// globs — `members = ['crates/[ab]']` admits both packages, so the
+    /// harness-declaring member's declaration claims the shared target.
+    /// The pre-#3634 emulation treated the pattern as a literal
+    /// directory, found no manifest there, and failed closed with
+    /// ManifestUnavailable.
+    #[test]
+    fn character_class_member_glob_resolves() -> Result<(), String> {
+        let dir = unique_workspace("charclass");
+        write_member_package(
+            &dir,
+            "crates/a",
+            "[package]\nname='a'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=false\n",
+        )?;
+        write_member_package(
+            &dir,
+            "crates/b",
+            "[package]\nname='b'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        make_dir(&dir, "crates/c")?;
+        make_dir(&dir, "shared")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[workspace]\nmembers = ['crates/[ab]']\n",
+        )?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the character-class glob expands: member a's declaration claims the target"
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())

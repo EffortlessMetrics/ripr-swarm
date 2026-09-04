@@ -6,6 +6,10 @@ Ratified 2026-09-01: the #3534 conformance corpus and
 `cargo xtask check-rust-source-role-authority` passed on #3618 after
 the implementation train (#3499, #3519 disposition, #3530-#3534) merged.
 
+Reworked 2026-09-03 (#3634): the harness-target validation sources
+workspace membership and the test-target inventory from `cargo
+metadata` itself, replacing the bounded manifest TOML emulation.
+
 Issue: #3283 (parent #3213; builds on #3273 and #3286)
 
 ## Problem
@@ -82,58 +86,52 @@ and macro suffixes never classify.
 
 A `custom_harness` registration grants its file-wide evidence role
 (and the registry's helper demotion and trial-subject derivation)
-only after its target validates against the parsed Cargo target
-metadata of the owning package (#3608): the target must match a
-declared `[[test]]` target — explicit `path = ...` or a name-only
-entry resolved to its autodiscovery shape — whose effective
-`harness` flag is `false`. Explicit-target ownership is
-declaration-driven across the analyzed workspace's MEMBER manifests
-only: the analysis-root manifest defines the member set (its own
-package, declared `[workspace.members]` with `*`/`?`/`**` globs
-matched lexically minus `[workspace.exclude]`, and package manifests
-reached through members' path dependencies across the regular, dev,
-and build dependency sections (verified against `cargo metadata`;
-workspace-inherited dependencies are not resolved in this bounded
-model)). Every member manifest's
-`[[test]] path = ...` entries are resolved lexically against their own
-manifest directory (ParentDir and CurDir segments collapse without
-touching the filesystem; a leading escape chain stays as spelled), and
-any member declaring the exact resolved target path claims it — so
-sibling-package `../shared/x.rs` declarations, targets below nested
-manifest directories, and in-package `generated/../qa/...` spellings
-all resolve. Agreeing declarations are deterministic; conflicting
-`harness` flags on one path are ambiguous ownership and fail closed.
-Nearest-manifest resolution governs the autodiscovery premise alone.
-Each batch parses every member manifest at most once; a member
-manifest that cannot be read or parsed leaves the declaration map
-incomplete and yields `manifest_unavailable`, never a target-typo
-verdict; nonmember manifests are skipped entirely (their declarations
-never validate a target and their conflicts never block one), and a
-declared member whose manifest does not exist fails closed the same
-way — Cargo rejects such workspaces too. Package autodiscovery is credited only for
-package-root `tests/**` shapes (never `src/tests/**`) under Cargo's
-effective default — including the edition-2015
-backward-compatibility rule where a manual `[[test]]` target with
-edition 2015 (explicit, omitted, or inherited via
-`edition.workspace = true` from the analysis root's
-`[workspace.package]`) disables autodiscovery. A manifest without a
-`[package]` table declares nothing: Cargo rejects target tables in
-virtual manifests. A name-only `[[test]]` entry defaults to exactly
-`tests/<name>.rs`; the `tests/<name>/main.rs` directory layout is a
-separate autodiscovered target that does not inherit the entry's
-`harness` flag. A target missing from Cargo metadata, a
-target whose Cargo entry still has `harness = true` (explicit or
-autodiscovered default), or an unresolvable owning manifest each
-record a typed limitation (`target_not_declared`,
-`harness_flag_conflict`, `manifest_unavailable`) naming the target;
-the registration degrades to per-function behavior — the file keeps
+only after its target validates against the workspace's Cargo
+target metadata (#3608; metadata-sourced since #3634): the target
+must match a declared `[[test]]` target — explicit `path = ...` or a
+name-only entry resolved to its autodiscovery shape — whose effective
+`harness` flag is `false`. Membership and target identity come from
+`cargo metadata` itself: each batch runs one bounded
+`cargo metadata --no-deps --offline` probe against the analysis root
+(the child cwd is anchored there, so a caller running inside another
+workspace cannot have the probe rejected as a foreign manifest), and
+its `packages[].targets[]` inventory is the authority for both the
+member set and the test-target list. That resolves exactly the shapes
+the previous manifest TOML emulation approximated or dropped:
+`[workspace.dependencies]` inheritance (an inherited path dependency is
+a member), character-class member globs (`crates/[ab]` expands),
+`[workspace.exclude]` (cargo matches exclude patterns as literal path
+prefixes — a wildcard component matches no member, a bare `dep` prefix
+excludes the subtree, and a literal member entry beats its
+parent-prefix exclusion), and regular/dev/build path dependencies. The
+exclude x path-dependency precedence is contested upstream; cargo
+resolves it exclude-wins on the pinned toolchain (verified empirically,
+direct and nested), which is also the under-credit direction, so the
+behavior is pinned rather than chosen. The `harness` flag is absent
+from metadata output by construction (verified on the pinned
+toolchain), so the flag premise still comes from parsing the owning
+package manifest's `[[test]]` entries — explicit path spellings and
+name-only `tests/<name>.rs` defaults alike; cargo keeps declared `..`
+segments in `src_path` as spelled, so declared paths and registration
+targets resolve lexically on both sides. Conflicting flags across
+owning manifests — the same path claimed by two packages — are
+ambiguous ownership and fail closed. A target missing from the
+inventory is `target_not_declared`; a target present without any naming
+manifest entry is autodiscovery, whose libtest default
+(`harness = true`; cargo resolves edition, `autotests`, and the
+directory-versus-file layouts itself) is `harness_flag_conflict`. Any
+unresolvable state — no cargo binary, a workspace cargo rejects (a
+broken member manifest, a virtual manifest carrying a target table, a
+glob member without a manifest), a probe that outlives its deadline, or
+an unreadable probe output — yields `manifest_unavailable`: the
+registration grants nothing, never over-credits, and the file keeps
 its ordinary classification, so a misdeclared target that ordinary
 classification treats as production keeps seeding production seams
 while a target in a `tests/`-style or Cargo-discovered evidence
 layout keeps its evidence role. Every file-wide evidence surface (diff
 seeding, repo seam inventory, LSP scope partition) consumes the same
 validated grant, so the degradation is identical everywhere, and the
-classified-seam caches bump their schema generations so pre-#3608
+classified-seam caches bump their schema generations so pre-#3634
 entries cannot serve classifications that bypass the validation.
 
 The opt-in joins the check-artifact config identity as
@@ -215,7 +213,12 @@ The #3532 harness registry joined the same identity as FindingAffecting
 Cargo-autodiscovery shapes, override priority, windows normalization,
 and the seeding/evidence partition. `analysis/workspace/cargo_targets.rs`
 pins manifest extraction and the #3608 harness-target Cargo verdict
-(declared, harness-enabled, undeclared, manifest-unavailable).
+(declared, harness-enabled, undeclared, manifest-unavailable) against
+real `cargo metadata` workspaces (#3634): metadata-sourced membership
+(workspace-inherited path dependencies, character-class member globs,
+wildcard exclude patterns, exclude x path-dependence precedence,
+recursive member globs), the fail-closed probe boundary, and the
+manifest-sourced `harness` flag.
 `analysis/facts/harness_registry` pins the conflict limitations and the
 degraded per-function behavior for misdeclared targets, and
 `analysis/language/rust.rs` pins the diff-path seeding flip alongside

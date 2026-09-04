@@ -17,8 +17,9 @@
 //!   RIPR did not expand every generated case — subjects state their
 //!   [`HarnessSubjectClaim`];
 //! - a known selector route ([`HarnessSelectorCapability::NamedUnexecuted`])
-//!   is not a selector that ran — passive analysis never starts Cargo or
-//!   a harness;
+//!   is not a selector that ran — passive analysis never builds or
+//!   executes a harness (the #3634 target validation reads `cargo
+//!   metadata` for declarations only; it never compiles or runs tests);
 //! - unregistered or ambiguous harnesses become typed limitations —
 //!   never production reclassification and never executable-test
 //!   optimism.
@@ -91,13 +92,18 @@ use std::path::Path;
 /// repositories without registrations keep every existing output.
 ///
 /// Before a `custom_harness` registration grants anything, its target is
-/// validated against the parsed Cargo target metadata of the owning
-/// package (#3608): only a declared `[[test]]` target with
-/// `harness = false` carries the premise the adapter needs. A target
-/// missing from Cargo metadata, still harness-enabled, or backed by an
-/// unreadable manifest records a typed limitation and the registration
-/// degrades to per-function behavior — the file keeps its ordinary
-/// classification instead of receiving file-wide evidence role.
+/// validated against the workspace's Cargo target metadata (#3608): only
+/// a declared `[[test]]` target with `harness = false` carries the
+/// premise the adapter needs. Membership and target identity come from
+/// `cargo metadata` itself, and the `harness` flag from the owning
+/// manifest, because metadata output omits the flag (#3634). A target
+/// missing from Cargo metadata, still harness-enabled, or an
+/// unresolvable validation premise (an unreadable owning manifest,
+/// cargo metadata that is unavailable for the analyzed workspace, or
+/// owning manifests that disagree on the target's `harness` flag)
+/// records a typed limitation and the registration degrades to
+/// per-function behavior — the file keeps its ordinary classification
+/// instead of receiving file-wide evidence role.
 pub(super) fn apply_registrations(
     index: &mut RustIndex,
     workspace_root: &Path,
@@ -197,7 +203,7 @@ fn cargo_metadata_conflict_limitation(
             "the registered custom-harness target `{displayed}` does not match any Cargo `[[test]]` target (declared or autodiscovered) in the owning package manifest; no file-wide evidence role, demotion, or trial subjects are granted and the file keeps its ordinary per-function classification"
         ),
         CargoHarnessVerdict::ManifestUnavailable => format!(
-            "the owning package manifest for `{displayed}` could not be read or parsed, so the `harness = false` premise of the registration cannot be established from Cargo metadata; no file-wide evidence role, demotion, or trial subjects are granted and the file keeps its ordinary per-function classification"
+            "the Cargo metadata premise for `{displayed}` could not be established (the owning package manifest could not be read or parsed, the workspace's `cargo metadata` was unavailable, or the owning manifests disagree on the target's `harness` flag), so the `harness = false` premise of the registration is not confirmed; no file-wide evidence role, demotion, or trial subjects are granted and the file keeps its ordinary per-function classification"
         ),
         CargoHarnessVerdict::HarnessDisabled => return None,
     };
