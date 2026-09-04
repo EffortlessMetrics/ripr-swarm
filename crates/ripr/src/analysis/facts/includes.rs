@@ -349,9 +349,18 @@ fn rebase_function_identity(
     if compilation_unit == function.file {
         return;
     }
-    let source_prefix = format!("{}::", function.file.display());
+    // Function identities are composed from the stable `/`-separated
+    // path text (`stable_path_text`, #3469 family) while `file` keeps the
+    // producing host's separators, so the prefix must be built from the
+    // same stable form — on a backslash host the display form never
+    // matches and the include rebase silently never fires (Windows-only
+    // failure of `rust_include_compilation_unit`, #3631-adjacent).
+    let source_prefix = format!("{}::", crate::analysis::stable_path_text(&function.file));
     if let Some(suffix) = function.id.0.strip_prefix(&source_prefix) {
-        function.id.0 = format!("{}::{suffix}", compilation_unit.display());
+        function.id.0 = format!(
+            "{}::{suffix}",
+            crate::analysis::stable_path_text(&compilation_unit)
+        );
     }
 }
 
@@ -386,6 +395,40 @@ fn limitation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rebase prefix must be composed from the same stable identity
+    /// text the symbol id uses, never from `file.display()`: identity is
+    /// canonical `/`-separated text (#3469 family) while `file` keeps the
+    /// producing host's separators, and a filename `%` makes the two
+    /// forms diverge on every host — so this pins the contract on Linux
+    /// CI too, where the Windows separator mismatch itself cannot run
+    /// (#3638 review).
+    #[test]
+    fn rebase_prefix_uses_the_stable_identity_form_not_display() {
+        let mut parents = BTreeMap::new();
+        parents.insert(
+            PathBuf::from("src/frag_50%.rs"),
+            ResolvedIncludeParent {
+                parent: PathBuf::from("src/lib.rs"),
+                requires_test: false,
+            },
+        );
+        let mut function = crate::analysis::rust_index::FunctionFact {
+            id: crate::domain::SymbolId("src/frag_50%25.rs::impl W::f".to_string()),
+            name: "f".to_string(),
+            file: PathBuf::from("src/frag_50%.rs"),
+            start_line: 1,
+            end_line: 2,
+            body: "fn f() {}".to_string(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: crate::analysis::facts::FunctionSourceRole::Production,
+            attrs: Vec::new(),
+        };
+        super::rebase_function_identity(&mut function, &parents);
+        assert_eq!(function.id.0, "src/lib.rs::impl W::f");
+    }
 
     #[test]
     fn include_macro_prefilter_rejects_common_identifier_mentions() {
