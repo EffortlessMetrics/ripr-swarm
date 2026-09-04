@@ -7,6 +7,7 @@
 use super::*;
 use crate::analysis::facts::build_index_with_test_harnesses;
 use crate::analysis::facts::model::FileFacts;
+use crate::domain::{OracleKind, OracleStrength};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -462,9 +463,10 @@ fn plain_idents_inside_trial_bodies_never_become_oracles() -> Result<(), Box<dyn
             .iter()
             .map(|assertion| assertion.text.as_str())
             .collect::<Vec<_>>(),
-        // One macro-shaped oracle with the invocation's real text; the
-        // `let snapshots` ident never classifies.
-        vec!["assert_eq!(snapshots, 1)"]
+        // One macro-shaped oracle with the invocation's real text (the
+        // same-line trailing semicolon included, ordinary-parser parity);
+        // the `let snapshots` ident never classifies.
+        vec!["assert_eq!(snapshots, 1);"]
     );
     Ok(())
 }
@@ -503,8 +505,1513 @@ fn snapshot_named_helpers_never_become_oracles_but_snapshot_asserts_do()
             .map(|assertion| assertion.text.as_str())
             .collect::<Vec<_>>(),
         // The *_snapshot naming boundary keeps helper-style macros out
-        // while the assert_snapshot family still classifies.
-        vec!["assert_snapshot!(1)"]
+        // while the assert_snapshot family still classifies (trailing
+        // semicolon included, ordinary-parser parity).
+        vec!["assert_snapshot!(1);"]
+    );
+    Ok(())
+}
+
+#[test]
+fn helper_callback_bodies_contribute_one_level_of_subject_evidence()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 gap 1: a trial registered as `Trial::test("name", helper_fn)`
+    // exercises the helper's body. The subject's claimed span stays the
+    // registration invocation, but its evidence (calls, oracles,
+    // literals) must be derived from the resolved helper body one level
+    // deep, with real line attribution — otherwise the subject
+    // understates observation relative to an ordinary `#[test]` that
+    // calls the same helper.
+    let root = temp_dir("helper-callback-body")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/helper_body.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn parse_config(raw: &str) -> u16 {
+    raw.parse().unwrap_or(0)
+}
+
+fn check_beta() -> Result<(), String> {
+    let port = parse_config("8080").unwrap();
+    assert_eq!(port, 8080);
+    Ok(())
+}
+
+fn trials() -> Vec<Trial> {
+    vec![
+        Trial::test("beta_round_trips", check_beta),
+        Trial::test("gamma_foreign", other_crate::check),
+    ]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "helper_body", "tests/helper_body.rs")?;
+    let files = [PathBuf::from("tests/helper_body.rs")];
+    let registrations = [custom_target_registration("tests/helper_body.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    let beta = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "beta_round_trips")
+        .ok_or("beta subject missing")?;
+    // The claimed identity span stays the registration invocation: the
+    // helper widens the evidence, not the subject span or body.
+    assert_eq!(beta.start_line, 16, "{:?}", beta.start_line);
+    assert_eq!(beta.end_line, 16, "{:?}", beta.end_line);
+    assert!(
+        !beta.body.contains("parse_config"),
+        "the subject body stays the invocation span: {:?}",
+        beta.body
+    );
+
+    // Calls observed in the helper body join the subject with real lines.
+    let beta_calls = beta
+        .calls
+        .iter()
+        .map(|call| (call.line, call.name.as_str()))
+        .collect::<Vec<_>>();
+    assert!(
+        beta_calls.contains(&(9, "parse_config")),
+        "the helper body's call is subject evidence: {beta_calls:?}"
+    );
+
+    // One level deep only: the transitive callee's body (parse_config,
+    // lines 4-6) stays unclaimed — its internals are not code the trial
+    // subject's own callback text exercises directly.
+    assert!(
+        beta_calls.iter().all(|(line, _)| *line >= 8),
+        "transitive helper bodies stay unclaimed: {beta_calls:?}"
+    );
+
+    // Oracles from the helper body carry the helper's real source lines:
+    // the helper's own method unwrap (gap 2, helper path) and its macro
+    // assertion.
+    let unwrap_oracle = beta
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.contains(".unwrap()"))
+        .ok_or("helper unwrap oracle missing")?;
+    assert_eq!(unwrap_oracle.line, 9, "{:?}", unwrap_oracle.line);
+    assert_eq!(unwrap_oracle.kind, OracleKind::SmokeOnly);
+    assert_eq!(unwrap_oracle.strength, OracleStrength::Smoke);
+    let assert_eq = beta
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!"))
+        .ok_or("helper assert_eq oracle missing")?;
+    assert_eq!(assert_eq.line, 10, "{:?}", assert_eq.line);
+    // Helper-body literals join the subject evidence.
+    assert!(
+        beta.literals
+            .iter()
+            .any(|literal| literal.value == "8080" && literal.line == 10),
+        "{:?}",
+        beta.literals
+    );
+
+    // Fail-closed control: a path callback (`other_crate::check`) is not a
+    // bare identifier bound in this file, so nothing is invented for it.
+    let gamma = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "gamma_foreign")
+        .ok_or("gamma subject missing")?;
+    assert!(
+        gamma.calls.iter().all(|call| call.name != "check"),
+        "unresolved callbacks contribute no invented evidence: {:?}",
+        gamma.calls
+    );
+    assert!(gamma.assertions.is_empty(), "{:?}", gamma.assertions);
+
+    // The mirrored TestFact carries the same widened evidence so every
+    // existing test consumer sees the subject the same way.
+    let beta_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "beta_round_trips")
+        .ok_or("beta test missing")?;
+    assert!(
+        beta_test
+            .calls
+            .iter()
+            .any(|call| call.name == "parse_config"),
+        "{:?}",
+        beta_test.calls
+    );
+    assert!(
+        beta_test
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text.starts_with("assert_eq!") && oracle.line == 10),
+        "{:?}",
+        beta_test.assertions
+    );
+    Ok(())
+}
+
+#[test]
+fn shadowed_callback_names_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review: a bare-identifier callback may name a local binding
+    // (let/parameter/closure), an import, or a fn that is not even
+    // name-visible from the invocation — crediting a same-named
+    // file-level fn's body in those cases would credit evidence the
+    // trial cannot reach (false exposed). Every such shape fails closed:
+    // the trial subject stays, but none of the same-named fn's body
+    // evidence is claimed.
+    let root = temp_dir("shadowed-callbacks")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/shadowed.rs",
+            r#"
+use libtest_mimic::Trial;
+use other_crate::imported_helper;
+
+fn imported_helper() -> u16 {
+    production_call(1)
+}
+
+fn closure_shadow_trials() -> Vec<Trial> {
+    let shadow_target = || 1u16;
+    vec![Trial::test("closure_shadow", shadow_target)]
+}
+
+fn param_shadow_trials(shadow_target: fn() -> u16) -> Vec<Trial> {
+    vec![Trial::test("param_shadow", shadow_target)]
+}
+
+fn nested_mod_shadow_trials() -> Vec<Trial> {
+    vec![Trial::test("nested_mod_shadow", nested_helper)]
+}
+
+fn import_shadow_trials() -> Vec<Trial> {
+    vec![Trial::test("import_shadow", imported_helper)]
+}
+
+mod helpers {
+    pub fn nested_helper() -> u16 {
+        production_call(3)
+    }
+}
+
+fn shadow_target() -> u16 {
+    production_call(4)
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "shadowed", "tests/shadowed.rs")?;
+    let files = [PathBuf::from("tests/shadowed.rs")];
+    let registrations = [custom_target_registration("tests/shadowed.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    // The clean file-level fn `shadow_target` exists with distinctive
+    // body evidence; every negative subject must claim none of it.
+    let credited_evidence = |subject_name: &str| -> bool {
+        index
+            .harness_subjects
+            .iter()
+            .find(|subject| subject.name == subject_name)
+            .is_some_and(|subject| {
+                subject
+                    .calls
+                    .iter()
+                    .any(|call| call.name == "production_call")
+                    || subject
+                        .assertions
+                        .iter()
+                        .any(|oracle| oracle.text.contains("production_call"))
+            })
+    };
+
+    // Every subject still classifies; fail-closed means uncredited
+    // evidence, not a missing subject.
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "closure_shadow",
+            "param_shadow",
+            "nested_mod_shadow",
+            "import_shadow"
+        ]
+    );
+    for subject in &index.harness_subjects {
+        assert_eq!(subject.claim, HarnessSubjectClaim::NamedInvocation);
+    }
+
+    // A local closure binding shadows the same-named file-level fn.
+    assert!(
+        !credited_evidence("closure_shadow"),
+        "a local `let` binding must fail closed: {:?}",
+        index
+            .harness_subjects
+            .iter()
+            .find(|subject| subject.name == "closure_shadow")
+            .map(|subject| (&subject.calls, &subject.assertions))
+    );
+    // A same-named fn parameter shadows it too.
+    assert!(
+        !credited_evidence("param_shadow"),
+        "a parameter binding must fail closed"
+    );
+    // A fn that exists only inside a nested module is not name-visible
+    // to the invocation.
+    assert!(
+        !credited_evidence("nested_mod_shadow"),
+        "a nested-module fn must fail closed"
+    );
+    // A top-level import binding the same leaf name makes the callback
+    // ambiguous with the import.
+    assert!(
+        !credited_evidence("import_shadow"),
+        "an import binding of the name must fail closed"
+    );
+
+    // The clean one-level positive still admits on the same authority:
+    // an unshadowed top-level fn's evidence is credited (pinned in full
+    // by helper_callback_bodies_contribute_one_level_of_subject_evidence).
+    let clean_root = temp_dir("shadowed-clean-control")?;
+    write_workspace(
+        &clean_root,
+        &[(
+            "tests/clean_control.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn clean_helper() -> u16 {
+    production_call(9)
+}
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("clean_case", clean_helper)]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&clean_root, "clean_control", "tests/clean_control.rs")?;
+    let clean_files = [PathBuf::from("tests/clean_control.rs")];
+    let clean_registrations = [custom_target_registration("tests/clean_control.rs")];
+    let clean_index =
+        build_index_with_test_harnesses(&clean_root.0, &clean_files, &clean_registrations)?;
+    assert!(
+        clean_index
+            .harness_subjects
+            .iter()
+            .find(|subject| subject.name == "clean_case")
+            .is_some_and(|subject| subject
+                .calls
+                .iter()
+                .any(|call| call.name == "production_call")),
+        "the clean unshadowed callback still admits its helper body evidence: {:?}",
+        clean_index.harness_subjects
+    );
+    Ok(())
+}
+
+#[test]
+fn trial_method_oracle_receivers_carry_keyword_and_chained_forms()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review: keyword receiver participants (`self`, `await`) are
+    // ordinary postfix receivers. Dropping them would truncate the
+    // oracle text (`value.unwrap()` instead of
+    // `self.value().unwrap()`) and misattribute the observed receiver.
+    let root = temp_dir("trial-keyword-receivers")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/keyword_receivers.rs",
+            r#"
+use libtest_mimic::Trial;
+
+struct Reader;
+
+impl Reader {
+    fn value(&self) -> Result<u16, String> {
+        Ok(8080)
+    }
+
+    fn trials(&self) -> Vec<Trial> {
+        vec![
+            libtest_mimic::Trial::test("keyword_receivers", || {
+                let direct = self.value().unwrap();
+                let awaited = self.value().await.unwrap();
+                let chained = self.value().map(|port| port).await.unwrap();
+                Ok(())
+            }),
+        ]
+    }
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "keyword_receivers", "tests/keyword_receivers.rs")?;
+    let files = [PathBuf::from("tests/keyword_receivers.rs")];
+    let registrations = [custom_target_registration("tests/keyword_receivers.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "keyword_receivers")
+        .ok_or("keyword_receivers test missing")?;
+
+    let expected = [
+        (14, "self.value().unwrap()"),
+        (15, "self.value().await.unwrap()"),
+        (16, "self.value().map(|port| port).await.unwrap()"),
+    ];
+    for (line, text) in expected {
+        let oracle = subject_test
+            .assertions
+            .iter()
+            .find(|oracle| oracle.text == text)
+            .ok_or_else(|| format!("expected oracle `{text}` in {:?}", subject_test.assertions))?;
+        assert_eq!(oracle.line, line, "{:?}", oracle);
+        assert_eq!(oracle.kind, OracleKind::SmokeOnly, "{:?}", oracle);
+        assert_eq!(oracle.strength, OracleStrength::Smoke, "{:?}", oracle);
+        // The observed receiver keeps the full postfix chain.
+        assert!(
+            oracle.observed_tokens.contains(&"value".to_string()),
+            "{:?}",
+            oracle.observed_tokens
+        );
+    }
+    // No oracle may carry a truncated receiver: the keyword must be
+    // part of the text, not dropped from it.
+    assert!(
+        subject_test
+            .assertions
+            .iter()
+            .all(|oracle| !oracle.text.starts_with("value.")),
+        "{:?}",
+        subject_test.assertions
+    );
+    Ok(())
+}
+
+#[test]
+fn given_dormant_macro_rules_template_when_trial_scanned_then_no_smoke_oracle_from_template()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review: a `macro_rules!` definition inside the trial callback
+    // is a dormant token tree. A `.unwrap()` inside the template must not
+    // gain smoke evidence while the macro is never invoked.
+    let root = temp_dir("trial-dormant-macro-template")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/dormant_macro.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![libtest_mimic::Trial::test("dormant_template", || {
+        macro_rules! dormant {
+            () => {
+                assert_eq!(ready().unwrap(), 1);
+            };
+        }
+        Ok(())
+    })]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "dormant_macro", "tests/dormant_macro.rs")?;
+    let files = [PathBuf::from("tests/dormant_macro.rs")];
+    let registrations = [custom_target_registration("tests/dormant_macro.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "dormant_template")
+        .ok_or("dormant_template test missing")?;
+
+    // The full expected oracle set is exactly empty: the claimed span
+    // contains no live oracle evidence at all — the template's
+    // `assert_eq!` (ExactValue/Strong on the pre-fix head) and its
+    // `.unwrap()` both stay unclaimed.
+    assert!(
+        subject_test.assertions.is_empty(),
+        "a dormant macro_rules template must not gain smoke evidence: {:?}",
+        subject_test.assertions
+    );
+    // The subject itself still classifies.
+    assert!(
+        index
+            .harness_subjects
+            .iter()
+            .any(|subject| subject.name == "dormant_template"),
+        "{:?}",
+        index.harness_subjects
+    );
+    Ok(())
+}
+
+#[test]
+fn given_dormant_macro_rules_template_in_helper_callback_then_no_oracle_either()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review, helper-callback path: a bare-identifier helper whose
+    // body defines a dormant `macro_rules!` template contributes its
+    // body evidence one level deep — but the template's own oracle must
+    // never join the subject while live helper evidence still admits.
+    let root = temp_dir("trial-dormant-template-helper")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/dormant_template_helper.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn check_template() -> Result<(), String> {
+    macro_rules! dormant {
+        () => {
+            assert_eq!(ready().unwrap(), 1);
+        };
+    }
+    assert_eq!(parse_config("8080"), 8080);
+    Ok(())
+}
+
+fn parse_config(raw: &str) -> u16 {
+    raw.parse().unwrap_or(0)
+}
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("helper_template", check_template)]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(
+        &root,
+        "dormant_template_helper",
+        "tests/dormant_template_helper.rs",
+    )?;
+    let files = [PathBuf::from("tests/dormant_template_helper.rs")];
+    let registrations = [custom_target_registration(
+        "tests/dormant_template_helper.rs",
+    )];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "helper_template")
+        .ok_or("helper_template test missing")?;
+
+    // The live helper assertion (line 10) stays; the template's oracle
+    // (line 7, inside the `macro_rules!` definition spanning lines 5-9)
+    // is dropped — the full expected set. The template's calls and
+    // literals are equally inert (#3603 round-5, ICPS-adjacent scope).
+    let texts = subject_test
+        .assertions
+        .iter()
+        .map(|oracle| (oracle.line, oracle.text.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        texts,
+        vec![(10, "assert_eq!(parse_config(\"8080\"), 8080);".to_string())],
+        "{:?}",
+        texts
+    );
+    // The helper's live call evidence still admits (one-level parity);
+    // the template's calls and literals never join.
+    assert!(
+        subject_test
+            .calls
+            .iter()
+            .any(|call| call.name == "parse_config"),
+        "{:?}",
+        subject_test.calls
+    );
+    assert!(
+        !subject_test.calls.iter().any(|call| call.name == "ready"),
+        "{:?}",
+        subject_test.calls
+    );
+    assert!(
+        !subject_test
+            .literals
+            .iter()
+            .any(|literal| literal.line >= 5 && literal.line <= 9),
+        "{:?}",
+        subject_test.literals
+    );
+    Ok(())
+}
+
+#[test]
+fn given_block_commented_helper_evidence_then_calls_and_literals_stay_inert()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (devin ICNY): the lexical call and literal extractors
+    // scanned block comments as live text, so commented-out calls and
+    // numbers joined the trial subject. Both extractors now mask
+    // comments (and string contents) before scanning, at the shared
+    // extractor, so ordinary `#[test]` bodies get the same guarantee.
+    let root = temp_dir("trial-block-comment-evidence")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/block_comment.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn check_commented() -> Result<(), String> {
+    /* other_call(9);
+    let n = 7; */
+    live_call(3);
+    let live = 5;
+    assert_eq!(live, 5);
+    Ok(())
+}
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("comment_case", check_commented)]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "block_comment", "tests/block_comment.rs")?;
+    let files = [PathBuf::from("tests/block_comment.rs")];
+    let registrations = [custom_target_registration("tests/block_comment.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "comment_case")
+        .ok_or("comment_case subject missing")?;
+
+    let call_names = subject
+        .calls
+        .iter()
+        .map(|call| call.name.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !call_names.contains(&"other_call"),
+        "block-commented call must not join the subject: {call_names:?}"
+    );
+    assert!(
+        call_names.contains(&"live_call"),
+        "live call still admits: {call_names:?}"
+    );
+    let literal_values = subject
+        .literals
+        .iter()
+        .map(|literal| literal.value.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !literal_values.contains(&"9") && !literal_values.contains(&"7"),
+        "commented numbers must not join the subject: {literal_values:?}"
+    );
+    assert!(
+        literal_values.contains(&"5") && literal_values.contains(&"3"),
+        "live literals still admit: {literal_values:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_one_line_dormant_macro_then_live_same_line_evidence_survives()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (devin ICOI): the dormant filter compared by line, so
+    // a one-line `macro_rules!` definition erased live facts sharing the
+    // line. Span masking erases only the definition's bytes; live code
+    // before and after it on the same line keeps its evidence.
+    let root = temp_dir("trial-one-line-dormant")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/one_line_dormant.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn check_inline() -> Result<(), String> {
+    macro_rules! m { () => { template_call(9); } } live_call(3); more(5); assert_eq!(2, 2); Ok(())
+}
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("inline_case", check_inline)]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "one_line_dormant", "tests/one_line_dormant.rs")?;
+    let files = [PathBuf::from("tests/one_line_dormant.rs")];
+    let registrations = [custom_target_registration("tests/one_line_dormant.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "inline_case")
+        .ok_or("inline_case subject missing")?;
+
+    let call_names = subject
+        .calls
+        .iter()
+        .map(|call| call.name.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !call_names.contains(&"template_call"),
+        "template call must not join: {call_names:?}"
+    );
+    assert!(
+        call_names.contains(&"live_call") && call_names.contains(&"more"),
+        "live calls sharing the template's line survive: {call_names:?}"
+    );
+    let literal_values = subject
+        .literals
+        .iter()
+        .map(|literal| literal.value.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !literal_values.contains(&"9"),
+        "template literal must not join: {literal_values:?}"
+    );
+    assert!(
+        literal_values.contains(&"3")
+            && literal_values.contains(&"5")
+            && literal_values.contains(&"2"),
+        "live literals sharing the line survive: {literal_values:?}"
+    );
+    assert!(
+        subject
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text.contains("assert_eq!(2, 2)")),
+        "the live same-line assertion survives: {:?}",
+        subject.assertions
+    );
+    Ok(())
+}
+
+#[test]
+fn trial_qualified_assertions_keep_the_full_path() -> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (devin ICPS): qualified assertion invocations
+    // (`insta::assert_snapshot!`) classified on their leaf but sliced
+    // their text from the leaf, dropping the path prefix. The scanner
+    // now slices from the full contiguous macro path, matching the
+    // ordinary parser's macro-call slice byte for byte.
+    let root = temp_dir("trial-qualified-assertions")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/qualified_assertions.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![
+        libtest_mimic::Trial::test("qualified_insta", || {
+            let value = create();
+            insta::assert_snapshot![value];
+            Ok(())
+        }),
+        libtest_mimic::Trial::test("qualified_json", || {
+            let value = create();
+            crate::snap::assert_json_snapshot!(value);
+            Ok(())
+        }),
+    ]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(
+        &root,
+        "qualified_assertions",
+        "tests/qualified_assertions.rs",
+    )?;
+    let files = [PathBuf::from("tests/qualified_assertions.rs")];
+    let registrations = [custom_target_registration("tests/qualified_assertions.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    // Ordinary-parser parity for the same qualified spelling.
+    let ordinary =
+        "fn ordinary() {\n    let value = create();\n    insta::assert_snapshot![value];\n}";
+    let ordinary_oracles =
+        parser_oracles_for_function(ordinary, 1).ok_or("ordinary fixture must parse")?;
+    let ordinary_oracle = ordinary_oracles
+        .iter()
+        .find(|oracle| oracle.text.contains("assert_snapshot"))
+        .ok_or("ordinary qualified oracle missing")?;
+
+    let insta = index
+        .tests
+        .iter()
+        .find(|test| test.name == "qualified_insta")
+        .ok_or("qualified_insta test missing")?;
+    let insta_oracle = insta
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.contains("assert_snapshot"))
+        .ok_or("qualified insta oracle missing")?;
+    assert_eq!(insta_oracle.text, "insta::assert_snapshot![value];");
+    assert_eq!(insta_oracle.text, ordinary_oracle.text, "ordinary parity");
+    assert_eq!(insta_oracle.kind, ordinary_oracle.kind);
+    assert_eq!(insta_oracle.strength, ordinary_oracle.strength);
+    assert_eq!(
+        insta_oracle.observed_tokens,
+        ordinary_oracle.observed_tokens
+    );
+    assert_eq!(insta_oracle.line, 8, "{insta_oracle:?}");
+
+    let json = index
+        .tests
+        .iter()
+        .find(|test| test.name == "qualified_json")
+        .ok_or("qualified_json test missing")?;
+    let json_oracle = json
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.contains("assert_json_snapshot"))
+        .ok_or("qualified json oracle missing")?;
+    assert_eq!(
+        json_oracle.text,
+        "crate::snap::assert_json_snapshot!(value);"
+    );
+    assert_eq!(json_oracle.line, 13, "{json_oracle:?}");
+    Ok(())
+}
+
+#[test]
+fn dormant_template_spans_cover_the_parsed_definition_and_mask_exactly()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Mechanism pin for the helper-path template filter: the spans come
+    // from the parsed `ast::MacroRules` node, and masking erases exactly
+    // those bytes (spaces, newlines preserved) while live code around
+    // the template survives for extraction.
+    let body = "fn check() {
+    macro_rules! dormant {
+        () => {
+            assert_eq!(1, 1);
+        };
+    }
+    assert_eq!(2, 2);
+}";
+    let spans = dormant_template_parse_spans(body);
+    assert_eq!(spans.len(), 1, "{spans:?}");
+    let (start, end) = spans[0];
+    let masked = mask_dormant_template_spans(body, &spans);
+    assert!(
+        !masked.contains("assert_eq!(1, 1)"),
+        "template contents must be erased: {masked}"
+    );
+    assert!(
+        masked.contains("assert_eq!(2, 2);"),
+        "live code outside the template survives: {masked}"
+    );
+    assert_eq!(
+        masked.lines().count(),
+        body.lines().count(),
+        "masking preserves line structure"
+    );
+    assert!(end > start);
+    // A body without definitions yields no spans: nothing is masked.
+    let plain = "fn check() {
+    assert_eq!(1, 1);
+}";
+    assert!(dormant_template_parse_spans(plain).is_empty());
+    assert_eq!(mask_dormant_template_spans(plain, &[]), plain);
+    Ok(())
+}
+
+#[test]
+fn trial_alternative_delimiters_keep_invocation_evidence() -> Result<(), Box<dyn std::error::Error>>
+{
+    // #3603 review (devin HQB0 + coderabbit Gk75): `assert![..]` and
+    // `assert!{..}` previously skipped the group without contributing its
+    // contents — tokenless, weak evidence. The trial scanner now emits
+    // the complete invocation text and classifies it exactly like the
+    // ordinary parser does for `#[test]` functions.
+    let root = temp_dir("trial-alt-delimiters")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/alt_delims.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![
+        libtest_mimic::Trial::test("bracket_assert", || {
+            let value = 40u16;
+            let expected = 40u16;
+            assert![value == expected];
+            Ok(())
+        }),
+        libtest_mimic::Trial::test("brace_assert", || {
+            let value = 41u16;
+            let expected = 41u16;
+            assert!{value == expected}
+            Ok(())
+        }),
+        libtest_mimic::Trial::test("newline_semi", || {
+            let value = 42u16;
+            let expected = 42u16;
+            assert!{value == expected}
+            ;
+            Ok(())
+        }),
+    ]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "alt_delims", "tests/alt_delims.rs")?;
+    let files = [PathBuf::from("tests/alt_delims.rs")];
+    let registrations = [custom_target_registration("tests/alt_delims.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    // Ordinary-parser oracle for the same assertion spelling: kind,
+    // strength, text, and observed tokens must match the trial scanner.
+    let ordinary = "fn ordinary() {\n    let value = 40u16;\n    let expected = 40u16;\n    assert![value == expected];\n}";
+    let ordinary_oracles =
+        parser_oracles_for_function(ordinary, 1).ok_or("ordinary fixture must parse")?;
+    let ordinary_oracle = ordinary_oracles
+        .iter()
+        .find(|oracle| oracle.text.contains("assert!"))
+        .ok_or("ordinary assert![..] oracle missing")?;
+
+    let bracket = index
+        .tests
+        .iter()
+        .find(|test| test.name == "bracket_assert")
+        .ok_or("bracket_assert test missing")?;
+    let bracket_oracle = bracket
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.contains("assert!"))
+        .ok_or("assert![..] oracle missing")?;
+    assert_eq!(bracket_oracle.text, "assert![value == expected];");
+    assert_eq!(bracket_oracle.text, ordinary_oracle.text, "ordinary parity");
+    assert_eq!(bracket_oracle.kind, ordinary_oracle.kind);
+    assert_eq!(bracket_oracle.strength, ordinary_oracle.strength);
+    assert_eq!(
+        bracket_oracle.observed_tokens,
+        ordinary_oracle.observed_tokens
+    );
+    assert_eq!(bracket_oracle.line, 9, "{bracket_oracle:?}");
+
+    let brace = index
+        .tests
+        .iter()
+        .find(|test| test.name == "brace_assert")
+        .ok_or("brace_assert test missing")?;
+    let brace_oracle = brace
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.contains("assert!"))
+        .ok_or("assert!{..} oracle missing")?;
+    assert_eq!(brace_oracle.text, "assert!{value == expected}");
+    assert_eq!(brace_oracle.kind, ordinary_oracle.kind);
+    assert_eq!(brace_oracle.strength, ordinary_oracle.strength);
+    assert_eq!(
+        brace_oracle.observed_tokens,
+        ordinary_oracle.observed_tokens
+    );
+    assert_eq!(brace_oracle.line, 15, "{brace_oracle:?}");
+
+    // A semicolon on the NEXT line is not part of the invocation: the
+    // oracle text ends at the group close (IDV7).
+    let newline_semi = index
+        .tests
+        .iter()
+        .find(|test| test.name == "newline_semi")
+        .ok_or("newline_semi test missing")?;
+    let newline_oracle = newline_semi
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.contains("assert!"))
+        .ok_or("newline_semi oracle missing")?;
+    assert_eq!(newline_oracle.text, "assert!{value == expected}");
+    assert_eq!(newline_oracle.line, 21, "{newline_oracle:?}");
+    Ok(())
+}
+
+#[test]
+fn trial_dormant_alternative_delimiters_stay_inert() -> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (devin HQBC): `macro_rules!` accepts every delimiter
+    // Rust permits. Parenthesized and bracketed dormant templates inside
+    // a trial callback previously escaped the definition skip and were
+    // scanned as live assertions and method oracles.
+    let root = temp_dir("trial-dormant-alt-delims")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/dormant_alt_delims.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![libtest_mimic::Trial::test("alt_delim_templates", || {
+        macro_rules! paren_template (
+            () => { assert_eq!(ready().unwrap(), 1); }
+        );
+        macro_rules! bracket_template [
+            () => { assert_eq!(ready().unwrap(), 2); }
+        ];
+        Ok(())
+    })]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "dormant_alt_delims", "tests/dormant_alt_delims.rs")?;
+    let files = [PathBuf::from("tests/dormant_alt_delims.rs")];
+    let registrations = [custom_target_registration("tests/dormant_alt_delims.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "alt_delim_templates")
+        .ok_or("alt_delim_templates test missing")?;
+
+    // The full expected oracle set is exactly empty — and the templates'
+    // calls and literals are equally inert (IDV-).
+    assert!(
+        subject_test.assertions.is_empty(),
+        "dormant paren/bracket templates must not gain oracles: {:?}",
+        subject_test.assertions
+    );
+    assert!(
+        !subject_test.calls.iter().any(|call| call.name == "ready"),
+        "{:?}",
+        subject_test.calls
+    );
+    assert!(
+        !subject_test
+            .literals
+            .iter()
+            .any(|literal| literal.value == "1" || literal.value == "2"),
+        "{:?}",
+        subject_test.literals
+    );
+    // The subject itself still classifies.
+    assert!(
+        index
+            .harness_subjects
+            .iter()
+            .any(|subject| subject.name == "alt_delim_templates"),
+        "{:?}",
+        index.harness_subjects
+    );
+    Ok(())
+}
+
+#[test]
+fn given_dormant_template_in_helper_then_calls_and_literals_stay_inert()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (devin HQAG): the helper-path dormant filter covered
+    // assertions only — the template's calls and literals still merged
+    // into the subject. Every merged helper evidence collection now
+    // drops template lines while live surrounding evidence stays, so
+    // the filter is targeted rather than a blanket drop.
+    let root = temp_dir("trial-dormant-helper-facts")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/dormant_helper_facts.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn check_shadow() -> Result<(), String> {
+    macro_rules! dormant {
+        () => {
+            template_call(9);
+        };
+    }
+    live_call(7);
+    let marker = 5;
+    let _ = marker;
+    Ok(())
+}
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("helper_facts", check_shadow)]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(
+        &root,
+        "dormant_helper_facts",
+        "tests/dormant_helper_facts.rs",
+    )?;
+    let files = [PathBuf::from("tests/dormant_helper_facts.rs")];
+    let registrations = [custom_target_registration("tests/dormant_helper_facts.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "helper_facts")
+        .ok_or("helper_facts subject missing")?;
+
+    let call_names = subject
+        .calls
+        .iter()
+        .map(|call| call.name.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !call_names.contains(&"template_call"),
+        "template call must not join the subject: {call_names:?}"
+    );
+    assert!(
+        call_names.contains(&"live_call"),
+        "live helper call still admits: {call_names:?}"
+    );
+    let literal_values = subject
+        .literals
+        .iter()
+        .map(|literal| literal.value.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !literal_values.contains(&"9"),
+        "template literal must not join the subject: {literal_values:?}"
+    );
+    assert!(
+        literal_values.contains(&"7") && literal_values.contains(&"5"),
+        "live helper literals still admit: {literal_values:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_same_line_functions_then_ast_scope_resolves_shadow()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (devin My3M): two functions sharing one source line
+    // made the line-span fallback pick the wrong enclosing scope, so the
+    // shadow scan missed the second function's local binding and credited
+    // the top-level helper's evidence. The scope now resolves from the
+    // invocation token's Fn ancestor: the local shadow fails the callback
+    // closed.
+    let root = temp_dir("same-line-functions")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/same_line_fns.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn shadow_target() -> u16 { production_call(4) }
+
+fn side_a() -> u16 { live_marker(1) } fn side_b() -> Trial { let shadow_target = || 1u16; Trial::test("same_line_shadow", shadow_target) }
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "same_line_fns", "tests/same_line_fns.rs")?;
+    let files = [PathBuf::from("tests/same_line_fns.rs")];
+    let registrations = [custom_target_registration("tests/same_line_fns.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "same_line_shadow")
+        .ok_or("same_line_shadow subject missing")?;
+
+    // The trial's own enclosing scope (side_b) binds the callback name
+    // locally, so the top-level shadow_target fn's evidence is never
+    // credited.
+    assert!(
+        !subject
+            .calls
+            .iter()
+            .any(|call| call.name == "production_call"),
+        "the same-line local shadow must fail the callback closed: {:?}",
+        subject.calls
+    );
+    assert!(
+        !subject
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text.contains("production_call")),
+        "{:?}",
+        subject.assertions
+    );
+    // The subject itself still classifies.
+    assert_eq!(subject.claim, HarnessSubjectClaim::NamedInvocation);
+    Ok(())
+}
+
+#[test]
+fn given_const_or_static_shadow_then_callback_fails_closed()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (devin EEaa): `const`/`static` bindings carry a Name,
+    // not an identifier pattern, so the IdentPat shadow scan could not
+    // see them. A const/static binding of the callback name — local in
+    // the enclosing body, or at file level next to a same-named fn —
+    // fails closed instead of crediting the fn's evidence.
+    let root = temp_dir("const-static-shadow")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/const_static_shadow.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn shadow_target() -> u16 {
+    production_call(1)
+}
+
+fn shadow_target_fn() -> u16 {
+    production_call(2)
+}
+
+fn local_const_trials() -> Vec<Trial> {
+    const shadow_target: u16 = 1;
+    let _ = shadow_target;
+    vec![Trial::test("const_shadow", shadow_target)]
+}
+
+fn local_static_trials() -> Vec<Trial> {
+    static shadow_target: u8 = 3;
+    let _ = shadow_target;
+    vec![Trial::test("static_shadow", shadow_target)]
+}
+
+fn item_shadow_trials() -> Vec<Trial> {
+    const shadow_target_fn: u16 = 2;
+    let _ = shadow_target_fn;
+    vec![Trial::test("item_shadow", shadow_target_fn)]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "const_static_shadow", "tests/const_static_shadow.rs")?;
+    let files = [PathBuf::from("tests/const_static_shadow.rs")];
+    let registrations = [custom_target_registration("tests/const_static_shadow.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    let credited = |subject_name: &str| -> bool {
+        index
+            .harness_subjects
+            .iter()
+            .find(|subject| subject.name == subject_name)
+            .is_some_and(|subject| {
+                subject
+                    .calls
+                    .iter()
+                    .any(|call| call.name == "production_call")
+            })
+    };
+    // A local `const` binding of the callback name shadows the fn.
+    assert!(
+        !credited("const_shadow"),
+        "a local const shadow must fail closed: {:?}",
+        index
+            .harness_subjects
+            .iter()
+            .find(|subject| subject.name == "const_shadow")
+            .map(|subject| &subject.calls)
+    );
+    // A local `static` binding likewise.
+    assert!(
+        !credited("static_shadow"),
+        "a local static shadow must fail closed"
+    );
+    // A file-level const binding the same name as a top-level fn blocks
+    // that fn's evidence even though exactly one fn fact exists.
+    assert!(
+        !credited("item_shadow"),
+        "a file-level const binding must fail closed"
+    );
+    // Every subject still classifies: fail-closed means uncredited
+    // evidence, not a missing subject.
+    let mut names = index
+        .harness_subjects
+        .iter()
+        .map(|subject| subject.name.as_str())
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    assert_eq!(names, vec!["const_shadow", "item_shadow", "static_shadow"]);
+    Ok(())
+}
+
+#[test]
+fn trial_method_oracle_receivers_carry_indexed_cast_operator_forms()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (devin FnF6): receiver parity for the indexed, cast,
+    // operator, and negation forms. The negation operator never extends
+    // a receiver (a `!` continues the walk only as a macro-call bang),
+    // so `!flag.unwrap()` keeps its receiver at `flag` — the under-emit
+    // direction.
+    let root = temp_dir("trial-receiver-forms")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/receiver_forms.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![libtest_mimic::Trial::test("receiver_forms", || {
+        let cache = vec![Some(1u16)];
+        let indexed = cache[0].unwrap();
+        let raw = 7u8;
+        let cast = (raw as u16).unwrap();
+        let left = 2u16;
+        let right = Some(3u16);
+        let sum = left + right.unwrap();
+        let flag = Some(true);
+        let ready = !flag.unwrap();
+        let _ = (indexed, cast, sum, ready);
+        Ok(())
+    })]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "receiver_forms", "tests/receiver_forms.rs")?;
+    let files = [PathBuf::from("tests/receiver_forms.rs")];
+    let registrations = [custom_target_registration("tests/receiver_forms.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "receiver_forms")
+        .ok_or("receiver_forms test missing")?;
+
+    let expected = [
+        (7, "cache[0].unwrap()"),
+        (9, "(raw as u16).unwrap()"),
+        (12, "right.unwrap()"),
+        (14, "flag.unwrap()"),
+    ];
+    for (line, text) in expected {
+        let oracle = subject_test
+            .assertions
+            .iter()
+            .find(|oracle| oracle.text == text)
+            .ok_or_else(|| format!("expected oracle `{text}` in {:?}", subject_test.assertions))?;
+        assert_eq!(oracle.line, line, "{oracle:?}");
+        assert_eq!(oracle.kind, OracleKind::SmokeOnly, "{oracle:?}");
+        assert_eq!(oracle.strength, OracleStrength::Smoke, "{oracle:?}");
+    }
+    // The indexed receiver keeps its full postfix chain in observed
+    // tokens; the operator and negation forms keep only the operand.
+    let indexed = subject_test
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text == "cache[0].unwrap()")
+        .ok_or("indexed oracle missing")?;
+    assert!(
+        indexed.observed_tokens.contains(&"cache".to_string()),
+        "{:?}",
+        indexed.observed_tokens
+    );
+    Ok(())
+}
+
+#[test]
+fn trial_receiver_walk_stops_at_comparison_operators() -> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (coderabbit LtlN): the receiver walk accepted any
+    // R_ANGLE as a turbofish close, so `a < b && c > d.unwrap()` emitted
+    // `< b && c > d.unwrap()` as receiver text and inflated
+    // observed_tokens — the over-emit direction. An angle group in
+    // receiver position is a turbofish only when its `<` is preceded by
+    // `::`; comparisons end the receiver at their operand.
+    let root = temp_dir("trial-comparison-receivers")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/comparison_receivers.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn parse_u16(raw: &str) -> u16 {
+    raw.parse::<u16>().unwrap_or(0)
+}
+
+fn trials() -> Vec<Trial> {
+    vec![libtest_mimic::Trial::test("comparison_forms", || {
+        let a = true;
+        let b = true;
+        let c = true;
+        let d = Some(1u16);
+        let check = a < b && c > d.unwrap();
+        let parsed = parse_u16("7").parse::<u16>().unwrap();
+        let _ = (check, parsed);
+        Ok(())
+    })]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(
+        &root,
+        "comparison_receivers",
+        "tests/comparison_receivers.rs",
+    )?;
+    let files = [PathBuf::from("tests/comparison_receivers.rs")];
+    let registrations = [custom_target_registration("tests/comparison_receivers.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "comparison_forms")
+        .ok_or("comparison_forms test missing")?;
+
+    // The comparison's operand is the receiver; the operator never
+    // extends it and no cross-expression text leaks in.
+    let d_oracle = subject_test
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text == "d.unwrap()")
+        .ok_or_else(|| format!("expected `d.unwrap()` in {:?}", subject_test.assertions))?;
+    assert_eq!(d_oracle.line, 14, "{d_oracle:?}");
+    assert!(
+        !subject_test
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text.contains("< b")),
+        "comparison text must not leak into receivers: {:?}",
+        subject_test.assertions
+    );
+    assert!(
+        !d_oracle.observed_tokens.contains(&"b".to_string()),
+        "{:?}",
+        d_oracle.observed_tokens
+    );
+    // A genuine turbofish still keeps its generic arguments.
+    let turbofish = subject_test
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.contains("parse::<u16>"))
+        .ok_or_else(|| format!("expected turbofish oracle in {:?}", subject_test.assertions))?;
+    assert_eq!(turbofish.text, "parse_u16(\"7\").parse::<u16>().unwrap()");
+    Ok(())
+}
+
+#[test]
+fn trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 gap 2: ordinary `#[test]` parsing records `.unwrap()` /
+    // `.expect()` method calls as smoke evidence; the trial token scanner
+    // must credit the same oracles for trial subjects, with real line
+    // attribution and the receiver expression in the oracle text.
+    let root = temp_dir("trial-method-oracles")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/method_oracles.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn parse_port(raw: &str) -> Result<u16, String> {
+    raw.parse::<u16>().map_err(|error| error.to_string())
+}
+
+fn trials() -> Vec<Trial> {
+    vec![
+        libtest_mimic::Trial::test("alpha_unwraps", || {
+            let port = parse_port("8080").unwrap();
+            let doubled = port.unwrap() * 2;
+            assert_eq!(doubled, 16160);
+            let label: Result<String, String> = Ok(format!("port={doubled}"));
+            let shown = label.expect("label ready");
+            let unwrapped_value = doubled;
+            let _ = unwrapped_value;
+            let _ = config.expect;
+            println!("{}", doubled.unwrap());
+            Result::<u8, u8>::unwrap(Ok(1));
+            Ok(())
+        }),
+    ]
+}
+
+struct Config {
+    expect: u8,
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "method_oracles", "tests/method_oracles.rs")?;
+    let files = [PathBuf::from("tests/method_oracles.rs")];
+    let registrations = [custom_target_registration("tests/method_oracles.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let alpha = index
+        .tests
+        .iter()
+        .find(|test| test.name == "alpha_unwraps")
+        .ok_or("alpha test missing")?;
+
+    let oracle_lines = |needle: &str| -> Vec<(usize, &String)> {
+        alpha
+            .assertions
+            .iter()
+            .filter(|oracle| oracle.text.contains(needle))
+            .map(|oracle| (oracle.line, &oracle.text))
+            .collect()
+    };
+    let unwraps = oracle_lines("unwrap()");
+    let expects = oracle_lines(".expect(");
+    let assert_eqs = oracle_lines("assert_eq!(");
+
+    // Method oracles exist with receiver-ful text and real source lines.
+    assert_eq!(
+        unwraps
+            .iter()
+            .filter(|(_, text)| text.as_str() == "parse_port(\"8080\").unwrap()")
+            .count(),
+        1,
+        "receiver call chain is the oracle text: {unwraps:?}"
+    );
+    assert!(
+        unwraps.contains(&(11, &"parse_port(\"8080\").unwrap()".to_string())),
+        "unwrap oracle carries the real source line: {unwraps:?}"
+    );
+    assert!(
+        unwraps.contains(&(12, &"port.unwrap()".to_string())),
+        "bare-receiver unwrap keeps the receiver in the text: {unwraps:?}"
+    );
+    assert!(
+        expects.contains(&(15, &"label.expect(\"label ready\")".to_string())),
+        "expect oracle with real line and message argument: {expects:?}"
+    );
+    // The assertion-macro oracle line is the real source line too (and
+    // its text carries the same-line trailing semicolon, ordinary-parser
+    // parity).
+    assert!(
+        assert_eqs.contains(&(13, &"assert_eq!(doubled, 16160);".to_string())),
+        "macro oracle lines are real source lines: {assert_eqs:?}"
+    );
+
+    // Smoke-strength parity with ordinary `#[test]` parsing.
+    for oracle in alpha
+        .assertions
+        .iter()
+        .filter(|oracle| oracle.text.ends_with(".unwrap()") || oracle.text.contains(".expect("))
+    {
+        assert_eq!(oracle.kind, OracleKind::SmokeOnly, "{oracle:?}");
+        assert_eq!(oracle.strength, OracleStrength::Smoke, "{oracle:?}");
+    }
+
+    // Fail-closed controls: a struct field named `expect`, a path-shaped
+    // `Result::unwrap` call, and anything inside a non-assertion macro's
+    // input never classify.
+    assert!(
+        unwraps.iter().all(|(_, text)| *text != "unwrap"),
+        "{unwraps:?}"
+    );
+    assert_eq!(
+        expects.len(),
+        1,
+        "only the real method-position expect classifies: {expects:?}"
+    );
+    assert!(
+        alpha
+            .assertions
+            .iter()
+            .all(|oracle| !oracle.text.contains("::unwrap")
+                && !oracle.text.contains("doubled.unwrap()")),
+        "path-shaped calls and non-assertion macro inputs stay out: {:?}",
+        alpha.assertions
     );
     Ok(())
 }

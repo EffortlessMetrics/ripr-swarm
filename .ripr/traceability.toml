@@ -8335,6 +8335,7 @@ code = [
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/analysis/source_role_corpus.rs",
   "crates/ripr/src/analysis/facts/harness_registry.rs",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs",
   "crates/ripr/src/analysis/facts/role_composition.rs",
   "crates/ripr/src/analysis/facts/cfg_predicates.rs",
   "crates/ripr/src/analysis/facts/test_styles.rs",
@@ -8796,6 +8797,39 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0172-cross-crate-dependency-edge-relation.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0173"
+name = "harness trial subject evidence parity"
+spec = "docs/specs/RIPR-SPEC-0173-trial-subject-evidence-parity.md"
+tests = [
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::helper_callback_bodies_contribute_one_level_of_subject_evidence",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::shadowed_callback_names_fail_closed",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_oracle_receivers_carry_keyword_and_chained_forms",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_dormant_macro_rules_template_when_trial_scanned_then_no_smoke_oracle_from_template",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_dormant_macro_rules_template_in_helper_callback_then_no_oracle_either",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::dormant_template_spans_cover_the_parsed_definition_and_mask_exactly",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_block_commented_helper_evidence_then_calls_and_literals_stay_inert",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_one_line_dormant_macro_then_live_same_line_evidence_survives",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_qualified_assertions_keep_the_full_path",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::previous_generation_classified_seam_envelope_with_identical_identity_is_a_miss",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::schema_versions_pin_the_role_composition_generation",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/facts/harness_registry.rs",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs",
+  "crates/ripr/src/analysis/facts/model.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0173-trial-subject-evidence-parity.md",
 ]
 metrics = [
   "unit_test_pass_rate",

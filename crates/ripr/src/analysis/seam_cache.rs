@@ -101,13 +101,14 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.2` -> `1.3`: source roles now compose across include and module edges
 /// (#3533); out-of-line `#[cfg(test)]` module helpers flip out of the
 /// production inventory, changing classified-seam content.
-/// `1.3` -> `1.4`: `custom_harness` registrations now validate against
-/// parsed Cargo target metadata (#3608); a misdeclared target keeps its
-/// ordinary classification — targets that ordinary classification treats
-/// as production keep seeding production seams, while `tests/`-layout and
-/// Cargo-discovered evidence paths stay evidence-only — instead of
-/// receiving file-wide evidence role, changing the production inventory
-/// classified seams derive from.
+/// `1.3` -> `1.4`: harness trial subjects gained helper-callback one-level
+/// body evidence and method-position `unwrap`/`expect` smoke oracles
+/// (#3603), and `custom_harness` registrations now validate against
+/// parsed Cargo target metadata (#3608) — a misdeclared target keeps its
+/// ordinary classification instead of receiving file-wide evidence role,
+/// changing the production inventory classified seams derive from. Old
+/// classified entries would serve evidence-blind classifications for
+/// registered-harness workspaces.
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.4";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
@@ -122,9 +123,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.4";
 /// evidence role (#3530), changing the facts sharded entries derive from.
 /// `0.8` -> `0.9`: source roles now compose across include and module edges
 /// (#3533), changing the facts sharded entries derive from.
-/// `0.9` -> `0.10`: `custom_harness` registrations now validate against
-/// parsed Cargo target metadata (#3608), changing the production
-/// inventory the facts sharded entries derive from.
+/// `0.9` -> `0.10`: #3603 trial evidence parity and #3608 harness-target
+/// validation change the facts and production inventory the sharded
+/// entries derive from.
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.10";
 
 /// Compact-classified seam cache schema. This cache stores the same
@@ -144,11 +145,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.10";
 /// `0.9` -> `0.10`: source roles now compose across include and module edges
 /// (#3533); out-of-line `#[cfg(test)]` module helpers flip out of the
 /// production inventory, changing compact classified-seam content.
-/// `0.10` -> `0.11`: `custom_harness` registrations now validate against
-/// parsed Cargo target metadata (#3608); a misdeclared target keeps its
-/// ordinary classification — production-classified targets keep seeding
-/// production seams, evidence-layout targets stay evidence-only —
-/// changing compact classified-seam content.
+/// `0.10` -> `0.11`: #3603 trial evidence parity and #3608 harness-target
+/// validation change the facts and production inventory the compact
+/// classified-seam entries derive from.
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.11";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
@@ -194,12 +193,16 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// a typed unknown (#3533 review). Entries from the `0.8` generation store
 /// such declarations as `Default`, which would resolve the default file
 /// Rust does not compile under the conditional configuration.
+/// `0.9` -> `1.0`: call and literal extraction now masks comments (line
+/// and nested block), string contents, and character literals before
+/// scanning (#3633 review). Warm per-file facts from before the change
+/// would serve comment-derived calls and numbers as live evidence.
 ///
-/// No bump for the #3608 harness-registration validation: stored per-file
-/// facts predate the registry entirely and the registry applies after
-/// cache retrieval, re-validating every build against the current
-/// manifests — a warm hit cannot bypass that validation.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.9";
+/// Still no bump for #3603/#3608 themselves: per-file parser facts are
+/// unchanged by the harness registry — it applies registrations after
+/// the file-fact cache loads, re-validating every build against the
+/// current manifests — so a warm hit cannot bypass that validation.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.0";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2600,16 +2603,80 @@ mod tests {
     use crate::domain::{Confidence, StageEvidence, StageState};
     use std::path::PathBuf;
 
-    /// #3533 cache-bump pin: composed source roles change every cached
-    /// derivation that embeds them. Each version here was bumped on purpose;
-    /// a future change must move these pins in the same PR as its semantic
-    /// change so no warm cache serves stale roles.
+    /// Cache-bump pin: composed source roles change every cached
+    /// derivation that embeds them (#3533), and trial evidence parity
+    /// changes classified-seam content for registered-harness workspaces
+    /// (#3603). Each version here was bumped on purpose; a future change
+    /// must move these pins in the same PR as its semantic change so no
+    /// warm cache serves stale roles.
     #[test]
     fn schema_versions_pin_the_role_composition_generation() {
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "0.9");
+        // 0.9 -> 1.0: comment/string masking changed the extracted
+        // FileFacts.calls/literals content (#3633 review).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.0");
         assert_eq!(CACHE_SCHEMA_VERSION, "1.4");
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.10");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.11");
+    }
+
+    #[test]
+    fn previous_generation_classified_seam_envelope_with_identical_identity_is_a_miss()
+    -> Result<(), String> {
+        // #3603: trial subjects gained helper-callback one-level body
+        // evidence and method unwrap/expect smoke oracles. An envelope
+        // seeded under the previous classified-seam generation must not
+        // satisfy the current generation's key, even with identical
+        // identity fields.
+        let dir = isolated_dir("gen-classified-seam");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let seams = vec![sample_classified()];
+        let previous_key = RepoSeamCacheKey {
+            schema_version: "1.3".to_string(),
+            analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            workspace_root_hash: hash_str("workspace"),
+            files_content_hash: hash_str("files"),
+            cfg_features_hash: hash_str(""),
+            config_hash: hash_str(""),
+            test_intent_hash: hash_str(""),
+            suppressions_hash: hash_str(""),
+            workspace_manifests_hash: hash_str("manifests"),
+            lockfile_hash: hash_str("lock"),
+            toolchain_hash: hash_str("toolchain"),
+            seam_limit_key: "unlimited".to_string(),
+        };
+        cache.store_classified_seams_with_limit(&previous_key, &seams, None, usize::MAX)?;
+        assert!(
+            cache.entry_path(&previous_key).exists(),
+            "seed sanity: previous-generation envelope stored"
+        );
+
+        // The current generation's key with identical identity must miss.
+        let current_key = RepoSeamCacheKey {
+            schema_version: CACHE_SCHEMA_VERSION.to_string(),
+            ..previous_key.clone()
+        };
+        assert_ne!(previous_key.schema_version, current_key.schema_version);
+        match cache.load_classified_seams(&current_key) {
+            CacheLoad::Miss => {}
+            other => {
+                return Err(format!(
+                    "expected Miss across the classified-seam generation transition, got {other:?}"
+                ));
+            }
+        }
+        // Seed sanity: the previous key still reads its own envelope; it
+        // is only reachable by a key current code never constructs.
+        match cache.load_classified_seams(&previous_key) {
+            CacheLoad::Hit((stored, _)) => assert_eq!(stored.len(), 1),
+            other => {
+                return Err(format!(
+                    "seed sanity: previous key should read its own envelope, got {other:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
     }
 
     fn sample_classified() -> ClassifiedSeam {
@@ -5229,6 +5296,54 @@ mod generation_transition_tests {
         // And the stale entry itself, loaded by its own key, no longer
         // satisfies current analysis identity: it can only be reached by
         // the previous key, which current code never constructs.
+        match cache.load_file_facts(&previous_key) {
+            CacheLoad::Hit(_) => {}
+            other => {
+                return Err(format!(
+                    "seed sanity: previous key should still read its own envelope, got {other:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn file_fact_generation_before_comment_masking_is_a_miss() -> Result<(), String> {
+        // #3633 review (coderabbit Ltle): call and literal extraction now
+        // masks comments and string contents, changing the stored
+        // FileFacts.calls/literals. An envelope seeded under the 0.9
+        // generation (pre-masking) must miss the current generation's key
+        // with identical identity fields.
+        let dir = isolated_dir("gen-masked-facts");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = RepoFileFactCache::at_dir(dir.clone());
+        let file = Path::new("src/commented.rs");
+        let content = "fn check() {\n    /* other_call(9); */\n    live_call(3);\n}\n"
+            .as_bytes()
+            .to_vec();
+        let previous_key = RepoFileFactCacheKey {
+            schema_version: "0.9".to_string(),
+            analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            file_path: file.to_path_buf(),
+            // Production derives this field via `hash_bytes`, so the seed
+            // must too: the only difference from the current key is then
+            // the schema generation, making the miss prove the boundary.
+            content_hash: hash_bytes(&content),
+        };
+        cache.store_file_facts(&previous_key, &FileFacts::default())?;
+        assert!(cache.entry_path(&previous_key).exists());
+
+        let current_key = RepoFileFactCacheKey::new(file, &content);
+        assert_ne!(previous_key.schema_version, current_key.schema_version);
+        match cache.load_file_facts(&current_key) {
+            CacheLoad::Miss => {}
+            other => {
+                return Err(format!(
+                    "expected Miss across the pre-masking file-fact generation, got {other:?}"
+                ));
+            }
+        }
         match cache.load_file_facts(&previous_key) {
             CacheLoad::Hit(_) => {}
             other => {

@@ -27,6 +27,28 @@
 //! inference from filenames, crate imports, macro suffixes, or function
 //! names, and a registration that names a file outside the analyzed
 //! index simply grants nothing (fail closed).
+//!
+//! ## Named-invocation evidence boundary (#3603)
+//!
+//! A trial subject's identity span is the registration invocation, but
+//! the evidence it claims is widened in exactly two bounded directions,
+//! both fail-closed:
+//!
+//! - a bare-identifier callback (`Trial::test("name", helper_fn)`) that
+//!   resolves to exactly one function in the registered target file
+//!   contributes that function's parsed body evidence (calls, oracles,
+//!   literals) one level deep, with real line attribution; closures,
+//!   path callbacks, and unresolved or ambiguous names contribute
+//!   nothing beyond the invocation span;
+//! - method-position `.unwrap()`/`.expect()` calls inside the claimed
+//!   span register smoke oracles, the same evidence the ordinary
+//!   `#[test]` parser records for `ast::MethodCallExpr`. Non-assertion
+//!   macro input is skipped, matching what parsed method-call nodes
+//!   could see.
+//!
+//! No strength over-credit is possible: helper evidence reuses the
+//! ordinary parser path, and method oracles are smoke-strength by
+//! construction.
 
 use super::model::{FunctionFact, FunctionSourceRole, RustIndex, TestFact};
 use super::test_styles::normalized_test_attribute_path as normalized_attribute_path;
@@ -34,12 +56,13 @@ use super::{
     HarnessLimitationFact, HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact,
 };
 use crate::analysis::rust_index::{
-    OracleFact, classify_assertion, extract_call_facts, extract_identifier_tokens,
-    extract_literal_facts,
+    OracleFact, classify_assertion, extract_assertions, extract_call_facts,
+    extract_identifier_tokens, extract_literal_facts,
 };
 use crate::analysis::syntax::ra::{LineIndex, parser_oracles_for_function, slice_text};
 use crate::analysis::workspace::{CargoHarnessVerdict, ManifestInventory};
 use crate::config::{TestHarnessAdapter, TestHarnessKind, TestHarnessRegistration};
+use crate::domain::{OracleKind, OracleStrength};
 use ra_ap_syntax::ast::{self, HasName};
 use ra_ap_syntax::{AstNode, Edition, SourceFile, TextSize};
 use std::collections::BTreeSet;
@@ -229,7 +252,8 @@ fn apply_libtest_mimic_target(
         return;
     }
     let line_index = LineIndex::new(source);
-    let trial_bindings = top_level_use_bindings(parse.tree().syntax(), "Trial");
+    let file_syntax = parse.tree().syntax().clone();
+    let trial_bindings = top_level_use_bindings(&file_syntax, "Trial");
     let tokens: Vec<ra_ap_syntax::SyntaxToken> = parse
         .tree()
         .syntax()
@@ -338,10 +362,105 @@ fn apply_libtest_mimic_target(
         let start_line = line_index.line(start);
         let end_line = line_index.line_for_range_end(TextSize::new(end_offset));
         let body = slice_text(source, start, TextSize::new(end_offset));
-        let calls = extract_call_facts(&body, start_line);
-        let literals = extract_literal_facts(&body, start_line);
-        let assertions =
-            parser_oracles_for_node_tokens(&tokens, matched.name_token_index, &line_index);
+        // Dormant `macro_rules!` templates inside the claimed span never
+        // execute: their spans are erased from the lexical extraction
+        // (spaces keep line attribution exact) so template calls and
+        // values never join the subject while live same-line evidence
+        // survives (#3603 review).
+        let template_spans = dormant_template_token_spans(
+            &tokens,
+            matched.name_token_index,
+            matched.open_paren_index,
+            start,
+        );
+        let masked_body = mask_dormant_template_spans(&body, &template_spans);
+        let mut calls = extract_call_facts(&masked_body, start_line);
+        let mut literals = extract_literal_facts(&masked_body, start_line);
+        let mut assertions =
+            parser_oracles_for_node_tokens(source, &tokens, matched.name_token_index, &line_index);
+        // #3603: a bare-identifier callback (`Trial::test("name",
+        // helper_fn)`) resolves to exactly one top-level function in this
+        // file, and that function's body is what the trial exercises —
+        // its parsed evidence joins the subject one level deep with real
+        // line attribution. Closures already scan through the claimed
+        // span; shadowed names, imports, paths, and unresolved or
+        // ambiguous names contribute nothing.
+        // The enclosing scope for the shadow scan: resolved from the
+        // invocation token's Fn ancestor when the trial is written as
+        // plain code, and from the innermost line-span function fact
+        // only when the tokens carry no Fn ancestor (a trial collected
+        // inside another macro's token tree). Resolving by ancestors
+        // first keeps two functions sharing one source line from picking
+        // the wrong scope (#3603 review, My3M).
+        let enclosing_scope: Option<(String, usize)> =
+            match tokens[position].parent_ancestors().find_map(ast::Fn::cast) {
+                Some(fn_node) => {
+                    let fn_start = fn_node
+                        .fn_token()
+                        .map(|token| token.text_range().start())
+                        .unwrap_or_else(|| fn_node.syntax().text_range().start());
+                    let fn_end = fn_node.syntax().text_range().end();
+                    Some((
+                        slice_text(source, fn_start, fn_end),
+                        line_index.line(fn_start),
+                    ))
+                }
+                None => enclosing_function(index, &target, start_line)
+                    .map(|function| (function.body.clone(), function.start_line)),
+            };
+        let enclosing_body = enclosing_scope.as_ref().map(|(body, _)| body.as_str());
+        if let Some(helper) =
+            bare_ident_callback(&tokens, matched.name_token_index, matched.open_paren_index)
+                .and_then(|ident_index| {
+                    resolve_helper_function(
+                        index,
+                        &target,
+                        &file_syntax,
+                        enclosing_body,
+                        tokens[ident_index].text(),
+                    )
+                })
+        {
+            // A `macro_rules!` definition in the helper body is a dormant
+            // token tree: its template never executes, so nothing inside
+            // it joins the subject — not oracles, not calls, not literals.
+            // The template spans are erased from every merged evidence
+            // extraction (spaces keep line attribution exact), so live
+            // same-line evidence survives while template facts cannot be
+            // extracted at all — including from the lexical fallback,
+            // which line-scans raw text (under-emit; #3603 review).
+            let dormant_spans = dormant_template_parse_spans(&helper.body);
+            let helper_evidence_body = mask_dormant_template_spans(&helper.body, &dormant_spans);
+            calls.extend(extract_call_facts(&helper_evidence_body, helper.start_line));
+            assertions.extend(
+                parser_oracles_for_function(&helper_evidence_body, helper.start_line)
+                    .unwrap_or_else(|| {
+                        extract_assertions(&helper_evidence_body, helper.start_line)
+                    }),
+            );
+            literals.extend(extract_literal_facts(
+                &helper_evidence_body,
+                helper.start_line,
+            ));
+            calls.sort_by(|left, right| {
+                left.line
+                    .cmp(&right.line)
+                    .then(left.name.cmp(&right.name))
+                    .then(left.text.cmp(&right.text))
+            });
+            calls.dedup_by(|left, right| {
+                left.line == right.line && left.name == right.name && left.text == right.text
+            });
+            assertions
+                .sort_by(|left, right| left.line.cmp(&right.line).then(left.text.cmp(&right.text)));
+            assertions.dedup_by(|left, right| left.line == right.line && left.text == right.text);
+            literals.sort_by(|left, right| {
+                left.line
+                    .cmp(&right.line)
+                    .then(left.value.cmp(&right.value))
+            });
+            literals.dedup_by(|left, right| left.line == right.line && left.value == right.value);
+        }
         let subject = HarnessSubjectFact {
             registration_id: registration.registration_id.clone(),
             harness_kind: registration.kind.as_str().to_string(),
@@ -593,11 +712,19 @@ fn balanced_call_end(tokens: &[ra_ap_syntax::SyntaxToken], open_paren_index: usi
 }
 
 /// Assertion evidence for one trial subject: the exact assertion-macro and
-/// `unwrap`/`expect` tokens inside the registration's own argument span.
-/// Only tokens between the name argument and the balanced close count, so
-/// adjacent code never credits this subject. Each oracle carries the real
-/// source line of its invocation.
+/// `unwrap`/`expect` method tokens inside the registration's own argument
+/// span. Only tokens between the name argument and the balanced close
+/// count, so adjacent code never credits this subject. Each oracle carries
+/// the real source line of its invocation (#3603).
+///
+/// Method-position `.unwrap()`/`.expect()` calls register smoke oracles
+/// with the receiver expression as text — the same evidence the ordinary
+/// `#[test]` parser records for `ast::MethodCallExpr`. Macro input is
+/// skipped wholesale (assertion macros still classify themselves), so a
+/// method token inside `println!(...)` never classifies, matching what
+/// parsed method-call nodes could see on the ordinary path.
 fn parser_oracles_for_node_tokens(
+    source: &str,
     tokens: &[ra_ap_syntax::SyntaxToken],
     name_token_index: usize,
     line_index: &LineIndex,
@@ -610,12 +737,102 @@ fn parser_oracles_for_node_tokens(
         match token.kind() {
             ra_ap_syntax::SyntaxKind::L_PAREN => depth += 1,
             ra_ap_syntax::SyntaxKind::R_PAREN => depth = depth.saturating_sub(1),
+            // A `macro_rules!` definition inside the claimed span is a
+            // dormant token tree: its template never executes, so no token
+            // inside it — assertion macro, method call, or otherwise —
+            // classifies as oracle evidence. Skip the whole definition.
+            // The token-level shape walk is required because a definition
+            // inside another macro's token tree (a trial collected in
+            // `vec![...]`) carries no `MacroRules` node to query; the
+            // ancestor check inside the identifier arm still guards the
+            // file-level shapes.
+            ra_ap_syntax::SyntaxKind::IDENT if token.text() == "macro_rules" => {
+                match skip_macro_rules_definition(tokens, index) {
+                    Some(next) => {
+                        index = next;
+                        continue;
+                    }
+                    None => {
+                        index += 1;
+                        continue;
+                    }
+                }
+            }
             ra_ap_syntax::SyntaxKind::IDENT => {
                 let name = token.text();
+                // A `macro_rules!` definition inside the claimed span is a
+                // dormant token tree: its template never executes, so no
+                // token inside it — assertion macro, method call, or
+                // otherwise — classifies as oracle evidence. The same
+                // ancestor authority that keeps dormant templates from
+                // becoming subjects keeps their tokens from becoming
+                // oracles.
+                if inside_macro_rules(tokens[index].parent_ancestors()) {
+                    index += 1;
+                    continue;
+                }
+                // Method-position unwrap/expect smoke oracles (#3603): a
+                // `.name(` shape only. A path-shaped `Result::unwrap(...)`,
+                // a bare binding, or a field read never classifies — the
+                // ordinary parser only sees `ast::MethodCallExpr` here
+                // either. The argument group is consumed so nothing inside
+                // it reclassifies.
+                let method_span = if name == "unwrap" || name == "expect" {
+                    previous_significant(tokens, index)
+                        .filter(|previous| {
+                            tokens[*previous].kind() == ra_ap_syntax::SyntaxKind::DOT
+                        })
+                        .and_then(|dot_index| {
+                            next_significant(tokens, index + 1)
+                                .filter(|open| {
+                                    tokens[*open].kind() == ra_ap_syntax::SyntaxKind::L_PAREN
+                                })
+                                .and_then(|open_index| {
+                                    matching_group_close(tokens, open_index)
+                                        .map(|close_index| (dot_index, close_index))
+                                })
+                        })
+                } else {
+                    None
+                };
+                if let Some((dot_index, close_index)) = method_span {
+                    let receiver_start = receiver_start_index(tokens, dot_index);
+                    let text = slice_text(
+                        source,
+                        tokens[receiver_start].text_range().start(),
+                        tokens[close_index].text_range().end(),
+                    )
+                    .trim()
+                    .trim_end_matches(';')
+                    .to_string();
+                    assertions.push(OracleFact {
+                        line: line_index.line(tokens[receiver_start].text_range().start()),
+                        kind: OracleKind::SmokeOnly,
+                        strength: OracleStrength::Smoke,
+                        observed_tokens: extract_identifier_tokens(&text),
+                        text,
+                    });
+                    index = close_index;
+                    index += 1;
+                    continue;
+                }
                 // Shared leaf predicate; the bang gate below restores
                 // MacroCall semantics, and the leaf boundary keeps
                 // `snapshot_helper!`-style names out of the oracle set.
                 if !crate::analysis::syntax::ra::is_assertion_macro_leaf(name) {
+                    // Non-assertion macro invocation: skip its input token
+                    // tree so method tokens inside macro input never
+                    // classify — the ordinary parser sees no method-call
+                    // nodes inside macro input either.
+                    if let Some(group_end) = next_significant(tokens, index + 1)
+                        .filter(|next| tokens[*next].kind() == ra_ap_syntax::SyntaxKind::BANG)
+                        .and_then(|bang_index| {
+                            next_significant(tokens, bang_index + 1)
+                                .and_then(|open| matching_group_close(tokens, open))
+                        })
+                    {
+                        index = group_end;
+                    }
                     index += 1;
                     continue;
                 }
@@ -630,33 +847,107 @@ fn parser_oracles_for_node_tokens(
                         continue;
                     }
                 };
-                // assert!(..) / assert_eq!(..) — the token tree follows;
-                // the assertion text is the macro invocation.
-                let mut text = format!("{name}!");
-                let mut cursor = match next_significant(tokens, bang_index + 1) {
-                    Some(next) if tokens[next].kind() == ra_ap_syntax::SyntaxKind::L_PAREN => {
-                        text.push('(');
-                        next
-                    }
-                    _ => bang_index + 1,
-                };
-                if text.ends_with('(') {
-                    let mut macro_depth = 1;
-                    cursor += 1;
-                    while cursor < tokens.len() && macro_depth > 0 {
-                        let inner = &tokens[cursor];
-                        match inner.kind() {
-                            ra_ap_syntax::SyntaxKind::L_PAREN => macro_depth += 1,
-                            ra_ap_syntax::SyntaxKind::R_PAREN => macro_depth -= 1,
-                            _ => {}
+                // assert!(..) / assert_eq![..] — the token tree follows; the
+                // assertion text is the complete macro invocation — full
+                // qualified path, every delimiter Rust permits — classified
+                // and token-extracted exactly like the ordinary parser
+                // slices it for `#[test]` functions (including a same-line
+                // trailing semicolon).
+                //
+                // Qualified forms (`insta::assert_snapshot![..]`) classify
+                // on the leaf but slice from the whole contiguous path:
+                // walk back over `::`-separated identifiers without
+                // crossing an expression boundary. Inside another macro's
+                // token tree the separator reaches the walk as two COLON
+                // tokens, so both spellings participate.
+                let mut text_start_token = index;
+                while let Some(last_separator) = previous_significant(tokens, text_start_token) {
+                    let double = match tokens[last_separator].kind() {
+                        ra_ap_syntax::SyntaxKind::COLON2 => true,
+                        ra_ap_syntax::SyntaxKind::COLON => {
+                            matches!(
+                                previous_significant(tokens, last_separator),
+                                Some(first) if tokens[first].kind() == ra_ap_syntax::SyntaxKind::COLON
+                            )
                         }
-                        text.push_str(inner.text());
-                        cursor += 1;
+                        _ => false,
+                    };
+                    if !double && tokens[last_separator].kind() != ra_ap_syntax::SyntaxKind::COLON2
+                    {
+                        break;
+                    }
+                    let segment = if double {
+                        previous_significant(tokens, last_separator)
+                            .and_then(|first| previous_significant(tokens, first))
+                    } else {
+                        previous_significant(tokens, last_separator)
+                    };
+                    match segment {
+                        // `crate`, `self`, and `super` are keyword path
+                        // segments, not identifiers.
+                        Some(segment)
+                            if matches!(
+                                tokens[segment].kind(),
+                                ra_ap_syntax::SyntaxKind::IDENT
+                                    | ra_ap_syntax::SyntaxKind::CRATE_KW
+                                    | ra_ap_syntax::SyntaxKind::SELF_KW
+                                    | ra_ap_syntax::SyntaxKind::SUPER_KW
+                            ) =>
+                        {
+                            text_start_token = segment;
+                        }
+                        _ => break,
                     }
                 }
+                let group = next_significant(tokens, bang_index + 1)
+                    .filter(|next| {
+                        matches!(
+                            tokens[*next].kind(),
+                            ra_ap_syntax::SyntaxKind::L_PAREN
+                                | ra_ap_syntax::SyntaxKind::L_BRACK
+                                | ra_ap_syntax::SyntaxKind::L_CURLY
+                        )
+                    })
+                    .and_then(|open_index| {
+                        matching_group_close(tokens, open_index)
+                            .map(|close_index| (open_index, close_index))
+                    });
+                let text = match group {
+                    Some((_open_index, close_index)) => {
+                        // Same-line trailing semicolon parity: the ordinary
+                        // parser's macro-call slice extends over a `;` on
+                        // the same line. The probe walks the raw trivia so
+                        // a newline — in whitespace or a comment — before
+                        // the semicolon keeps the text at the group close.
+                        let mut end = tokens[close_index].text_range().end();
+                        let mut probe = close_index + 1;
+                        while let Some(inner) = tokens.get(probe) {
+                            if is_trivia(inner.kind()) {
+                                if inner.text().contains('\n') {
+                                    break;
+                                }
+                                probe += 1;
+                                continue;
+                            }
+                            if inner.kind() == ra_ap_syntax::SyntaxKind::SEMICOLON {
+                                end = inner.text_range().end();
+                            }
+                            break;
+                        }
+                        slice_text(source, tokens[text_start_token].text_range().start(), end)
+                    }
+                    None => format!("{name}!"),
+                };
+                // The group has been consumed; resuming inside it would
+                // rescan nested idents as separate top-level oracles.
+                // Without a group (`assert!` alone), resume after the bang.
+                let cursor = match group {
+                    Some((_open_index, close_index)) => close_index + 1,
+                    None => bang_index + 1,
+                };
                 let classification = classify_assertion(&text);
                 assertions.push(OracleFact {
-                    line: line_index.line(tokens[index].text_range().start()) + 1,
+                    line: line_index.line(tokens[text_start_token].text_range().start()),
                     kind: classification.kind,
                     strength: classification.strength,
                     observed_tokens: extract_identifier_tokens(&text),
@@ -673,6 +964,477 @@ fn parser_oracles_for_node_tokens(
     }
     assertions.sort_by(|left, right| left.line.cmp(&right.line).then(left.text.cmp(&right.text)));
     assertions
+}
+
+/// Index of the previous non-trivia token before `from`.
+fn previous_significant(tokens: &[ra_ap_syntax::SyntaxToken], from: usize) -> Option<usize> {
+    if from == 0 {
+        return None;
+    }
+    (0..from).rev().find(|index| {
+        !matches!(
+            tokens[*index].kind(),
+            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+        )
+    })
+}
+
+/// Whether one token kind is trivia.
+fn is_trivia(kind: ra_ap_syntax::SyntaxKind) -> bool {
+    matches!(
+        kind,
+        ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+    )
+}
+
+/// Index of the close token balancing the bracket-like open at
+/// `open_index` (`()`, `[]`, `{}`), or `None` when unbalanced.
+fn matching_group_close(tokens: &[ra_ap_syntax::SyntaxToken], open_index: usize) -> Option<usize> {
+    let close_kind = match tokens.get(open_index)?.kind() {
+        ra_ap_syntax::SyntaxKind::L_PAREN => ra_ap_syntax::SyntaxKind::R_PAREN,
+        ra_ap_syntax::SyntaxKind::L_BRACK => ra_ap_syntax::SyntaxKind::R_BRACK,
+        ra_ap_syntax::SyntaxKind::L_CURLY => ra_ap_syntax::SyntaxKind::R_CURLY,
+        _ => return None,
+    };
+    let open_kind = tokens[open_index].kind();
+    let mut depth: usize = 0;
+    for (offset, token) in tokens[open_index..].iter().enumerate() {
+        if token.kind() == open_kind {
+            depth += 1;
+        } else if token.kind() == close_kind {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(open_index + offset);
+            }
+        }
+    }
+    None
+}
+
+/// Index of the open token balancing the bracket-like close at
+/// `close_index`, or `None` when unbalanced.
+fn matching_group_open(tokens: &[ra_ap_syntax::SyntaxToken], close_index: usize) -> Option<usize> {
+    let open_kind = match tokens.get(close_index)?.kind() {
+        ra_ap_syntax::SyntaxKind::R_PAREN => ra_ap_syntax::SyntaxKind::L_PAREN,
+        ra_ap_syntax::SyntaxKind::R_BRACK => ra_ap_syntax::SyntaxKind::L_BRACK,
+        ra_ap_syntax::SyntaxKind::R_CURLY => ra_ap_syntax::SyntaxKind::L_CURLY,
+        _ => return None,
+    };
+    let close_kind = tokens[close_index].kind();
+    let mut depth: usize = 0;
+    for (offset, token) in tokens[..=close_index].iter().rev().enumerate() {
+        if token.kind() == close_kind {
+            depth += 1;
+        } else if token.kind() == open_kind {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(close_index - offset);
+            }
+        }
+    }
+    None
+}
+
+/// Index of the `<` balancing a `>` at `angle_index` (generic arguments
+/// such as `parse::<u16>(...)`), or `None` when unbalanced. Compound
+/// shift tokens never match, so expression contexts stop the walk.
+fn matching_angle_open(tokens: &[ra_ap_syntax::SyntaxToken], angle_index: usize) -> Option<usize> {
+    if tokens.get(angle_index)?.kind() != ra_ap_syntax::SyntaxKind::R_ANGLE {
+        return None;
+    }
+    let mut depth: usize = 0;
+    for (offset, token) in tokens[..=angle_index].iter().rev().enumerate() {
+        match token.kind() {
+            ra_ap_syntax::SyntaxKind::R_ANGLE => depth += 1,
+            ra_ap_syntax::SyntaxKind::L_ANGLE => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(angle_index - offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Index of the first token of the receiver expression for the method
+/// invocation whose `.` sits at `dot_index`. The walk runs backwards and
+/// only crosses balanced bracket groups, generic argument groups,
+/// literals, identifiers, keyword receiver participants (`self`,
+/// `Self`, `await`, `crate`, `super`), and the `.`/`::` connectors of
+/// one postfix expression; anything else (operators, statement
+/// punctuation, other keywords, a `!` not preceded by a macro-path
+/// identifier) ends the receiver, so the text never reaches across a
+/// statement boundary. Returns `dot_index` itself when nothing can be
+/// consumed.
+fn receiver_start_index(tokens: &[ra_ap_syntax::SyntaxToken], dot_index: usize) -> usize {
+    let mut receiver_start = dot_index;
+    let mut cursor = dot_index;
+    while cursor > 0 {
+        cursor -= 1;
+        if is_trivia(tokens[cursor].kind()) {
+            continue;
+        }
+        match tokens[cursor].kind() {
+            ra_ap_syntax::SyntaxKind::R_PAREN
+            | ra_ap_syntax::SyntaxKind::R_BRACK
+            | ra_ap_syntax::SyntaxKind::R_CURLY => {
+                let Some(open) = matching_group_open(tokens, cursor) else {
+                    return receiver_start;
+                };
+                receiver_start = open;
+                cursor = open;
+            }
+            ra_ap_syntax::SyntaxKind::R_ANGLE => {
+                let Some(open) = matching_angle_open(tokens, cursor) else {
+                    return receiver_start;
+                };
+                // Only a turbofish group (`parse::<u16>(..)`) is a generic
+                // argument group in receiver position, and its `<` is
+                // always preceded by `::`. Without the path separators the
+                // angles are comparison operators, and consuming the group
+                // would reach across the expression and over-credit the
+                // receiver. Inside a macro token tree the separators reach
+                // the walk as two COLON tokens, so both spellings
+                // participate.
+                let turbofish = match previous_significant(tokens, open) {
+                    Some(separator) => match tokens[separator].kind() {
+                        ra_ap_syntax::SyntaxKind::COLON2 => true,
+                        ra_ap_syntax::SyntaxKind::COLON => {
+                            matches!(
+                                previous_significant(tokens, separator),
+                                Some(first) if tokens[first].kind() == ra_ap_syntax::SyntaxKind::COLON
+                            )
+                        }
+                        _ => false,
+                    },
+                    None => false,
+                };
+                if !turbofish {
+                    // Comparison operators end the receiver at their
+                    // operand; consuming the angle group would reach
+                    // across the expression.
+                    return receiver_start;
+                }
+                receiver_start = open;
+                cursor = open;
+            }
+            ra_ap_syntax::SyntaxKind::IDENT
+            | ra_ap_syntax::SyntaxKind::STRING
+            | ra_ap_syntax::SyntaxKind::INT_NUMBER
+            | ra_ap_syntax::SyntaxKind::FLOAT_NUMBER
+            | ra_ap_syntax::SyntaxKind::CHAR
+            | ra_ap_syntax::SyntaxKind::BYTE_STRING
+            // Keyword receiver participants (#3603 review): `self.value
+            // .unwrap()`, `future.await.unwrap()`, and path roots like
+            // `crate::config.value.unwrap()` are ordinary postfix
+            // receivers; dropping the keyword would truncate the receiver
+            // text and misattribute the observed receiver.
+            | ra_ap_syntax::SyntaxKind::SELF_KW
+            | ra_ap_syntax::SyntaxKind::SELF_TYPE_KW
+            | ra_ap_syntax::SyntaxKind::AWAIT_KW
+            | ra_ap_syntax::SyntaxKind::CRATE_KW
+            | ra_ap_syntax::SyntaxKind::SUPER_KW => {
+                receiver_start = cursor;
+            }
+            ra_ap_syntax::SyntaxKind::DOT | ra_ap_syntax::SyntaxKind::COLON2 => {
+                // Postfix connectors: the current receiver start stands.
+            }
+            ra_ap_syntax::SyntaxKind::COLON => {
+                // A raw `::` inside a macro token tree reaches the walk as
+                // two COLON tokens: accept the pair when the neighbor
+                // colon sits on the other side. A lone colon (a
+                // struct-field separator) ends the receiver.
+                let previous_colon = matches!(
+                    previous_significant(tokens, cursor),
+                    Some(previous) if tokens[previous].kind() == ra_ap_syntax::SyntaxKind::COLON
+                );
+                let next_colon = matches!(
+                    next_significant(tokens, cursor + 1),
+                    Some(next) if tokens[next].kind() == ra_ap_syntax::SyntaxKind::COLON
+                );
+                if previous_colon {
+                    if let Some(first) = previous_significant(tokens, cursor) {
+                        cursor = first;
+                    } else {
+                        return receiver_start;
+                    }
+                } else if next_colon {
+                    if let Some(second) = next_significant(tokens, cursor + 1) {
+                        cursor = second;
+                    } else {
+                        return receiver_start;
+                    }
+                } else {
+                    return receiver_start;
+                }
+            }
+            ra_ap_syntax::SyntaxKind::BANG => {
+                // A macro-call receiver (`println!("x").unwrap()`)
+                // continues through `!` only when the macro path's last
+                // identifier precedes it; a negation operator ends the
+                // receiver.
+                let Some(path_ident) = previous_significant(tokens, cursor) else {
+                    return receiver_start;
+                };
+                if tokens[path_ident].kind() != ra_ap_syntax::SyntaxKind::IDENT {
+                    return receiver_start;
+                }
+                receiver_start = path_ident;
+                cursor = path_ident;
+            }
+            _ => return receiver_start,
+        }
+    }
+    receiver_start
+}
+
+/// Token index of a bare-identifier trial callback (`Trial::test("name",
+/// helper_fn)`): between the name argument and the balanced close, the
+/// only significant tokens are one separating comma, the identifier, and
+/// optionally a trailing comma. Closures, path callbacks, and any
+/// multi-token argument do not resolve (fail closed, #3603).
+fn bare_ident_callback(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    name_token_index: usize,
+    open_paren_index: usize,
+) -> Option<usize> {
+    let close_index = matching_group_close(tokens, open_paren_index)?;
+    let significant: Vec<usize> = (name_token_index + 1..close_index)
+        .filter(|index| !is_trivia(tokens[*index].kind()))
+        .collect();
+    if significant.len() != 2 && significant.len() != 3 {
+        return None;
+    }
+    let comma = significant[0];
+    let ident = significant[1];
+    if tokens[comma].kind() != ra_ap_syntax::SyntaxKind::COMMA
+        || tokens[ident].kind() != ra_ap_syntax::SyntaxKind::IDENT
+    {
+        return None;
+    }
+    match significant.len() {
+        2 => Some(ident),
+        // A trailing comma after the identifier is still a bare callback.
+        3 if tokens[significant[2]].kind() == ra_ap_syntax::SyntaxKind::COMMA => Some(ident),
+        _ => None,
+    }
+}
+
+/// The one file-level function the callback can be shown to name, or
+/// `None` whenever binding identity is not provable (#3603 review). The
+/// resolution is fail-closed in three directions:
+///
+/// - a local binding of the name inside the trial's enclosing body
+///   (`let`, parameter, closure or loop pattern, or a fn-local `use`)
+///   shadows any file-level fn — the callback would run the local, not
+///   the file-level fn, so nothing is credited;
+/// - a top-level `use` binding the same leaf name makes the bare
+///   callback ambiguous with the import — nothing is credited;
+/// - the name must name exactly one `FunctionFact` AND exactly one
+///   top-level `fn` item of the file; a same-named fn that lives only
+///   inside a nested module or impl is not name-visible to the
+///   invocation and never admits. Function facts are producer-owned
+///   parsed structure, so resolution is never a name heuristic on raw
+///   text.
+fn resolve_helper_function<'a>(
+    index: &'a RustIndex,
+    target: &Path,
+    file_syntax: &ra_ap_syntax::SyntaxNode,
+    enclosing_body: Option<&str>,
+    name: &str,
+) -> Option<&'a FunctionFact> {
+    if let Some(body) = enclosing_body
+        && enclosing_body_binds_name(body, name)
+    {
+        return None;
+    }
+    if !top_level_use_bindings(file_syntax, name).is_empty() {
+        return None;
+    }
+    // A top-level `const`/`static` binding the callback's leaf name makes
+    // the bare callback ambiguous with the item binding — parse-only
+    // spellings can carry both a same-named const and fn, and a local
+    // const/static shadow is separately covered by the enclosing-body
+    // gate.
+    let top_level_same_named_item = file_syntax
+        .children()
+        .any(|item| node_binding_name(&item).is_some_and(|item_name| item_name == name));
+    if top_level_same_named_item {
+        return None;
+    }
+    let top_level_same_named = file_syntax
+        .children()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .map(|item| item.text() == name)
+                .unwrap_or(false)
+        })
+        .count();
+    if top_level_same_named != 1 {
+        return None;
+    }
+    let facts = index.files.get(target)?;
+    let mut matches = facts
+        .functions
+        .iter()
+        .filter(|function| function.name == name);
+    let matched = matches.next()?;
+    matches.next().is_none().then_some(matched)
+}
+
+/// The innermost function fact whose span contains `line`, if any — the
+/// line-based fallback for invocations whose tokens carry no Fn ancestor
+/// (a trial collected inside another macro's token tree). Ancestor-based
+/// resolution is preferred; this heuristic can pick the wrong scope when
+/// two functions share one source line.
+fn enclosing_function<'a>(
+    index: &'a RustIndex,
+    target: &Path,
+    line: usize,
+) -> Option<&'a FunctionFact> {
+    index
+        .files
+        .get(target)?
+        .functions
+        .iter()
+        .filter(|function| function.start_line <= line && line <= function.end_line)
+        .min_by_key(|function| function.end_line.saturating_sub(function.start_line))
+}
+
+/// Whether the enclosing body binds `name` locally: any identifier
+/// pattern (`let`, parameter, closure parameter, loop pattern), any
+/// `const`/`static` item binding inside the body (a local const or static
+/// shadows the file-level fn just like a `let`), or any `use` item inside
+/// the body that binds the name. An unparseable body counts as bound
+/// (fail closed).
+fn enclosing_body_binds_name(body_text: &str, name: &str) -> bool {
+    let parse = SourceFile::parse(body_text, Edition::CURRENT);
+    if !parse.errors().is_empty() {
+        return true;
+    }
+    let tree = parse.tree();
+    let syntax = tree.syntax();
+    let pattern_binds = syntax
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .any(|pattern| {
+            pattern
+                .name()
+                .map(|item| item.text() == name)
+                .unwrap_or(false)
+        });
+    if pattern_binds {
+        return true;
+    }
+    let item_binds = syntax
+        .descendants()
+        .any(|node| node_binding_name(&node).is_some_and(|item_name| item_name == name));
+    if item_binds {
+        return true;
+    }
+    let mut bindings = BTreeSet::new();
+    for use_item in syntax.descendants().filter_map(ast::Use::cast) {
+        let Some(use_tree) = use_item.use_tree() else {
+            continue;
+        };
+        collect_use_bindings(&use_tree, String::new(), name, &mut bindings);
+    }
+    !bindings.is_empty()
+}
+
+/// The bound name of a `const` or `static` item node, if the node is one.
+/// Item bindings carry a `Name`, not an identifier pattern, so the
+/// identifier-pattern scan cannot see them.
+fn node_binding_name(node: &ra_ap_syntax::SyntaxNode) -> Option<String> {
+    let name = ast::Const::cast(node.clone())
+        .and_then(|item| item.name())
+        .or_else(|| ast::Static::cast(node.clone()).and_then(|item| item.name()))?;
+    Some(name.text().to_string())
+}
+
+/// Byte spans of the dormant `macro_rules!` definitions in `text`, from
+/// the parsed `ast::MacroRules` nodes — real parsed structure, no brace
+/// balancing. An unparseable body yields no spans: the oracle producers
+/// already fail closed on their own.
+fn dormant_template_parse_spans(text: &str) -> Vec<(usize, usize)> {
+    let parse = SourceFile::parse(text, Edition::CURRENT);
+    if !parse.errors().is_empty() {
+        return Vec::new();
+    }
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroRules::cast)
+        .map(|definition| {
+            let range = definition.syntax().text_range();
+            (
+                u32::from(range.start()) as usize,
+                u32::from(range.end()) as usize,
+            )
+        })
+        .collect()
+}
+
+/// Erase the dormant-template byte spans from `text` by replacing their
+/// non-newline bytes with spaces: template evidence can no longer be
+/// extracted, while line offsets and live same-line evidence outside the
+/// spans stay exact. Span edges are character boundaries, so only whole
+/// characters are replaced.
+fn mask_dormant_template_spans(text: &str, spans: &[(usize, usize)]) -> String {
+    if spans.is_empty() {
+        return text.to_string();
+    }
+    let mut masked = text.as_bytes().to_vec();
+    for (start, end) in spans {
+        let range = (*start).min(masked.len())..(*end).min(masked.len());
+        for byte in &mut masked[range] {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    // See the note above: masked regions cover whole characters, so the
+    // masked bytes are always valid UTF-8; the fallback keeps the input
+    // rather than panicking on a defect.
+    String::from_utf8(masked).unwrap_or_else(|_| text.to_string())
+}
+
+/// Byte spans (relative to the claimed-span body text, which starts at
+/// `body_start`) of the dormant `macro_rules!` definitions between the
+/// trial's name argument and its balanced close, for trials registered
+/// inside another macro's token tree where no `MacroRules` nodes exist.
+fn dormant_template_token_spans(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    name_token_index: usize,
+    open_paren_index: usize,
+    body_start: TextSize,
+) -> Vec<(usize, usize)> {
+    let Some(close_index) = matching_group_close(tokens, open_paren_index) else {
+        return Vec::new();
+    };
+    let mut spans = Vec::new();
+    let mut walk = name_token_index + 1;
+    while walk < close_index {
+        if tokens[walk].kind() == ra_ap_syntax::SyntaxKind::IDENT
+            && tokens[walk].text() == "macro_rules"
+            && let Some(next) = skip_macro_rules_definition(tokens, walk)
+        {
+            let span_start =
+                u32::from(tokens[walk].text_range().start()).saturating_sub(u32::from(body_start));
+            let span_end = u32::from(tokens[next - 1].text_range().end())
+                .saturating_sub(u32::from(body_start));
+            spans.push((span_start as usize, span_end as usize));
+            walk = next;
+            continue;
+        }
+        walk += 1;
+    }
+    spans
 }
 
 /// Index of the next non-trivia token at or after `from`.
@@ -1059,18 +1821,42 @@ fn resolve_trial_binding(bindings: &BTreeSet<String>, marker: &str) -> TrialBind
 /// Whether the ancestor chain of a token sits inside a loop expression —
 /// the bounded signal for runtime-only trial discovery. Works through
 /// macro token trees too, because tokens keep their ancestor nodes.
-/// Whether the token sits inside a `macro_rules!` definition body: the
-/// tokens there are a template, not an executed registration.
-fn inside_macro_rules(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> bool {
-    ancestors.any(|ancestor| ast::MacroRules::can_cast(ancestor.kind()))
-}
-
 fn in_loop(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> bool {
     ancestors.any(|ancestor| {
         ast::WhileExpr::can_cast(ancestor.kind())
             || ast::ForExpr::can_cast(ancestor.kind())
             || ast::LoopExpr::can_cast(ancestor.kind())
     })
+}
+
+/// Whether the token sits inside a `macro_rules!` definition body: the
+/// tokens there are a template, not an executed registration.
+fn inside_macro_rules(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> bool {
+    ancestors.any(|ancestor| ast::MacroRules::can_cast(ancestor.kind()))
+}
+
+/// Index just past the `macro_rules! name <group>` definition whose
+/// `macro_rules` token sits at `index`, or `None` when the shape is not a
+/// definition. Trivia-tolerant — `macro_rules` and `!` may be separated
+/// by whitespace or comments — and balanced at the token level over every
+/// delimiter Rust permits for the template body (`(...)`, `[...]`,
+/// `{...}`), because a definition inside another macro's token tree
+/// carries no `MacroRules` node to query.
+fn skip_macro_rules_definition(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    index: usize,
+) -> Option<usize> {
+    let bang = next_significant(tokens, index + 1)?;
+    if tokens[bang].kind() != ra_ap_syntax::SyntaxKind::BANG {
+        return None;
+    }
+    let name = next_significant(tokens, bang + 1)?;
+    if tokens[name].kind() != ra_ap_syntax::SyntaxKind::IDENT {
+        return None;
+    }
+    let open = next_significant(tokens, name + 1)?;
+    let close = matching_group_close(tokens, open)?;
+    Some(close + 1)
 }
 
 /// Exact simple string-literal text of one token. Escaped spellings,
