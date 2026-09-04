@@ -174,12 +174,24 @@ pub(super) fn classify_trial_reachability(
     let mut run_calls = Vec::new();
     let mut ambiguous_bare_run = false;
     let mut unbound_imported_run_call = false;
+    let mut foreign_suffix_run_call = false;
     let run_bindings = top_level_use_bindings(file_syntax, "run");
     let aliased_run_locals = aliased_run_entry_locals(file_syntax);
     for position in 0..tokens.len() {
         let Some(matched) = match_run_path(tokens, position, marker) else {
             continue;
         };
+        if matched.foreign {
+            // A foreign suffix shape (`wrapper::libtest_mimic::run(`) is
+            // unsupported entry evidence: it cannot anchor, and trials
+            // may feed it through an unanchored real entry (#3639
+            // review).
+            if inside_macro_rules(tokens[position].parent_ancestors()) {
+                continue;
+            }
+            foreign_suffix_run_call = true;
+            continue;
+        }
         // A `run` inside a `macro_rules!` template is dormant, exactly
         // like a trial template: it never anchors the entry point.
         if inside_macro_rules(tokens[position].parent_ancestors()) {
@@ -241,24 +253,31 @@ pub(super) fn classify_trial_reachability(
 
     // Run-entry absence is concluded only when no supported spelling
     // anchors AND no unsupported shape is present that could be the real
-    // entry point. An unsupported spelling keeps every trial admitted
-    // and disclosed instead.
+    // entry point. Unsupported evidence is recorded regardless of
+    // anchored calls (#3639 review): trials may feed an unanchored entry
+    // beside a resolved one, so it also clears the completeness premise
+    // below instead of only gating absence.
     let unsupported_entry_reason = if ambiguous_bare_run {
         Some(format!(
             "a bare `run` invocation cannot be tied to marker `{marker}` (conflicting imports bind `run` from more than one path), so the run entry point is not anchored",
             marker = marker
         ))
-    } else if run_calls.is_empty() && unbound_imported_run_call {
+    } else if unbound_imported_run_call {
         Some(format!(
             "a bare `run` invocation is bound from a path that cannot be established as `{marker}::run` (possibly a re-export), so the run entry point is not anchored",
             marker = marker
         ))
-    } else if run_calls.is_empty() && aliased_run_call_present {
+    } else if aliased_run_call_present {
         Some(format!(
             "a `run` path is imported under an alias and invoked, which the scanner cannot anchor to `{marker}::run`, so the run entry point is not anchored",
             marker = marker
         ))
-    } else if run_calls.is_empty() && run_tests_call_present(tokens) {
+    } else if foreign_suffix_run_call {
+        Some(format!(
+            "a qualified call matches the `{marker}::run` suffix inside a longer foreign path, so the run entry point is not anchored",
+            marker = marker
+        ))
+    } else if run_tests_call_present(tokens) {
         Some(format!(
             "the target calls an unsupported harness entry spelling (`run_tests`); only `{marker}::run` is resolved",
             marker = marker
@@ -269,10 +288,11 @@ pub(super) fn classify_trial_reachability(
     let run_entry_absent = run_calls.is_empty() && unsupported_entry_reason.is_none();
 
     let mut reachable: BTreeSet<usize> = BTreeSet::new();
-    // With no anchored run call there is nothing complete to reason
-    // over: an unsupported entry spelling (or unresolved bare `run`)
-    // must leave every trial unknown, never excluded.
-    let mut arguments_complete = !run_calls.is_empty();
+    // With unsupported entry evidence there is no complete premise to
+    // reason over even when an anchored call also resolves: trials may
+    // feed the unanchored entry, so every non-anchored trial stays
+    // unknown, never excluded (#3639 review).
+    let mut arguments_complete = !run_calls.is_empty() && unsupported_entry_reason.is_none();
     let mut first_incomplete_reason: Option<String> = unsupported_entry_reason;
     if !run_calls.is_empty() {
         let resolver = Resolver {
@@ -387,8 +407,59 @@ fn run_tests_call_present(tokens: &[SyntaxToken]) -> bool {
     false
 }
 
+/// Whether a full `<marker>::run (` suffix match starts at `position`
+/// (segments joined by the tolerated `::`/`:` `:` separators), returning
+/// the open-paren token index — the foreign-suffix probe for mid-path
+/// qualified matches (#3639 review).
+fn foreign_suffix_run_paren(
+    tokens: &[SyntaxToken],
+    position: usize,
+    marker: &str,
+) -> Option<usize> {
+    let is_ident_eq =
+        |index: usize, expected: &str| tokens.get(index).map(SyntaxToken::text) == Some(expected);
+    let separator_width = |index: usize| -> Option<usize> {
+        match tokens.get(index).map(SyntaxToken::kind) {
+            Some(SyntaxKind::COLON2) => Some(1),
+            Some(SyntaxKind::COLON)
+                if matches!(
+                    tokens.get(index + 1).map(SyntaxToken::kind),
+                    Some(SyntaxKind::COLON)
+                ) =>
+            {
+                Some(2)
+            }
+            _ => None,
+        }
+    };
+    let mut segments: Vec<&str> = marker.split("::").collect();
+    segments.push("run");
+    let mut cursor = position;
+    let mut matched_segments = 0usize;
+    for segment in &segments {
+        if !is_ident_eq(cursor, segment) {
+            return None;
+        }
+        cursor += 1;
+        matched_segments += 1;
+        if matched_segments < segments.len() {
+            let width = separator_width(cursor)?;
+            cursor += width;
+        }
+    }
+    tokens
+        .get(cursor)
+        .filter(|token| token.kind() == SyntaxKind::L_PAREN)
+        .map(|_| cursor)
+}
+
 struct RunPathMatch {
     qualified: bool,
+    /// The path matched `<marker>::run (` textually but began mid-path —
+    /// a foreign suffix like `wrapper::libtest_mimic::run`. It can never
+    /// anchor the entry, and its presence must never conclude absence
+    /// (#3639 review).
+    foreign: bool,
     open_paren_index: usize,
 }
 
@@ -430,6 +501,20 @@ fn match_run_path(tokens: &[SyntaxToken], position: usize, marker: &str) -> Opti
             if !at_path_start(tokens, position, false) {
                 continue;
             }
+        } else if !at_path_start(tokens, position, false) {
+            // A qualified marker suffix mid-path (`wrapper::
+            // libtest_mimic::run(`) is a foreign item, not the registered
+            // entry: report it as foreign so the caller keeps it as
+            // unsupported entry evidence instead of anchoring or
+            // concluding absence (#3639 review).
+            if let Some(open_paren_index) = foreign_suffix_run_paren(tokens, position, marker) {
+                return Some(RunPathMatch {
+                    qualified,
+                    foreign: true,
+                    open_paren_index,
+                });
+            }
+            continue;
         }
         let mut segments: Vec<&str> = if qualified {
             marker.split("::").collect()
@@ -459,6 +544,7 @@ fn match_run_path(tokens: &[SyntaxToken], position: usize, marker: &str) -> Opti
         {
             return Some(RunPathMatch {
                 qualified,
+                foreign: false,
                 open_paren_index: cursor,
             });
         }

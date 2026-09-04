@@ -3243,6 +3243,73 @@ fn never_called_trials() -> Vec<Trial> {
     Ok(())
 }
 
+/// #3639 review (devin): a qualified call matching the marker suffix
+/// inside a longer foreign path (`wrapper::libtest_mimic::run`) can
+/// never anchor the entry. Combined with an aliased real entry
+/// receiving the trial, the trial must stay admitted as unknown — not
+/// excluded by the foreign call's (empty) resolved argument.
+#[test]
+fn foreign_suffix_run_call_cannot_exclude_trials() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("foreign-suffix")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/foreign_suffix.rs",
+            r#"
+use libtest_mimic::{run as execute, Arguments, Trial};
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("foreign_suffix_trial", || Ok(()))]
+}
+
+fn main() {
+    let arguments = Arguments::from_args();
+    wrapper::libtest_mimic::run(&arguments, &Vec::new());
+    execute(&arguments, &trials());
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "foreign_suffix", "tests/foreign_suffix.rs")?;
+    let files = [PathBuf::from("tests/foreign_suffix.rs")];
+    let registrations = [custom_target_registration("tests/foreign_suffix.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    assert_eq!(
+        index
+            .tests
+            .iter()
+            .filter(|test| test.file.ends_with(Path::new("tests/foreign_suffix.rs")))
+            .count(),
+        1,
+        "the trial must not be excluded by the foreign call: {:?}",
+        index.harness_limitations
+    );
+    let unknown = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_reachability_unknown")
+        .ok_or_else(|| {
+            format!(
+                "missing unknown disclosure: {:?}",
+                index.harness_limitations
+            )
+        })?;
+    assert!(
+        unknown.detail.contains("foreign_suffix_trial"),
+        "{unknown:?}"
+    );
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .all(|limitation| limitation.code != "registration_unreachable"),
+        "{:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}
+
 /// #3639 review (devin): an aliased run entry (`use
 /// libtest_mimic::run as execute;` plus an `execute(..)` call) cannot be
 /// anchored, so it must never conclude unreachability — the trials stay

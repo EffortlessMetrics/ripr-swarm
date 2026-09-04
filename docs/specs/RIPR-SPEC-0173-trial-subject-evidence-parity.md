@@ -343,8 +343,10 @@ variant, in `docs/OUTPUT_SCHEMA.md`'s `subjects[].claim` and
   named-invocation reachability-boundary (#3604, #3636) documentation on
   `HarnessSubjectFact` and `HarnessSubjectClaim::NamedInvocation`
 - `crates/ripr/src/analysis/seam_cache.rs` — classified/sharded/compact
-  schema-generation bumps (`1.4` -> `1.5`, `0.10` -> `0.11`,
-  `0.11` -> `0.12` for #3636) and the warm-cache regression
+  schema-generation bumps (the #3634-era `1.4` -> `1.5`, `0.10` ->
+  `0.11`, `0.11` -> `0.12` transitions, then the #3636-era `1.5` ->
+  `1.6`, `0.11` -> `0.12`, `0.12` -> `0.13` transitions) and the
+  warm-cache regressions for both generation steps
 
 ## Metrics
 
