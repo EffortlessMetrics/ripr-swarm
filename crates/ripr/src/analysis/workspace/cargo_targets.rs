@@ -276,7 +276,14 @@ impl ManifestInventory {
         workspace_root: &Path,
         registration_target: &Path,
     ) -> CargoHarnessVerdict {
-        let anchored = lexical(&normalize(&workspace_root.join(registration_target)));
+        // The inventory keys are cargo's absolute source paths, so the
+        // anchored target must be made absolute against the process
+        // directory too: with a relative analysis root, the raw join
+        // stays relative and every lookup misses (NotDeclared for all
+        // registrations, #3637 review).
+        let joined = workspace_root.join(registration_target);
+        let joined = std::path::absolute(&joined).unwrap_or(joined);
+        let anchored = lexical(&normalize(&joined));
         self.ensure_workspace_metadata(workspace_root);
         let owners = match &self.metadata {
             MetadataState::Loaded(targets) => targets.get(&anchored).cloned(),
@@ -427,7 +434,16 @@ fn run_workspace_cargo_metadata(
                     "--offline",
                 ])
                 .arg("--manifest-path")
-                .arg(&manifest_path)
+                // Bare `Cargo.toml`: the process directory below is the
+                // workspace root, and a root-prefixed `manifest_path`
+                // would be re-resolved against that new directory — a
+                // relative analysis root (`some/dir`) would probe
+                // `some/dir/some/dir/Cargo.toml` and fail every
+                // registration's premise (#3637 review). An absolute path
+                // would work, but canonicalize emits `\\?\` verbatim
+                // paths on Windows that would leak into the inventory
+                // keys.
+                .arg("Cargo.toml")
                 // Cargo resolves the workspace from the process directory
                 // too: without this anchor, a probe for a bare-package
                 // root inherits the caller's enclosing workspace and cargo
@@ -1654,6 +1670,55 @@ harness=true
             "the dropped dual-layout declaration compiles nothing"
         );
         let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3637 review (devin): a relative analysis root must not invalidate
+    /// the metadata probe. The probe anchors the child process in the
+    /// workspace root, so the manifest path it passes must be resolved in
+    /// that root, not re-prefixed with it; the fixture lives under the
+    /// test process cwd (`target/`, gitignored) and the verdict is driven
+    /// with a purely relative root.
+    #[test]
+    fn relative_analysis_root_still_resolves_the_workspace() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let relative_root = PathBuf::from("target").join(format!("harness-relative-{stamp}"));
+        let pkg_tests = relative_root.join("pkg/tests");
+        std::fs::create_dir_all(&pkg_tests).map_err(|error| error.to_string())?;
+        std::fs::write(
+            relative_root.join("Cargo.toml"),
+            "[workspace]
+members = ['pkg']
+",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            relative_root.join("pkg/Cargo.toml"),
+            "[package]
+name='p'
+version='0.1.0'
+edition='2024'
+
+[[test]]
+name='mimic'
+harness=false
+",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(relative_root.join("pkg/src.rs"), "").map_err(|error| error.to_string())?;
+        std::fs::write(pkg_tests.join("mimic.rs"), "").map_err(|error| error.to_string())?;
+
+        let verdict =
+            cargo_test_target_harness_verdict(&relative_root, Path::new("pkg/tests/mimic.rs"));
+        assert_eq!(
+            verdict,
+            CargoHarnessVerdict::HarnessDisabled,
+            "a relative root resolves the same workspace premise as an absolute one"
+        );
+        let _ = std::fs::remove_dir_all(&relative_root);
         Ok(())
     }
 
