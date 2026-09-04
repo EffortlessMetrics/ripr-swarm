@@ -8322,6 +8322,8 @@ tests = [
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::context_tests::dev_and_build_path_dependencies_join_the_member_set",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::context_tests::exclusion_prefix_covers_nested_path_dependencies",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::context_tests::exclusion_patterns_exclude_directory_prefixes",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::context_tests::explicit_literal_member_beats_parent_prefix_exclusion",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::context_tests::glob_discovered_member_yields_to_parent_prefix_exclusion",
 ]
 fixtures = [
   "crates/ripr/tests/data/source-role-corpus",

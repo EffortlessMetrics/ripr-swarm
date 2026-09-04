@@ -361,7 +361,9 @@ impl ManifestInventory {
         let normalized_root = normalize(workspace_root);
         // Membership (review HAkg): the analysis-root manifest defines the
         // workspace — its own package when it has `[package]`, plus the
-        // declared `[workspace.members]` (globs matched lexically) minus
+        // declared `[workspace.members]` (globs matched lexically; explicit
+        // literal entries beat parent-prefix exclusions while glob-expanded
+        // matches yield to them, cargo metadata parity) minus
         // `[workspace.exclude]`, plus package manifests reached through
         // members' regular path dependencies. Manifests outside this
         // member set are not part of the analyzed workspace: their
@@ -390,17 +392,56 @@ impl ManifestInventory {
                 }
                 if let Some(workspace) = value.get("workspace") {
                     excluded = collect_string_array(workspace.get("exclude"));
-                    let mut candidates: Vec<String> = Vec::new();
+                    // Each candidate carries its pattern's form (review
+                    // round eight): explicit literal entries are named
+                    // directly by the manifest and beat parent-prefix
+                    // exclusions, while glob-expanded matches yield to
+                    // them — cargo metadata parity for members =
+                    // ["dep/sub"] versus ["dep/*"] under exclude =
+                    // ["dep"].
+                    let mut candidates: Vec<(PathBuf, bool)> = Vec::new();
                     for pattern in collect_string_array(workspace.get("members")) {
-                        candidates.extend(expand_member_pattern(workspace_root, &pattern));
+                        let normalized_pattern = pattern.trim().replace('\\', "/");
+                        let trimmed = normalized_pattern.trim_end_matches('/');
+                        if member_pattern_has_wildcard(trimmed) {
+                            for candidate in expand_member_pattern(workspace_root, trimmed) {
+                                candidates
+                                    .push((normalize(&workspace_root.join(&candidate)), false));
+                            }
+                        } else {
+                            // Named directly by the manifest: enrolled even
+                            // when the directory does not exist yet, so the
+                            // absent-member rule fails closed on it.
+                            candidates.push((normalize(&workspace_root.join(trimmed)), true));
+                        }
                     }
-                    candidates.retain(|candidate| {
-                        !excluded.iter().any(|excluded_pattern| {
-                            exclusion_pattern_excludes(excluded_pattern, candidate)
-                        })
+                    candidates.retain(|(dir, from_literal_entry)| {
+                        let relative_directory = normalize(dir)
+                            .strip_prefix(&normalized_root)
+                            .ok()
+                            .map(|relative| relative.to_string_lossy().to_string());
+                        let excluded_member = match relative_directory {
+                            // Outside the analysis root: not a member.
+                            None => true,
+                            Some(relative) => excluded.iter().any(|excluded_pattern| {
+                                if *from_literal_entry {
+                                    // Explicit entries beat parent-prefix
+                                    // exclusions: only a match of the entry
+                                    // itself (still glob-shaped) excludes it.
+                                    let normalized_excluded = excluded_pattern
+                                        .trim()
+                                        .replace('\\', "/")
+                                        .trim_end_matches('/')
+                                        .to_string();
+                                    workspace_member_glob_matches(&normalized_excluded, &relative)
+                                } else {
+                                    exclusion_pattern_excludes(excluded_pattern, &relative)
+                                }
+                            }),
+                        };
+                        !excluded_member
                     });
-                    for candidate in candidates {
-                        let dir = normalize(&workspace_root.join(&candidate));
+                    for (dir, _) in candidates {
                         enqueue(dir, &mut queue, &mut seen);
                     }
                 }
@@ -770,6 +811,15 @@ fn expand_member_pattern_walk(base: &Path, components: &[&str], matched: &mut Ve
             }
         }
     }
+}
+
+/// Whether a `[workspace.members]` pattern contains glob components —
+/// glob-expanded member candidates yield to parent-prefix exclusions
+/// while explicit literal entries beat them (review round eight).
+fn member_pattern_has_wildcard(trimmed_pattern: &str) -> bool {
+    trimmed_pattern
+        .split('/')
+        .any(|component| component.contains('*') || component.contains('?'))
 }
 
 /// Whether one `[workspace.exclude]` pattern excludes one
@@ -1247,7 +1297,7 @@ name='ws'
 edition='2024'
 
 [workspace]
-members = ['crates/a', 'crates/b']
+members = ['crates/a']
 ",
         )
         .map_err(|error| error.to_string())?;
@@ -1274,8 +1324,20 @@ harness=false
         assert_eq!(verdict("shared/other.rs"), CargoHarnessVerdict::NotDeclared);
 
         // Ambiguity: a second package declaring the same shared path with
-        // a conflicting harness flag fails closed.
+        // a conflicting harness flag fails closed. The second package is
+        // declared as a member when its manifest appears.
         std::fs::create_dir_all(dir.join("crates/b")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]
+name='ws'
+edition='2024'
+
+[workspace]
+members = ['crates/a', 'crates/b']
+",
+        )
+        .map_err(|error| error.to_string())?;
         std::fs::write(
             dir.join("crates/b/Cargo.toml"),
             "[package]
@@ -2273,5 +2335,88 @@ mod context_tests {
         );
         assert!(!exclusion_pattern_excludes("a/b", "a/c"));
         assert!(!exclusion_pattern_excludes("a/b/c", "a/b"));
+    }
+
+    /// #3608 review round eight: Cargo's explicit-literal versus glob
+    /// precedence over parent-prefix exclusions, pinned per shape against
+    /// cargo metadata parity (verified on this toolchain: members =
+    /// ["dep/sub"] with exclude = ["dep"] retains sub as a workspace
+    /// member; members = ["dep/*"] with the same exclusion removes it).
+    ///
+    /// Shape A — explicit literal entry: `dep/sub` keeps its harness
+    /// authority, so its `harness = false` declaration claims the target.
+    #[test]
+    fn explicit_literal_member_beats_parent_prefix_exclusion() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-literal-member-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("main")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("dep/sub")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = ['dep/sub']\nexclude = ['dep']\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("main/Cargo.toml"),
+            "[package]\nname='main'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("dep/sub/Cargo.toml"),
+            "[package]\nname='sub'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the explicit literal member is retained: its declaration claims the target"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round eight, shape B — glob-discovered member: the
+    /// same nested package reached through `dep/*` yields to the parent
+    /// prefix exclusion, so its declaration grants no authority.
+    #[test]
+    fn glob_discovered_member_yields_to_parent_prefix_exclusion() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-glob-member-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("main")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("dep/sub")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = ['dep/*']\nexclude = ['dep']\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("main/Cargo.toml"),
+            "[package]\nname='main'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("dep/sub/Cargo.toml"),
+            "[package]\nname='sub'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../../shared/mimic.rs'\nharness=true\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
+            CargoHarnessVerdict::NotDeclared,
+            "the glob-discovered member is dropped: its declaration grants no authority"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
     }
 }
