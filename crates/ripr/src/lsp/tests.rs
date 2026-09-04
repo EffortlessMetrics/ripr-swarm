@@ -17381,6 +17381,8 @@ fn registered_harness_projection_reaches_the_lsp_snapshot() -> Result<(), Box<dy
             "version = \"0.1.0\"\n",
             "edition = \"2024\"\n",
             "\n",
+            "[workspace]\n",
+            "\n",
             "[lib]\n",
             "name = \"lsp_harness_fixture\"\n",
             "path = \"src/lib.rs\"\n",

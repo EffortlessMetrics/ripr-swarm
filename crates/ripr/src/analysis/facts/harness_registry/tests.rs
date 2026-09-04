@@ -72,9 +72,14 @@ fn write_workspace(
 ) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(root.0.join("src"))?;
     fs::create_dir_all(root.0.join("tests"))?;
+    // The empty [workspace] table makes the fixture a standalone workspace
+    // root (#3634): the harness validation probes `cargo metadata`, and a
+    // bare package whose manifest sits inside an enclosing workspace —
+    // e.g. a host temp dir under this repo's target/ — would be rejected
+    // by cargo as "believes it's in a workspace when it's not".
     fs::write(
         root.0.join("Cargo.toml"),
-        "[package]\nname = 'harness-fixture'\nversion = '0.1.0'\nedition = '2024'\n",
+        "[package]\nname = 'harness-fixture'\nversion = '0.1.0'\nedition = '2024'\n\n[workspace]\n",
     )?;
     for (path, source) in files {
         let full = root.0.join(path);
@@ -2396,7 +2401,7 @@ fn inert_test_in_harness_target() {
     let files = [(file.clone(), source)];
     fs::write(
         root.0.join("Cargo.toml"),
-        "[package]\nname = 'harness-fixture'\nversion = '0.1.0'\nedition = '2024'\n",
+        "[package]\nname = 'harness-fixture'\nversion = '0.1.0'\nedition = '2024'\n\n[workspace]\n",
     )?;
     declare_harness_false_target(&root, "cached_mimic", "tests/cached_mimic.rs")?;
     let registrations = [custom_target_registration("tests/cached_mimic.rs")];
@@ -2565,9 +2570,13 @@ fn misdeclared_target_keeps_per_function_roles_and_records_the_conflict()
     let root = temp_dir("misdeclared-target")?;
     write_workspace(
         &root,
-        &[(
-            "src/misdeclared.rs",
-            r#"
+        &[
+            // The lib target keeps the fixture package cargo-valid; it
+            // declares nothing for the misdeclared file.
+            ("src/lib.rs", ""),
+            (
+                "src/misdeclared.rs",
+                r#"
 use libtest_mimic::Trial;
 
 fn trials() -> Vec<Trial> {
@@ -2579,7 +2588,8 @@ fn ordinary_libtest_still_runs_here() {
     assert_eq!(1, 1);
 }
 "#,
-        )],
+            ),
+        ],
     )?;
     // The manifest declares nothing for src/misdeclared.rs: the
     // registration's target is missing from Cargo metadata.
@@ -2831,12 +2841,14 @@ fn warm_file_fact_cache_still_reaches_cargo_target_validation()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("warm-validation")?;
     fs::create_dir_all(root.0.join("src"))?;
+    // The package carries a lib target so cargo metadata resolves; it
+    // deliberately declares nothing for the target file: the
+    // registration below is misdeclared.
+    fs::write(root.0.join("src/lib.rs"), "")?;
     fs::write(
         root.0.join("Cargo.toml"),
-        "[package]\nname = 'harness-fixture'\nversion = '0.1.0'\nedition = '2024'\n",
+        "[package]\nname = 'harness-fixture'\nversion = '0.1.0'\nedition = '2024'\n\n[workspace]\n",
     )?;
-    // The manifest deliberately declares nothing for the target: the
-    // registration below is misdeclared.
     let file = PathBuf::from("src/misdeclared_mimic.rs");
     let source = br#"
 use libtest_mimic::Trial;
@@ -2952,20 +2964,27 @@ fn shared_target_declared_from_a_sibling_package_is_accepted()
     let root = temp_dir("shared-target")?;
     write_workspace(
         &root,
-        &[(
-            "shared/mimic.rs",
-            r#"
+        &[
+            // The root package's lib target keeps the fixture
+            // cargo-valid alongside its declared member.
+            ("src/lib.rs", ""),
+            (
+                "shared/mimic.rs",
+                r#"
 use libtest_mimic::Trial;
 
 fn trials() -> Vec<Trial> {
     vec![Trial::test("shared_case", || Ok(()))]
 }
 "#,
-        )],
+            ),
+        ],
     )?;
     // The declaring package sits beside shared/ as a declared workspace
-    // member; its target path escapes its own directory.
-    fs::create_dir_all(root.0.join("crates/a"))?;
+    // member; its target path escapes its own directory. The lib.rs
+    // target file keeps the member package cargo-valid.
+    fs::create_dir_all(root.0.join("crates/a/src"))?;
+    fs::write(root.0.join("crates/a/src/lib.rs"), "")?;
     fs::write(
         root.0.join("crates/a/Cargo.toml"),
         "[package]\nname = 'a'\nversion = '0.1.0'\nedition = '2024'\n\n\

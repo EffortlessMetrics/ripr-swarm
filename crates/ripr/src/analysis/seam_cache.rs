@@ -109,7 +109,14 @@ pub(crate) struct CachedSeamLimitInfo {
 /// changing the production inventory classified seams derive from. Old
 /// classified entries would serve evidence-blind classifications for
 /// registered-harness workspaces.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.4";
+/// `1.4` -> `1.5`: harness-target validation now sources workspace
+/// membership and the test-target inventory from `cargo metadata`
+/// itself (#3634), flipping verdicts for workspaces the manifest
+/// emulation approximated (workspace-inherited path dependencies,
+/// character-class member globs, wildcard exclude patterns). Old
+/// classified entries would serve pre-#3634 grants for those
+/// workspaces.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.5";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -126,7 +133,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.4";
 /// `0.9` -> `0.10`: #3603 trial evidence parity and #3608 harness-target
 /// validation change the facts and production inventory the sharded
 /// entries derive from.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.10";
+/// `0.10` -> `0.11`: #3634 metadata-sourced harness validation flips
+/// verdicts for workspaces the manifest emulation approximated.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.11";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -148,7 +157,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.10";
 /// `0.10` -> `0.11`: #3603 trial evidence parity and #3608 harness-target
 /// validation change the facts and production inventory the compact
 /// classified-seam entries derive from.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.11";
+/// `0.11` -> `0.12`: #3634 metadata-sourced harness validation flips
+/// verdicts for workspaces the manifest emulation approximated.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.12";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -2614,9 +2625,11 @@ mod tests {
         // 0.9 -> 1.0: comment/string masking changed the extracted
         // FileFacts.calls/literals content (#3633 review).
         assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.0");
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.4");
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.10");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.11");
+        // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
+        // verdicts for workspaces the manifest emulation approximated.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.5");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.11");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.12");
     }
 
     #[test]

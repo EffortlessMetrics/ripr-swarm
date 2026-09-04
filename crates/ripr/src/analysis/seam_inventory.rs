@@ -1497,9 +1497,13 @@ marker = "libtest_mimic::Trial"
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        // A name-only target reaches metadata's inventory only when its
+        // conventional-layout file exists (#3634).
+        std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("tests/mimic.rs"), "").map_err(|error| error.to_string())?;
         std::fs::write(
             root.join("Cargo.toml"),
-            "[package]\nname = 'role-fixture'\nversion = '0.1.0'\n\n[[test]]\nname = 'mimic'\nharness = false\n",
+            "[package]\nname = 'role-fixture'\nversion = '0.1.0'\n\n[workspace]\n\n[[test]]\nname = 'mimic'\nharness = false\n",
         )
         .map_err(|error| error.to_string())?;
         let targets = harness_targets_from_config(&root, &config);

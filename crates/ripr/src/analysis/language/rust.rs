@@ -4557,6 +4557,7 @@ let _ = (result, note, raw);"##,
         write(
             &root.join("Cargo.toml"),
             "[package]\nname='registered-harness'\nversion='0.1.0'\nedition='2024'\n\n\
+             [workspace]\n\n\
              [[test]]\nname='price_mimic'\npath='src/price_mimic.rs'\nharness=false\n",
         )?;
         write(
@@ -4691,9 +4692,10 @@ let _ = (result, note, raw);"##,
         let root = temp_root("misdeclared-harness-diff")?;
         write(
             &root.join("Cargo.toml"),
-            // The manifest deliberately declares nothing for
-            // src/price_mimic.rs: the registration below is misdeclared.
-            "[package]\nname='registered-harness'\nversion='0.1.0'\nedition='2024'\n",
+            // The manifest carries a [workspace] table so the fixture is a
+            // standalone workspace root, and deliberately declares nothing
+            // for src/price_mimic.rs: the registration below is misdeclared.
+            "[package]\nname='registered-harness'\nversion='0.1.0'\nedition='2024'\n\n[workspace]\n",
         )?;
         write(
             &root.join("src/lib.rs"),
