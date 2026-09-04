@@ -277,16 +277,30 @@ impl ManifestInventory {
         registration_target: &Path,
     ) -> CargoHarnessVerdict {
         // The inventory keys are cargo's absolute source paths, so the
-        // anchored target must be made absolute against the process
-        // directory too: with a relative analysis root, the raw join
-        // stays relative and every lookup misses (NotDeclared for all
-        // registrations, #3637 review).
+        // anchored target must be resolved in the same terms. Two forms
+        // are tried: the as-given absolute path, and the real path
+        // behind any symlinks. Cargo echoes the path family it was
+        // given on Windows (a junction root yields alias-form keys,
+        // verified 1.95.0) but canonicalizes symlinks on Unix (#3637
+        // review, demonstrated by the Linux CI run of the alias pin), so one
+        // form alone cannot cover both hosts. Missing on both forms is
+        // the fail-closed NotDeclared.
         let joined = workspace_root.join(registration_target);
-        let joined = std::path::absolute(&joined).unwrap_or(joined);
-        let anchored = lexical(&normalize(&joined));
+        let absolute = std::path::absolute(&joined).unwrap_or(joined);
+        let anchored = lexical(&normalize(&absolute));
         self.ensure_workspace_metadata(workspace_root);
         let owners = match &self.metadata {
-            MetadataState::Loaded(targets) => targets.get(&anchored).cloned(),
+            MetadataState::Loaded(targets) => {
+                targets.get(&anchored).cloned().or_else(|| {
+                    // `fs::canonicalize` returns verbatim `\\?\`
+                    // paths on Windows; those can only match
+                    // verbatim keys cargo never echoes, so a miss
+                    // there is harmless — the alias-form lookup
+                    // above already covered the Windows behavior.
+                    let real = std::fs::canonicalize(&absolute).ok()?;
+                    targets.get(&lexical(&normalize(&real))).cloned()
+                })
+            }
             // No metadata premise is available (probe failed or was never
             // loadable): the registration grants nothing. Fail closed —
             // under-credit, never over-credit (#3634).
@@ -1722,15 +1736,15 @@ harness=false
         Ok(())
     }
 
-    /// #3637 review (devin, refuted with evidence and pinned): cargo
-    /// metadata echoes the path family it was given — through a junction
-    /// alias it reports alias-form workspace/package/source paths (1.95.0,
-    /// verified) — and `std::path::absolute` likewise preserves the alias.
-    /// Alias-form roots therefore compare against alias-form inventory
-    /// keys and resolve. Canonicalizing either side would BREAK this:
-    /// cargo's output is plain (never `\\?\` verbatim) while
-    /// `fs::canonicalize` returns verbatim paths on Windows. The pin
-    /// guards against a later canonicalize "fix".
+    /// #3637 review (devin), pinned across both cargo behaviors: cargo
+    /// metadata echoes the path family it was given on Windows (a
+    /// junction root yields alias-form keys, verified 1.95.0) but
+    /// canonicalizes symlinks on Unix (demonstrated by the Linux CI run of the
+    /// first version of this pin). The verdict therefore resolves the
+    /// anchored target under BOTH forms, and the alias root stays valid
+    /// on either host. Canonicalizing unconditionally would break the
+    /// Windows side (verbatim \?\ output never matches cargo's plain
+    /// echo); skipping canonicalization would break Unix.
     /// Create a directory alias (Windows junction, Unix symlink) for the
     /// alias-form inventory pin. Returns the OS error when aliases are
     /// unavailable on this host so the caller can skip without a false
