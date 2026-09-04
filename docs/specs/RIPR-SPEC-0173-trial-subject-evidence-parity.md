@@ -16,6 +16,8 @@ Linked issues:
 
 - #3603 (finding: trial subject evidence parity — helper-callback bodies
   and method unwrap/expect oracles)
+- #3604 (finding: dead trial construction still claims a subject — make
+  the named-invocation reachability boundary explicit)
 - #3532 (the harness registry and libtest_mimic adapter this parity
   contract binds)
 
@@ -56,6 +58,20 @@ ordinary `#[test]` that reaches the same behavior:
 Both directions under-emit (fail closed), and the fix must not open the
 opposite failure: crediting a same-named function the callback does not
 actually name is the token-coincidence false-`exposed` family.
+
+A third, opposite-direction boundary was left implicit by the first
+adapter generation (#3604): the token scan establishes a subject for any
+anchored `Trial::test("name", ...)` in the registered target, including
+constructors in dead construction — an unused helper, an `if false`
+branch, or a collection never passed to the harness's run entry point.
+Calls and oracles inside such dead constructors join the subject and
+enter the executable-test denominator although the harness never
+registers or executes the trial. The discovery scan is intentionally
+syntactic (trials collected inside macro token trees carry no parsed
+expression nodes), so static reachability from a constructor into the
+run entry point is not established. The honest failure mode is to keep
+the syntactic claim and name the over-credit boundary, not to absorb it
+silently.
 
 ## Behavior
 
@@ -105,6 +121,22 @@ contents before scanning, so commented-out code is never evidence.
 Closures, path callbacks, unresolved names, ambiguous names, and
 shadowed names contribute nothing beyond the invocation span.
 
+### Named-invocation reachability boundary (#3604)
+
+`HarnessSubjectClaim::NamedInvocation` is a syntactic claim bounded by
+the registered target: a named invocation exists in the registered
+target. It does not claim the harness registers or executes the trial.
+Dead construction — a trial constructor in an unused helper, an `if
+false` branch, or a collection never passed to the harness's run entry
+point — still carries the claim and still enters the executable-test
+denominator. The boundary is named, not silent: it is stated on the
+claim variant, in `docs/OUTPUT_SCHEMA.md`'s `subjects[].claim` field,
+and here. The claim stays uniform across reachable and dead
+constructions: statically distinguishing them is exactly the
+reachability trace this adapter generation does not perform, so a
+per-subject deadness annotation would be a claim the scanner cannot
+establish.
+
 ## Non-Goals
 
 - No assertion-form parity beyond trial subjects: #3284 owns
@@ -121,6 +153,13 @@ shadowed names contribute nothing beyond the invocation span.
   parser path, and method oracles are smoke-strength by construction;
   no oracle may claim a strength the underlying evidence cannot
   support.
+- No reachability tracing of trial constructors into the harness's run
+  entry point (#3604): the discovery scan stays syntactic, and a
+  bounded dataflow into the run input would need call and binding
+  resolution through macro token trees — a second name-resolution
+  engine, out of proportion for the finding. Dead construction stays
+  credited, with the over-credit boundary named on the claim, in
+  `docs/OUTPUT_SCHEMA.md`, and here.
 - No mutation execution, no coverage claims, and no vocabulary beyond
   the static finding contract.
 
@@ -164,7 +203,12 @@ shadowed names contribute nothing beyond the invocation span.
 - a warm-cache regression: a classified-seam envelope seeded under the
   previous generation must miss the current generation's key with
   identical identity fields, and the schema-generation pin moves in the
-  same PR as the semantic change.
+  same PR as the semantic change;
+- a dead-construction pin (#3604): a trial constructor in an `if false`
+  branch and one in a helper nothing calls still classify, still claim
+  `named_invocation`, and still enter the executable-test denominator —
+  with the test asserting the claim type itself, so the over-credit
+  boundary stays named on the claim rather than silent.
 
 ## Acceptance Examples
 
@@ -184,6 +228,11 @@ shadowed names contribute nothing beyond the invocation span.
 - A registered harness workspace analyzed on a pre-change cache: the
   generation bump forces a miss, so the widened evidence is recomputed
   rather than served stale.
+- A registered target whose trials are built only inside an `if false`
+  branch and in a helper nothing calls (#3604): both subjects still
+  classify as `named_invocation` and still enter the executable-test
+  denominator; the boundary lives on the claim, not in a per-subject
+  deadness annotation.
 
 ## Test Mapping
 
@@ -197,6 +246,7 @@ shadowed names contribute nothing beyond the invocation span.
 - `crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_block_commented_helper_evidence_then_calls_and_literals_stay_inert`
 - `crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_one_line_dormant_macro_then_live_same_line_evidence_survives`
 - `crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_qualified_assertions_keep_the_full_path`
+- `crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_dead_construction_then_subjects_still_claim_named_invocation`
 - `crates/ripr/src/analysis/seam_cache.rs::tests::previous_generation_classified_seam_envelope_with_identical_identity_is_a_miss`
 - `crates/ripr/src/analysis/seam_cache.rs::tests::schema_versions_pin_the_role_composition_generation`
 
@@ -208,9 +258,9 @@ shadowed names contribute nothing beyond the invocation span.
   `enclosing_function`, `enclosing_body_binds_name`,
   `parser_oracles_for_node_tokens` (method oracles, macro-input skip),
   `receiver_start_index` (keyword receiver participants)
-- `crates/ripr/src/analysis/facts/model.rs` — the evidence-boundary
-  documentation on `HarnessSubjectFact` and
-  `HarnessSubjectClaim::NamedInvocation`
+- `crates/ripr/src/analysis/facts/model.rs` — the evidence-boundary and
+  named-invocation reachability-boundary (#3604) documentation on
+  `HarnessSubjectFact` and `HarnessSubjectClaim::NamedInvocation`
 - `crates/ripr/src/analysis/seam_cache.rs` — classified/sharded/compact
   schema-generation bumps and the warm-cache regression
 

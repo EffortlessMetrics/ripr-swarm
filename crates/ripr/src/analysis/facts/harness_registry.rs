@@ -49,6 +49,22 @@
 //! No strength over-credit is possible: helper evidence reuses the
 //! ordinary parser path, and method oracles are smoke-strength by
 //! construction.
+//!
+//! ## Named-invocation reachability boundary (#3604)
+//!
+//! [`HarnessSubjectClaim::NamedInvocation`] is a syntactic claim bounded
+//! by the registered target: a named invocation exists in the registered
+//! target. It is not a claim that the harness registers or executes the
+//! trial. Dead construction — a trial constructor in an unused helper,
+//! an `if false` branch, or a collection never passed to the harness's
+//! run entry point — still claims the subject and still enters the
+//! executable-test denominator. Static reachability from the constructor
+//! into the run entry point is not established: discovery is a token
+//! scan over the whole file, and trials collected inside macro token
+//! trees carry no parsed expression nodes to trace. The over-credit
+//! boundary is named on the claim, in `docs/OUTPUT_SCHEMA.md`, and in
+//! RIPR-SPEC-0173 rather than silently absorbed; a reachability trace
+//! into the run input stays out of scope for this adapter generation.
 
 use super::model::{FunctionFact, FunctionSourceRole, RustIndex, TestFact};
 use super::test_styles::normalized_test_attribute_path as normalized_attribute_path;
@@ -231,6 +247,15 @@ pub(crate) fn validated_file_wide_harness_targets(
 /// - trial registration inside a loop (runtime-only discovery);
 /// - unanchored or ambiguously imported `Trial` paths;
 /// - duplicate trial names (two subject claims on one identity).
+///
+/// Every established subject claims
+/// [`HarnessSubjectClaim::NamedInvocation`]: a syntactic claim bounded by
+/// the registered target, not a claim that the harness registers or
+/// executes the trial (#3604). Dead construction — an unused helper, an
+/// `if false` branch, a collection never passed to the harness's run
+/// entry point — still claims the subject and enters the
+/// executable-test denominator; see the module-level reachability
+/// boundary note.
 fn apply_libtest_mimic_target(
     index: &mut RustIndex,
     registration: &TestHarnessRegistration,

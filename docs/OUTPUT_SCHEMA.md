@@ -1396,7 +1396,14 @@ subject and one dynamic-name limitation:
   Cargo or a harness
 - `subjects[].claim` — `named_invocation` (the invocation is one source-level
   subject; generated cases are not enumerated) or `named_function` (the
-  function is one executable test)
+  function is one executable test). `named_invocation` is a syntactic claim
+  bounded by the registered target: a named trial invocation exists in the
+  registered target. It does not claim the harness registers or executes the
+  trial — a constructor in dead construction (an unused helper, an `if false`
+  branch, a collection never passed to the harness's run entry point) still
+  carries the claim and still enters the executable-test denominator; static
+  reachability from the constructor into the run entry point is not
+  established (#3604).
 - `limitations[]` — typed shapes the registration saw but could not classify
   (`dynamic_trial_name`, `dynamic_trial_registration`, `ambiguous_import`,
   `unanchored_trial_path`, `unresolved_marker_import`, `duplicate_subject`,
