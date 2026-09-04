@@ -59,6 +59,17 @@ are scoped or reviewed.
   are invalidated by the changed extraction generations
   ([#3603](https://github.com/EffortlessMetrics/ripr-swarm/issues/3603)).
 
+- The named-invocation capability claim carried by libtest-mimic trial
+  subjects is now documented as syntactic-only: a subject whose
+  `Trial::test` registration is statically reached from the registered
+  entry point is claimed as a named invocation of that trial even when
+  the surrounding construction is dead at runtime (unreachable
+  registration path) or the adapter's `run` call is absent. The claim
+  docs, adapter documentation, check-JSON schema, and spec
+  (RIPR-SPEC-0173) state this boundary explicitly, and a fixture pins
+  that dead construction does not suppress the named-invocation claim
+  ([#3604](https://github.com/EffortlessMetrics/ripr-swarm/issues/3604)).
+
 - New `ripr mcp --stdio [--root PATH]` command: a bounded, read-only
   Model Context Protocol server that exposes exact workspace status
   (`ripr_workspace_status` tool and `ripr://workspace/status` resource)

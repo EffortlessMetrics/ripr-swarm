@@ -3052,7 +3052,7 @@ fn never_called_trials() -> Vec<Trial> {
         .iter()
         .find(|subject| subject.name == "unused_helper_trial")
         .ok_or("unused_helper_trial subject missing")?;
-    for subject in [&dead_branch, &unused_helper] {
+    for subject in [dead_branch, unused_helper] {
         assert_eq!(
             subject.claim,
             HarnessSubjectClaim::NamedInvocation,
@@ -3067,14 +3067,14 @@ fn never_called_trials() -> Vec<Trial> {
         let mut names = index
             .tests
             .iter()
-            .filter(|test| test.file.as_path() == Path::new("tests/dead_construction.rs"))
+            .filter(|test| test.file.ends_with(Path::new("tests/dead_construction.rs")))
             .map(|test| test.name.as_str())
             .collect::<Vec<_>>();
         names.sort_unstable();
         names
     };
     assert_eq!(test_names, vec!["dead_branch_trial", "unused_helper_trial"]);
-    for subject in [&dead_branch, &unused_helper] {
+    for subject in [dead_branch, unused_helper] {
         assert!(
             subject
                 .assertions
