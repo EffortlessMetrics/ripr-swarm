@@ -98,22 +98,26 @@ fn collect_explicit_paths(
 pub(crate) struct DeclaredCargoTestTarget {
     pub(crate) path: PathBuf,
     pub(crate) harness: bool,
+    /// The declared target name for a name-only entry. The cargo target
+    /// name is the identity that proves cargo retained this entry: a
+    /// name-only declaration whose ambiguous dual layout made cargo drop
+    /// the target never reaches the flag matcher, even when another
+    /// explicit entry claims one of the same layout paths (#3637 review).
+    pub(crate) name: Option<String>,
 }
 
 /// Enumerate every `[[test]]` target of one manifest with its effective
 /// `harness` flag (#3608). Two entry shapes contribute:
 ///
-/// - an explicit `path = ...` entry contributes exactly its resolved path;
-/// - a name-only entry (no `path`) contributes both of cargo's name-only
-///   layouts, `tests/<name>.rs` and `tests/<name>/main.rs` (#3637 review,
-///   verified against `cargo metadata` 1.95.0: with only the directory
-///   layout on disk, cargo reports the entry's target source path as
-///   `tests/<name>/main.rs` — the directory shape is that entry's target,
-///   not a separate autodiscovered one), so a registration on either
-///   layout still matches the declaration that governs it. With both
-///   layouts on disk cargo drops the ambiguous target from its inventory
-///   entirely, so the extra candidate can never credit a second,
-///   independently-governed target.
+/// - an explicit `path = ...` entry contributes exactly its resolved path
+///   and matches the metadata target by that path;
+/// - a name-only entry (no `path`) carries its declared name and matches
+///   the metadata target by that name (#3637 review): cargo resolves the
+///   entry itself to `tests/<name>.rs` or `tests/<name>/main.rs` — with
+///   only the directory layout on disk it reports the directory shape as
+///   the entry's source path (verified against `cargo metadata` 1.95.0) —
+///   and with both layouts on disk it drops the target entirely, so only
+///   the name match can prove cargo retained the entry.
 ///
 /// The flag is the entry's `harness` key when present, Cargo's `true`
 /// default otherwise. Entries with neither a name nor a path contribute
@@ -159,6 +163,7 @@ fn declared_test_targets_with_harness_from_value(
             targets.push(DeclaredCargoTestTarget {
                 path: lexical(&normalize(&manifest_dir.join(path))),
                 harness,
+                name: None,
             });
             continue;
         }
@@ -169,18 +174,18 @@ fn declared_test_targets_with_harness_from_value(
         if name.is_empty() {
             continue;
         }
-        // A name-only entry governs both of cargo's name-only layouts
-        // (#3637 review): `tests/<name>.rs` and `tests/<name>/main.rs`.
-        // The metadata inventory decides which shape (if any) actually
-        // compiles — with both on disk cargo drops the target — so the
-        // second candidate cannot over-credit an independently governed
-        // file.
-        for relative in [format!("tests/{name}.rs"), format!("tests/{name}/main.rs")] {
-            targets.push(DeclaredCargoTestTarget {
-                path: lexical(&normalize(&manifest_dir.join(relative))),
-                harness,
-            });
-        }
+        // A name-only entry matches cargo's retained target by NAME, not
+        // by a synthesized layout path (#3637 review): cargo resolves the
+        // entry to `tests/<name>.rs` or `tests/<name>/main.rs` itself and
+        // reports that src_path; with both on disk it drops the target
+        // entirely, and only the metadata-side name proves the entry was
+        // retained. The path field stays the conventional file layout for
+        // display and test ergonomics only.
+        targets.push(DeclaredCargoTestTarget {
+            path: lexical(&normalize(&manifest_dir.join(format!("tests/{name}.rs")))),
+            harness,
+            name: Some(name.to_string()),
+        });
     }
     targets
 }
@@ -227,8 +232,9 @@ enum MetadataState {
     Unloaded,
     Failed,
     /// Workspace test targets keyed by their lexically resolved source
-    /// path; each entry lists the owning package manifest directories.
-    Loaded(BTreeMap<PathBuf, Vec<PathBuf>>),
+    /// path; each entry lists the owning package manifest directories
+    /// with the cargo target name (#3637 review).
+    Loaded(BTreeMap<PathBuf, Vec<(PathBuf, String)>>),
 }
 
 /// The memoized parse outcome for one owning manifest directory.
@@ -287,11 +293,25 @@ impl ManifestInventory {
             return CargoHarnessVerdict::NotDeclared;
         };
         let mut flags: Vec<bool> = Vec::new();
-        for manifest_dir in &owners {
+        for (manifest_dir, target_name) in &owners {
             match self.manifest_at(manifest_dir) {
                 OwnedManifest::Parsed { root, value } => {
                     for target in declared_test_targets_with_harness_from_value(&value, &root) {
-                        if target.path == anchored {
+                        // Identity, not tokens (#3637 review): a
+                        // name-only entry matches by its declared name —
+                        // the cargo target name proves cargo retained it
+                        // — while an explicit-path entry matches by its
+                        // exact path (the metadata src_path of an
+                        // explicit target is its declared path). A
+                        // declaration cargo dropped from the inventory
+                        // (ambiguous dual layout) therefore cannot
+                        // contribute its flag to a live target that
+                        // another entry owns.
+                        let matched = match &target.name {
+                            Some(name) => name == target_name,
+                            None => target.path == anchored,
+                        };
+                        if matched {
                             flags.push(target.harness);
                         }
                     }
@@ -379,7 +399,9 @@ const CARGO_METADATA_PROBE_DEADLINE: std::time::Duration = std::time::Duration::
 /// temp file rather than a pipe so a large workspace cannot fill the OS
 /// pipe buffer and deadlock against the poll; the file is removed on
 /// every path.
-fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<BTreeMap<PathBuf, Vec<PathBuf>>> {
+fn run_workspace_cargo_metadata(
+    workspace_root: &Path,
+) -> Option<BTreeMap<PathBuf, Vec<(PathBuf, String)>>> {
     let manifest_path = workspace_root.join("Cargo.toml");
     if !manifest_path.is_file() {
         return None;
@@ -443,9 +465,15 @@ fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<BTreeMap<PathBu
 /// set — cargo's own membership resolution. Each `kind: ["test"]` target
 /// contributes its lexically resolved `src_path` (cargo keeps declared
 /// `..` segments as spelled, so both sides resolve lexically) mapped to
-/// the owning package's manifest directory.
-fn workspace_test_target_owners(value: &serde_json::Value) -> BTreeMap<PathBuf, Vec<PathBuf>> {
-    let mut owners: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+/// the owning package's manifest directory and the cargo target name —
+/// the name is the identity that ties a metadata target back to the
+/// manifest entry cargo retained, so a declaration cargo dropped from
+/// its inventory cannot contribute its flag to a live target (#3637
+/// review).
+fn workspace_test_target_owners(
+    value: &serde_json::Value,
+) -> BTreeMap<PathBuf, Vec<(PathBuf, String)>> {
+    let mut owners: BTreeMap<PathBuf, Vec<(PathBuf, String)>> = BTreeMap::new();
     let Some(packages) = value.get("packages").and_then(serde_json::Value::as_array) else {
         return owners;
     };
@@ -477,10 +505,13 @@ fn workspace_test_target_owners(value: &serde_json::Value) -> BTreeMap<PathBuf, 
             let Some(src_path) = target.get("src_path").and_then(serde_json::Value::as_str) else {
                 continue;
             };
+            let Some(name) = target.get("name").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
             owners
                 .entry(lexical(&normalize(Path::new(src_path))))
                 .or_default()
-                .push(manifest_dir.clone());
+                .push((manifest_dir.clone(), name.to_string()));
         }
     }
     for entry in owners.values_mut() {
@@ -742,22 +773,32 @@ mod extraction {
                 (
                     target.path.to_string_lossy().replace('\\', "/"),
                     target.harness,
+                    target.name.clone(),
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(
             rendered,
             vec![
-                ("/ws/pkg/src/contract_test.rs".to_string(), false),
-                ("/ws/pkg/tests/plain.rs".to_string(), false),
-                ("/ws/pkg/tests/plain/main.rs".to_string(), false),
-                ("/ws/pkg/tests/flagged.rs".to_string(), true),
-                ("/ws/pkg/tests/flagged/main.rs".to_string(), true),
-                ("/ws/pkg/tests/defaults_on.rs".to_string(), true),
-                ("/ws/pkg/tests/defaults_on/main.rs".to_string(), true),
-                ("/ws/pkg/tests/explicit_only.rs".to_string(), true),
+                ("/ws/pkg/src/contract_test.rs".to_string(), false, None),
+                (
+                    "/ws/pkg/tests/plain.rs".to_string(),
+                    false,
+                    Some("plain".to_string()),
+                ),
+                (
+                    "/ws/pkg/tests/flagged.rs".to_string(),
+                    true,
+                    Some("flagged".to_string()),
+                ),
+                (
+                    "/ws/pkg/tests/defaults_on.rs".to_string(),
+                    true,
+                    Some("defaults_on".to_string()),
+                ),
+                ("/ws/pkg/tests/explicit_only.rs".to_string(), true, None,),
             ],
-            "name-only entries cover both cargo layouts (#3637 review); explicit paths stay exact"
+            "explicit entries carry no name (path-matched); name-only entries carry their declared name (name-matched, #3637 review)"
         );
         assert!(
             declared_test_targets_with_harness_from_manifest("not [ valid toml", Path::new("/ws"))
@@ -1556,6 +1597,61 @@ harness=false
             verdict("pkg/tests/suite/main.rs"),
             CargoHarnessVerdict::HarnessEnabled,
             "without the declaration the autodiscovered directory layout is harness-enabled"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3637 review (devin): with both name-only layouts on disk cargo
+    /// drops the ambiguous `suite` target entirely, but an explicit entry
+    /// claiming the directory path stays in cargo's inventory. The
+    /// dropped declaration must not contribute its flag to the live
+    /// target — name-based matching skips it, so the explicit entry's
+    /// `harness = true` alone decides and the verdict is HarnessEnabled,
+    /// never a false flag conflict.
+    #[test]
+    fn dropped_dual_declaration_cannot_conflict_with_a_live_explicit_target() -> Result<(), String>
+    {
+        let dir = unique_workspace("dual-explicit");
+        make_dir(&dir, "pkg/tests/suite")?;
+        write_file(
+            &dir,
+            "Cargo.toml",
+            "[workspace]
+members = ['pkg']
+",
+        )?;
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]
+name='p'
+version='0.1.0'
+edition='2024'
+
+[[test]]
+name='suite'
+harness=false
+
+[[test]]
+name='suite_main'
+path='tests/suite/main.rs'
+harness=true
+",
+        )?;
+        write_file(&dir, "pkg/src/lib.rs", "")?;
+        write_file(&dir, "pkg/tests/suite.rs", "")?;
+        write_file(&dir, "pkg/tests/suite/main.rs", "")?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("pkg/tests/suite/main.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "only the explicit entry cargo retained decides the live target's flag"
+        );
+        assert_eq!(
+            verdict("pkg/tests/suite.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "the dropped dual-layout declaration compiles nothing"
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
