@@ -549,6 +549,7 @@ fn trials() -> Vec<Trial> {
 "#,
         )],
     )?;
+    declare_harness_false_target(&root, "helper_body", "tests/helper_body.rs")?;
     let files = [PathBuf::from("tests/helper_body.rs")];
     let registrations = [custom_target_registration("tests/helper_body.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
@@ -704,6 +705,7 @@ fn shadow_target() -> u16 {
 "#,
         )],
     )?;
+    declare_harness_false_target(&root, "shadowed", "tests/shadowed.rs")?;
     let files = [PathBuf::from("tests/shadowed.rs")];
     let registrations = [custom_target_registration("tests/shadowed.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
@@ -795,6 +797,7 @@ fn trials() -> Vec<Trial> {
 "#,
         )],
     )?;
+    declare_harness_false_target(&clean_root, "clean_control", "tests/clean_control.rs")?;
     let clean_files = [PathBuf::from("tests/clean_control.rs")];
     let clean_registrations = [custom_target_registration("tests/clean_control.rs")];
     let clean_index =
@@ -850,6 +853,7 @@ impl Reader {
 "#,
         )],
     )?;
+    declare_harness_false_target(&root, "keyword_receivers", "tests/keyword_receivers.rs")?;
     let files = [PathBuf::from("tests/keyword_receivers.rs")];
     let registrations = [custom_target_registration("tests/keyword_receivers.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
@@ -920,6 +924,7 @@ fn trials() -> Vec<Trial> {
 "#,
         )],
     )?;
+    declare_harness_false_target(&root, "dormant_macro", "tests/dormant_macro.rs")?;
     let files = [PathBuf::from("tests/dormant_macro.rs")];
     let registrations = [custom_target_registration("tests/dormant_macro.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
@@ -984,6 +989,11 @@ fn trials() -> Vec<Trial> {
 }
 "#,
         )],
+    )?;
+    declare_harness_false_target(
+        &root,
+        "dormant_template_helper",
+        "tests/dormant_template_helper.rs",
     )?;
     let files = [PathBuf::from("tests/dormant_template_helper.rs")];
     let registrations = [custom_target_registration(
@@ -1068,6 +1078,7 @@ fn trials() -> Vec<Trial> {
 "#,
         )],
     )?;
+    declare_harness_false_target(&root, "block_comment", "tests/block_comment.rs")?;
     let files = [PathBuf::from("tests/block_comment.rs")];
     let registrations = [custom_target_registration("tests/block_comment.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
@@ -1131,6 +1142,7 @@ fn trials() -> Vec<Trial> {
 "#,
         )],
     )?;
+    declare_harness_false_target(&root, "one_line_dormant", "tests/one_line_dormant.rs")?;
     let files = [PathBuf::from("tests/one_line_dormant.rs")];
     let registrations = [custom_target_registration("tests/one_line_dormant.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
@@ -1210,6 +1222,11 @@ fn trials() -> Vec<Trial> {
 }
 "#,
         )],
+    )?;
+    declare_harness_false_target(
+        &root,
+        "qualified_assertions",
+        "tests/qualified_assertions.rs",
     )?;
     let files = [PathBuf::from("tests/qualified_assertions.rs")];
     let registrations = [custom_target_registration("tests/qualified_assertions.rs")];
@@ -1347,6 +1364,7 @@ fn trials() -> Vec<Trial> {
 "#,
         )],
     )?;
+    declare_harness_false_target(&root, "alt_delims", "tests/alt_delims.rs")?;
     let files = [PathBuf::from("tests/alt_delims.rs")];
     let registrations = [custom_target_registration("tests/alt_delims.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
@@ -1445,6 +1463,7 @@ fn trials() -> Vec<Trial> {
 "#,
         )],
     )?;
+    declare_harness_false_target(&root, "dormant_alt_delims", "tests/dormant_alt_delims.rs")?;
     let files = [PathBuf::from("tests/dormant_alt_delims.rs")];
     let registrations = [custom_target_registration("tests/dormant_alt_delims.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
@@ -1519,6 +1538,11 @@ fn trials() -> Vec<Trial> {
 }
 "#,
         )],
+    )?;
+    declare_harness_false_target(
+        &root,
+        "dormant_helper_facts",
+        "tests/dormant_helper_facts.rs",
     )?;
     let files = [PathBuf::from("tests/dormant_helper_facts.rs")];
     let registrations = [custom_target_registration("tests/dormant_helper_facts.rs")];
@@ -1602,6 +1626,7 @@ fn item_shadow_trials() -> Vec<Trial> {
 "#,
         )],
     )?;
+    declare_harness_false_target(&root, "const_static_shadow", "tests/const_static_shadow.rs")?;
     let files = [PathBuf::from("tests/const_static_shadow.rs")];
     let registrations = [custom_target_registration("tests/const_static_shadow.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
@@ -1685,6 +1710,7 @@ fn trials() -> Vec<Trial> {
 "#,
         )],
     )?;
+    declare_harness_false_target(&root, "receiver_forms", "tests/receiver_forms.rs")?;
     let files = [PathBuf::from("tests/receiver_forms.rs")];
     let registrations = [custom_target_registration("tests/receiver_forms.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
@@ -1768,6 +1794,7 @@ struct Config {
 "#,
         )],
     )?;
+    declare_harness_false_target(&root, "method_oracles", "tests/method_oracles.rs")?;
     let files = [PathBuf::from("tests/method_oracles.rs")];
     let registrations = [custom_target_registration("tests/method_oracles.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
