@@ -2991,3 +2991,115 @@ fn trials() -> Vec<Trial> {
     assert!(index.harness_limitations.is_empty());
     Ok(())
 }
+
+/// #3604: the adapter's discovery scan is syntactic and bounded by the
+/// registered target, so a trial constructor that never reaches the
+/// harness's run entry point — one inside an `if false` branch, one built
+/// in a helper nothing calls — still claims
+/// `HarnessSubjectClaim::NamedInvocation` and still enters the
+/// executable-test denominator, together with the dead constructor's
+/// calls and oracles. This pin keeps the over-credit boundary named
+/// instead of silent: the claim type is the annotation, and the boundary
+/// text lives on the claim variant, in `docs/OUTPUT_SCHEMA.md`, and in
+/// RIPR-SPEC-0173. Statically separating dead from reachable construction
+/// is the reachability trace this adapter generation does not perform,
+/// so the claim stays uniform and no per-subject deadness annotation is
+/// emitted.
+#[test]
+fn given_dead_construction_then_subjects_still_claim_named_invocation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("dead-construction")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/dead_construction.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn production_call(value: u16) -> u16 { value }
+
+fn dead_branch_trials() -> Vec<Trial> {
+    if false {
+        return vec![Trial::test("dead_branch_trial", || {
+            assert_eq!(production_call(1), 1);
+        })];
+    }
+    Vec::new()
+}
+
+fn never_called_trials() -> Vec<Trial> {
+    vec![Trial::test("unused_helper_trial", || {
+        assert_eq!(production_call(2), 2);
+    })]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "dead_construction", "tests/dead_construction.rs")?;
+    let files = [PathBuf::from("tests/dead_construction.rs")];
+    let registrations = [custom_target_registration("tests/dead_construction.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    // Both dead constructors still claim a subject, under the one
+    // syntactic claim: a named invocation in the registered target.
+    let dead_branch = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "dead_branch_trial")
+        .ok_or("dead_branch_trial subject missing")?;
+    let unused_helper = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "unused_helper_trial")
+        .ok_or("unused_helper_trial subject missing")?;
+    for subject in [&dead_branch, &unused_helper] {
+        assert_eq!(
+            subject.claim,
+            HarnessSubjectClaim::NamedInvocation,
+            "the syntactic claim covers dead construction too; the boundary is the claim's documented reachability limit"
+        );
+        assert_eq!(subject.claim.as_str(), "named_invocation");
+    }
+
+    // The credit is real: both subjects join the executable-test
+    // denominator with the dead constructors' own evidence.
+    let test_names = {
+        let mut names = index
+            .tests
+            .iter()
+            .filter(|test| test.file.as_path() == Path::new("tests/dead_construction.rs"))
+            .map(|test| test.name.as_str())
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        names
+    };
+    assert_eq!(test_names, vec!["dead_branch_trial", "unused_helper_trial"]);
+    for subject in [&dead_branch, &unused_helper] {
+        assert!(
+            subject
+                .assertions
+                .iter()
+                .any(|oracle| oracle.text.starts_with("assert_eq!")),
+            "the dead constructor's oracle still joins the subject: {:?}",
+            subject.assertions
+        );
+        assert!(
+            subject
+                .calls
+                .iter()
+                .any(|call| call.name == "production_call"),
+            "the dead constructor's call still joins the subject: {:?}",
+            subject.calls
+        );
+    }
+
+    // The boundary is named on the claim, not per subject: no limitation
+    // is recorded for these subjects, because the scan establishes the
+    // invocation and the claim text carries the reachability limit.
+    assert!(
+        index.harness_limitations.is_empty(),
+        "dead construction is a documented claim boundary, not a per-subject limitation: {:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}

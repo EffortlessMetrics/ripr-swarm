@@ -8818,6 +8818,7 @@ tests = [
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_block_commented_helper_evidence_then_calls_and_literals_stay_inert",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_one_line_dormant_macro_then_live_same_line_evidence_survives",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_qualified_assertions_keep_the_full_path",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_dead_construction_then_subjects_still_claim_named_invocation",
   "crates/ripr/src/analysis/seam_cache.rs::tests::previous_generation_classified_seam_envelope_with_identical_identity_is_a_miss",
   "crates/ripr/src/analysis/seam_cache.rs::tests::schema_versions_pin_the_role_composition_generation",
 ]
@@ -8830,6 +8831,7 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0173-trial-subject-evidence-parity.md",
+  "docs/OUTPUT_SCHEMA.md",
 ]
 metrics = [
   "unit_test_pass_rate",

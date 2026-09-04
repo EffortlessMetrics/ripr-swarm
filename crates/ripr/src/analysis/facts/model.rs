@@ -582,6 +582,17 @@ pub enum HarnessSubjectClaim {
     /// span register smoke oracles. Closures, path callbacks, and
     /// unresolved or ambiguous names contribute nothing beyond the
     /// invocation span — the boundary is fail-closed.
+    ///
+    /// Reachability boundary (#3604): this is a syntactic claim bounded
+    /// by the registered target — a named invocation exists in the
+    /// registered target. It does not claim the harness registers or
+    /// executes the trial. Dead construction — a trial constructor in an
+    /// unused helper, an `if false` branch, or a collection never passed
+    /// to the harness's run entry point — still carries this claim and
+    /// still enters the executable-test denominator. Static reachability
+    /// from the constructor into the run entry point is not established
+    /// by this claim; the over-credit boundary is named here rather than
+    /// silently absorbed.
     NamedInvocation,
     /// The function is one executable test (registered test-producing
     /// attribute).
