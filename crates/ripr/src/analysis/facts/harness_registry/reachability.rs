@@ -173,7 +173,9 @@ pub(super) fn classify_trial_reachability(
     }
     let mut run_calls = Vec::new();
     let mut ambiguous_bare_run = false;
+    let mut unbound_imported_run_call = false;
     let run_bindings = top_level_use_bindings(file_syntax, "run");
+    let aliased_run_locals = aliased_run_entry_locals(file_syntax);
     for position in 0..tokens.len() {
         let Some(matched) = match_run_path(tokens, position, marker) else {
             continue;
@@ -214,9 +216,28 @@ pub(super) fn classify_trial_reachability(
             // not be the harness entry; absence of an anchored call must
             // not conclude unreachability while it exists.
             RunBindingResolution::Ambiguous => ambiguous_bare_run = true,
+            // A bare `run` bound from a non-marker path (`use
+            // crate::adapter::run;`) is possibly a re-export of the
+            // harness entry: it cannot anchor the entry, but its presence
+            // must not conclude unreachability either (#3639 review).
+            RunBindingResolution::Unbound if !run_bindings.is_empty() => {
+                unbound_imported_run_call = true;
+            }
             RunBindingResolution::Unbound => {}
         }
     }
+    // An aliased import of a `run` path (`use libtest_mimic::run as
+    // execute;`) produces a call the scanner cannot anchor (#3639
+    // review): its presence is unsupported entry evidence.
+    let aliased_run_call_present = !aliased_run_locals.is_empty()
+        && tokens.iter().enumerate().any(|(position, token)| {
+            token.kind() == SyntaxKind::IDENT
+                && aliased_run_locals.contains(token.text())
+                && tokens
+                    .get(position + 1)
+                    .is_some_and(|next| next.kind() == SyntaxKind::L_PAREN)
+                && !inside_macro_rules(token.parent_ancestors())
+        });
 
     // Run-entry absence is concluded only when no supported spelling
     // anchors AND no unsupported shape is present that could be the real
@@ -225,6 +246,16 @@ pub(super) fn classify_trial_reachability(
     let unsupported_entry_reason = if ambiguous_bare_run {
         Some(format!(
             "a bare `run` invocation cannot be tied to marker `{marker}` (conflicting imports bind `run` from more than one path), so the run entry point is not anchored",
+            marker = marker
+        ))
+    } else if run_calls.is_empty() && unbound_imported_run_call {
+        Some(format!(
+            "a bare `run` invocation is bound from a path that cannot be established as `{marker}::run` (possibly a re-export), so the run entry point is not anchored",
+            marker = marker
+        ))
+    } else if run_calls.is_empty() && aliased_run_call_present {
+        Some(format!(
+            "a `run` path is imported under an alias and invoked, which the scanner cannot anchor to `{marker}::run`, so the run entry point is not anchored",
             marker = marker
         ))
     } else if run_calls.is_empty() && run_tests_call_present(tokens) {
@@ -441,14 +472,59 @@ enum RunBindingResolution {
     Unbound,
 }
 
+fn aliased_run_entry_locals(file_syntax: &ra_ap_syntax::SyntaxNode) -> BTreeSet<String> {
+    let mut locals = BTreeSet::new();
+    for use_item in file_syntax.children().filter_map(ast::Use::cast) {
+        let Some(use_tree) = use_item.use_tree() else {
+            continue;
+        };
+        collect_aliased_run_locals(&use_tree, "", &mut locals);
+    }
+    locals
+}
+
+fn collect_aliased_run_locals(tree: &ast::UseTree, prefix: &str, out: &mut BTreeSet<String>) {
+    let path_text = tree.path().map(|path| {
+        path.syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+    });
+    let child_prefix = match (&path_text, prefix.is_empty()) {
+        (Some(path), false) => format!("{prefix}::{path}"),
+        (Some(path), true) => path.clone(),
+        (None, _) => prefix.to_string(),
+    };
+    if let Some(list) = tree.use_tree_list() {
+        for nested in list.use_trees() {
+            collect_aliased_run_locals(&nested, &child_prefix, out);
+        }
+        return;
+    }
+    let is_run_path = child_prefix.ends_with("::run") || child_prefix == "run";
+    let Some(local) = tree
+        .rename()
+        .and_then(|rename| rename.name())
+        .map(|named| named.text().to_string())
+        .filter(|local| !local.is_empty())
+    else {
+        return;
+    };
+    if is_run_path {
+        out.insert(local);
+    }
+}
+
 /// Resolve a bare `run` spelling against the marker, mirroring the trial
 /// binding resolution exactly: anchored when one import binds the name
 /// from the marker path; ambiguous when conflicting bindings exist.
 fn resolve_run_binding(bindings: &BTreeSet<String>, marker: &str) -> RunBindingResolution {
     let anchored_full = format!("{marker}::run");
-    let matches_marker = |binding: &String| {
-        binding == &anchored_full || binding.ends_with(&format!("::{anchored_full}"))
-    };
+    let alias_suffix = format!("::{anchored_full}");
+    let matches_marker =
+        |binding: &String| binding == &anchored_full || binding.ends_with(&alias_suffix);
     let anchored = bindings.iter().any(matches_marker);
     let conflicting = bindings
         .iter()
@@ -646,7 +722,7 @@ impl<'a, 'b> Resolver<'a, 'b> {
                 reason: None,
             };
         };
-        let contained = self.trials_within(first, last);
+        let contained = self.top_level_trials_within(first, last);
         let deny = |reason: String| ArgumentResolution {
             trials: contained.clone(),
             complete: false,
@@ -716,11 +792,13 @@ impl<'a, 'b> Resolver<'a, 'b> {
         )
     }
 
-    /// Resolve one builder function's body: trials visible anywhere in
-    /// the body are admitted; completeness requires every significant
-    /// token to be accounted for by trial spans, parsed `let`
-    /// statements, `vec!`/array literal scaffolding, or a trailing
-    /// reference to a resolved binding.
+    /// Resolve one builder function by tracing its returned expression
+    /// (#3639 review): a straight-line body's value is its tail
+    /// expression, so only trials reachable from the tail (direct
+    /// collection elements and the immutable let bindings they consume)
+    /// are admitted; trials in unused bindings or dead statements are
+    /// not part of the run argument. `return`, branches, or loops at
+    /// body depth zero fail closed to unknown.
     fn resolve_builder_body(
         &self,
         name: &str,
@@ -784,54 +862,89 @@ impl<'a, 'b> Resolver<'a, 'b> {
             body: body_range,
         };
         let (body_first, body_last) = body_range;
-        let mut trials = self.trials_within(body_first, body_last);
-        let mut covered: Vec<(usize, usize)> = self
-            .trials
-            .iter()
-            .filter(|trial| trial.start >= body_first && trial.end <= body_last)
-            .map(|trial| (trial.start, trial.end))
-            .collect();
-        let mut resolved_binding_names: BTreeSet<String> = BTreeSet::new();
-        let mut complete = true;
-        let mut reason: Option<String> = None;
-        for binding in self.depth_zero_let_bindings(body_first, body_last, usize::MAX) {
-            covered.push((binding.statement_start, binding.statement_end));
-            let resolution = self.resolve_argument(
-                binding.init_start,
-                binding.init_end,
-                Some(builder_scope),
-                usize::MAX,
-                depth + 1,
-                1,
-            );
-            trials.extend(resolution.trials);
-            resolved_binding_names.insert(binding.name.to_string());
-            if binding.is_mut {
-                complete = false;
-                reason = Some(format!(
-                    "the builder binds `{}` as `mut`, so later mutations cannot be resolved",
-                    binding.name
-                ));
-            } else if !resolution.complete && reason.is_none() {
-                complete = false;
-                reason = resolution.reason;
-            } else if !resolution.complete {
-                complete = false;
+        // Trace the builder's RETURNED expression, not every construction
+        // in the body (#3639 review): a straight-line body's value is its
+        // tail expression, so trials in unused bindings or dead
+        // statements are not part of the run argument. Unsupported
+        // control flow (`return`, branches, loops) fails closed to
+        // unknown — never to reachable.
+        let Some((tail_first, tail_last)) = self.builder_tail_expression(body_first, body_last)
+        else {
+            return ArgumentResolution {
+                trials: BTreeSet::new(),
+                complete: false,
+                reason: Some(format!(
+                    "the builder function `{name}` body has no statically-resolvable tail expression (unsupported control flow such as `return` or a branch/loop, or no tail at all), so the returned trials cannot be resolved"
+                )),
+            };
+        };
+        let tail_resolution = self.resolve_argument(
+            tail_first,
+            tail_last,
+            Some(builder_scope),
+            usize::MAX,
+            depth + 1,
+            1,
+        );
+        ArgumentResolution {
+            trials: tail_resolution.trials,
+            complete: tail_resolution.complete,
+            reason: tail_resolution.reason,
+        }
+    }
+
+    /// The tail expression of a builder body: the significant tokens
+    /// after the last depth-zero `;`. `None` when the body contains
+    /// unsupported control flow at depth zero — a `return`, branch, or
+    /// loop keyword means the returned value is not statically the tail.
+    fn builder_tail_expression(
+        &self,
+        body_first: usize,
+        body_last: usize,
+    ) -> Option<(usize, usize)> {
+        let mut last_semicolon: Option<usize> = None;
+        let mut depth: usize = 0;
+        for index in body_first..=body_last {
+            match self.scan.tokens[index].kind() {
+                SyntaxKind::L_PAREN | SyntaxKind::L_BRACK | SyntaxKind::L_CURLY => {
+                    depth += 1;
+                }
+                SyntaxKind::R_PAREN | SyntaxKind::R_BRACK | SyntaxKind::R_CURLY => {
+                    depth = depth.saturating_sub(1);
+                }
+                SyntaxKind::SEMICOLON if depth == 0 => {
+                    last_semicolon = Some(index);
+                }
+                SyntaxKind::RETURN_KW
+                | SyntaxKind::IF_KW
+                | SyntaxKind::MATCH_KW
+                | SyntaxKind::LOOP_KW
+                | SyntaxKind::WHILE_KW
+                | SyntaxKind::FOR_KW
+                    if depth == 0 =>
+                {
+                    return None;
+                }
+                _ => {}
             }
         }
-        if complete
-            && !self.body_tokens_accounted(body_first, body_last, &covered, &resolved_binding_names)
-        {
-            complete = false;
-            reason = Some(format!(
-                "the builder function `{name}` body contains expressions outside the supported trial-collection forms"
-            ));
+        let tail_first = match last_semicolon {
+            Some(semicolon) => self
+                .next_significant_within(semicolon + 1, body_last)
+                .unwrap_or(body_last + 1),
+            None => self
+                .next_significant_within(body_first, body_last)
+                .unwrap_or(body_last + 1),
+        };
+        if tail_first > body_last {
+            // No tail expression: an empty body or one that ends in `;`.
+            // The returned value cannot be established (a unit return
+            // feeds no run argument, but proving the builder is the
+            // argument's value means it returned something) — fail
+            // closed via the unsupported-control-flow path.
+            return None;
         }
-        ArgumentResolution {
-            trials,
-            complete,
-            reason,
-        }
+        Some((tail_first, body_last))
     }
 
     /// Locate the top-level function node matching a resolved builder
@@ -875,41 +988,6 @@ impl<'a, 'b> Resolver<'a, 'b> {
     /// for: inside a trial span or parsed `let` statement, inside the
     /// `vec!`/array literal scaffolding around them, or a trailing
     /// reference to a resolved binding.
-    fn body_tokens_accounted(
-        &self,
-        first: usize,
-        last: usize,
-        covered: &[(usize, usize)],
-        resolved_binding_names: &BTreeSet<String>,
-    ) -> bool {
-        let mut uncovered: Vec<usize> = Vec::new();
-        for index in first..=last {
-            let token = &self.scan.tokens[index];
-            if is_trivia(token.kind()) {
-                continue;
-            }
-            if covered
-                .iter()
-                .any(|(start, end)| index >= *start && index <= *end)
-            {
-                continue;
-            }
-            if is_literal_scaffolding(token) {
-                continue;
-            }
-            uncovered.push(index);
-        }
-        if uncovered.is_empty() {
-            return true;
-        }
-        // A trailing bare reference to a resolved binding (`let trials =
-        // vec![..]; trials`) is the value the builder returns.
-        let last_uncovered = uncovered[uncovered.len() - 1];
-        uncovered.len() == 1
-            && self.scan.tokens[last_uncovered].kind() == SyntaxKind::IDENT
-            && resolved_binding_names.contains(self.scan.tokens[last_uncovered].text())
-    }
-
     /// The one immutable `let` binding of `name` at block depth zero in
     /// `body`, bound before `before`. Zero or multiple candidates fail.
     fn unique_let_binding(
@@ -1043,7 +1121,6 @@ impl<'a, 'b> Resolver<'a, 'b> {
             is_mut,
             init_start,
             init_end,
-            statement_start: let_index,
             statement_end,
         })
     }
@@ -1145,16 +1222,45 @@ impl<'a, 'b> Resolver<'a, 'b> {
             .collect()
     }
 
-    /// Whether every significant token in the span lies inside some
-    /// anchored trial invocation: direct trial collections in every
-    /// literal shape.
+    /// Anchored trial invocations contained in the span that are not
+    /// nested inside another trial invocation (#3639 review): a
+    /// `Trial::test` constructed inside another trial's callback is
+    /// textually contained by the collection span but is not itself an
+    /// element registered with the harness, so it must not be credited
+    /// as reachable through direct containment.
+    fn top_level_trials_within(&self, start: usize, end: usize) -> BTreeSet<usize> {
+        self.trials_within(start, end)
+            .into_iter()
+            .filter(|&position| self.trial_nesting_depth(position) == 0)
+            .collect()
+    }
+
+    /// How many other pending trial spans strictly contain this one.
+    fn trial_nesting_depth(&self, position: usize) -> usize {
+        let trial = &self.trials[position];
+        self.trials
+            .iter()
+            .enumerate()
+            .filter(|(other, candidate)| {
+                *other != position && candidate.start <= trial.start && trial.end <= candidate.end
+            })
+            .count()
+    }
+
+    /// Whether every significant token in the span is accounted for by a
+    /// top-level trial element or literal scaffolding: direct trial
+    /// collections in every literal shape, including the commas that
+    /// separate multiple elements (#3639 review) and `mut` in
+    /// `&mut`/`mut` receiver positions.
     fn all_tokens_inside_trials(&self, start: usize, end: usize) -> bool {
         (start..=end)
             .filter(|index| !is_trivia(self.scan.tokens[*index].kind()))
             .all(|index| {
-                self.trials
-                    .iter()
-                    .any(|trial| index >= trial.start && index <= trial.end)
+                is_literal_scaffolding(&self.scan.tokens[index])
+                    || self
+                        .trials
+                        .iter()
+                        .any(|trial| index >= trial.start && index <= trial.end)
             })
     }
 }
@@ -1165,12 +1271,14 @@ struct LetBinding<'a> {
     is_mut: bool,
     init_start: usize,
     init_end: usize,
-    statement_start: usize,
     statement_end: usize,
 }
 
 /// Tokens that only ever scaffold a trial collection literal and can
-/// never introduce a construction by themselves.
+/// never introduce a construction by themselves. `MUT_KW` covers the
+/// `&mut`/`mut` receiver positions (`run(&mut vec![..])`, mutable slice
+/// literals) that never change which trials the argument contains
+/// (#3639 review).
 fn is_literal_scaffolding(token: &SyntaxToken) -> bool {
     matches!(
         token.kind(),
@@ -1179,6 +1287,7 @@ fn is_literal_scaffolding(token: &SyntaxToken) -> bool {
             | SyntaxKind::COMMA
             | SyntaxKind::SEMICOLON
             | SyntaxKind::AMP
+            | SyntaxKind::MUT_KW
             | SyntaxKind::DOT2
             | SyntaxKind::BANG
     ) || (token.kind() == SyntaxKind::IDENT && token.text() == "vec")

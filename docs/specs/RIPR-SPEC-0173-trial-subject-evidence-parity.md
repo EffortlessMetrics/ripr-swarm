@@ -166,8 +166,10 @@ denominator is decided by a separate bounded authority
   target at all, or every anchored run argument resolved completely and
   the trial is not in the union — and is recorded per trial as
   `registration_unreachable`. An unsupported entry spelling
-  (`run_tests`) or an unanchorable bare `run` keeps every trial
-  admitted and disclosed; the authority never concludes absence in
+  (`run_tests`), an unanchorable bare `run`, a bare `run` bound from a
+  non-marker path (possibly a re-export), or an aliased `run` import
+  invoked under its local name keeps every trial admitted and
+  disclosed; the authority never concludes absence in
   their presence.
 
 The boundary stays named, not silent: it is stated on the claim
@@ -259,7 +261,11 @@ variant, in `docs/OUTPUT_SCHEMA.md`'s `subjects[].claim` and
   unsupported `run_tests` entry spelling keep their trials admitted in
   the denominator with one aggregate
   `registration_reachability_unknown` limitation naming the trials and
-  its reason, and never degrade into an exclusion;
+  its reason, and never degrade into an exclusion; so do an aliased
+  run entry (`use libtest_mimic::run as execute;` plus an `execute(..)`
+  call), a bare `run` re-exported from a non-marker path, a builder
+  with an early `return`, and a builder with a conditional at body
+  depth zero (#3639 review);
 - a warm-cache regression (#3636): the reachability exclusion is
   identical on the file-fact-cache warm path (the registry re-applies
   after cache load), and the classified-seam generations bump so a

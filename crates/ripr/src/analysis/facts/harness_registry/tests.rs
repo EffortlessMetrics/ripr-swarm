@@ -3243,6 +3243,478 @@ fn never_called_trials() -> Vec<Trial> {
     Ok(())
 }
 
+/// #3639 review (devin): an aliased run entry (`use
+/// libtest_mimic::run as execute;` plus an `execute(..)` call) cannot be
+/// anchored, so it must never conclude unreachability — the trials stay
+/// in the executable-test denominator under the aggregate unknown
+/// disclosure.
+#[test]
+fn aliased_run_entry_keeps_trials_with_unknown_disclosure() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = temp_dir("alias-entry")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/alias_entry.rs",
+            r#"
+use libtest_mimic::{run as execute, Arguments, Trial};
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("aliased_entry_trial", || Ok(()))]
+}
+
+fn main() {
+    let arguments = Arguments::from_args();
+    execute(&arguments, &trials());
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "alias_entry", "tests/alias_entry.rs")?;
+    let files = [PathBuf::from("tests/alias_entry.rs")];
+    let registrations = [custom_target_registration("tests/alias_entry.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    assert_eq!(
+        index
+            .tests
+            .iter()
+            .filter(|test| test.file.ends_with(Path::new("tests/alias_entry.rs")))
+            .count(),
+        1,
+        "the aliased entry must not exclude the trial: {:?}",
+        index.harness_limitations
+    );
+    let unknown = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_reachability_unknown")
+        .ok_or_else(|| {
+            format!(
+                "missing unknown disclosure: {:?}",
+                index.harness_limitations
+            )
+        })?;
+    assert!(
+        unknown.detail.contains("aliased_entry_trial"),
+        "{unknown:?}"
+    );
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .all(|limitation| limitation.code != "registration_unreachable"),
+        "an unanchorable entry is unknown, never an exclusion: {:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}
+
+/// #3639 review (devin): a bare `run` bound from a non-marker path
+/// (`use adapter::run;`) is possibly a re-export of the harness entry —
+/// it cannot anchor, and it must not conclude unreachability either.
+#[test]
+fn reexported_run_entry_keeps_trials_with_unknown_disclosure()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("reexport-entry")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/reexport_entry.rs",
+            r#"
+mod adapter {
+    pub use libtest_mimic::run;
+}
+
+use adapter::{run, Arguments};
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("reexport_entry_trial", || Ok(()))]
+}
+
+fn main() {
+    let arguments = Arguments::from_args();
+    run(&arguments, &trials());
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "reexport_entry", "tests/reexport_entry.rs")?;
+    let files = [PathBuf::from("tests/reexport_entry.rs")];
+    let registrations = [custom_target_registration("tests/reexport_entry.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    assert_eq!(
+        index
+            .tests
+            .iter()
+            .filter(|test| test.file.ends_with(Path::new("tests/reexport_entry.rs")))
+            .count(),
+        1,
+        "the re-exported entry must not exclude the trial: {:?}",
+        index.harness_limitations
+    );
+    let unknown = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_reachability_unknown")
+        .ok_or_else(|| {
+            format!(
+                "missing unknown disclosure: {:?}",
+                index.harness_limitations
+            )
+        })?;
+    assert!(
+        unknown.detail.contains("reexport_entry_trial"),
+        "{unknown:?}"
+    );
+    Ok(())
+}
+
+/// #3639 review (devin): builder resolution traces the returned
+/// expression — trials in unused bindings are not part of the run
+/// argument and are excluded, without an unknown disclosure.
+#[test]
+fn builder_unused_binding_trial_is_excluded() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("builder-unused")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/builder_unused.rs",
+            &with_harness_main(
+                r#"
+use libtest_mimic::Trial;
+
+fn build_trials() -> Vec<Trial> {
+    let unused = vec![Trial::test("builder_dead_trial", || Ok(()))];
+    vec![Trial::test("builder_live_trial", || Ok(()))]
+}
+"#,
+                "build_trials()",
+            ),
+        )],
+    )?;
+    declare_harness_false_target(&root, "builder_unused", "tests/builder_unused.rs")?;
+    let files = [PathBuf::from("tests/builder_unused.rs")];
+    let registrations = [custom_target_registration("tests/builder_unused.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    let admitted: Vec<_> = index
+        .tests
+        .iter()
+        .filter(|test| test.file.ends_with(Path::new("tests/builder_unused.rs")))
+        .map(|test| test.name.as_str())
+        .collect();
+    assert_eq!(
+        admitted,
+        vec!["builder_live_trial"],
+        "only the returned trial enters the denominator: {:?}",
+        index.harness_limitations
+    );
+    let exclusion = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_unreachable")
+        .ok_or_else(|| format!("missing exclusion: {:?}", index.harness_limitations))?;
+    assert!(
+        exclusion.detail.contains("builder_dead_trial"),
+        "{exclusion:?}"
+    );
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .all(|limitation| limitation.code != "registration_reachability_unknown"),
+        "a straight-line builder is a proof, not an unknown: {:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}
+
+/// #3639 review (devin): a builder with an early `return` has
+/// unsupported control flow — its trials stay admitted under the
+/// unknown disclosure, never excluded and never blindly reachable.
+#[test]
+fn builder_early_return_discloses_unknown() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("builder-return")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/builder_return.rs",
+            &with_harness_main(
+                r#"
+use libtest_mimic::Trial;
+
+fn build_trials() -> Vec<Trial> {
+    return vec![Trial::test("early_return_trial", || Ok(()))];
+}
+"#,
+                "build_trials()",
+            ),
+        )],
+    )?;
+    declare_harness_false_target(&root, "builder_return", "tests/builder_return.rs")?;
+    let files = [PathBuf::from("tests/builder_return.rs")];
+    let registrations = [custom_target_registration("tests/builder_return.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    assert_eq!(
+        index
+            .tests
+            .iter()
+            .filter(|test| test.file.ends_with(Path::new("tests/builder_return.rs")))
+            .count(),
+        1,
+        "unsupported control flow keeps the trial admitted: {:?}",
+        index.harness_limitations
+    );
+    let unknown = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_reachability_unknown")
+        .ok_or_else(|| {
+            format!(
+                "missing unknown disclosure: {:?}",
+                index.harness_limitations
+            )
+        })?;
+    assert!(unknown.detail.contains("early_return_trial"), "{unknown:?}");
+    Ok(())
+}
+
+/// #3639 review (devin): a builder with a conditional at body depth zero
+/// has unsupported control flow — unknown disclosure, not reachable.
+#[test]
+fn builder_dead_conditional_discloses_unknown() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("builder-cond")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/builder_cond.rs",
+            &with_harness_main(
+                r#"
+use libtest_mimic::Trial;
+
+fn build_trials() -> Vec<Trial> {
+    if false {
+        vec![Trial::test("cond_dead_trial", || Ok(()))]
+    } else {
+        vec![Trial::test("cond_live_trial", || Ok(()))]
+    }
+}
+"#,
+                "build_trials()",
+            ),
+        )],
+    )?;
+    declare_harness_false_target(&root, "builder_cond", "tests/builder_cond.rs")?;
+    let files = [PathBuf::from("tests/builder_cond.rs")];
+    let registrations = [custom_target_registration("tests/builder_cond.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    assert_eq!(
+        index
+            .tests
+            .iter()
+            .filter(|test| test.file.ends_with(Path::new("tests/builder_cond.rs")))
+            .count(),
+        2,
+        "both conditional trials stay admitted: {:?}",
+        index.harness_limitations
+    );
+    let unknown = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_reachability_unknown")
+        .ok_or_else(|| {
+            format!(
+                "missing unknown disclosure: {:?}",
+                index.harness_limitations
+            )
+        })?;
+    assert!(
+        unknown.detail.contains("cond_dead_trial") && unknown.detail.contains("cond_live_trial"),
+        "{unknown:?}"
+    );
+    Ok(())
+}
+
+/// #3639 review (devin): the commas separating multiple direct
+/// collection elements are scaffolding — two live trials resolve
+/// completely and a dead construction elsewhere is excluded without an
+/// unknown disclosure.
+#[test]
+fn two_trials_in_direct_collection_exclude_dead_construction()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("multi-trials")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/multi_trials.rs",
+            &with_harness_main(
+                r#"
+use libtest_mimic::Trial;
+
+fn dead_elsewhere() -> Vec<Trial> {
+    vec![Trial::test("elsewhere_dead_trial", || Ok(()))]
+}
+"#,
+                "vec![Trial::test(\"multi_a\", || Ok(())), Trial::test(\"multi_b\", || Ok(()))]",
+            ),
+        )],
+    )?;
+    declare_harness_false_target(&root, "multi_trials", "tests/multi_trials.rs")?;
+    let files = [PathBuf::from("tests/multi_trials.rs")];
+    let registrations = [custom_target_registration("tests/multi_trials.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    let mut admitted: Vec<_> = index
+        .tests
+        .iter()
+        .filter(|test| test.file.ends_with(Path::new("tests/multi_trials.rs")))
+        .map(|test| test.name.as_str())
+        .collect();
+    admitted.sort_unstable();
+    assert_eq!(
+        admitted,
+        vec!["multi_a", "multi_b"],
+        "both collection elements are reachable: {:?}",
+        index.harness_limitations
+    );
+    let exclusion = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_unreachable")
+        .ok_or_else(|| format!("missing exclusion: {:?}", index.harness_limitations))?;
+    assert!(
+        exclusion.detail.contains("elsewhere_dead_trial"),
+        "{exclusion:?}"
+    );
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .all(|limitation| limitation.code != "registration_reachability_unknown"),
+        "a fully resolved argument is a proof, not an unknown: {:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}
+
+/// #3639 review (devin): a trial constructed inside another trial's
+/// callback is not a collection element — only the outer trial is
+/// reachable; the inner construction is excluded by the resolved
+/// argument.
+#[test]
+fn nested_trial_in_callback_is_not_a_collection_element() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = temp_dir("nested-trial")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/nested_trial.rs",
+            &with_harness_main(
+                r#"
+use libtest_mimic::Trial;
+"#,
+                "vec![Trial::test(\"outer_trial\", || {\n        let _hidden = Trial::test(\"inner_trial\", || Ok(()));\n    })]",
+            ),
+        )],
+    )?;
+    declare_harness_false_target(&root, "nested_trial", "tests/nested_trial.rs")?;
+    let files = [PathBuf::from("tests/nested_trial.rs")];
+    let registrations = [custom_target_registration("tests/nested_trial.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    let admitted: Vec<_> = index
+        .tests
+        .iter()
+        .filter(|test| test.file.ends_with(Path::new("tests/nested_trial.rs")))
+        .map(|test| test.name.as_str())
+        .collect();
+    assert_eq!(
+        admitted,
+        vec!["outer_trial"],
+        "only the outer collection element is reachable: {:?}",
+        index.harness_limitations
+    );
+    let exclusion = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_unreachable")
+        .ok_or_else(|| format!("missing exclusion: {:?}", index.harness_limitations))?;
+    assert!(exclusion.detail.contains("inner_trial"), "{exclusion:?}");
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .all(|limitation| limitation.code != "registration_reachability_unknown"),
+        "the argument resolves completely: {:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}
+
+/// #3639 review (gemini): `mut` in a `&mut` receiver position is
+/// scaffolding — `run(&mut vec![..])` resolves completely instead of
+/// degrading to an unknown disclosure.
+#[test]
+fn mut_receiver_direct_collection_resolves_completely() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("mut-arg")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/mut_arg.rs",
+            &with_harness_main(
+                r#"
+use libtest_mimic::Trial;
+
+fn dead_elsewhere() -> Vec<Trial> {
+    vec![Trial::test("mut_arg_dead_trial", || Ok(()))]
+}
+"#,
+                "&mut vec![Trial::test(\"mut_arg_trial\", || Ok(()))]",
+            ),
+        )],
+    )?;
+    declare_harness_false_target(&root, "mut_arg", "tests/mut_arg.rs")?;
+    let files = [PathBuf::from("tests/mut_arg.rs")];
+    let registrations = [custom_target_registration("tests/mut_arg.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    let admitted: Vec<_> = index
+        .tests
+        .iter()
+        .filter(|test| test.file.ends_with(Path::new("tests/mut_arg.rs")))
+        .map(|test| test.name.as_str())
+        .collect();
+    assert_eq!(
+        admitted,
+        vec!["mut_arg_trial"],
+        "the &mut receiver form resolves: {:?}",
+        index.harness_limitations
+    );
+    let exclusion = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_unreachable")
+        .ok_or_else(|| format!("missing exclusion: {:?}", index.harness_limitations))?;
+    assert!(
+        exclusion.detail.contains("mut_arg_dead_trial"),
+        "{exclusion:?}"
+    );
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .all(|limitation| limitation.code != "registration_reachability_unknown"),
+        "{:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}
+
 /// #3636: every supported run-argument form admits its trials — a
 /// direct `vec![]` literal, an array literal, an immutable let-bound
 /// chain, a `&local[..]` index, and a one-level builder function — with
