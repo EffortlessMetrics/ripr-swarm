@@ -103,8 +103,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// production inventory, changing classified-seam content.
 /// `1.3` -> `1.4`: harness trial subjects gained helper-callback one-level
 /// body evidence and method-position `unwrap`/`expect` smoke oracles
-/// (#3603); old classified entries would serve evidence-blind
-/// classifications for registered-harness workspaces.
+/// (#3603), and `custom_harness` registrations now validate against
+/// parsed Cargo target metadata (#3608) — a misdeclared target keeps its
+/// ordinary classification instead of receiving file-wide evidence role,
+/// changing the production inventory classified seams derive from. Old
+/// classified entries would serve evidence-blind classifications for
+/// registered-harness workspaces.
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.4";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
@@ -119,7 +123,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.4";
 /// evidence role (#3530), changing the facts sharded entries derive from.
 /// `0.8` -> `0.9`: source roles now compose across include and module edges
 /// (#3533), changing the facts sharded entries derive from.
-/// `0.9` -> `0.10`: #3603 trial evidence parity changes the facts sharded
+/// `0.9` -> `0.10`: #3603 trial evidence parity and #3608 harness-target
+/// validation change the facts and production inventory the sharded
 /// entries derive from.
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.10";
 
@@ -140,8 +145,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.10";
 /// `0.9` -> `0.10`: source roles now compose across include and module edges
 /// (#3533); out-of-line `#[cfg(test)]` module helpers flip out of the
 /// production inventory, changing compact classified-seam content.
-/// `0.10` -> `0.11`: #3603 trial evidence parity changes compact
-/// classified-seam content.
+/// `0.10` -> `0.11`: #3603 trial evidence parity and #3608 harness-target
+/// validation change the facts and production inventory the compact
+/// classified-seam entries derive from.
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.11";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
@@ -190,6 +196,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// No bump for #3603: per-file parser facts are unchanged — the harness
 /// registry applies registrations after the file-fact cache loads, so the
 /// trial evidence parity change never alters a stored `FileFacts`.
+///
+/// No bump for the #3608 harness-registration validation either: stored
+/// per-file facts predate the registry entirely and the registry applies
+/// after cache retrieval, re-validating every build against the current
+/// manifests — a warm hit cannot bypass that validation.
 pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.9";
 
 /// Keep the best-effort classified-seam cache from turning a successful live

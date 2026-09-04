@@ -80,6 +80,62 @@ registration; registers executable tests).
 Attribute-driven membership is authoritative; filenames, imports,
 and macro suffixes never classify.
 
+A `custom_harness` registration grants its file-wide evidence role
+(and the registry's helper demotion and trial-subject derivation)
+only after its target validates against the parsed Cargo target
+metadata of the owning package (#3608): the target must match a
+declared `[[test]]` target — explicit `path = ...` or a name-only
+entry resolved to its autodiscovery shape — whose effective
+`harness` flag is `false`. Explicit-target ownership is
+declaration-driven across the analyzed workspace's MEMBER manifests
+only: the analysis-root manifest defines the member set (its own
+package, declared `[workspace.members]` with `*`/`?`/`**` globs
+matched lexically minus `[workspace.exclude]`, and package manifests
+reached through members' path dependencies across the regular, dev,
+and build dependency sections (verified against `cargo metadata`;
+workspace-inherited dependencies are not resolved in this bounded
+model)). Every member manifest's
+`[[test]] path = ...` entries are resolved lexically against their own
+manifest directory (ParentDir and CurDir segments collapse without
+touching the filesystem; a leading escape chain stays as spelled), and
+any member declaring the exact resolved target path claims it — so
+sibling-package `../shared/x.rs` declarations, targets below nested
+manifest directories, and in-package `generated/../qa/...` spellings
+all resolve. Agreeing declarations are deterministic; conflicting
+`harness` flags on one path are ambiguous ownership and fail closed.
+Nearest-manifest resolution governs the autodiscovery premise alone.
+Each batch parses every member manifest at most once; a member
+manifest that cannot be read or parsed leaves the declaration map
+incomplete and yields `manifest_unavailable`, never a target-typo
+verdict; nonmember manifests are skipped entirely (their declarations
+never validate a target and their conflicts never block one), and a
+declared member whose manifest does not exist fails closed the same
+way — Cargo rejects such workspaces too. Package autodiscovery is credited only for
+package-root `tests/**` shapes (never `src/tests/**`) under Cargo's
+effective default — including the edition-2015
+backward-compatibility rule where a manual `[[test]]` target with
+edition 2015 (explicit, omitted, or inherited via
+`edition.workspace = true` from the analysis root's
+`[workspace.package]`) disables autodiscovery. A manifest without a
+`[package]` table declares nothing: Cargo rejects target tables in
+virtual manifests. A name-only `[[test]]` entry defaults to exactly
+`tests/<name>.rs`; the `tests/<name>/main.rs` directory layout is a
+separate autodiscovered target that does not inherit the entry's
+`harness` flag. A target missing from Cargo metadata, a
+target whose Cargo entry still has `harness = true` (explicit or
+autodiscovered default), or an unresolvable owning manifest each
+record a typed limitation (`target_not_declared`,
+`harness_flag_conflict`, `manifest_unavailable`) naming the target;
+the registration degrades to per-function behavior — the file keeps
+its ordinary classification, so a misdeclared target that ordinary
+classification treats as production keeps seeding production seams
+while a target in a `tests/`-style or Cargo-discovered evidence
+layout keeps its evidence role. Every file-wide evidence surface (diff
+seeding, repo seam inventory, LSP scope partition) consumes the same
+validated grant, so the degradation is identical everywhere, and the
+classified-seam caches bump their schema generations so pre-#3608
+entries cannot serve classifications that bypass the validation.
+
 The opt-in joins the check-artifact config identity as
 FindingAffecting (`CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION` 1 → 2) and
 the repo-exposure consumed-config list; the workspace cache key already
@@ -127,6 +183,13 @@ The #3532 harness registry joined the same identity as FindingAffecting
 - Evidence files stay indexed; no evidence path is dropped from the
   index or from related-test discovery.
 - `TestFact` registration remains attribute-driven only.
+- A `custom_harness` registration never grants file-wide evidence role
+  without a confirmed `harness = false` Cargo declaration (#3608): a
+  misdeclared target keeps its ordinary classification — targets that
+  ordinary classification treats as production keep seeding production
+  seams, while `tests/`-style or Cargo-discovered evidence layouts stay
+  evidence-only — and the conflict is recorded as a typed limitation
+  naming the target.
 
 ## Acceptance Examples
 
@@ -136,6 +199,13 @@ The #3532 harness registry joined the same identity as FindingAffecting
   evidence; `src/unconfirmed_test.rs` without a declaration → production.
 - Accept: `production_like_targets = ["tests/api_contract.rs"]` → that
   file analyzed as production; `tests/other.rs` stays evidence.
+- Accept: a `custom_harness` registration on a declared
+  `harness = false` target (explicit custom path or name-only entry on
+  the conventional layout) → file-wide evidence role with adapter
+  subjects; the same registration against an undeclared or
+  `harness = true` target → typed limitation, no demotion, and a
+  production-classified target keeps seeding production seams while an
+  evidence-layout target keeps its evidence role (#3608).
 - Reject: a bench harness call (`criterion_main!`) becoming an
   obligation; a `test_*.rs` name alone excluding a production file.
 
@@ -144,7 +214,12 @@ The #3532 harness registry joined the same identity as FindingAffecting
 `analysis/workspace/source_role.rs` unit tests pin the layout rules,
 Cargo-autodiscovery shapes, override priority, windows normalization,
 and the seeding/evidence partition. `analysis/workspace/cargo_targets.rs`
-pins manifest extraction. `analysis/language/rust.rs` pins diff seeding
+pins manifest extraction and the #3608 harness-target Cargo verdict
+(declared, harness-enabled, undeclared, manifest-unavailable).
+`analysis/facts/harness_registry` pins the conflict limitations and the
+degraded per-function behavior for misdeclared targets, and
+`analysis/language/rust.rs` pins the diff-path seeding flip alongside
+diff seeding
 (bench gap regression, declared-target confirmation with a probeable
 helper, opt-in restore). `config/tests.rs` pins parsing, identity
 classification, and absolute-path rejection.

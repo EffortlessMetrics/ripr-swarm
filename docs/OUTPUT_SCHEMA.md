@@ -1400,7 +1400,13 @@ subject and one dynamic-name limitation:
 - `limitations[]` — typed shapes the registration saw but could not classify
   (`dynamic_trial_name`, `dynamic_trial_registration`, `ambiguous_import`,
   `unanchored_trial_path`, `unresolved_marker_import`, `duplicate_subject`,
-  `parse_unavailable`)
+  `parse_unavailable`). Cargo target metadata conflicts (#3608) use
+  `target_not_declared` (the target matches no Cargo `[[test]]` target,
+  declared or autodiscovered), `harness_flag_conflict` (the Cargo target
+  still has `harness = true`), and `manifest_unavailable` (the owning
+  manifest could not be read or parsed); each records that the
+  registration grants no file-wide evidence role, demotion, or trial
+  subjects and the target keeps its ordinary per-function classification.
 
 An absent `test_harnesses` array means the repository has no harness
 registrations; it is never a claim that custom harnesses do not exist.

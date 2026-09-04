@@ -28,6 +28,22 @@ are scoped or reviewed.
   gains a `test_harnesses` projection only when registrations exist
   ([#3532](https://github.com/EffortlessMetrics/ripr-swarm/issues/3532)).
 
+- Registered `custom_harness` targets now validate against the parsed
+  Cargo target metadata of the declaring manifest: only a declared
+  `[[test]]` target with `harness = false` keeps file-wide evidence role,
+  helper demotion, and adapter subjects. Explicit declarations resolve
+  lexically (`..` segments collapsed) and claim their target across
+  nested and sibling manifest directories, including shared targets
+  declared via a parent-relative path; nearest-manifest resolution still
+  governs package autodiscovery, and workspace-inherited
+  (`edition.workspace = true`) editions are honored. A registration
+  whose target is missing from Cargo metadata, whose Cargo target still
+  has `harness = true`, or whose workspace manifests cannot all be read
+  and parsed records the typed limitations `target_not_declared`,
+  `harness_flag_conflict`, or `manifest_unavailable` — naming the target
+  — and degrades to per-function behavior
+  ([#3608](https://github.com/EffortlessMetrics/ripr-swarm/issues/3608)).
+
 - New `ripr mcp --stdio [--root PATH]` command: a bounded, read-only
   Model Context Protocol server that exposes exact workspace status
   (`ripr_workspace_status` tool and `ripr://workspace/status` resource)

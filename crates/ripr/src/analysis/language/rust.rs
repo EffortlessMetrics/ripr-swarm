@@ -1683,12 +1683,11 @@ impl RustAdapter {
             analyzable_rust_files.iter().map(|path| path.as_path()),
         );
         source_role_context.production_like_targets = options.production_like_targets.clone();
-        source_role_context.harness_targets = options
-            .test_harnesses
-            .iter()
-            .filter(|registration| registration.file_wide_harness_evidence())
-            .map(|registration| registration.target.clone())
-            .collect();
+        // Cargo-validated file-wide harness evidence (#3608): only
+        // registrations whose manifest declares `harness = false` keep
+        // the grant.
+        source_role_context.harness_targets =
+            rust_index::validated_file_wide_harness_targets(&options.root, &options.test_harnesses);
 
         // #2971: The cross-crate calls_owner bypass in find_related_tests
         // requires a workspace-complete function index. In Instant/Draft/Fast
@@ -1900,12 +1899,11 @@ impl RustAdapter {
                 analyzable_rust_files.iter().map(|path| path.as_path()),
             );
             context.production_like_targets = options.production_like_targets.clone();
-            context.harness_targets = options
-                .test_harnesses
-                .iter()
-                .filter(|registration| registration.file_wide_harness_evidence())
-                .map(|registration| registration.target.clone())
-                .collect();
+            // Cargo-validated file-wide harness evidence (#3608).
+            context.harness_targets = rust_index::validated_file_wide_harness_targets(
+                &options.root,
+                &options.test_harnesses,
+            );
             context
         };
         let production_files = analyzable_rust_files
@@ -4558,7 +4556,8 @@ let _ = (result, note, raw);"##,
         let root = temp_root("registered-harness-diff")?;
         write(
             &root.join("Cargo.toml"),
-            "[package]\nname='registered-harness'\nversion='0.1.0'\nedition='2024'\n",
+            "[package]\nname='registered-harness'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='price_mimic'\npath='src/price_mimic.rs'\nharness=false\n",
         )?;
         write(
             &root.join("src/lib.rs"),
@@ -4678,6 +4677,139 @@ let _ = (result, note, raw);"##,
                 .iter()
                 .any(|subject| subject.name == "price_at_boundary"),
             "the exact trial registration is a projected subject"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_misdeclared_harness_target_keeps_seeding_and_records_the_conflict()
+    -> Result<(), String> {
+        // #3608: a `custom_harness` registration whose target does not
+        // match any Cargo `[[test]]` target keeps seeding production
+        // seams (no file-wide evidence role on an unverified premise) and
+        // records the conflict as a typed limitation.
+        let root = temp_root("misdeclared-harness-diff")?;
+        write(
+            &root.join("Cargo.toml"),
+            // The manifest deliberately declares nothing for
+            // src/price_mimic.rs: the registration below is misdeclared.
+            "[package]\nname='registered-harness'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn price(amount: i32) -> i32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+        )?;
+        write(
+            &root.join("src/price_mimic.rs"),
+            "use libtest_mimic::Trial;\n\nfn setup_price(amount: i32) -> i32 {\n    if amount < 0 { 0 } else { price(amount) }\n}\n\nfn trials() -> Vec<Trial> {\n    vec![Trial::test(\"price_at_boundary\", || {\n        assert_eq!(setup_price(100), 90);\n    })]\n}\n",
+        )?;
+        write(
+            &root.join("src/unregistered_helper.rs"),
+            "pub fn helper_path(amount: i32) -> i32 {\n    if amount < 0 { 0 } else { amount }\n}\n",
+        )?;
+        let mut diff_text = String::new();
+        let mut add_file = |path: &str, lines: &[&str]| {
+            diff_text.push_str(&format!("diff --git a{path} b{path}\n"));
+            diff_text.push_str("new file mode 100644\n");
+            diff_text.push_str("--- /dev/null\n");
+            diff_text.push_str(&format!("+++ b{path}\n"));
+            diff_text.push_str(&format!("@@ -0,0 +1,{} @@\n", lines.len()));
+            for line in lines {
+                diff_text.push_str(&format!("+{line}\n"));
+            }
+        };
+        add_file(
+            "/src/lib.rs",
+            &[
+                "pub fn price(amount: i32) -> i32 {",
+                "    if amount > 100 { amount - 10 } else { amount }",
+                "}",
+            ],
+        );
+        add_file(
+            "/src/price_mimic.rs",
+            &[
+                "use libtest_mimic::Trial;",
+                "",
+                "fn setup_price(amount: i32) -> i32 {",
+                "    if amount < 0 { 0 } else { price(amount) }",
+                "}",
+                "",
+                "fn trials() -> Vec<Trial> {",
+                "    vec![Trial::test(\"price_at_boundary\", || {",
+                "        assert_eq!(setup_price(100), 90);",
+                "    })]",
+                "}",
+            ],
+        );
+        add_file(
+            "/src/unregistered_helper.rs",
+            &[
+                "pub fn helper_path(amount: i32) -> i32 {",
+                "    if amount < 0 { 0 } else { amount }",
+                "}",
+            ],
+        );
+        let changed_files = diff::parse_unified_diff(&diff_text);
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: vec![crate::config::TestHarnessRegistration {
+                    registration_id: "mimic-suite".to_string(),
+                    target: std::path::PathBuf::from("src/price_mimic.rs"),
+                    kind: crate::config::TestHarnessKind::CustomHarnessTarget,
+                    adapter: crate::config::TestHarnessAdapter::LibtestMimicV1,
+                    marker: "libtest_mimic".to_string(),
+                }],
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        let finding_files = result
+            .findings
+            .iter()
+            .map(|finding| {
+                finding
+                    .probe
+                    .location
+                    .file
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            finding_files
+                .iter()
+                .any(|file| file.ends_with("src/price_mimic.rs")),
+            "the misdeclared target keeps seeding production seams: {finding_files:?}"
+        );
+        let projection = result
+            .harness_projections
+            .iter()
+            .find(|projection| projection.registration_id == "mimic-suite")
+            .ok_or("missing harness projection")?;
+        assert!(
+            projection.subjects.is_empty(),
+            "a misdeclared target establishes no trial subjects: {:?}",
+            projection.subjects
+        );
+        assert!(
+            projection.limitations.iter().any(|limitation| {
+                limitation.code == "target_not_declared"
+                    && limitation.detail.contains("src/price_mimic.rs")
+            }),
+            "the conflict is recorded with the target named: {:?}",
+            projection.limitations
         );
         Ok(())
     }
