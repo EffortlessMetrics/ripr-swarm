@@ -310,19 +310,25 @@ fn apply_libtest_mimic_target(
             );
             literals.extend(extract_literal_facts(&helper.body, helper.start_line));
             // A `macro_rules!` definition in the helper body is a dormant
-            // token tree. Today the ordinary parser path keeps definition
-            // token trees unstructured (no nested macro-call nodes), so it
-            // emits nothing from the template; this retain keeps that
-            // guarantee under parser behavior drift and covers the lexical
-            // fallback, which line-scans raw text and would credit the
-            // template's assertion (under-emit; #3603 review).
+            // token tree: its template never executes, so nothing inside
+            // it joins the subject — not oracles, not calls, not literals.
+            // The ordinary parser path today keeps definition token trees
+            // unstructured (no nested macro-call nodes), so it emits
+            // nothing from the template; the retains keep that guarantee
+            // under parser behavior drift and cover the lexical
+            // extractors, which line-scan raw text and would credit the
+            // template's calls, values, and assertions (under-emit;
+            // #3603 review).
             let dormant = dormant_macro_rules_line_ranges(&helper.body, helper.start_line);
             if !dormant.is_empty() {
-                assertions.retain(|oracle| {
-                    !dormant
+                let line_is_dormant = |line: usize| {
+                    dormant
                         .iter()
-                        .any(|(start, end)| oracle.line >= *start && oracle.line <= *end)
-                });
+                        .any(|(start, end)| line >= *start && line <= *end)
+                };
+                assertions.retain(|oracle| !line_is_dormant(oracle.line));
+                calls.retain(|call| !line_is_dormant(call.line));
+                literals.retain(|literal| !line_is_dormant(literal.line));
             }
             calls.sort_by(|left, right| {
                 left.line
@@ -729,45 +735,56 @@ fn parser_oracles_for_node_tokens(
                         continue;
                     }
                 };
-                // assert!(..) / assert_eq!(..) — the token tree follows;
-                // the assertion text is the macro invocation.
-                let mut text = format!("{name}!");
-                let mut cursor = match next_significant(tokens, bang_index + 1) {
-                    Some(next) if tokens[next].kind() == ra_ap_syntax::SyntaxKind::L_PAREN => {
-                        text.push('(');
-                        next
-                    }
-                    _ => bang_index + 1,
-                };
-                if text.ends_with('(') {
-                    let mut macro_depth = 1;
-                    cursor += 1;
-                    while cursor < tokens.len() && macro_depth > 0 {
-                        let inner = &tokens[cursor];
-                        match inner.kind() {
-                            ra_ap_syntax::SyntaxKind::L_PAREN => macro_depth += 1,
-                            ra_ap_syntax::SyntaxKind::R_PAREN => macro_depth -= 1,
-                            _ => {}
-                        }
-                        text.push_str(inner.text());
-                        cursor += 1;
-                    }
-                } else if let Some(group_close) = next_significant(tokens, bang_index + 1)
+                // assert!(..) / assert_eq![..] — the token tree follows; the
+                // assertion text is the complete macro invocation in every
+                // delimiter Rust permits, classified and token-extracted
+                // exactly like the ordinary parser slices it for `#[test]`
+                // functions (including a same-line trailing semicolon).
+                let group = next_significant(tokens, bang_index + 1)
                     .filter(|next| {
                         matches!(
                             tokens[*next].kind(),
-                            ra_ap_syntax::SyntaxKind::L_BRACK | ra_ap_syntax::SyntaxKind::L_CURLY
+                            ra_ap_syntax::SyntaxKind::L_PAREN
+                                | ra_ap_syntax::SyntaxKind::L_BRACK
+                                | ra_ap_syntax::SyntaxKind::L_CURLY
                         )
                     })
-                    .and_then(|open| matching_group_close(tokens, open))
-                {
-                    // assert![..] / assert!{..}: the macro still
-                    // classifies, and its input is skipped like every
-                    // macro input — nothing inside it reclassifies.
-                    // `cursor` lands one past the close, matching the
-                    // consumed-paren path below.
-                    cursor = group_close + 1;
-                }
+                    .and_then(|open_index| {
+                        matching_group_close(tokens, open_index)
+                            .map(|close_index| (open_index, close_index))
+                    });
+                let text = match group {
+                    Some((_open_index, close_index)) => {
+                        // Same-line trailing semicolon parity: the ordinary
+                        // parser's macro-call slice extends over a `;` on
+                        // the same line; a comment or newline before one
+                        // keeps the text at the group close.
+                        let mut end = tokens[close_index].text_range().end();
+                        let mut probe = next_significant(tokens, close_index + 1);
+                        while let Some(candidate) = probe {
+                            let inner = &tokens[candidate];
+                            if inner.kind() == ra_ap_syntax::SyntaxKind::WHITESPACE
+                                && !inner.text().contains('\n')
+                            {
+                                probe = next_significant(tokens, candidate + 1);
+                                continue;
+                            }
+                            if inner.kind() == ra_ap_syntax::SyntaxKind::SEMICOLON {
+                                end = inner.text_range().end();
+                            }
+                            break;
+                        }
+                        slice_text(source, tokens[index].text_range().start(), end)
+                    }
+                    None => format!("{name}!"),
+                };
+                // The group has been consumed; resuming inside it would
+                // rescan nested idents as separate top-level oracles.
+                // Without a group (`assert!` alone), resume after the bang.
+                let cursor = match group {
+                    Some((_open_index, close_index)) => close_index + 1,
+                    None => bang_index + 1,
+                };
                 let classification = classify_assertion(&text);
                 assertions.push(OracleFact {
                     line: line_index.line(tokens[index].text_range().start()),
@@ -1020,6 +1037,17 @@ fn resolve_helper_function<'a>(
     if !top_level_use_bindings(file_syntax, name).is_empty() {
         return None;
     }
+    // A top-level `const`/`static` binding the callback's leaf name makes
+    // the bare callback ambiguous with the item binding — parse-only
+    // spellings can carry both a same-named const and fn, and a local
+    // const/static shadow is separately covered by the enclosing-body
+    // gate.
+    let top_level_same_named_item = file_syntax
+        .children()
+        .any(|item| node_binding_name(&item).is_some_and(|item_name| item_name == name));
+    if top_level_same_named_item {
+        return None;
+    }
     let top_level_same_named = file_syntax
         .children()
         .filter_map(ast::Fn::cast)
@@ -1060,9 +1088,11 @@ fn enclosing_function<'a>(
 }
 
 /// Whether the enclosing body binds `name` locally: any identifier
-/// pattern (`let`, parameter, closure parameter, loop pattern), or any
-/// `use` item inside the body that binds the name. An unparseable body
-/// counts as bound (fail closed).
+/// pattern (`let`, parameter, closure parameter, loop pattern), any
+/// `const`/`static` item binding inside the body (a local const or static
+/// shadows the file-level fn just like a `let`), or any `use` item inside
+/// the body that binds the name. An unparseable body counts as bound
+/// (fail closed).
 fn enclosing_body_binds_name(function: &FunctionFact, name: &str) -> bool {
     let parse = SourceFile::parse(&function.body, Edition::CURRENT);
     if !parse.errors().is_empty() {
@@ -1082,6 +1112,12 @@ fn enclosing_body_binds_name(function: &FunctionFact, name: &str) -> bool {
     if pattern_binds {
         return true;
     }
+    let item_binds = syntax
+        .descendants()
+        .any(|node| node_binding_name(&node).is_some_and(|item_name| item_name == name));
+    if item_binds {
+        return true;
+    }
     let mut bindings = BTreeSet::new();
     for use_item in syntax.descendants().filter_map(ast::Use::cast) {
         let Some(use_tree) = use_item.use_tree() else {
@@ -1090,6 +1126,16 @@ fn enclosing_body_binds_name(function: &FunctionFact, name: &str) -> bool {
         collect_use_bindings(&use_tree, String::new(), name, &mut bindings);
     }
     !bindings.is_empty()
+}
+
+/// The bound name of a `const` or `static` item node, if the node is one.
+/// Item bindings carry a `Name`, not an identifier pattern, so the
+/// identifier-pattern scan cannot see them.
+fn node_binding_name(node: &ra_ap_syntax::SyntaxNode) -> Option<String> {
+    let name = ast::Const::cast(node.clone())
+        .and_then(|item| item.name())
+        .or_else(|| ast::Static::cast(node.clone()).and_then(|item| item.name()))?;
+    Some(name.text().to_string())
 }
 
 /// Inclusive 1-based line ranges of the dormant `macro_rules!` definitions
@@ -1518,12 +1564,13 @@ fn inside_macro_rules(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNo
     ancestors.any(|ancestor| ast::MacroRules::can_cast(ancestor.kind()))
 }
 
-/// Index just past the `macro_rules! name { ... }` definition whose
+/// Index just past the `macro_rules! name <group>` definition whose
 /// `macro_rules` token sits at `index`, or `None` when the shape is not a
 /// definition. Trivia-tolerant — `macro_rules` and `!` may be separated
-/// by whitespace or comments — and brace-balanced at the token level,
-/// because a definition inside another macro's token tree carries no
-/// `MacroRules` node to query.
+/// by whitespace or comments — and balanced at the token level over every
+/// delimiter Rust permits for the template body (`(...)`, `[...]`,
+/// `{...}`), because a definition inside another macro's token tree
+/// carries no `MacroRules` node to query.
 fn skip_macro_rules_definition(
     tokens: &[ra_ap_syntax::SyntaxToken],
     index: usize,
@@ -1537,23 +1584,8 @@ fn skip_macro_rules_definition(
         return None;
     }
     let open = next_significant(tokens, name + 1)?;
-    if tokens[open].kind() != ra_ap_syntax::SyntaxKind::L_CURLY {
-        return None;
-    }
-    let mut depth: usize = 0;
-    for (offset, token) in tokens[open..].iter().enumerate() {
-        match token.kind() {
-            ra_ap_syntax::SyntaxKind::L_CURLY => depth += 1,
-            ra_ap_syntax::SyntaxKind::R_CURLY => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(open + offset + 1);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
+    let close = matching_group_close(tokens, open)?;
+    Some(close + 1)
 }
 
 /// Exact simple string-literal text of one token. Escaped spellings,
