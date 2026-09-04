@@ -87,20 +87,26 @@ metadata of the owning package (#3608): the target must match a
 declared `[[test]]` target — explicit `path = ...` or a name-only
 entry resolved to its autodiscovery shape — whose effective
 `harness` flag is `false`. Explicit-target ownership is
-declaration-driven across the whole workspace: every package
-manifest's `[[test]] path = ...` entries are resolved lexically
-against their own manifest directory (ParentDir and CurDir segments
-collapse without touching the filesystem; a leading escape chain stays
-as spelled), and any manifest declaring the exact resolved target path
-claims it — so sibling-package `../shared/x.rs` declarations, targets
-below nested manifest directories, and in-package `generated/../qa/...`
-spellings all resolve. Agreeing declarations are deterministic;
-conflicting `harness` flags on one path are ambiguous ownership and
-fail closed. Nearest-manifest resolution governs the autodiscovery
-premise alone. Each batch parses every manifest in the workspace at
-most once; any manifest that cannot be read or parsed leaves the
-declaration map incomplete and yields `manifest_unavailable`, never a
-target-typo verdict. Package autodiscovery is credited only for
+declaration-driven across the analyzed workspace's MEMBER manifests
+only: the analysis-root manifest defines the member set (its own
+package, declared `[workspace.members]` with `*`/`?`/`**` globs
+matched lexically minus `[workspace.exclude]`, and regular path
+dependencies of members; dev-, build-, and workspace-inherited
+dependencies do not create membership). Every member manifest's
+`[[test]] path = ...` entries are resolved lexically against their own
+manifest directory (ParentDir and CurDir segments collapse without
+touching the filesystem; a leading escape chain stays as spelled), and
+any member declaring the exact resolved target path claims it — so
+sibling-package `../shared/x.rs` declarations, targets below nested
+manifest directories, and in-package `generated/../qa/...` spellings
+all resolve. Agreeing declarations are deterministic; conflicting
+`harness` flags on one path are ambiguous ownership and fail closed.
+Nearest-manifest resolution governs the autodiscovery premise alone.
+Each batch parses every member manifest at most once; a member
+manifest that cannot be read or parsed leaves the declaration map
+incomplete and yields `manifest_unavailable`, never a target-typo
+verdict; nonmember manifests are skipped entirely (their declarations
+never validate a target and their conflicts never block one). Package autodiscovery is credited only for
 package-root `tests/**` shapes (never `src/tests/**`) under Cargo's
 effective default — including the edition-2015
 backward-compatibility rule where a manual `[[test]]` target with
@@ -108,7 +114,10 @@ edition 2015 (explicit, omitted, or inherited via
 `edition.workspace = true` from the analysis root's
 `[workspace.package]`) disables autodiscovery. A manifest without a
 `[package]` table declares nothing: Cargo rejects target tables in
-virtual manifests. A target missing from Cargo metadata, a
+virtual manifests. A name-only `[[test]]` entry defaults to exactly
+`tests/<name>.rs`; the `tests/<name>/main.rs` directory layout is a
+separate autodiscovered target that does not inherit the entry's
+`harness` flag. A target missing from Cargo metadata, a
 target whose Cargo entry still has `harness = true` (explicit or
 autodiscovered default), or an unresolvable owning manifest each
 record a typed limitation (`target_not_declared`,

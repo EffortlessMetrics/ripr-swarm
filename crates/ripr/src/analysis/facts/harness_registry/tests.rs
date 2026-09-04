@@ -1456,13 +1456,18 @@ fn trials() -> Vec<Trial> {
 "#,
         )],
     )?;
-    // The declaring package sits beside shared/; its target path escapes
-    // its own directory.
+    // The declaring package sits beside shared/ as a declared workspace
+    // member; its target path escapes its own directory.
     fs::create_dir_all(root.0.join("crates/a"))?;
     fs::write(
         root.0.join("crates/a/Cargo.toml"),
         "[package]\nname = 'a'\nversion = '0.1.0'\nedition = '2024'\n\n\
          [[test]]\nname = 'mimic'\npath = '../../shared/mimic.rs'\nharness = false\n",
+    )?;
+    fs::write(
+        root.0.join("Cargo.toml"),
+        "[package]\nname = 'harness-fixture'\nversion = '0.1.0'\nedition = '2024'\n\n\
+         [workspace]\nmembers = ['crates/a']\n",
     )?;
     let files = [PathBuf::from("shared/mimic.rs")];
     let registrations = [custom_target_registration("shared/mimic.rs")];

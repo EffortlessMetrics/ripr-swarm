@@ -88,10 +88,11 @@ pub(crate) struct DeclaredCargoTestTarget {
 /// `harness` flag (#3608). Two entry shapes contribute:
 ///
 /// - an explicit `path = ...` entry contributes exactly its resolved path;
-/// - a name-only entry (no `path`) contributes the two autodiscovery
-///   shapes Cargo resolves the name to (`tests/<name>.rs` and
-///   `tests/<name>/main.rs`), so a registration on the conventional
-///   layout still matches the declaration that governs it.
+/// - a name-only entry (no `path`) contributes its default path
+///   `tests/<name>.rs` (review HAla: only the file layout; the directory
+///   layout `tests/<name>/main.rs` is a separate autodiscovered target
+///   governed by the autodiscovery rules), so a registration on the
+///   conventional layout still matches the declaration that governs it.
 ///
 /// The flag is the entry's `harness` key when present, Cargo's `true`
 /// default otherwise. Entries with neither a name nor a path contribute
@@ -152,12 +153,15 @@ fn declared_test_targets_with_harness_from_value(
         if name.is_empty() {
             continue;
         }
-        for candidate in [format!("tests/{name}.rs"), format!("tests/{name}/main.rs")] {
-            targets.push(DeclaredCargoTestTarget {
-                path: lexical(&normalize(&manifest_dir.join(candidate))),
-                harness,
-            });
-        }
+        // A name-only entry defaults to exactly `tests/<name>.rs` (review
+        // HAla): the directory shape `tests/<name>/main.rs` is a separate
+        // autodiscovered target whose premise comes from the autodiscovery
+        // rules (package presence, edition, `autotests`), not from this
+        // entry's `harness` flag.
+        targets.push(DeclaredCargoTestTarget {
+            path: lexical(&normalize(&manifest_dir.join(format!("tests/{name}.rs")))),
+            harness,
+        });
     }
     targets
 }
@@ -354,12 +358,55 @@ impl ManifestInventory {
             return;
         }
         let mut scan = WorkspaceScan::default();
-        for prefix in crate::analysis::seam_cache::workspace_manifest_dir_prefixes(workspace_root) {
-            let dir = if prefix.is_empty() {
-                workspace_root.to_path_buf()
-            } else {
-                workspace_root.join(&prefix)
-            };
+        let normalized_root = normalize(workspace_root);
+        // Membership (review HAkg): the analysis-root manifest defines the
+        // workspace — its own package when it has `[package]`, plus the
+        // declared `[workspace.members]` (globs matched lexically) minus
+        // `[workspace.exclude]`, plus package manifests reached through
+        // members' regular path dependencies. Manifests outside this
+        // member set are not part of the analyzed workspace: their
+        // declarations never enter the map and their malformed state is
+        // not this workspace's premise. An absent root manifest defines
+        // no members at all.
+        let mut queue: Vec<PathBuf> = Vec::new();
+        let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+        let enqueue = |dir: PathBuf, queue: &mut Vec<PathBuf>, seen: &mut BTreeSet<PathBuf>| {
+            if !dir.starts_with(&normalized_root) {
+                return;
+            }
+            if seen.insert(dir.clone()) {
+                queue.push(dir);
+            }
+        };
+        match self.manifest_at(workspace_root) {
+            OwnedManifest::Parsed { value, .. } => {
+                if value.get("package").is_some() {
+                    enqueue(normalize(workspace_root), &mut queue, &mut seen);
+                }
+                if let Some(workspace) = value.get("workspace") {
+                    let excluded = collect_string_array(workspace.get("exclude"));
+                    let mut candidates: Vec<String> = Vec::new();
+                    for pattern in collect_string_array(workspace.get("members")) {
+                        candidates.extend(expand_member_pattern(workspace_root, &pattern));
+                    }
+                    candidates.retain(|candidate| {
+                        !excluded.iter().any(|excluded_pattern| {
+                            workspace_member_glob_matches(excluded_pattern, candidate)
+                        })
+                    });
+                    for candidate in candidates {
+                        let dir = normalize(&workspace_root.join(&candidate));
+                        enqueue(dir, &mut queue, &mut seen);
+                    }
+                }
+            }
+            OwnedManifest::Unresolvable => scan.any_unresolvable = true,
+            OwnedManifest::Absent => {}
+        }
+        let mut index = 0usize;
+        while index < queue.len() {
+            let dir = queue[index].clone();
+            index += 1;
             match self.manifest_at(&dir) {
                 OwnedManifest::Absent => {}
                 OwnedManifest::Unresolvable => scan.any_unresolvable = true,
@@ -373,6 +420,9 @@ impl ManifestInventory {
                                 .or_default()
                                 .push(target.harness);
                         }
+                    }
+                    for dependency_dir in member_path_dependency_dirs(&value, &root) {
+                        enqueue(dependency_dir, &mut queue, &mut seen);
                     }
                 }
             }
@@ -614,6 +664,141 @@ fn normalize(path: &Path) -> PathBuf {
     PathBuf::from(path.to_string_lossy().replace('\\', "/"))
 }
 
+/// Collect the string entries of one optional TOML array value (the
+/// `[workspace.members]` / `[workspace.exclude]` shape).
+fn collect_string_array(value: Option<&toml::Value>) -> Vec<String> {
+    value
+        .and_then(|value| value.as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Expand one `[workspace.members]` glob pattern into the
+/// workspace-relative directories it matches (review HAkg). Lexical
+/// approximation documented in place of full Cargo glob semantics:
+/// `**` matches any number of path components, `*` matches any characters
+/// within one component, `?` matches one character; no symlink,
+/// canonicalization, or case-folding behavior. Only directories that
+/// exist on disk are returned; whether a match actually carries a
+/// manifest is decided by the caller.
+fn expand_member_pattern(workspace_root: &Path, pattern: &str) -> Vec<String> {
+    let normalized = pattern.trim().replace('\\', "/");
+    let trimmed = normalized.trim_end_matches('/');
+    let components: Vec<&str> = match trimmed {
+        "" | "." => Vec::new(),
+        _ => trimmed.split('/').collect(),
+    };
+    let mut matched = Vec::new();
+    expand_member_pattern_walk(workspace_root, &components, &mut matched);
+    let normalized_root = normalize(workspace_root);
+    matched
+        .into_iter()
+        .filter_map(|dir| {
+            normalize(&dir)
+                .strip_prefix(&normalized_root)
+                .ok()
+                .map(|relative| relative.to_string_lossy().to_string())
+        })
+        .collect()
+}
+
+fn expand_member_pattern_walk(base: &Path, components: &[&str], matched: &mut Vec<PathBuf>) {
+    match components.split_first() {
+        None => matched.push(base.to_path_buf()),
+        Some((&"**", rest)) => {
+            expand_member_pattern_walk(base, rest, matched);
+            let Ok(entries) = std::fs::read_dir(base) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+                    expand_member_pattern_walk(&entry.path(), rest, matched);
+                }
+            }
+        }
+        Some((component, rest)) => {
+            let Ok(entries) = std::fs::read_dir(base) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                if workspace_member_glob_matches(component, &name) {
+                    expand_member_pattern_walk(&entry.path(), rest, matched);
+                }
+            }
+        }
+    }
+}
+
+/// Whether one path component matches one glob component: `*` matches any
+/// characters, `?` exactly one character, everything else is literal.
+fn workspace_member_glob_matches(pattern: &str, name: &str) -> bool {
+    match pattern.chars().next() {
+        None => name.is_empty(),
+        Some('*') => {
+            let rest = &pattern[1..];
+            (0..=name.chars().count()).any(|skip| {
+                let tail: String = name.chars().skip(skip).collect();
+                workspace_member_glob_matches(rest, &tail)
+            })
+        }
+        Some('?') => {
+            let mut name_chars = name.chars();
+            match name_chars.next() {
+                None => false,
+                Some(_) => workspace_member_glob_matches(&pattern[1..], name_chars.as_str()),
+            }
+        }
+        Some(first) => {
+            let mut name_chars = name.chars();
+            match name_chars.next() {
+                Some(candidate) if candidate == first => {
+                    workspace_member_glob_matches(&pattern[first.len_utf8()..], name_chars.as_str())
+                }
+                _ => false,
+            }
+        }
+    }
+}
+
+/// The lexically resolved directories of the parsed manifest's regular
+/// path dependencies (`[dependencies]` and `[target.*.dependencies]`
+/// entries carrying a `path` key): Cargo folds those into the workspace
+/// as members, so they are member candidates for the declaration map
+/// (review HAkg). Dev-, build-, and workspace-inherited
+/// (`{ workspace = true }`) dependencies do not create membership in
+/// this bounded model.
+fn member_path_dependency_dirs(value: &toml::Value, manifest_dir: &Path) -> Vec<PathBuf> {
+    let mut dependency_tables = Vec::new();
+    if let Some(dependencies) = value.get("dependencies").and_then(|value| value.as_table()) {
+        dependency_tables.push(dependencies);
+    }
+    if let Some(targets) = value.get("target").and_then(|value| value.as_table()) {
+        for (_, target_table) in targets {
+            if let Some(dependencies) = target_table.get("dependencies").and_then(|v| v.as_table())
+            {
+                dependency_tables.push(dependencies);
+            }
+        }
+    }
+    dependency_tables
+        .iter()
+        .flat_map(|dependencies| dependencies.iter())
+        .filter_map(|(_, entry)| entry.get("path").and_then(|path| path.as_str()))
+        .filter(|path| !path.trim().is_empty())
+        .map(|path| lexical(&normalize(&manifest_dir.join(path.trim()))))
+        .collect()
+}
+
 /// Lexically resolve one normalized path (#3608 review): collapse CurDir
 /// components and ParentDir/preceding-segment pairs without touching the
 /// filesystem, so a declared path like `generated/../qa/mimic.rs` (or a
@@ -729,13 +914,11 @@ mod tests {
             vec![
                 ("/ws/pkg/src/contract_test.rs".to_string(), false),
                 ("/ws/pkg/tests/plain.rs".to_string(), false),
-                ("/ws/pkg/tests/plain/main.rs".to_string(), false),
                 ("/ws/pkg/tests/flagged.rs".to_string(), true),
-                ("/ws/pkg/tests/flagged/main.rs".to_string(), true),
                 ("/ws/pkg/tests/defaults_on.rs".to_string(), true),
-                ("/ws/pkg/tests/defaults_on/main.rs".to_string(), true),
                 ("/ws/pkg/tests/explicit_only.rs".to_string(), true),
-            ]
+            ],
+            "name-only entries default to exactly tests/<name>.rs (review HAla)"
         );
         assert!(
             declared_test_targets_with_harness_from_manifest("not [ valid toml", Path::new("/ws"))
@@ -758,14 +941,20 @@ mod tests {
         let write_manifest = |text: &str| -> Result<(), String> {
             std::fs::write(dir.join("pkg/Cargo.toml"), text).map_err(|error| error.to_string())
         };
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        // The analyzed root declares a real workspace whose member is pkg;
+        // only member manifests feed the declaration map (review HAkg).
+        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = ['pkg']\n")
+            .map_err(|error| error.to_string())?;
         std::fs::create_dir_all(dir.join("pkg/src")).map_err(|error| error.to_string())?;
         std::fs::create_dir_all(dir.join("orphan/src")).map_err(|error| error.to_string())?;
         let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
 
-        // No manifest at the package root: the premise cannot be established.
+        // orphan is not a member and declares nothing: the nearest
+        // manifest (the virtual root) declares no target for the path.
         assert_eq!(
             verdict("orphan/src/mimic.rs"),
-            CargoHarnessVerdict::ManifestUnavailable
+            CargoHarnessVerdict::NotDeclared
         );
 
         // Manifest A: autotests disabled, one explicit harness = false target
@@ -798,12 +987,9 @@ mod tests {
             verdict("pkg/src/contract_tset.rs"),
             CargoHarnessVerdict::NotDeclared
         );
-        // No manifest exists anywhere on the ownership walk (the temp root
-        // itself has no Cargo.toml): the premise cannot be established.
-        assert_eq!(
-            verdict("loose.rs"),
-            CargoHarnessVerdict::ManifestUnavailable
-        );
+        // loose.rs matches no declaration and no autodiscovery shape at
+        // its nearest manifest (the virtual workspace root).
+        assert_eq!(verdict("loose.rs"), CargoHarnessVerdict::NotDeclared);
 
         // Manifest B: plain package, no [[test]] entries — autodiscovery on.
         write_manifest("[package]\nname='p'\nversion='0.1.0'\n")?;
@@ -900,7 +1086,7 @@ mod tests {
             .map_err(|error| error.to_string())?;
         std::fs::write(
             dir.join("Cargo.toml"),
-            "[package]\nname='ws'\nedition='2024'\n\n\
+            "[package]\nname='ws'\nedition='2024'\n\n[workspace]\nmembers = ['below/nested/manifest']\n\n\
              [[test]]\nname='mimic'\npath='below/nested/manifest/dir/mimic.rs'\nharness=false\n",
         )
         .map_err(|error| error.to_string())?;
@@ -979,6 +1165,9 @@ mod tests {
             "[package]
 name='ws'
 edition='2024'
+
+[workspace]
+members = ['crates/a', 'crates/b']
 ",
         )
         .map_err(|error| error.to_string())?;
@@ -1050,6 +1239,9 @@ harness=true
             "[package]
 name='ws'
 edition='2024'
+
+[workspace]
+members = ['pkg']
 ",
         )
         .map_err(|error| error.to_string())?;
@@ -1392,7 +1584,7 @@ harness=false
         // manifest when no deeper manifest exists.
         std::fs::write(
             dir.join("Cargo.toml"),
-            "[package]\nname='ws'\nedition='2024'\n\n\
+            "[package]\nname='ws'\nedition='2024'\n\n[workspace]\nmembers = ['crates/a']\n\n\
              [[test]]\nname='mimic'\npath='qa_root/mimic.rs'\nharness=false\n",
         )
         .map_err(|error| error.to_string())?;
@@ -1518,6 +1710,189 @@ mod context_tests {
                 .contains(&PathBuf::from("pkg-a/src/perf.rs"))
         );
         assert!(context.production_like_targets.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round five (HAla): a name-only `[[test]]` entry
+    /// defaults to exactly `tests/<name>.rs`; the directory layout
+    /// `tests/<name>/main.rs` stays governed by the autodiscovery rules
+    /// and does not inherit the entry's `harness` flag.
+    #[test]
+    fn name_only_entry_credits_only_the_file_layout() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-name-only-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("pkg/tests/suite")).map_err(|error| error.to_string())?;
+        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = ['pkg']\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("pkg/Cargo.toml"),
+            "[package]\nname='p'\nedition='2024'\n\n[[test]]\nname='suite'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("pkg/tests/suite.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the name-only entry defaults to the file layout"
+        );
+        assert_eq!(
+            verdict("pkg/tests/suite/main.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "the directory layout is a separate autodiscovered target: it does not inherit the flag"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round five (HAkg): membership gating. A malformed
+    /// manifest that is NOT a workspace member is skipped — it neither
+    /// rejects a valid member registration nor conflicts with it — while
+    /// a malformed MEMBER manifest leaves the declaration map incomplete
+    /// and fails closed.
+    #[test]
+    fn membership_gates_the_declaration_map() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-membership-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("member")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("stray")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = ['member']\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("member/Cargo.toml"),
+            "[package]\nname='m'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='target.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        // A standalone nested manifest outside the member set is
+        // malformed: it is not a member, so it is ignored entirely.
+        std::fs::write(dir.join("stray/Cargo.toml"), "not [ valid toml")
+            .map_err(|error| error.to_string())?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("member/target.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "a malformed nonmember manifest neither rejects nor conflicts"
+        );
+
+        // Even a nonmember declaring the same path with a conflicting
+        // flag cannot create ambiguity: it is not part of the workspace.
+        std::fs::write(
+            dir.join("stray/Cargo.toml"),
+            "[package]\nname='s'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../member/target.rs'\nharness=true\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("member/target.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "nonmember declarations cannot conflict with member targets"
+        );
+
+        // A malformed MEMBER manifest leaves the premise unprovable.
+        std::fs::write(dir.join("member/Cargo.toml"), "not [ valid toml")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("member/target.rs"),
+            CargoHarnessVerdict::ManifestUnavailable,
+            "a malformed member manifest fails closed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round five (HAkg): regular path dependencies of
+    /// members join the member set, so a dependency package's shared
+    /// harness declaration is honored.
+    #[test]
+    fn path_dependency_members_join_the_declaration_map() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-pathdep-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("crates/a")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("crates/b")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = ['crates/a']\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("crates/a/Cargo.toml"),
+            "[package]\nname='a'\nedition='2024'\n\n[dependencies]\nb = { path = '../b' }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("crates/b/Cargo.toml"),
+            "[package]\nname='b'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the path-dependency member's declaration is honored"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round five (HAkg): `[workspace.exclude]` removes glob
+    /// matches from the member set, and glob expansion (`crates/*`)
+    /// honors declared members.
+    #[test]
+    fn glob_members_honor_excludes() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-glob-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("crates/kept")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("crates/dropped")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = ['crates/*']\nexclude = ['crates/dropped']\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("crates/kept/Cargo.toml"),
+            "[package]\nname='kept'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the glob-kept member's declaration is honored"
+        );
+        // The excluded package declares the same path with a conflicting
+        // flag: excluded from the member set, it cannot create ambiguity.
+        std::fs::write(
+            dir.join("crates/dropped/Cargo.toml"),
+            "[package]\nname='dropped'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../shared/mimic.rs'\nharness=true\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the excluded member's conflicting declaration is ignored"
+        );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
