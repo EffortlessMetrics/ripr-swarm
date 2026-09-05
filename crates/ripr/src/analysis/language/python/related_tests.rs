@@ -157,10 +157,7 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
             Some(format!("pytest {path}::{node}"))
         }
         "unittest" => {
-            let module = path
-                .strip_suffix(".py")
-                .unwrap_or(path.as_str())
-                .replace('/', ".");
+            let module = unittest_module_for_path(&path);
             Some(format!(
                 "python -m unittest {module}.{}",
                 test.qualified_name
@@ -307,7 +304,7 @@ fn construct_call_invokes_owner(test: &PythonTest, owner: &PythonOwner) -> bool 
     }
     let needle = format!("{class_name}(");
     test.body_text.match_indices(&needle).any(|(idx, _)| {
-        has_call_boundary(&test.body_text, idx)
+        python_callee_start_has_boundary(&test.body_text, idx)
             && !line_prefix_looks_like_comment_or_string(&test.body_text, idx)
             && construct_result_is_called(&test.body_text, idx + needle.len() - 1)
     })
@@ -391,7 +388,8 @@ pub(super) fn local_binding_calls_owner(test: &PythonTest, owner: &PythonOwner) 
     let needle = format!("{class_name}(");
     // Guard C: exactly one real, non-inline `Class(` construction.
     let mut constructions = body.match_indices(&needle).filter(|(idx, _)| {
-        has_call_boundary(body, *idx) && !line_prefix_looks_like_comment_or_string(body, *idx)
+        python_callee_start_has_boundary(body, *idx)
+            && !line_prefix_looks_like_comment_or_string(body, *idx)
     });
     let Some((idx, _)) = constructions.next() else {
         return false;
@@ -491,12 +489,6 @@ pub(super) fn imported_module_matches_owner(import: &PythonImport, owner: &Pytho
         .is_some_and(|stem| import.imported.rsplit('.').next() == Some(stem))
 }
 
-/// Whether a `from M import Y` statement's source module `M` points at the owner's
-/// module. Compares the import's `source_module` last segment against the owner
-/// file stem (`from src.handler import validate`, `from handler import validate`,
-/// and a resolved `from .handler import validate` all match an owner in
-/// `src/handler.py`). A plain `import X` has an empty `source_module` and so
-/// never matches — fail closed.
 /// The dotted module path of the owner file itself: `src/handler.py` →
 /// `src.handler`, `src/pkg/__init__.py` → `src.pkg`. Identity comparisons must
 /// use this full path — a bare file stem is the token-coincidence family
@@ -519,6 +511,12 @@ fn owner_module_path(file: &Path) -> String {
     parts.join(".")
 }
 
+/// Whether a `from M import Y` statement's source module `M` points at the owner's
+/// module. Compares the import's `source_module` last segment against the owner
+/// file stem (`from src.handler import validate`, `from handler import validate`,
+/// and a resolved `from .handler import validate` all match an owner in
+/// `src/handler.py`). A plain `import X` has an empty `source_module` and so
+/// never matches — fail closed.
 pub(super) fn import_source_module_matches_owner(
     import: &PythonImport,
     owner: &PythonOwner,
@@ -605,7 +603,7 @@ pub(super) fn first_parenthesized_string_argument(text: &str) -> Option<String> 
 fn contains_call_name(body_text: &str, call_name: &str) -> bool {
     let needle = format!("{call_name}(");
     body_text.match_indices(&needle).any(|(idx, _)| {
-        has_call_boundary(body_text, idx)
+        python_callee_start_has_boundary(body_text, idx)
             && !line_prefix_looks_like_comment_or_string(body_text, idx)
     })
 }
@@ -613,7 +611,7 @@ fn contains_call_name(body_text: &str, call_name: &str) -> bool {
 fn contains_attribute_call(body_text: &str, receiver: &str, attr: &str) -> bool {
     let needle = format!("{receiver}.{attr}(");
     body_text.match_indices(&needle).any(|(idx, _)| {
-        has_call_boundary(body_text, idx)
+        python_callee_start_has_boundary(body_text, idx)
             && !line_prefix_looks_like_comment_or_string(body_text, idx)
     })
 }
@@ -689,7 +687,8 @@ fn body_calls_method_on_owner_bound_receiver(body: &str, local: &str, method: &s
     let constructions: Vec<usize> = body
         .match_indices(&construct)
         .filter(|(idx, _)| {
-            has_call_boundary(body, *idx) && !line_prefix_looks_like_comment_or_string(body, *idx)
+            python_callee_start_has_boundary(body, *idx)
+                && !line_prefix_looks_like_comment_or_string(body, *idx)
         })
         .map(|(idx, _)| idx)
         .collect();
@@ -737,13 +736,6 @@ pub(super) fn strong_test_calls_owner_method_on_bound_receiver(
                 })
         })
     })
-}
-
-fn has_call_boundary(body_text: &str, idx: usize) -> bool {
-    body_text[..idx]
-        .chars()
-        .next_back()
-        .is_none_or(|ch| !is_python_identifier_char(ch) && ch != '.')
 }
 
 pub(super) fn line_prefix_looks_like_comment_or_string(body_text: &str, idx: usize) -> bool {
