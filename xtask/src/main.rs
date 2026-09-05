@@ -4522,11 +4522,15 @@ fn policy_report_body(
     }
 
     for disclosure in disclosures {
-        body.push_str(&format!("## {}\n\n", disclosure.heading));
+        body.push_str("## ");
+        body.push_str(&disclosure.heading);
+        body.push_str("\n\n");
         body.push_str(&disclosure.intro);
         body.push_str("\n\n");
         for item in &disclosure.items {
-            body.push_str(&format!("- {item}\n"));
+            body.push_str("- ");
+            body.push_str(item);
+            body.push('\n');
         }
         body.push('\n');
     }
