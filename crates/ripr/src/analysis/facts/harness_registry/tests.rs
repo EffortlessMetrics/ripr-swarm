@@ -3310,6 +3310,135 @@ fn main() {
     Ok(())
 }
 
+/// #3639 review (devin): a local closure named `run` shadows the
+/// imported harness entry — those calls cannot anchor, so the trials
+/// stay admitted under the unknown disclosure instead of resolving
+/// against the shadow.
+#[test]
+fn shadowed_run_closure_keeps_trials_with_unknown_disclosure()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("shadow-closure")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/shadow_closure.rs",
+            r#"
+use libtest_mimic::{run, Arguments, Trial};
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("shadowed_closure_trial", || Ok(()))]
+}
+
+fn main() {
+    let run = |arguments: &Arguments, all_trials: &[Trial]| {
+        let _ = (arguments, all_trials);
+    };
+    let arguments = Arguments::from_args();
+    run(&arguments, &trials());
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "shadow_closure", "tests/shadow_closure.rs")?;
+    let files = [PathBuf::from("tests/shadow_closure.rs")];
+    let registrations = [custom_target_registration("tests/shadow_closure.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    assert_eq!(
+        index
+            .tests
+            .iter()
+            .filter(|test| test.file.ends_with(Path::new("tests/shadow_closure.rs")))
+            .count(),
+        1,
+        "the shadowed call must not resolve the trial: {:?}",
+        index.harness_limitations
+    );
+    let unknown = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_reachability_unknown")
+        .ok_or_else(|| {
+            format!(
+                "missing unknown disclosure: {:?}",
+                index.harness_limitations
+            )
+        })?;
+    assert!(
+        unknown.detail.contains("shadowed_closure_trial"),
+        "{unknown:?}"
+    );
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .all(|limitation| limitation.code != "registration_unreachable"),
+        "{:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}
+
+/// #3639 review (devin): a function parameter named `run` shadows the
+/// import the same way — unknown disclosure, never an anchor.
+#[test]
+fn shadowed_run_parameter_keeps_trials_with_unknown_disclosure()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("shadow-param")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/shadow_param.rs",
+            r#"
+use libtest_mimic::{run, Arguments, Trial};
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("shadowed_param_trial", || Ok(()))]
+}
+
+fn main_with(run: fn(&Arguments, &[Trial])) {
+    let arguments = Arguments::from_args();
+    run(&arguments, &trials());
+}
+
+fn main() {
+    main_with(|_, _| {});
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "shadow_param", "tests/shadow_param.rs")?;
+    let files = [PathBuf::from("tests/shadow_param.rs")];
+    let registrations = [custom_target_registration("tests/shadow_param.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    assert_eq!(
+        index
+            .tests
+            .iter()
+            .filter(|test| test.file.ends_with(Path::new("tests/shadow_param.rs")))
+            .count(),
+        1,
+        "the shadowed parameter call must not resolve the trial: {:?}",
+        index.harness_limitations
+    );
+    let unknown = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "registration_reachability_unknown")
+        .ok_or_else(|| {
+            format!(
+                "missing unknown disclosure: {:?}",
+                index.harness_limitations
+            )
+        })?;
+    assert!(
+        unknown.detail.contains("shadowed_param_trial"),
+        "{unknown:?}"
+    );
+    Ok(())
+}
+
 /// #3639 review (devin): trivia between the final path segment and the
 /// call parenthesis does not hide the entry — both the bare and the
 /// qualified spellings anchor across whitespace and comments, so the

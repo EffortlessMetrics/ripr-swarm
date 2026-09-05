@@ -75,8 +75,9 @@
 //! is aggregate and typed.
 
 use super::{
-    at_path_start, inside_macro_rules, is_trivia, matching_group_close, matching_group_open,
-    next_significant, previous_significant, resolve_helper_function, top_level_use_bindings,
+    at_path_start, enclosing_body_binds_name, inside_macro_rules, is_trivia, matching_group_close,
+    matching_group_open, next_significant, previous_significant, resolve_helper_function,
+    top_level_use_bindings,
 };
 use crate::analysis::facts::model::RustIndex;
 use crate::analysis::syntax::ra::{LineIndex, slice_text};
@@ -158,7 +159,7 @@ pub(super) fn classify_trial_reachability(
 ) -> ReachabilityOutcome {
     let TargetScan {
         target: _,
-        source: _,
+        source,
         file_syntax,
         tokens,
         token_starts,
@@ -175,6 +176,7 @@ pub(super) fn classify_trial_reachability(
     let mut ambiguous_bare_run = false;
     let mut unbound_imported_run_call = false;
     let mut foreign_suffix_run_call = false;
+    let mut shadowed_bare_run = false;
     let run_bindings = top_level_use_bindings(file_syntax, "run");
     let aliased_run_locals = aliased_run_entry_locals(file_syntax);
     for position in 0..tokens.len() {
@@ -222,7 +224,29 @@ pub(super) fn classify_trial_reachability(
                     matched.open_paren_index,
                     close,
                 );
-                run_calls.push(call);
+                // A local binding, closure parameter, or function
+                // parameter named `run` shadows the import inside its
+                // scope: that call is not the registered entry point
+                // (#3639 review). The call becomes unsupported entry
+                // evidence instead of an anchor; a call inside a macro
+                // token tree carries no scope to check and equally
+                // cannot anchor.
+                let shadowed = match call.scope {
+                    Some(scope) => {
+                        let body_text = slice_text(
+                            source,
+                            TextSize::from(token_starts[scope.full.0]),
+                            tokens[scope.full.1].text_range().end(),
+                        );
+                        enclosing_body_binds_name(&body_text, "run")
+                    }
+                    None => true,
+                };
+                if shadowed {
+                    shadowed_bare_run = true;
+                } else {
+                    run_calls.push(call);
+                }
             }
             // A bare `run` the imports cannot tie to the marker may or may
             // not be the harness entry; absence of an anchored call must
@@ -272,6 +296,11 @@ pub(super) fn classify_trial_reachability(
             "a `run` path is imported under an alias and invoked, which the scanner cannot anchor to `{marker}::run`, so the run entry point is not anchored",
             marker = marker
         ))
+    } else if shadowed_bare_run {
+        Some(
+            "a bare `run` invocation is shadowed by a local binding in its enclosing scope, so the run entry point is not anchored"
+                .to_string(),
+        )
     } else if foreign_suffix_run_call {
         Some(format!(
             "a qualified call matches the `{marker}::run` suffix inside a longer foreign path, so the run entry point is not anchored",
