@@ -1048,7 +1048,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "external_state_read",
             "<out>/source-promotion-preflight.{json,md}",
             false,
-            false,
+            true,
             "Validates exact source/swarm parents, repository identity and reachability, deterministic ancestry counts/digests, and a disposable merge-tree conflict inventory; it never mutates either repository, constructs a join, changes versions, or publishes.",
         ),
         command_entry(
