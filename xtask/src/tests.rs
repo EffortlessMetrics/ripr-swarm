@@ -2873,7 +2873,7 @@ fn evidence_promotion_pinned_external_semantics_reject_false_clean_and_packet() 
 
     let report =
         super::evidence_promotion_external_semantic_violations(&case, &check_json).join("\n");
-    assert!(report.contains("expected static_limit_kind"), "{report}");
+    assert!(report.contains("expected limitation kind"), "{report}");
     assert!(report.contains("repair_packet_ready=true"), "{report}");
     assert!(report.contains("must_disclose_witness"), "{report}");
     assert!(report.contains("promoted to exposed"), "{report}");

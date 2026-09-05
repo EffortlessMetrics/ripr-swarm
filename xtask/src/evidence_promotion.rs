@@ -1318,11 +1318,22 @@ pub(crate) fn evidence_promotion_semantic_violations(
                     violations.push(format!(
                         "{case_label}: `must_emit_limitation` requires expected_limit_kind"
                     ));
-                } else if !evidence_promotion_emits_limitation_kind(check_json, expected_limit_kind)
-                {
-                    violations.push(format!(
-                        "{case_label}: expected limitation kind `{expected_limit_kind}` was not emitted in findings' static_limit_kind or test_harnesses limitations"
-                    ));
+                } else {
+                    // Findings come from the validated report slice (pure
+                    // and pinned-external cases pass different shapes);
+                    // the harness projection comes from the check output.
+                    let has_limit = findings.iter().any(|finding| {
+                        finding.get("static_limit_kind").and_then(Value::as_str)
+                            == Some(expected_limit_kind.as_str())
+                    }) || evidence_promotion_emits_any_harness_limitation_kind(
+                        check_json,
+                        expected_limit_kind,
+                    );
+                    if !has_limit {
+                        violations.push(format!(
+                            "{case_label}: expected limitation kind `{expected_limit_kind}` was not emitted in findings' static_limit_kind or test_harnesses limitations"
+                        ));
+                    }
                 }
             }
             EvidencePromotionSemanticAssertion::MustNotEmitLimitation => {
@@ -2920,24 +2931,6 @@ fn evidence_promotion_report_reads_clean(check_json: &Value, findings: &[Value])
     true
 }
 
-/// Whether the check output emits the limitation kind on any supported
-/// surface: findings' `static_limit_kind` or the harness projection's
-/// `test_harnesses[].limitations[].code` (#3636 corpus lane). The
-/// harness projection is where `registration_unreachable` and sibling
-/// harness-limitation kinds are recorded; findings carry only
-/// `static_limit_kind`.
-fn evidence_promotion_emits_limitation_kind(check_json: &Value, kind: &str) -> bool {
-    let findings_emit = check_json
-        .get("findings")
-        .and_then(Value::as_array)
-        .is_some_and(|findings| {
-            findings.iter().any(|finding| {
-                finding.get("static_limit_kind").and_then(Value::as_str) == Some(kind)
-            })
-        });
-    findings_emit || evidence_promotion_emits_any_harness_limitation_kind(check_json, kind)
-}
-
 /// Whether any harness projection in the check output emits a limitation
 /// with the given code.
 fn evidence_promotion_emits_any_harness_limitation_kind(check_json: &Value, kind: &str) -> bool {
@@ -4396,7 +4389,7 @@ mod harness_limitation_assertion_tests {
     #[test]
     fn must_emit_limitation_accepts_harness_projection_kind() {
         let check_json = check_with_harness_limitation("registration_unreachable");
-        assert!(evidence_promotion_emits_limitation_kind(
+        assert!(evidence_promotion_emits_any_harness_limitation_kind(
             &check_json,
             "registration_unreachable"
         ));
@@ -4405,24 +4398,20 @@ mod harness_limitation_assertion_tests {
     #[test]
     fn must_emit_limitation_rejects_absent_harness_kind() {
         let check_json = check_with_harness_limitation("registration_unreachable");
-        assert!(!evidence_promotion_emits_limitation_kind(
+        assert!(!evidence_promotion_emits_any_harness_limitation_kind(
             &check_json,
             "unanchored_trial_path"
         ));
     }
 
     #[test]
-    fn must_emit_limitation_still_accepts_static_limit_kind() {
-        let check_json = json!({
-            "findings": [
-                {"static_limit_kind": "static_unknown"}
-            ]
-        });
-        assert!(evidence_promotion_emits_limitation_kind(
+    fn harness_projection_kinds_are_kind_specific() {
+        let check_json = check_with_harness_limitation("static_unknown");
+        assert!(evidence_promotion_emits_any_harness_limitation_kind(
             &check_json,
             "static_unknown"
         ));
-        assert!(!evidence_promotion_emits_limitation_kind(
+        assert!(!evidence_promotion_emits_any_harness_limitation_kind(
             &check_json,
             "registration_unreachable"
         ));
@@ -4438,7 +4427,7 @@ mod harness_limitation_assertion_tests {
         assert!(!evidence_promotion_emits_any_harness_limitation(
             &check_json
         ));
-        assert!(!evidence_promotion_emits_limitation_kind(
+        assert!(!evidence_promotion_emits_any_harness_limitation_kind(
             &check_json,
             "registration_unreachable"
         ));
