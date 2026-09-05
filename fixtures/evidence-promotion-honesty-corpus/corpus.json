@@ -1184,6 +1184,20 @@
         { "type": "expected_class", "class": "no_static_path" },
         { "type": "maximum_class", "class": "no_static_path" }
       ]
+    },
+    {
+      "id": "rust_harness_dead_construction_no_exposed_credit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/harness_dead_construction_no_exposed_credit",
+      "vector": "harness_dead_construction_oracles_do_not_credit_exposure",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "expected_finding_count", "count": 3 },
+        { "type": "maximum_class", "class": "no_static_path" },
+        { "type": "must_not_promote" }
+      ]
     }
   ]
 }

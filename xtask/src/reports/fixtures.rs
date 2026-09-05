@@ -167,6 +167,19 @@ pub(crate) fn goldens_check_failure_message(
             golden_drift_type(&entry.semantics),
             blessing,
         ));
+        // The console should carry the first differing line: the
+        // report file is runner-local, so a CI log is often the only
+        // place the hint is visible (#3636 corpus lane).
+        let expected_text = read_text_lossy(Path::new(&entry.expected));
+        let actual_text = read_text_lossy(Path::new(&entry.actual));
+        if let (Ok(expected_text), Ok(actual_text)) = (expected_text, actual_text)
+            && let Some(hint) = first_line_difference(
+                &normalize_golden_text(&expected_text),
+                &normalize_golden_text(&actual_text),
+            )
+        {
+            message.push_str(&format!("  first difference: {hint}\n"));
+        }
     }
     // Violations that are not per-fixture output drift (contract or run errors)
     // are not represented in `entries`; surface them verbatim so nothing is lost.
@@ -895,12 +908,28 @@ pub(crate) fn first_line_difference(expected: &str, actual: &str) -> Option<Stri
         let expected_line = expected_lines.get(index).copied().unwrap_or("<missing>");
         let actual_line = actual_lines.get(index).copied().unwrap_or("<missing>");
         if expected_line != actual_line {
-            return Some(format!(
+            let mut detail = format!(
                 "line {} expected `{}` vs actual `{}`",
                 index + 1,
                 snapshot_line_preview(expected_line),
                 snapshot_line_preview(actual_line)
-            ));
+            );
+            // Long lines whose previews are identical need a divergence
+            // pointer, or the hint names no actionable difference.
+            if snapshot_line_preview(expected_line) == snapshot_line_preview(actual_line) {
+                let common = expected_line
+                    .chars()
+                    .zip(actual_line.chars())
+                    .take_while(|(expected, actual)| expected == actual)
+                    .count();
+                let start = common.saturating_sub(40);
+                let expected_excerpt: String = expected_line.chars().skip(start).take(80).collect();
+                let actual_excerpt: String = actual_line.chars().skip(start).take(80).collect();
+                detail.push_str(&format!(
+                    "; divergence at char {common}: expected `...{expected_excerpt}...` vs actual `...{actual_excerpt}...`"
+                ));
+            }
+            return Some(detail);
         }
     }
 
