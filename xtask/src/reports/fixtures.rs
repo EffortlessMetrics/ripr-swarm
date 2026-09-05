@@ -908,12 +908,28 @@ pub(crate) fn first_line_difference(expected: &str, actual: &str) -> Option<Stri
         let expected_line = expected_lines.get(index).copied().unwrap_or("<missing>");
         let actual_line = actual_lines.get(index).copied().unwrap_or("<missing>");
         if expected_line != actual_line {
-            return Some(format!(
+            let mut detail = format!(
                 "line {} expected `{}` vs actual `{}`",
                 index + 1,
                 snapshot_line_preview(expected_line),
                 snapshot_line_preview(actual_line)
-            ));
+            );
+            // Long lines whose previews are identical need a divergence
+            // pointer, or the hint names no actionable difference.
+            if snapshot_line_preview(expected_line) == snapshot_line_preview(actual_line) {
+                let common = expected_line
+                    .chars()
+                    .zip(actual_line.chars())
+                    .take_while(|(expected, actual)| expected == actual)
+                    .count();
+                let start = common.saturating_sub(40);
+                let expected_excerpt: String = expected_line.chars().skip(start).take(80).collect();
+                let actual_excerpt: String = actual_line.chars().skip(start).take(80).collect();
+                detail.push_str(&format!(
+                    "; divergence at char {common}: expected `...{expected_excerpt}...` vs actual `...{actual_excerpt}...`"
+                ));
+            }
+            return Some(detail);
         }
     }
 
