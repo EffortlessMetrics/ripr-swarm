@@ -152,8 +152,14 @@ says it was re-blessed to."
    `limitations[]`, or a named `static_limit_kind`. This guards against a
    re-bless that makes a known unresolved edge or incomplete scope disappear
    into a clean-looking empty result.
-4c. `must_emit_limitation` cases (additive, RIPR-SPEC-0114/0115): asserts at
-   least one finding carries `static_limit_kind == expected_limit_kind`. This is
+4c. `must_emit_limitation` cases (additive, RIPR-SPEC-0114/0115; surfaces
+   extended by #3636): asserts the expected limitation kind was emitted on a
+   supported surface — at least one finding carries
+   `static_limit_kind == expected_limit_kind`, or the check output's
+   `test_harnesses[].limitations[].code` emits it (harness-limitation kinds
+   such as `registration_unreachable` live only in the harness projection).
+   `must_not_emit_limitation` symmetrically forbids non-empty harness
+   projections. This is
    an independent assertion (a case may combine it with `must_remain_non_promoted`)
    and guards against a re-bless that silently drops a named limitation back to a
    bare class — e.g. dropping `rust_transitive_reach_unresolved` so a transitive

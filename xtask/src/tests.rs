@@ -2850,6 +2850,91 @@ fn evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape()
     );
 }
 
+fn harness_limitation_case(
+    assertions: Vec<super::EvidencePromotionSemanticAssertion>,
+) -> super::EvidencePromotionExternalCase {
+    super::EvidencePromotionExternalCase {
+        id: "rust_harness_dead_construction_no_exposed_credit".to_string(),
+        language: "rust".to_string(),
+        external_repo: String::new(),
+        external_commit: String::new(),
+        external_patch: PathBuf::new(),
+        external_command: String::new(),
+        runtime_budget_seconds: 0,
+        artifact_budget_bytes: 0,
+        assertions,
+    }
+}
+
+fn harness_check_json(limitation_code: Option<&str>) -> serde_json::Value {
+    let limitations = limitation_code
+        .map(|code| serde_json::json!([{"code": code, "file": "tests/mimic.rs", "line": 5}]))
+        .unwrap_or_else(|| serde_json::json!([]));
+    serde_json::json!({
+        "findings": [],
+        "test_harnesses": [
+            {"registration_id": "mimic-suite", "limitations": limitations}
+        ]
+    })
+}
+
+/// Dispatch-level coverage for the harness-projection surface (#3636):
+/// `must_emit_limitation` must accept the kind from
+/// `test_harnesses[].limitations[].code` through the same semantic
+/// dispatch the corpus gate uses, not only through the helper predicate.
+#[test]
+fn evidence_promotion_semantics_accept_harness_limitation_kind() {
+    let case = harness_limitation_case(vec![
+        super::EvidencePromotionSemanticAssertion::MustNotReportClean,
+        super::EvidencePromotionSemanticAssertion::MustEmitLimitation {
+            expected_limit_kind: "registration_unreachable".to_string(),
+        },
+    ]);
+    let violations = super::evidence_promotion_external_semantic_violations(
+        &case,
+        &harness_check_json(Some("registration_unreachable")),
+    );
+    assert!(
+        violations.is_empty(),
+        "expected the harness projection kind to satisfy must_emit_limitation, got {violations:?}"
+    );
+}
+
+#[test]
+fn evidence_promotion_semantics_reject_missing_harness_limitation_kind() {
+    let case = harness_limitation_case(vec![
+        super::EvidencePromotionSemanticAssertion::MustNotReportClean,
+        super::EvidencePromotionSemanticAssertion::MustEmitLimitation {
+            expected_limit_kind: "registration_unreachable".to_string(),
+        },
+    ]);
+    let violations =
+        super::evidence_promotion_external_semantic_violations(&case, &harness_check_json(None));
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("expected limitation kind")),
+        "expected the stripped limitations to fail must_emit_limitation, got {violations:?}"
+    );
+}
+
+#[test]
+fn evidence_promotion_must_not_emit_limitation_forbids_harness_projection() {
+    let case = harness_limitation_case(vec![
+        super::EvidencePromotionSemanticAssertion::MustNotEmitLimitation,
+    ]);
+    let violations = super::evidence_promotion_external_semantic_violations(
+        &case,
+        &harness_check_json(Some("registration_unreachable")),
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("test_harnesses limitations")),
+        "expected the harness projection to fail must_not_emit_limitation, got {violations:?}"
+    );
+}
+
 #[test]
 fn evidence_promotion_pinned_external_semantics_reject_false_clean_and_packet() {
     let case = semver_external_case_for_test();
@@ -2873,7 +2958,7 @@ fn evidence_promotion_pinned_external_semantics_reject_false_clean_and_packet() 
 
     let report =
         super::evidence_promotion_external_semantic_violations(&case, &check_json).join("\n");
-    assert!(report.contains("expected static_limit_kind"), "{report}");
+    assert!(report.contains("expected limitation kind"), "{report}");
     assert!(report.contains("repair_packet_ready=true"), "{report}");
     assert!(report.contains("must_disclose_witness"), "{report}");
     assert!(report.contains("promoted to exposed"), "{report}");
