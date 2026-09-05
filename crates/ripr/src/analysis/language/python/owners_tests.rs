@@ -3,10 +3,10 @@ use super::source_facts::extract_source_facts;
 use super::source_utils::{
     line_for_range_end, line_for_range_start, normalized_path, text_for_range,
 };
+use super::static_limits::{collect_static_cli_receiver_names, is_static_route_decorator};
 use super::{
-    PythonImport, PythonOwner, PythonTest, collect_assertions_from_statements,
-    collect_static_cli_receiver_names, expr_full_name, first_parenthesized_string_argument,
-    is_static_route_decorator,
+    PythonImport, PythonOwner, PythonTest, collect_assertions_from_statements, expr_full_name,
+    first_parenthesized_string_argument,
 };
 use crate::domain::OwnerKind;
 use rustpython_parser::{
