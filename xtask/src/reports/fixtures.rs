@@ -170,10 +170,14 @@ pub(crate) fn goldens_check_failure_message(
         // The console should carry the first differing line: the
         // report file is runner-local, so a CI log is often the only
         // place the hint is visible (#3636 corpus lane).
-        if let Some(hint) = first_line_difference(
-            &normalize_golden_text(&entry.expected),
-            &normalize_golden_text(&entry.actual),
-        ) {
+        let expected_text = read_text_lossy(Path::new(&entry.expected));
+        let actual_text = read_text_lossy(Path::new(&entry.actual));
+        if let (Ok(expected_text), Ok(actual_text)) = (expected_text, actual_text)
+            && let Some(hint) = first_line_difference(
+                &normalize_golden_text(&expected_text),
+                &normalize_golden_text(&actual_text),
+            )
+        {
             message.push_str(&format!("  first difference: {hint}\n"));
         }
     }
