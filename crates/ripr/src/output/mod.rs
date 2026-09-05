@@ -53,6 +53,7 @@ pub(crate) mod review_comments;
 pub(crate) mod review_comments_receipt;
 pub(crate) mod ripr_zero_status;
 pub(crate) mod sarif;
+pub(crate) mod schemas;
 pub mod start_here_state;
 pub(crate) mod suppression_health;
 pub(crate) mod suppressions;
@@ -64,6 +65,10 @@ pub(crate) mod typescript_packet_projection;
 pub(crate) mod typescript_preview_card;
 pub(crate) mod value_path;
 pub(crate) mod waiver_aging;
+
+// Keep the compatibility catalog in ordinary library compilation rather than
+// making it a test-only inventory.
+const _: usize = schemas::AGENT_ARTIFACT_SCHEMAS.len();
 
 #[cfg(test)]
 pub(crate) mod test_support {
