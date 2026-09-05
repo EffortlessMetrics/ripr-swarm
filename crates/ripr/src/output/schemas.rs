@@ -12,6 +12,11 @@
 /// compatibility surface.
 pub(crate) type AgentArtifactSchema = (&'static str, &'static str, &'static str, &'static str);
 
+/// The verification-execution response producer currently keeps this envelope
+/// version private. The focused source-binding test below makes a change to that
+/// producer fail this registry until the catalog is reviewed at the same time.
+const VERIFICATION_EXECUTION_RESPONSE_SCHEMA_VERSION: &str = "1";
+
 /// Complete active agent repair-loop schema inventory.
 ///
 /// This is a compatibility catalog, not a claim that differently versioned
@@ -68,10 +73,16 @@ pub(crate) const AGENT_ARTIFACT_SCHEMAS: &[AgentArtifactSchema] = &[
         "0.3: corrected pair currentness and retained exact-byte artifact bindings (#2922, #3027, #3045).",
     ),
     (
+        "verification_execution_response",
+        VERIFICATION_EXECUTION_RESPONSE_SCHEMA_VERSION,
+        "app::verification_execution",
+        "1: initial committed response envelope for the bounded verify-execute process surface (#1979, #2332).",
+    ),
+    (
         "verification_execution_result",
         crate::domain::VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION,
         "domain::verification_result / app::verification_execution",
-        "1: initial provenance-bound result for an explicitly executed producer-owned verification command (#1979, #2332).",
+        "1: initial provenance-bound result nested in a successful verification-execution response (#1979, #2332).",
     ),
     (
         "repair_attempt",
@@ -107,7 +118,9 @@ pub(crate) const AGENT_ARTIFACT_SCHEMAS: &[AgentArtifactSchema] = &[
 
 #[cfg(test)]
 mod tests {
-    use super::AGENT_ARTIFACT_SCHEMAS;
+    use super::{
+        AGENT_ARTIFACT_SCHEMAS, VERIFICATION_EXECUTION_RESPONSE_SCHEMA_VERSION,
+    };
     use std::collections::BTreeSet;
 
     #[test]
@@ -129,6 +142,11 @@ mod tests {
             ),
             ("targeted_test_outcome", "0.1", "output::outcome"),
             ("agent_verify", "0.3", "output::outcome"),
+            (
+                "verification_execution_response",
+                "1",
+                "app::verification_execution",
+            ),
             (
                 "verification_execution_result",
                 "1",
@@ -153,5 +171,22 @@ mod tests {
             );
             assert!(names.insert(name), "duplicate artifact name: {name}");
         }
+    }
+
+    #[test]
+    fn verification_execution_response_version_matches_private_producer() {
+        const PREFIX: &str = "const RESPONSE_SCHEMA_VERSION: &str = \"";
+        let producer_source = include_str!("../app/verification_execution.rs");
+        let producer_version = producer_source.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix(PREFIX)
+                .and_then(|value| value.strip_suffix("\";"))
+        });
+
+        assert_eq!(
+            producer_version,
+            Some(VERIFICATION_EXECUTION_RESPONSE_SCHEMA_VERSION),
+            "verification-execution response version drifted from the central catalog"
+        );
     }
 }
