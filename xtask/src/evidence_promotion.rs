@@ -2918,6 +2918,9 @@ fn evidence_promotion_report_reads_clean(check_json: &Value, findings: &[Value])
     {
         return false;
     }
+    if evidence_promotion_emits_any_harness_limitation(check_json) {
+        return false;
+    }
     if check_json
         .get("preview_languages")
         .and_then(Value::as_array)
@@ -3013,7 +3016,9 @@ fn evidence_promotion_failure_kind(violations: &[String], pure_case: bool) -> St
         "unexpected_promotion".to_string()
     } else if joined.contains("static_limit_kind")
         || joined.contains("must_emit_limitation")
+        || joined.contains("must_not_emit_limitation")
         || joined.contains("named limitation")
+        || joined.contains("test_harnesses limitations")
     {
         "unexpected_limitation".to_string()
     } else if pure_case
