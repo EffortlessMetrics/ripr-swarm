@@ -4,18 +4,13 @@
 //! The live emitter modules remain authoritative for serialization and own the
 //! constants referenced below. This catalog gives reviewers and internal
 //! consumers one compiled inventory of artifact names, versions, producers,
-//! and version-history notes without duplicating version literals in
-//! production code. Adding an agent-loop artifact or changing an existing
-//! version must update the focused contract test in this module.
+//! and version-history notes without creating a second version authority.
+//! Adding an agent-loop artifact or changing an existing version must update
+//! the focused contract test in this module.
 
 /// `(artifact, version, producer, version history)` for one agent-loop
 /// compatibility surface.
-pub(crate) type AgentArtifactSchema = (
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-);
+pub(crate) type AgentArtifactSchema = (&'static str, &'static str, &'static str, &'static str);
 
 /// Complete agent repair-loop schema inventory.
 ///
@@ -101,11 +96,7 @@ mod tests {
         let expected = [
             ("artifact_identity", "1", "agent::artifact"),
             ("repo_exposure", "0.3", "output::repo_exposure"),
-            (
-                "repo_exposure_summary",
-                "0.1",
-                "output::repo_exposure",
-            ),
+            ("repo_exposure_summary", "0.1", "output::repo_exposure"),
             ("agent_brief", "0.1", "output::agent_brief"),
             (
                 "agent_seam_packet",
@@ -117,11 +108,7 @@ mod tests {
             ("agent_receipt", "0.5", "output::agent_receipt"),
             ("agent_workflow", "0.1", "app::agent_workflow"),
             ("agent_status", "0.1", "app::agent_status"),
-            (
-                "agent_review_summary",
-                "0.1",
-                "app::agent_review_summary",
-            ),
+            ("agent_review_summary", "0.1", "app::agent_review_summary"),
         ];
 
         assert_eq!(AGENT_ARTIFACT_SCHEMAS.len(), expected.len());
