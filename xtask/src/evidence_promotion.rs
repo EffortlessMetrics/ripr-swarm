@@ -1318,16 +1318,11 @@ pub(crate) fn evidence_promotion_semantic_violations(
                     violations.push(format!(
                         "{case_label}: `must_emit_limitation` requires expected_limit_kind"
                     ));
-                } else {
-                    let has_limit = findings.iter().any(|finding| {
-                        finding.get("static_limit_kind").and_then(Value::as_str)
-                            == Some(expected_limit_kind.as_str())
-                    });
-                    if !has_limit {
-                        violations.push(format!(
-                            "{case_label}: expected static_limit_kind `{expected_limit_kind}` was not emitted"
-                        ));
-                    }
+                } else if !evidence_promotion_emits_limitation_kind(check_json, expected_limit_kind)
+                {
+                    violations.push(format!(
+                        "{case_label}: expected limitation kind `{expected_limit_kind}` was not emitted in findings' static_limit_kind or test_harnesses limitations"
+                    ));
                 }
             }
             EvidencePromotionSemanticAssertion::MustNotEmitLimitation => {
@@ -1337,6 +1332,11 @@ pub(crate) fn evidence_promotion_semantic_violations(
                     violations.push(format!(
                         "{case_label}: `must_not_emit_limitation` forbids static_limit_kind, but found it at {}",
                         limit_paths.join(", ")
+                    ));
+                }
+                if evidence_promotion_emits_any_harness_limitation(check_json) {
+                    violations.push(format!(
+                        "{case_label}: `must_not_emit_limitation` forbids test_harnesses limitations, but the harness projection emitted at least one"
                     ));
                 }
             }
@@ -2920,6 +2920,60 @@ fn evidence_promotion_report_reads_clean(check_json: &Value, findings: &[Value])
     true
 }
 
+/// Whether the check output emits the limitation kind on any supported
+/// surface: findings' `static_limit_kind` or the harness projection's
+/// `test_harnesses[].limitations[].code` (#3636 corpus lane). The
+/// harness projection is where `registration_unreachable` and sibling
+/// harness-limitation kinds are recorded; findings carry only
+/// `static_limit_kind`.
+fn evidence_promotion_emits_limitation_kind(check_json: &Value, kind: &str) -> bool {
+    let findings_emit = check_json
+        .get("findings")
+        .and_then(Value::as_array)
+        .is_some_and(|findings| {
+            findings.iter().any(|finding| {
+                finding.get("static_limit_kind").and_then(Value::as_str) == Some(kind)
+            })
+        });
+    findings_emit || evidence_promotion_emits_any_harness_limitation_kind(check_json, kind)
+}
+
+/// Whether any harness projection in the check output emits a limitation
+/// with the given code.
+fn evidence_promotion_emits_any_harness_limitation_kind(check_json: &Value, kind: &str) -> bool {
+    check_json
+        .get("test_harnesses")
+        .and_then(Value::as_array)
+        .is_some_and(|harnesses| {
+            harnesses.iter().any(|harness| {
+                harness
+                    .get("limitations")
+                    .and_then(Value::as_array)
+                    .is_some_and(|limitations| {
+                        limitations.iter().any(|limitation| {
+                            limitation.get("code").and_then(Value::as_str) == Some(kind)
+                        })
+                    })
+            })
+        })
+}
+
+/// Whether any harness projection in the check output emits any
+/// limitation at all.
+fn evidence_promotion_emits_any_harness_limitation(check_json: &Value) -> bool {
+    check_json
+        .get("test_harnesses")
+        .and_then(Value::as_array)
+        .is_some_and(|harnesses| {
+            harnesses.iter().any(|harness| {
+                harness
+                    .get("limitations")
+                    .and_then(Value::as_array)
+                    .is_some_and(|limitations| !limitations.is_empty())
+            })
+        })
+}
+
 fn evidence_promotion_discloses_unanalyzed_working_tree(check_json: &Value) -> bool {
     check_json
         .get("unanalyzed_working_tree")
@@ -4318,4 +4372,83 @@ pub(crate) fn validate_evidence_promotion_honesty_corpus_at(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod harness_limitation_assertion_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn check_with_harness_limitation(code: &str) -> Value {
+        json!({
+            "findings": [],
+            "test_harnesses": [
+                {
+                    "registration_id": "mimic-suite",
+                    "limitations": [
+                        {"code": code, "file": "tests/mimic.rs", "line": 5}
+                    ]
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn must_emit_limitation_accepts_harness_projection_kind() {
+        let check_json = check_with_harness_limitation("registration_unreachable");
+        assert!(evidence_promotion_emits_limitation_kind(
+            &check_json,
+            "registration_unreachable"
+        ));
+    }
+
+    #[test]
+    fn must_emit_limitation_rejects_absent_harness_kind() {
+        let check_json = check_with_harness_limitation("registration_unreachable");
+        assert!(!evidence_promotion_emits_limitation_kind(
+            &check_json,
+            "unanchored_trial_path"
+        ));
+    }
+
+    #[test]
+    fn must_emit_limitation_still_accepts_static_limit_kind() {
+        let check_json = json!({
+            "findings": [
+                {"static_limit_kind": "static_unknown"}
+            ]
+        });
+        assert!(evidence_promotion_emits_limitation_kind(
+            &check_json,
+            "static_unknown"
+        ));
+        assert!(!evidence_promotion_emits_limitation_kind(
+            &check_json,
+            "registration_unreachable"
+        ));
+    }
+
+    #[test]
+    fn harness_projection_without_limitations_emits_nothing() {
+        let check_json = json!({
+            "test_harnesses": [
+                {"registration_id": "mimic-suite", "limitations": []}
+            ]
+        });
+        assert!(!evidence_promotion_emits_any_harness_limitation(
+            &check_json
+        ));
+        assert!(!evidence_promotion_emits_limitation_kind(
+            &check_json,
+            "registration_unreachable"
+        ));
+    }
+
+    #[test]
+    fn missing_harness_projection_emits_nothing() {
+        let check_json = json!({"findings": []});
+        assert!(!evidence_promotion_emits_any_harness_limitation(
+            &check_json
+        ));
+    }
 }

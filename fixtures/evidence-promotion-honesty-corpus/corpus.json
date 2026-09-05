@@ -1194,6 +1194,7 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "must_disclose_scope" },
+        { "type": "must_emit_limitation", "expected_limit_kind": "registration_unreachable" },
         { "type": "expected_finding_count", "count": 3 },
         { "type": "maximum_class", "class": "no_static_path" },
         { "type": "must_not_promote" }
