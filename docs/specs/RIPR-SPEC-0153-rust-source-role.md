@@ -10,6 +10,15 @@ Reworked 2026-09-03 (#3634): the harness-target validation sources
 workspace membership and the test-target inventory from `cargo
 metadata` itself, replacing the bounded manifest TOML emulation.
 
+Reworked 2026-09-04 (#3631): the authority gate's cfg-test regions are
+derived from the real grammar (`ra_ap_syntax`) instead of a hand-written
+depth-tracking scanner, eliminating the scanner's documented edge cases
+(else-if initializer chains, multi-line attribute/doc trim gaps, braced
+const-generic arguments) and a differential-run finding where escaped
+character literals leaked whole cfg-test modules into scans. Files that
+do not parse cleanly are scanned verbatim (over-catch only) and the
+fallback is disclosed in `source-role-authority.md`.
+
 Issue: #3283 (parent #3213; builds on #3273 and #3286)
 
 ## Problem
@@ -232,7 +241,11 @@ executable-test membership, layout classification, naming-lookalike
 rejection, and cfg-variant equivalence against `facts::build_index`.
 `cargo xtask check-rust-source-role-authority` structurally rejects
 consumer-side role re-derivation and inventories the approved
-`rust_index::is_test_file` consumers.
+`rust_index::is_test_file` consumers. Its production regions come from
+the parser-backed authority (`xtask/src/rust_region_scan.rs`, #3631);
+the honored cfg-test spelling stays exactly `cfg(test)` so the exemption
+inventory is unchanged, and a parse failure degrades to a disclosed
+verbatim scan instead of a second lexical authority.
 
 ## Non-Goals
 
