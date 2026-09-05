@@ -246,11 +246,15 @@ pub struct RustIndex {
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     #[serde(default)]
     pub include_limitations: Vec<RustIncludeLimitation>,
-    /// Executable test subjects established by registered harness
-    /// adapters (#3532). Empty without registrations; every entry carries
-    /// its registration provenance, harness kind, adapter generation,
-    /// subject identity, and selector capability so consumers project
-    /// them without reconstructing any of it.
+    /// Subjects established by registered harness adapters (#3532).
+    /// Empty without registrations; every entry carries its registration
+    /// provenance, harness kind, adapter generation, subject identity,
+    /// and selector capability so consumers project them without
+    /// reconstructing any of it. For libtest-mimic trial subjects,
+    /// executable-test denominator admission is decided by the
+    /// reachability authority (#3636): a subject excluded from the run
+    /// argument keeps its fact and syntactic claim and is named by a
+    /// `registration_unreachable` limitation.
     #[serde(default)]
     pub harness_subjects: Vec<HarnessSubjectFact>,
     /// Typed limitations recorded by registered harness adapters (#3532):
@@ -583,16 +587,20 @@ pub enum HarnessSubjectClaim {
     /// unresolved or ambiguous names contribute nothing beyond the
     /// invocation span — the boundary is fail-closed.
     ///
-    /// Reachability boundary (#3604): this is a syntactic claim bounded
-    /// by the registered target — a named invocation exists in the
-    /// registered target. It does not claim the harness registers or
-    /// executes the trial. Dead construction — a trial constructor in an
-    /// unused helper, an `if false` branch, or a collection never passed
-    /// to the harness's run entry point — still carries this claim and
-    /// still enters the executable-test denominator. Static reachability
-    /// from the constructor into the run entry point is not established
-    /// by this claim; the over-credit boundary is named here rather than
-    /// silently absorbed.
+    /// Reachability boundary (#3604, #3636): this is a syntactic claim
+    /// bounded by the registered target — a named invocation exists in
+    /// the registered target. It does not claim the harness registers or
+    /// executes the trial. Whether the subject enters the
+    /// executable-test denominator is decided by the bounded
+    /// reachability authority: a construction provably excluded from
+    /// every resolved run argument (or a target with no run entry call)
+    /// keeps this claim but does not enter the denominator and is named
+    /// by a `registration_unreachable` limitation; a construction the
+    /// bounded resolver can neither connect nor exclude stays in the
+    /// denominator under this claim and is disclosed by an aggregate
+    /// `registration_reachability_unknown` limitation. There is no
+    /// per-subject reachability field: the unknown bucket is exactly the
+    /// case where per-subject attribution is not reliable.
     NamedInvocation,
     /// The function is one executable test (registered test-producing
     /// attribute).
@@ -611,9 +619,13 @@ impl HarnessSubjectClaim {
 
 /// One executable test subject established by a registered harness
 /// adapter (#3532). A matching adapter emits these typed subject facts
-/// rather than mutating `FunctionFact` ad hoc. Each subject also
-/// registers an ordinary `TestFact` (same name/file/span) so the
-/// executable-test denominator and every existing test consumer see it.
+/// rather than mutating `FunctionFact` ad hoc. Subjects normally also
+/// register an ordinary `TestFact` (same name/file/span) so the
+/// executable-test denominator and every existing test consumer see it;
+/// the reachability authority (#3636) is the one exception — a subject
+/// whose construction provably cannot reach the harness run entry point
+/// keeps its subject fact and claim while its `TestFact` is withheld
+/// and a `registration_unreachable` limitation names it.
 ///
 /// Evidence boundary for `HarnessSubjectClaim::NamedInvocation` (#3603):
 /// `start_line`/`end_line`/`body` stay the registration invocation, while
@@ -654,7 +666,12 @@ pub struct HarnessLimitationFact {
     pub registration_id: String,
     /// Stable limitation code, e.g. `dynamic_trial_name`,
     /// `dynamic_trial_registration`, `ambiguous_import`,
-    /// `unanchored_trial_path`.
+    /// `unanchored_trial_path`, `registration_unreachable` (a trial
+    /// construction excluded from every resolved run entry argument, or
+    /// a target with no run entry call — the syntactic subject claim is
+    /// retained), or `registration_reachability_unknown` (the aggregate
+    /// disclosure naming trials whose reachability the bounded resolver
+    /// could neither connect nor exclude; they remain admitted).
     pub code: String,
     pub file: PathBuf,
     pub line: usize,

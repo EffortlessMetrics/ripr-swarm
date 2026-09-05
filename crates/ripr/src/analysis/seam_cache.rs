@@ -116,7 +116,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// character-class member globs, wildcard exclude patterns). Old
 /// classified entries would serve pre-#3634 grants for those
 /// workspaces.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.5";
+/// `1.5` -> `1.6`: the harness reachability authority (#3636) excludes
+/// trial constructions that provably cannot reach the registered run
+/// entry point's argument from the executable-test denominator and
+/// discloses unresolved reachability, changing the test inventory
+/// classified seams derive from for registered-harness workspaces. Old
+/// classified entries would serve dead-construction over-credits.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.6";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -135,7 +141,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.5";
 /// entries derive from.
 /// `0.10` -> `0.11`: #3634 metadata-sourced harness validation flips
 /// verdicts for workspaces the manifest emulation approximated.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.11";
+/// `0.11` -> `0.12`: #3636 excludes unreachable harness trial
+/// constructions from the executable-test denominator, changing the
+/// facts sharded entries derive from.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.12";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -159,7 +168,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.11";
 /// classified-seam entries derive from.
 /// `0.11` -> `0.12`: #3634 metadata-sourced harness validation flips
 /// verdicts for workspaces the manifest emulation approximated.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.12";
+/// `0.12` -> `0.13`: #3636 excludes unreachable harness trial
+/// constructions from the executable-test denominator, changing the
+/// facts the compact classified-seam entries derive from.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.13";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -209,10 +221,12 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// scanning (#3633 review). Warm per-file facts from before the change
 /// would serve comment-derived calls and numbers as live evidence.
 ///
-/// Still no bump for #3603/#3608 themselves: per-file parser facts are
-/// unchanged by the harness registry — it applies registrations after
-/// the file-fact cache loads, re-validating every build against the
-/// current manifests — so a warm hit cannot bypass that validation.
+/// Still no bump for #3603/#3608/#3636 themselves: per-file parser
+/// facts are unchanged by the harness registry — it applies
+/// registrations after the file-fact cache loads, re-validating every
+/// build against the current manifests, and the #3636 reachability
+/// authority runs inside that re-application — so a warm hit cannot
+/// bypass either validation or reachability classification.
 pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.0";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
@@ -2623,29 +2637,39 @@ mod tests {
     #[test]
     fn schema_versions_pin_the_role_composition_generation() {
         // 0.9 -> 1.0: comment/string masking changed the extracted
-        // FileFacts.calls/literals content (#3633 review).
+        // FileFacts.calls/literals content (#3633 review). Still no bump
+        // for the harness registry itself: it re-applies after the
+        // file-fact cache loads, so #3636 cannot be bypassed by a warm
+        // file-fact hit.
         assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.0");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.5");
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.11");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.12");
+        // 1.5 -> 1.6: the #3636 reachability authority excludes
+        // unreachable harness trial constructions from the
+        // executable-test denominator.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.6");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.12");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.13");
     }
 
     #[test]
     fn previous_generation_classified_seam_envelope_with_identical_identity_is_a_miss()
     -> Result<(), String> {
         // #3603: trial subjects gained helper-callback one-level body
-        // evidence and method unwrap/expect smoke oracles. An envelope
-        // seeded under the previous classified-seam generation must not
-        // satisfy the current generation's key, even with identical
-        // identity fields.
+        // evidence and method unwrap/expect smoke oracles. #3636: the
+        // reachability authority excludes unreachable trial
+        // constructions from the executable-test denominator. An
+        // envelope seeded under the previous classified-seam generation
+        // must not satisfy the current generation's key, even with
+        // identical identity fields.
         let dir = isolated_dir("gen-classified-seam");
         let _ = std::fs::remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let seams = vec![sample_classified()];
         let previous_key = RepoSeamCacheKey {
-            schema_version: "1.3".to_string(),
+            // The previous generation that must miss: the #3634-era 1.5
+            // key, one step behind the current #3636-era 1.6 generation.
+            schema_version: "1.5".to_string(),
             analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
             workspace_root_hash: hash_str("workspace"),
             files_content_hash: hash_str("files"),

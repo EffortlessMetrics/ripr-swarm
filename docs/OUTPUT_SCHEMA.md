@@ -1401,9 +1401,15 @@ subject and one dynamic-name limitation:
   registered target. It does not claim the harness registers or executes the
   trial — a constructor in dead construction (an unused helper, an `if false`
   branch, a collection never passed to the harness's run entry point) still
-  carries the claim and still enters the executable-test denominator; static
-  reachability from the constructor into the run entry point is not
-  established (#3604).
+  carries the claim. Denominator admission for the subject is decided by the
+  bounded reachability authority (#3636): a construction provably excluded
+  from every resolved run argument keeps this claim but leaves the
+  executable-test denominator and is named by a `registration_unreachable`
+  limitation; a construction the resolver can neither connect nor exclude
+  stays in the denominator under this claim with an aggregate
+  `registration_reachability_unknown` disclosure. There is no per-subject
+  reachability field: the unknown bucket is exactly the case where
+  per-subject attribution is not established.
 - `limitations[]` — typed shapes the registration saw but could not classify
   (`dynamic_trial_name`, `dynamic_trial_registration`, `ambiguous_import`,
   `unanchored_trial_path`, `unresolved_marker_import`, `duplicate_subject`,
@@ -1414,6 +1420,16 @@ subject and one dynamic-name limitation:
   manifest could not be read or parsed); each records that the
   registration grants no file-wide evidence role, demotion, or trial
   subjects and the target keeps its ordinary per-function classification.
+  Reachability limitations (#3636) use `registration_unreachable` (one per
+  trial: the construction provably cannot reach the registered run entry
+  point's argument — no supported run entry call exists in the target, or
+  every run argument resolved completely and the trial is not in any of
+  them — so the subject keeps its syntactic claim and fact but its
+  executable-test fact does not join the denominator) and
+  `registration_reachability_unknown` (one aggregate disclosure per
+  registration: the bounded resolver could not establish reachability for
+  the named trials, so they remain in the denominator under the syntactic
+  claim and the gap is disclosed here rather than per subject).
 
 An absent `test_harnesses` array means the repository has no harness
 registrations; it is never a claim that custom harnesses do not exist.
