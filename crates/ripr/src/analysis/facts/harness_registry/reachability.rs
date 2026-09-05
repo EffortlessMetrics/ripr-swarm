@@ -512,6 +512,10 @@ fn match_run_path(tokens: &[SyntaxToken], position: usize, marker: &str) -> Opti
     // arm's own path-start gate continues first and the qualified walk
     // of a real call anchored from an earlier position already returned.
     if at_path_start(tokens, position, false)
+        && !matches!(
+            previous_significant(tokens, position).map(|previous| tokens[previous].kind()),
+            Some(SyntaxKind::DOT)
+        )
         && let Some(open_paren_index) = run_path_paren(tokens, position)
     {
         return Some(RunPathMatch {
@@ -821,8 +825,12 @@ impl<'a, 'b> Resolver<'a, 'b> {
             };
         };
         let contained = self.top_level_trials_within(first, last);
+        // An unsupported enclosing form can discard or replace anything
+        // inside it, so lexically contained trials are not credited as
+        // reachable here — they resolve to unknown with the aggregate
+        // disclosure instead (#3639 review).
         let deny = |reason: String| ArgumentResolution {
-            trials: contained.clone(),
+            trials: BTreeSet::new(),
             complete: false,
             reason: Some(reason),
         };
@@ -854,6 +862,24 @@ impl<'a, 'b> Resolver<'a, 'b> {
             if is_mut {
                 return deny(format!(
                     "the local `{name}` is bound `mut`, so later re-assignments cannot be resolved"
+                ));
+            }
+            // An immutable binding to a MUTABLE reference
+            // (`let trials = &mut vec![..];`) can grow through later
+            // `push` calls between the binding and the run invocation,
+            // so the initializer is the whole collection only when no
+            // mutation happens in between (#3639 review). A direct
+            // `run(&mut vec![..])` argument has no intervening
+            // statements and stays supported.
+            if let Some(amp) = self.next_significant_within(init_start, init_end)
+                && self.scan.tokens[amp].kind() == SyntaxKind::AMP
+                && self
+                    .next_significant_within(amp + 1, init_end)
+                    .is_some_and(|next| self.scan.tokens[next].kind() == SyntaxKind::MUT_KW)
+                && self.mutable_growth_between(init_end, before)
+            {
+                return deny(format!(
+                    "the local `{name}` is bound to a mutable reference with later `push` mutations before the run call, so the initializer's trials are not the whole collection"
                 ));
             }
             let mut resolution = self.resolve_argument(
@@ -1226,6 +1252,19 @@ impl<'a, 'b> Resolver<'a, 'b> {
     /// Strip supported collection containers from an expression span:
     /// leading `&`/`&mut`, a whole-span `vec![..]`, a whole-span `[..]`,
     /// and a `local[..]` range-full index suffix.
+    /// Whether a `push(`-shaped mutation of a mutable collection occurs
+    /// in the token span between a `&mut` binding's initializer and the
+    /// run call (#3639 review).
+    fn mutable_growth_between(&self, init_end: usize, before: usize) -> bool {
+        (init_end..=before).any(|index| {
+            self.scan.tokens[index].kind() == SyntaxKind::IDENT
+                && self.scan.tokens[index].text() == "push"
+                && self
+                    .next_significant_within(index + 1, before)
+                    .is_some_and(|next| self.scan.tokens[next].kind() == SyntaxKind::L_PAREN)
+        })
+    }
+
     fn peel_containers(&self, start: usize, end: usize) -> (usize, usize) {
         let (mut start, mut end) = (start, end);
         for _ in 0..MAX_HOPS {
@@ -1327,22 +1366,23 @@ impl<'a, 'b> Resolver<'a, 'b> {
     /// element registered with the harness, so it must not be credited
     /// as reachable through direct containment.
     fn top_level_trials_within(&self, start: usize, end: usize) -> BTreeSet<usize> {
-        self.trials_within(start, end)
-            .into_iter()
-            .filter(|&position| self.trial_nesting_depth(position) == 0)
-            .collect()
-    }
-
-    /// How many other pending trial spans strictly contain this one.
-    fn trial_nesting_depth(&self, position: usize) -> usize {
-        let trial = &self.trials[position];
-        self.trials
+        // Nesting counts only containers INSIDE the resolved span: a
+        // trial built by a nested run call deeper in the target has its
+        // containing trial outside this span and stays a top-level
+        // element of its own argument (#3639 review).
+        let within = self.trials_within(start, end);
+        within
             .iter()
-            .enumerate()
-            .filter(|(other, candidate)| {
-                *other != position && candidate.start <= trial.start && trial.end <= candidate.end
+            .filter(|&&position| {
+                let trial = &self.trials[position];
+                !within.iter().any(|&other| {
+                    other != position
+                        && self.trials[other].start <= trial.start
+                        && trial.end <= self.trials[other].end
+                })
             })
-            .count()
+            .copied()
+            .collect()
     }
 
     /// Whether every significant token in the span is accounted for by a

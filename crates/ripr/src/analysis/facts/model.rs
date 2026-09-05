@@ -619,9 +619,13 @@ impl HarnessSubjectClaim {
 
 /// One executable test subject established by a registered harness
 /// adapter (#3532). A matching adapter emits these typed subject facts
-/// rather than mutating `FunctionFact` ad hoc. Each subject also
-/// registers an ordinary `TestFact` (same name/file/span) so the
-/// executable-test denominator and every existing test consumer see it.
+/// rather than mutating `FunctionFact` ad hoc. Subjects normally also
+/// register an ordinary `TestFact` (same name/file/span) so the
+/// executable-test denominator and every existing test consumer see it;
+/// the reachability authority (#3636) is the one exception — a subject
+/// whose construction provably cannot reach the harness run entry point
+/// keeps its subject fact and claim while its `TestFact` is withheld
+/// and a `registration_unreachable` limitation names it.
 ///
 /// Evidence boundary for `HarnessSubjectClaim::NamedInvocation` (#3603):
 /// `start_line`/`end_line`/`body` stay the registration invocation, while
