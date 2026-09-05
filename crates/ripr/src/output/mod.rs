@@ -66,8 +66,9 @@ pub(crate) mod typescript_preview_card;
 pub(crate) mod value_path;
 pub(crate) mod waiver_aging;
 
-// Keep the compatibility catalog in ordinary library compilation rather than
-// making it a test-only inventory.
+// #2973 owns a compiled compatibility inventory, not a migration of every
+// emitter's version authority. Keep the catalog in ordinary library
+// compilation while the live producer modules continue to own serialization.
 const _: usize = schemas::AGENT_ARTIFACT_SCHEMAS.len();
 
 #[cfg(test)]
