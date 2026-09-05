@@ -1,3 +1,4 @@
+use super::source_facts::PythonSourceFacts;
 use super::*;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
