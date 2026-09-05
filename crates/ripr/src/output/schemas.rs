@@ -118,9 +118,7 @@ pub(crate) const AGENT_ARTIFACT_SCHEMAS: &[AgentArtifactSchema] = &[
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AGENT_ARTIFACT_SCHEMAS, VERIFICATION_EXECUTION_RESPONSE_SCHEMA_VERSION,
-    };
+    use super::{AGENT_ARTIFACT_SCHEMAS, VERIFICATION_EXECUTION_RESPONSE_SCHEMA_VERSION};
     use std::collections::BTreeSet;
 
     #[test]
