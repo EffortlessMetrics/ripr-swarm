@@ -167,6 +167,15 @@ pub(crate) fn goldens_check_failure_message(
             golden_drift_type(&entry.semantics),
             blessing,
         ));
+        // The console should carry the first differing line: the
+        // report file is runner-local, so a CI log is often the only
+        // place the hint is visible (#3636 corpus lane).
+        if let Some(hint) = first_line_difference(
+            &normalize_golden_text(&entry.expected),
+            &normalize_golden_text(&entry.actual),
+        ) {
+            message.push_str(&format!("  first difference: {hint}\n"));
+        }
     }
     // Violations that are not per-fixture output drift (contract or run errors)
     // are not represented in `entries`; surface them verbatim so nothing is lost.
