@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — harness_dead_construction_no_exposed_credit (3)
+
+Reason:
+RIPR-SPEC-0173: regenerate the #3636 corpus golden after trimming trailing whitespace from diff.patch (git diff --check); re-embeds the input_identity hash of the committed patch bytes.
+
+Command:
+`cargo xtask goldens bless harness_dead_construction_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
