@@ -1,8 +1,9 @@
-use super::source_utils::{line_for_range_end, line_for_range_start, text_for_range};
-use super::{
-    PythonOwner, PythonTest, collect_imports_from_statements, collect_owners_from_statements,
-    collect_tests_from_statements, expr_full_name, module_owner,
+use super::owners_tests::{
+    collect_imports_from_statements, collect_owners_from_statements, collect_tests_from_statements,
+    module_owner,
 };
+use super::source_utils::{line_for_range_end, line_for_range_start, text_for_range};
+use super::{PythonOwner, PythonTest, expr_full_name};
 use crate::domain::{LanguageId as DomainLanguageId, StaticLimitKind};
 use rustpython_parser::{
     Mode,
