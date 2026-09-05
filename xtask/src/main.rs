@@ -12307,410 +12307,88 @@ fn check_rust_source_role_authority() -> Result<(), String> {
 }
 
 /// Production-side text of one Rust source file, region-aware: the whole
-/// file minus the interiors of its top-level `#[cfg(test)]` items.
+/// file minus the interiors of its top-level `#[cfg(test)]` items (#3631).
 ///
-/// The previous scanner truncated the file at the first column-0
-/// `#[cfg(test)]` line, which left every later production region outside
-/// the scan (for example `analysis/mod.rs`, whose `#[cfg(test)] mod
-/// source_role_corpus;` boundary sits near the top of the file). This
-/// scanner lexes just enough Rust — line and block comments, string /
-/// raw-string / char literals — to track brace/paren/bracket depth,
-/// exempts the
-/// items gated at the top level, and rescans production code before,
-/// between, and after them. Gated item bodies stay exempt so test
-/// fixtures and assertions (which manipulate source text as data) never
-/// reach role-authority pattern scans. Patterns are still matched as
-/// plain substrings of the returned text, so producer exemptions and the
-/// allowed-site inventory behave exactly as before.
+/// Uses `ra_ap_syntax` to extract top-level items and check their attributes.
+/// Items gated on test (via `#[cfg(test)]` or `#[cfg(all(..., test, ...))]`)
+/// have their entire text ranges (including doc comments and outer attributes)
+/// excluded from the production text.
 fn raw_production_text(text: &str) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    let mut out = String::with_capacity(text.len());
-    let mut i = 0usize;
-    let mut depth = 0usize; // brace/paren/bracket nesting of production code
-    while i < chars.len() {
-        if depth == 0 && chars[i] == '#' && is_top_level_cfg_test_attr(&chars, i) {
-            // A doc comment or attribute line preceding the gated item
-            // (`#[doc = r#"path.contains("/tests/")"#]`) belongs to the
-            // exempt item, not to production scans (#3629 review).
-            trim_preceding_attribute_run(&mut out);
-            i = skip_cfg_test_item(&chars, i);
-            // Keep a line seam so patterns cannot splice across a
-            // removed item.
-            out.push('\n');
-            continue;
+    use ra_ap_syntax::ast::{AstNode, HasModuleItem};
+    use ra_ap_syntax::{Edition, SourceFile, TextRange};
+
+    let parse = SourceFile::parse(text, Edition::CURRENT);
+    let mut excluded_ranges: Vec<TextRange> = Vec::new();
+
+    for item in parse.tree().items() {
+        if is_item_cfg_test_gated(&item) {
+            excluded_ranges.push(item.syntax().text_range());
         }
-        if let Some(end) = advance_lexeme(&chars, i) {
-            out.extend(chars[i..end].iter().copied());
-            i = end;
-            continue;
-        }
-        match chars[i] {
-            '{' | '(' | '[' => depth += 1,
-            '}' | ')' | ']' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-        out.push(chars[i]);
-        i += 1;
     }
+
+    if excluded_ranges.is_empty() {
+        return text.to_string();
+    }
+
+    excluded_ranges.sort_by_key(|r| r.start());
+    let mut out = String::with_capacity(text.len());
+    let mut cursor: usize = 0;
+
+    for range in excluded_ranges {
+        let start: usize = u32::from(range.start()) as usize;
+        let end: usize = u32::from(range.end()) as usize;
+
+        if start > cursor {
+            let keep = &text[cursor..start];
+            out.push_str(keep);
+        }
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        cursor = cursor.max(end);
+    }
+
+    if cursor < text.len() {
+        out.push_str(&text[cursor..]);
+    }
+
     out
 }
 
-/// Drop the trailing run of attribute/doc-comment lines from `out` --
-/// the run the scanner just decided belongs to a `#[cfg(test)]` item.
-/// Single-line forms only (`#[...]` balanced on one line, `///...`);
-/// multi-line attributes break the run conservatively and stay.
-fn trim_preceding_attribute_run(out: &mut String) {
-    let mut scan_end = out.len();
-    loop {
-        if scan_end == 0 {
-            break;
-        }
-        // A trailing newline would make the last line empty and stop the
-        // backward walk early; step over it first.
-        if out.as_bytes()[scan_end - 1] == b'\n' {
-            scan_end -= 1;
-            continue;
-        }
-        let line_start = out[..scan_end].rfind('\n').map(|p| p + 1).unwrap_or(0);
-        let line = out[line_start..scan_end].trim();
-        if line.is_empty() {
-            scan_end = line_start;
-            continue;
-        }
-        let is_attr = line.starts_with("#[") && line.ends_with(']');
-        let is_doc = line.starts_with("///");
-        if is_attr || is_doc {
-            scan_end = line_start;
-        } else {
-            break;
-        }
-    }
-    out.truncate(scan_end);
+/// Check if a top-level item is gated on test.
+fn is_item_cfg_test_gated(item: &ra_ap_syntax::ast::Item) -> bool {
+    use ra_ap_syntax::ast::HasAttrs;
+    item.attrs().any(|attr| is_cfg_test_attr(&attr))
 }
 
-/// Whether `#[cfg(test)]` (with optional interior whitespace) starts at
-/// `i` on the `#`. The caller guarantees top-level (depth 0) position.
-fn is_top_level_cfg_test_attr(chars: &[char], i: usize) -> bool {
-    let mut j = i + 1;
-    // Comments are trivia (`#[cfg(/* test-only */ test)]` is a gated
-    // item), so token boundaries skip them like whitespace (#3629 review).
-    j = skip_trivia(chars, j);
-    if chars.get(j) != Some(&'[') {
-        return false;
-    }
-    j += 1;
-    for expected in ["cfg", "(", "test", ")"] {
-        j = skip_trivia(chars, j);
-        for spelled in expected.chars() {
-            if chars.get(j) != Some(&spelled) {
-                return false;
-            }
-            j += 1;
-        }
-    }
-    j = skip_trivia(chars, j);
-    chars.get(j) == Some(&']')
-}
-
-/// End of the top-level item gated by the `#[cfg(test)]` attribute that
-/// starts at `start`: the attribute, any further attributes, and then the
-/// item itself — either through the `;` at the item's own level (a
-/// declaration: `mod name;`, `use ...;`, `static ... = ...;`) or through
-/// the closing brace of the first brace group at that level (a
-/// definition's body: `mod name { ... }`, `fn name(...) { ... }`). The
-/// signature's `)`/`]` closers only unwind the signature — they never end
-/// the item, so a gated function's body stays exempt. Nothing in the
-/// skipped range reaches production pattern scans.
-fn skip_cfg_test_item(chars: &[char], start: usize) -> usize {
-    let mut i = start;
-    loop {
-        i = skip_attribute(chars, i);
-        i = skip_trivia(chars, i);
-        if chars.get(i) != Some(&'#') {
-            break;
-        }
-    }
-    // The item ender (#3629 review): a depth-0 `;` after the head ends
-    // declarations and initializer items (`const X = if true { .. } else
-    // { .. };` must not leak the else tail); when no `;` follows a closed
-    // depth-0 brace group (a definition body), that close ends the item.
-    let mut depth = 0usize; // paren/bracket/brace nesting
-    while i < chars.len() {
-        if let Some(end) = advance_lexeme(chars, i) {
-            i = end;
-            continue;
-        }
-        match chars[i] {
-            ';' if depth == 0 => return i + 1,
-            '{' if depth == 0 => {
-                // A depth-0 brace group: definition body or initializer
-                // block. Skip it balanced; the item ends at this close
-                // unless an `else` chain or a `;` continues the initializer
-                // expression (#3629 review).
-                let mut body = 1usize;
-                i += 1;
-                while i < chars.len() && body > 0 {
-                    if let Some(end) = advance_lexeme(chars, i) {
-                        i = end;
-                        continue;
-                    }
-                    match chars[i] {
-                        '{' => body += 1,
-                        '}' => body -= 1,
-                        _ => {}
-                    }
-                    i += 1;
-                }
-                loop {
-                    let mut j = skip_trivia(chars, i);
-                    if chars.get(j) == Some(&';') {
-                        return j + 1;
-                    }
-                    let is_else = chars[j..].len() >= 4
-                        && chars[j] == 'e'
-                        && chars[j + 1] == 'l'
-                        && chars[j + 2] == 's'
-                        && chars[j + 3] == 'e'
-                        && !chars.get(j + 4).is_some_and(|c| is_identifier_continue(*c));
-                    if !is_else {
-                        return i;
-                    }
-                    j = skip_trivia(chars, j + 4);
-                    if chars.get(j) != Some(&'{') {
-                        // `else if ...` chains: bail conservatively.
-                        return chars.len();
-                    }
-                    let mut tail = 1usize;
-                    j += 1;
-                    while j < chars.len() && tail > 0 {
-                        if let Some(end) = advance_lexeme(chars, j) {
-                            j = end;
-                            continue;
-                        }
-                        match chars[j] {
-                            '{' => tail += 1,
-                            '}' => tail -= 1,
-                            _ => {}
-                        }
-                        j += 1;
-                    }
-                    i = j;
-                }
-            }
-            '{' | '(' | '[' => depth += 1,
-            '}' | ')' | ']' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-        i += 1;
-    }
-    chars.len()
-}
-
-/// End of the `#[...]` attribute starting at `i` on the `#`, or `i` when
-/// no attribute starts there. Bracket contents are lexeme-aware so a
-/// string cannot fake the closing bracket.
-fn skip_attribute(chars: &[char], i: usize) -> usize {
-    if chars.get(i) != Some(&'#') {
-        return i;
-    }
-    let mut j = i + 1;
-    skip_whitespace(chars, &mut j);
-    if chars.get(j) != Some(&'[') {
-        return i;
-    }
-    let mut rel = 0usize;
-    while j < chars.len() {
-        if let Some(end) = advance_lexeme(chars, j) {
-            j = end;
-            continue;
-        }
-        match chars[j] {
-            '[' => rel += 1,
-            ']' => {
-                rel = rel.saturating_sub(1);
-                if rel == 0 {
-                    return j + 1;
-                }
-            }
-            _ => {}
-        }
-        j += 1;
-    }
-    chars.len()
-}
-
-/// Position after whitespace and comments starting at `i`.
-fn skip_trivia(chars: &[char], mut i: usize) -> usize {
-    loop {
-        skip_whitespace(chars, &mut i);
-        match chars.get(i) {
-            Some('/') if chars.get(i + 1) == Some(&'/') => i = line_comment_end(chars, i),
-            Some('/') if chars.get(i + 1) == Some(&'*') => i = block_comment_end(chars, i),
-            _ => return i,
-        }
+fn is_cfg_test_attr(attr: &ra_ap_syntax::ast::Attr) -> bool {
+    use ra_ap_syntax::ast;
+    match attr.meta() {
+        Some(ast::Meta::CfgMeta(cfg)) => cfg
+            .cfg_predicate()
+            .is_some_and(|predicate| evaluate_cfg_requires_test(&predicate)),
+        _ => false,
     }
 }
 
-fn skip_whitespace(chars: &[char], i: &mut usize) {
-    while matches!(
-        chars.get(*i),
-        Some(' ') | Some('\t') | Some('\r') | Some('\n')
-    ) {
-        *i += 1;
-    }
-}
-
-/// End of the comment or literal that starts at `i`, or `None` when no
-/// lexeme that could hide a brace or delimiter starts there. Purely
-/// structural: delimiters inside these lexemes never affect depth
-/// tracking, and production scans still see their text verbatim. Raw
-/// strings are recognized under every Rust prefix (`r`, `br`, `cr`).
-fn advance_lexeme(chars: &[char], i: usize) -> Option<usize> {
-    match chars[i] {
-        '/' if chars.get(i + 1) == Some(&'/') => Some(line_comment_end(chars, i)),
-        '/' if chars.get(i + 1) == Some(&'*') => Some(block_comment_end(chars, i)),
-        '"' => Some(string_literal_end(chars, i)),
-        'r' | 'b' | 'c'
-            if !in_identifier(chars, i) && raw_string_prefix_end(chars, i).is_some() =>
-        {
-            Some(raw_string_end(chars, i))
+fn evaluate_cfg_requires_test(predicate: &ra_ap_syntax::ast::CfgPredicate) -> bool {
+    use ra_ap_syntax::ast;
+    match predicate {
+        ast::CfgPredicate::CfgAtom(atom) => {
+            atom.eq_token().is_none()
+                && atom
+                    .ident_token()
+                    .is_some_and(|token| token.text() == "test")
         }
-        '\'' => Some(char_literal_or_lifetime_end(chars, i)),
-        _ => None,
-    }
-}
-
-/// Quote position of the raw string whose prefix starts at `i` on `r`,
-/// `b`, or `c`, or `None` when those chars do not open a raw string.
-/// `b"..."`/`c"..."` ordinary strings return `None` here: their quote is
-/// handled by the plain string branch.
-fn raw_string_prefix_end(chars: &[char], i: usize) -> Option<usize> {
-    let mut j = i;
-    if matches!(chars.get(j), Some('b') | Some('c')) {
-        j += 1;
-    }
-    if chars.get(j) != Some(&'r') {
-        return None;
-    }
-    j += 1;
-    while chars.get(j) == Some(&'#') {
-        j += 1;
-    }
-    if chars.get(j) == Some(&'"') {
-        Some(j)
-    } else {
-        None
-    }
-}
-
-fn is_identifier_continue(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
-}
-
-/// Whether the char before `i` continues an identifier, so an `r`, `b`,
-/// or `c` there belongs to a name (`var`, `pub`) rather than a raw-string
-/// prefix.
-fn in_identifier(chars: &[char], i: usize) -> bool {
-    i > 0 && is_identifier_continue(chars[i - 1])
-}
-
-fn line_comment_end(chars: &[char], start: usize) -> usize {
-    let mut i = start;
-    while i < chars.len() && chars[i] != '\n' {
-        i += 1;
-    }
-    i
-}
-
-/// End of a (nestable) `/* ... */` block comment.
-fn block_comment_end(chars: &[char], start: usize) -> usize {
-    let mut i = start + 2;
-    let mut nesting = 1usize;
-    while i < chars.len() {
-        if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
-            nesting += 1;
-            i += 2;
-        } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
-            nesting -= 1;
-            i += 2;
-            if nesting == 0 {
-                return i;
-            }
-        } else {
-            i += 1;
-        }
-    }
-    chars.len()
-}
-
-fn string_literal_end(chars: &[char], start: usize) -> usize {
-    let mut i = start + 1;
-    while i < chars.len() {
-        match chars[i] {
-            '\\' => i += 2,
-            '"' => return i + 1,
-            _ => i += 1,
-        }
-    }
-    chars.len()
-}
-
-/// End of a raw string `r"..."`, `r#"..."#`, `br#"..."#`, or `cr#"..."#`
-/// that starts at `i` on the prefix's first char, or `i + 1` when the
-/// hash run never opens a quote. The hash-aware terminator keeps an
-/// embedded quote (legal inside raw strings) from closing the lexeme
-/// early and exposing braces to depth tracking.
-fn raw_string_end(chars: &[char], start: usize) -> usize {
-    let mut hashes = 0usize;
-    let mut i = start;
-    if matches!(chars.get(i), Some('b') | Some('c')) {
-        i += 1;
-    }
-    // The caller's prefix check guarantees chars[i] == 'r' here.
-    i += 1;
-    while chars.get(i) == Some(&'#') {
-        hashes += 1;
-        i += 1;
-    }
-    if chars.get(i) != Some(&'"') {
-        return start + 1;
-    }
-    i += 1;
-    while i < chars.len() {
-        if chars[i] == '"' {
-            let mut close_hashes = 0usize;
-            let mut j = i + 1;
-            while chars.get(j) == Some(&'#') {
-                close_hashes += 1;
-                j += 1;
-            }
-            if close_hashes == hashes {
-                return j;
+        ast::CfgPredicate::CfgComposite(composite) => {
+            let keyword = composite.keyword();
+            match keyword.as_ref().map(|token| token.text()) {
+                Some("all") => composite
+                    .cfg_predicates()
+                    .any(|child| evaluate_cfg_requires_test(&child)),
+                _ => false,
             }
         }
-        i += 1;
-    }
-    chars.len()
-}
-
-/// End of a char literal starting at `i` on the quote, or `i + 1` for a
-/// lifetime (or loop label), whose quote is syntax and never hides a
-/// brace.
-fn char_literal_or_lifetime_end(chars: &[char], i: usize) -> usize {
-    match chars.get(i + 1) {
-        Some('\\') => {
-            let mut j = i + 2;
-            while j < chars.len() {
-                match chars[j] {
-                    '\\' => j += 2,
-                    '\'' => return j + 1,
-                    _ => j += 1,
-                }
-            }
-            chars.len()
-        }
-        Some(_) if chars.get(i + 2) == Some(&'\'') => i + 3,
-        _ => i + 1,
     }
 }
 
@@ -12767,22 +12445,6 @@ pub fn later() {}
     fn production_only_file_is_returned_verbatim() {
         let text = "pub fn a(path: &str) -> bool {\n    path.contains(\"/tests/\")\n}\n";
         assert_eq!(raw_production_text(text), text);
-    }
-
-    #[test]
-    fn scratch_debug_dump() {
-        let text = "#[cfg(test)]
-mod tests {
-    fn t() {
-        let _ = path.contains(\"/tests/\");
-    }
-}
-
-pub fn later(path: &str) -> bool {
-    path.contains(\"/tests/\")
-}
-";
-        eprintln!("SCANNED_START>>{}<<SCANNED_END", raw_production_text(text));
     }
 
     #[test]
@@ -12957,6 +12619,81 @@ pub fn later(path: &str) -> bool {
         assert!(scanned.contains("pub fn early"));
         assert!(!scanned.contains("_test.rs"));
         assert!(!scanned.contains("starts_with(\"tests"));
+    }
+
+    #[test]
+    fn gated_const_else_if_initializer_does_not_bail_to_eof() {
+        // #3631 edge case 1: else-if initializer chains previously bailed to EOF,
+        // missing subsequent production code scans.
+        let text = r#"
+#[cfg(test)]
+const FOO: i32 = if true {
+    1
+} else if false {
+    2
+} else {
+    3
+};
+
+pub fn subsequent_production(path: &str) -> bool {
+    path.contains("/tests/")
+}
+"#;
+        let scanned = raw_production_text(text);
+        assert!(!scanned.contains("const FOO"));
+        assert!(scanned.contains("subsequent_production"));
+        assert!(scanned.contains(r#"path.contains("/tests/")"#));
+    }
+
+    #[test]
+    fn multiline_doc_attribute_on_gated_item_is_fully_trimmed() {
+        // #3631 edge case 2: multi-line attributes and doc comments preceding a gated item
+        // should be excluded along with the gated item instead of triggering false pattern matches.
+        let text = r#"
+#[doc = "first line\npath.contains(\"/tests/\")"]
+/**
+ * Block doc comment
+ * path.contains("/tests/")
+ */
+#[cfg(test)]
+fn gated_test_helper() {}
+
+pub fn production() -> bool { true }
+"#;
+        let scanned = raw_production_text(text);
+        assert!(!scanned.contains("/tests/"));
+        assert!(!scanned.contains("gated_test_helper"));
+        assert!(scanned.contains("pub fn production"));
+    }
+
+    #[test]
+    fn braced_const_generic_arguments_do_not_confuse_item_scanning() {
+        // #3631 edge case 3: braced const generic expressions in production types.
+        let text = r#"
+pub struct GenericStruct<const N: usize>;
+
+pub fn foo() -> GenericStruct<{ 1 + 1 }> {
+    GenericStruct
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn t() {
+        let _ = path.contains("/tests/");
+    }
+}
+
+pub fn after(path: &str) -> bool {
+    path.ends_with("_test.rs")
+}
+"#;
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn foo"));
+        assert!(scanned.contains("pub fn after"));
+        assert!(scanned.contains(r#"path.ends_with("_test.rs")"#));
+        assert!(!scanned.contains("/tests/"));
+        assert!(!scanned.contains("fn t()"));
     }
 }
 
