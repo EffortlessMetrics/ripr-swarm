@@ -2,11 +2,11 @@
 //! loop (#2646, #2973).
 //!
 //! The live emitter modules remain authoritative for serialization and own the
-//! constants referenced below. This catalog gives reviewers one compiled
-//! inventory of artifact names, versions, producers, and version-history notes
-//! without creating a second version authority. Adding an agent-loop artifact
-//! or changing an existing version must update the focused contract test in
-//! this module.
+//! constants referenced below. This catalog gives reviewers one compile-checked
+//! source inventory of artifact names, versions, producers, and version-history
+//! notes without creating a second version authority. Adding an agent-loop
+//! artifact or changing an existing version must update the focused contract
+//! test in this module.
 
 /// `(artifact, version, producer, version history)` for one agent-loop
 /// compatibility surface.
@@ -16,7 +16,8 @@ pub(crate) type AgentArtifactSchema = (&'static str, &'static str, &'static str,
 ///
 /// This is a compatibility catalog, not a claim that differently versioned
 /// artifact families share one wire shape. Each producer still validates its
-/// own exact schema and fails closed on unsupported input.
+/// own exact schema and fails closed on unsupported input. Binary/runtime
+/// discovery is intentionally outside this inventory slice.
 pub(crate) const AGENT_ARTIFACT_SCHEMAS: &[AgentArtifactSchema] = &[
     (
         "artifact_identity",
@@ -65,6 +66,12 @@ pub(crate) const AGENT_ARTIFACT_SCHEMAS: &[AgentArtifactSchema] = &[
         crate::output::outcome::AGENT_VERIFY_SCHEMA_VERSION,
         "output::outcome",
         "0.3: corrected pair currentness and retained exact-byte artifact bindings (#2922, #3027, #3045).",
+    ),
+    (
+        "verification_execution_result",
+        crate::domain::VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION,
+        "domain::verification_result / app::verification_execution",
+        "1: initial provenance-bound result for an explicitly executed producer-owned verification command (#1979, #2332).",
     ),
     (
         "repair_attempt",
@@ -122,6 +129,11 @@ mod tests {
             ),
             ("targeted_test_outcome", "0.1", "output::outcome"),
             ("agent_verify", "0.3", "output::outcome"),
+            (
+                "verification_execution_result",
+                "1",
+                "domain::verification_result / app::verification_execution",
+            ),
             ("repair_attempt", "0.1", "app::repair_attempt"),
             ("agent_receipt", "0.5", "output::agent_receipt"),
             ("agent_workflow", "0.1", "app::agent_workflow"),
@@ -135,7 +147,10 @@ mod tests {
             AGENT_ARTIFACT_SCHEMAS.iter().copied().zip(expected)
         {
             assert_eq!((name, version, producer), expected_entry);
-            assert!(!history.trim().is_empty(), "{name} has no version history");
+            assert!(
+                history.starts_with(&format!("{version}:")),
+                "{name} history must start with current version {version}: {history}"
+            );
             assert!(names.insert(name), "duplicate artifact name: {name}");
         }
     }
