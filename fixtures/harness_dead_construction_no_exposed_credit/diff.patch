@@ -8,7 +8,7 @@ index 0000000..1111111 100644
 -    raw.parse().unwrap_or(0)
 +    raw.parse().unwrap_or(1)
  }
- 
+
  /// Reports whether the parsed limit exceeds the default.
  pub fn limit_exceeds_default(raw: &str) -> bool {
 -    parse_limit(raw) > 0
