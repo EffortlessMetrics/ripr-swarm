@@ -1,5 +1,6 @@
 use super::owners_tests::{extract_owners, extract_tests};
 use super::source_facts::{PythonSourceFactKind, PythonSourceFacts};
+use super::source_utils::text_for_range;
 use super::*;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
