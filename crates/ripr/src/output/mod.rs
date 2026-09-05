@@ -66,9 +66,10 @@ pub(crate) mod typescript_preview_card;
 pub(crate) mod value_path;
 pub(crate) mod waiver_aging;
 
-// #2973 owns a compiled compatibility inventory, not a migration of every
-// emitter's version authority. Keep the catalog in ordinary library
-// compilation while the live producer modules continue to own serialization.
+// #2973 owns a source-level compatibility inventory, not a binary discovery
+// surface or a migration of every emitter's version authority. This reference
+// keeps the catalog compile-checked outside #[cfg(test)] while live producers
+// continue to own serialization. Optimized binary retention is not claimed.
 const _: usize = schemas::AGENT_ARTIFACT_SCHEMAS.len();
 
 #[cfg(test)]
