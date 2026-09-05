@@ -114,11 +114,11 @@ mod tests {
         assert_eq!(AGENT_ARTIFACT_SCHEMAS.len(), expected.len());
         let mut names = BTreeSet::new();
         for ((name, version, producer, history), expected_entry) in
-            AGENT_ARTIFACT_SCHEMAS.iter().zip(expected)
+            AGENT_ARTIFACT_SCHEMAS.iter().copied().zip(expected)
         {
-            assert_eq!((*name, *version, *producer), expected_entry);
+            assert_eq!((name, version, producer), expected_entry);
             assert!(!history.trim().is_empty(), "{name} has no version history");
-            assert!(names.insert(*name), "duplicate artifact name: {name}");
+            assert!(names.insert(name), "duplicate artifact name: {name}");
         }
     }
 }
