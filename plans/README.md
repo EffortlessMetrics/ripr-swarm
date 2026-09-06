@@ -129,6 +129,7 @@ For docs-only plan/control changes, run at minimum:
 git diff --check
 cargo xtask check-doc-index
 cargo xtask check-traceability
+cargo xtask check-capabilities
 cargo xtask check-pr
 ```
 
