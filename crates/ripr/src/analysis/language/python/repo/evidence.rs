@@ -550,13 +550,22 @@ fn build_production_file_evidence(
             // ids. Suffix the duplicates (.2, .3, ...) the way the repo
             // probe inventory does, so suppression and selection resolve a
             // single finding instead of hiding the rest (#3668 review).
-            let ordinal = findings
+            let base_id = finding.id.clone();
+            let count = findings
                 .iter()
-                .filter(|existing| existing.id == finding.id)
+                .filter(|existing| {
+                    existing.id == base_id
+                        || existing.id.strip_prefix(&base_id).map_or(false, |suffix| {
+                            suffix.starts_with('.')
+                                && suffix[1..].chars().all(|c| c.is_ascii_digit())
+                        })
+                })
                 .count()
                 + 1;
-            if ordinal > 1 {
-                finding.id = format!("{}.{}", finding.id, ordinal);
+            if count > 1 {
+                let suffixed = format!("{base_id}.{count}");
+                finding.id = suffixed.clone();
+                finding.probe.id.0 = suffixed;
             }
             findings.push(finding);
         }
@@ -1277,6 +1286,36 @@ mod tests {
                 .any(|owner| !owner.behavior_items.is_empty())
         );
         assert_eq!(first.counts.excluded_by_role, 2);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_identical_statements_in_owner_get_sequential_finding_and_probe_ids()
+    -> Result<(), String> {
+        let root = unique_test_root("repeated_stmt_ids");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        // Three identical statements under the same function
+        write_file(
+            &root.join("app.py"),
+            "def run():\n    x = 1\n    x = 1\n    x = 1\n",
+        )?;
+        let evidence = build_repo_evidence(
+            &super::super::select_repo_input_with_limit(&root, default_limit()),
+            &root,
+        );
+        assert_eq!(evidence.findings.len(), 3);
+        let id0 = &evidence.findings[0].id;
+        let id1 = &evidence.findings[1].id;
+        let id2 = &evidence.findings[2].id;
+        assert_ne!(id0, id1);
+        assert_ne!(id1, id2);
+        assert_ne!(id0, id2);
+        assert_eq!(id1, &format!("{id0}.2"));
+        assert_eq!(id2, &format!("{id0}.3"));
+        assert_eq!(&evidence.findings[0].probe.id.0, id0);
+        assert_eq!(&evidence.findings[1].probe.id.0, id1);
+        assert_eq!(&evidence.findings[2].probe.id.0, id2);
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
