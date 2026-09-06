@@ -198,7 +198,7 @@ pub(in crate::analysis::language::python) fn discover_repo_working_set(
     // all.
     let selected_production = production.len().min(limit);
     let evidence_budget = limit - selected_production;
-    let selected: Vec<(PathBuf, PythonFileRole)> = production
+    let mut selected: Vec<(PathBuf, PythonFileRole)> = production
         .iter()
         .take(selected_production)
         .map(|path| (path.clone(), PythonFileRole::Production))
@@ -209,6 +209,10 @@ pub(in crate::analysis::language::python) fn discover_repo_working_set(
                 .map(|(path, role)| (path.clone(), *role)),
         )
         .collect();
+    // The heaps drain per role, so the combined set must be re-sorted to
+    // restore the documented sorted-path order when production and
+    // evidence paths interleave (#3666 review).
+    selected.sort_by(|(left, _), (right, _)| left.cmp(right));
 
     let selected_count = selected.len();
     let analyzed_candidates = selected_production;

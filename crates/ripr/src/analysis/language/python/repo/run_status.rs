@@ -43,8 +43,10 @@ pub(in crate::analysis::language::python) enum PythonRepoRunStatus {
     Disabled,
 }
 
-/// Why a run ended partial. Populated by the evidence producer (PR B);
-/// discovery alone reads no sources, so it cannot produce a partial run.
+/// Why a run ended partial. The parse-failure reason is populated by the
+/// evidence producer (PR B); the discovery-incomplete reason is populated
+/// by the input selector when parts of the workspace could not be read
+/// (#3666 review).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::analysis::language::python) enum PartialRunReason {
     /// Selected files that could not be read or parsed; the retained count
@@ -52,6 +54,13 @@ pub(in crate::analysis::language::python) enum PartialRunReason {
     ParseFailures {
         /// Number of selected files that failed to read or parse.
         failed: usize,
+    },
+    /// Subtrees or entries the walk could not read; the omitted contents
+    /// were never discovered, so source absence is unestablished and the
+    /// status must not report `NoPythonSource`.
+    DiscoveryIncomplete {
+        /// Number of unreadable subtrees or entries.
+        unreadable: usize,
     },
 }
 
@@ -126,6 +135,20 @@ mod tests {
         // the evidence producer (PR B) must complete analysis first.
         assert!(!PythonRepoRunStatus::Selected.can_support_full_denominator());
         assert_eq!(PythonRepoRunStatus::Selected.as_str(), "selected");
+    }
+
+    #[test]
+    fn discovery_incomplete_reason_retains_the_unreadable_count() {
+        let status = PythonRepoRunStatus::Partial {
+            reason: PartialRunReason::DiscoveryIncomplete { unreadable: 3 },
+        };
+        assert!(!status.can_support_full_denominator());
+        assert_ne!(
+            status,
+            PythonRepoRunStatus::Partial {
+                reason: PartialRunReason::DiscoveryIncomplete { unreadable: 4 },
+            }
+        );
     }
 
     #[test]

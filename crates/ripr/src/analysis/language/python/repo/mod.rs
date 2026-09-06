@@ -26,7 +26,7 @@ use discovery::{
     CapRecoveryRoute, DiscoveryCounts, RepoWorkingSetLimit, discover_repo_working_set,
 };
 use roles::PythonFileRole;
-use run_status::PythonRepoRunStatus;
+use run_status::{PartialRunReason, PythonRepoRunStatus};
 use std::path::{Path, PathBuf};
 
 use super::super::detect_python_test_framework;
@@ -106,7 +106,22 @@ pub(in crate::analysis::language::python) fn select_repo_input_with_limit(
     // set was also capped. A discovery-only selection can never be
     // `Complete`: analysis (PR B) has not run, so the honest state is
     // `Selected` (#3666 review).
-    let status = if counts.discovered == 0 || production_files.is_empty() {
+    // Status precedence: incomplete discovery is the most fundamental
+    // fact — an unreadable root or subtree can contain Python source
+    // (production or evidence), so source absence is unestablished and
+    // the run is partial before the no-source condition is even
+    // evaluated (#3666 review). "No subject" is next: a run with no
+    // production source has nothing to analyze even when the working set
+    // was also capped. A discovery-only selection can never be
+    // `Complete`: analysis (PR B) has not run, so the honest state is
+    // `Selected`.
+    let status = if counts.unreadable_subtrees > 0 {
+        PythonRepoRunStatus::Partial {
+            reason: PartialRunReason::DiscoveryIncomplete {
+                unreadable: counts.unreadable_subtrees,
+            },
+        }
+    } else if counts.discovered == 0 || production_files.is_empty() {
         PythonRepoRunStatus::NoPythonSource
     } else if counts.capped > 0 {
         PythonRepoRunStatus::Capped
