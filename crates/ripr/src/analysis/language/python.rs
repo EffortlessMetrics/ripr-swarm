@@ -49,6 +49,7 @@ mod oracles;
 mod owners_tests;
 mod probe_shape;
 mod related_tests;
+mod repo;
 mod sink_alignment;
 mod source_facts;
 #[cfg(test)]
