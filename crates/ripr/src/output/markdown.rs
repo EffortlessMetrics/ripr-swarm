@@ -39,8 +39,8 @@ pub(crate) const POWERSHELL_UNAVAILABLE_DISCLOSURE: &str =
 /// quotes and PowerShell rejects at the `'\''` escape (#2628). Translations
 /// applied:
 ///
-/// - Compound bash commands (`&&`, `||`, `;`, heredocs, input redirection,
-///   command substitution outside quoted regions) return [`None`]:
+/// - Compound bash commands (`&&`, `||`, `;`, bare line separators, heredocs,
+///   input redirection, command substitution outside quoted regions) return [`None`]:
 ///   re-tokenizing them as PowerShell would be a second shell parser, so the
 ///   caller under-emits — bash form plus
 ///   [`POWERSHELL_UNAVAILABLE_DISCLOSURE`] — instead of shipping a line that
@@ -137,7 +137,10 @@ fn powershell_redirect_offset(command: &str) -> Option<usize> {
 /// which is the close-escape-reopen idiom inside a `'\''`-escaped token and
 /// must keep translating. When in doubt the caller under-emits: a false
 /// "compound" costs one disclosure line, a false "simple" would publish an
-/// invalid or semantically different PowerShell line.
+/// invalid or semantically different PowerShell line. Unquoted LF, CRLF, and
+/// bare CR are withheld before redirect parsing: a command list must not be
+/// folded into one invocation or mistaken for part of an artifact path. Quoted
+/// line separators are argument data and keep the normal translation path.
 fn is_compound_bash_command(command: &str) -> bool {
     let chars: Vec<char> = command.chars().collect();
     let mut index = 0;
@@ -178,7 +181,7 @@ fn is_compound_bash_command(command: &str) -> bool {
                     Some(_) => return true,
                     None => index += 1,
                 },
-                ';' => return true,
+                ';' | '\n' | '\r' => return true,
                 '&' => return true,
                 '|' => return true,
                 '<' => return true,
@@ -407,6 +410,53 @@ mod tests {
         assert_eq!(
             powershell_command("ripr receipt write --gap 'it'\\''s'"),
             Some("ripr receipt write --gap 'it''s'".to_string())
+        );
+    }
+
+    /// A bare line separator is not an argv character: it can delimit a
+    /// second command, including after the first command's redirect target.
+    #[test]
+    fn powershell_command_rejects_unquoted_line_separators() {
+        for separator in ["\n", "\r\n", "\r"] {
+            for command in [
+                format!("cargo test{separator}ripr check"),
+                format!("cargo test{separator}ripr check > after.json"),
+                format!("ripr check > after.json{separator}cargo test"),
+                format!("cargo test \"owner's case\"{separator}ripr check"),
+                format!("ripr check --root 'café'{separator}cargo test"),
+            ] {
+                assert_eq!(
+                    powershell_command(&command),
+                    None,
+                    "must withhold a compound translation: {command:?}"
+                );
+            }
+        }
+    }
+
+    /// Newlines inside either supported quote form are literal argument data,
+    /// not command boundaries; rejecting every multiline string is too broad.
+    #[test]
+    fn powershell_command_preserves_quoted_line_separators() {
+        for separator in ["\n", "\r\n", "\r"] {
+            for command in [
+                format!("cargo test 'first{separator}second'"),
+                format!("cargo test \"first{separator}second\""),
+                format!("cargo test \"owner's{separator}case\""),
+                format!("cargo test 'a \"{separator}case'"),
+            ] {
+                let rendered = powershell_command(&command);
+                assert_eq!(rendered.as_deref(), Some(command.as_str()));
+            }
+        }
+    }
+
+    /// Literal multiline data must not hide the real redirect that follows it.
+    #[test]
+    fn powershell_command_keeps_redirect_after_quoted_newline() {
+        assert_eq!(
+            powershell_command("ripr check --root 'café\nrepo' > 'résumé.json'"),
+            Some("$ripr = ((ripr check --root 'café\nrepo') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 }
