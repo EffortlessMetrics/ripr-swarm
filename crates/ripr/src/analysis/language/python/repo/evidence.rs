@@ -536,7 +536,7 @@ fn build_production_file_evidence(
             });
         }
         items_per_owner[index].push(item);
-        if let Some(finding) = classify_change_with_context(
+        if let Some(mut finding) = classify_change_with_context(
             relative,
             line,
             &text,
@@ -545,6 +545,19 @@ fn build_production_file_evidence(
             all_tests,
             PythonNoBehaviorContext::default(),
         ) {
+            // Repo mode classifies every representative behavior line, so
+            // identical statements under one owner produce identical probe
+            // ids. Suffix the duplicates (.2, .3, ...) the way the repo
+            // probe inventory does, so suppression and selection resolve a
+            // single finding instead of hiding the rest (#3668 review).
+            let ordinal = findings
+                .iter()
+                .filter(|existing| existing.id == finding.id)
+                .count()
+                + 1;
+            if ordinal > 1 {
+                finding.id = format!("{}.{}", finding.id, ordinal);
+            }
             findings.push(finding);
         }
     }
