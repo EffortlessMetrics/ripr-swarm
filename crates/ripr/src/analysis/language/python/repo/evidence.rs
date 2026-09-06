@@ -561,7 +561,7 @@ fn build_production_file_evidence(
                 .iter()
                 .filter(|existing| {
                     existing.id == base_id
-                        || existing.id.strip_prefix(&base_id).map_or(false, |suffix| {
+                        || existing.id.strip_prefix(&base_id).is_some_and(|suffix| {
                             suffix.starts_with('.')
                                 && suffix[1..].chars().all(|c| c.is_ascii_digit())
                         })
