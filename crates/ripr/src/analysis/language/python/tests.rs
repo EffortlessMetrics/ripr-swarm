@@ -3939,12 +3939,10 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
 /// isolated workspace, explicit working-set limits (#2109), and a digest
 /// for the byte-determinism proof.
 fn unique_repo_test_root(label: &str) -> PathBuf {
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "ripr-py-repo-adapter-{label}-{}-{stamp}",
+        "ripr-py-repo-adapter-{label}-{}-{count}",
         std::process::id()
     ))
 }

@@ -445,17 +445,23 @@ pub(in crate::analysis::language::python) fn partial_disclosure(
         | PythonRepoRunStatus::Selected
         | PythonRepoRunStatus::NoPythonSource
         | PythonRepoRunStatus::Disabled => None,
-        PythonRepoRunStatus::Capped => Some(format!(
-            "repo run capped: {} Python file(s) beyond the working-set limit of {}; findings cover the selected files only. Recovery: {}",
-            evidence.counts.capped,
-            evidence.working_set_limit.limit,
-            evidence
+        PythonRepoRunStatus::Capped => {
+            let routes = evidence
                 .recovery_routes
                 .iter()
                 .map(|route| route.describe())
                 .collect::<Vec<_>>()
-                .join("; "),
-        )),
+                .join("; ");
+            let recovery_suffix = if routes.is_empty() {
+                String::new()
+            } else {
+                format!(" Recovery: {routes}")
+            };
+            Some(format!(
+                "repo run capped: {} Python file(s) beyond the working-set limit of {}; findings cover the selected files only.{}",
+                evidence.counts.capped, evidence.working_set_limit.limit, recovery_suffix
+            ))
+        }
         PythonRepoRunStatus::Partial { reason } => Some(match reason {
             PartialRunReason::ParseFailures { failed } => format!(
                 "repo run partial: {failed} selected Python file(s) failed to read or parse and left the analyzed denominator"
