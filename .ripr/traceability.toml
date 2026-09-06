@@ -2316,10 +2316,10 @@ name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
   "crates/ripr/src/analysis/language/python.rs",
-  "crates/ripr/src/analysis/language/python.rs::tests_inline::classify_click_output_change_as_repairable_cli_gap",
-  "crates/ripr/src/analysis/language/python.rs::tests_inline::classify_exception_match_assertion_as_exposed",
-  "crates/ripr/src/analysis/language/python.rs::tests_inline::classify_field_assertion_as_exposed",
-  "crates/ripr/src/analysis/language/python.rs::tests_inline::classify_output_assertion_as_exposed",
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_click_output_change_as_repairable_cli_gap",
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_exception_match_assertion_as_exposed",
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_field_assertion_as_exposed",
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_output_assertion_as_exposed",
   "crates/ripr/src/analysis/language/python/python_tests.rs::cli_decorators_are_transparent_only_for_static_cli_shapes",
   "crates/ripr/src/analysis/language/python/python_tests.rs::cli_output_discriminators_cover_echo_streams_and_exit_codes",
   "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_is_direct_when_oracle_names_owner",
