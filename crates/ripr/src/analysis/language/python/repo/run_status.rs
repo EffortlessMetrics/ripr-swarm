@@ -62,6 +62,15 @@ pub(in crate::analysis::language::python) enum PartialRunReason {
         /// Number of unreadable subtrees or entries.
         unreadable: usize,
     },
+    /// Selected files whose role was ambiguous were counted but never read
+    /// or analyzed, so the run cannot be `Complete` while any exist.
+    /// Unreachable while discovery routes only production/test/helper
+    /// roles, but typed so the evidence producer can never report
+    /// `Complete` over unanalyzed selected files (#3554 PR B).
+    UnanalyzedAmbiguous {
+        /// Number of selected ambiguous-role files left unanalyzed.
+        count: usize,
+    },
 }
 
 impl PythonRepoRunStatus {
@@ -147,6 +156,20 @@ mod tests {
             status,
             PythonRepoRunStatus::Partial {
                 reason: PartialRunReason::DiscoveryIncomplete { unreadable: 4 },
+            }
+        );
+    }
+
+    #[test]
+    fn unanalyzed_ambiguous_reason_retains_the_count_and_blocks_a_full_denominator() {
+        let status = PythonRepoRunStatus::Partial {
+            reason: PartialRunReason::UnanalyzedAmbiguous { count: 2 },
+        };
+        assert!(!status.can_support_full_denominator());
+        assert_ne!(
+            status,
+            PythonRepoRunStatus::Partial {
+                reason: PartialRunReason::UnanalyzedAmbiguous { count: 3 },
             }
         );
     }

@@ -1,13 +1,17 @@
-//! Python repo-mode input authority (#3554 PR A).
+//! Python repo-mode input + evidence authorities (#3554 PR A / PR B).
 //!
 //! PR A builds the input structure beneath the documented repo-mode
 //! limitation (see `docs/LANGUAGE_ADAPTER_PREVIEW.md` § "Repo-Mode Analysis
 //! Is Rust-Only"): shared workspace role selection, bounded discovery
-//! (#2109), and typed run status. `PythonAdapter::analyze_repo` keeps its
-//! empty-scaffold output until the evidence producer (PR B) and the pipeline
-//! projection (PR C) land, so nothing here changes public behavior yet.
+//! (#2109), and typed run status. PR B adds the native evidence producer
+//! ([`evidence::build_repo_evidence`]): facts built once over the selected
+//! production/test set, native Python behavior items with related-test and
+//! oracle evidence, and typed limitations — exercised by unit tests only.
+//! `PythonAdapter::analyze_repo` keeps its empty-scaffold output until the
+//! pipeline projection (PR C) consumes the producer, so nothing here changes
+//! public behavior yet.
 //!
-//! [`select_repo_input`] composes the three modules into one
+//! [`select_repo_input`] composes the input modules into one
 //! [`PythonRepoInput`]: the bounded selected working set partitioned by
 //! role, the typed discovery counts, the run status, the effective
 //! working-set limit with its cap source, the retained operator recovery
@@ -15,10 +19,11 @@
 
 #![allow(
     dead_code,
-    reason = "Python repo-mode input scaffold is exercised by unit tests until the PR B evidence producer and PR C pipeline projection consume it (#3554)"
+    reason = "Python repo-mode input and evidence producers are exercised by unit tests until the PR C pipeline projection consumes them from analyze_repo (#3554)"
 )]
 
 mod discovery;
+mod evidence;
 mod roles;
 mod run_status;
 
