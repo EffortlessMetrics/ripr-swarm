@@ -30,7 +30,10 @@ use std::path::Path;
 /// The taxonomy distinguishes production subjects from evidence sources and
 /// from excluded material, so production findings can never be seeded from
 /// test, helper, generated, or environment files.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// `PartialOrd`/`Ord` order variants only for the bounded retention
+/// heaps' `(path, role)` pairs (paths compare first, so role order is
+/// the tiebreaker that never fires for distinct paths).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(in crate::analysis::language::python) enum PythonFileRole {
     /// Application/library source the adapter treats as a production-owner
     /// surface. The analysis-subject role.

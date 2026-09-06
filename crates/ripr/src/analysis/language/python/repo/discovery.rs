@@ -156,69 +156,71 @@ pub(in crate::analysis::language::python) struct RepoDiscovery {
 
 /// Discover and select the bounded Python repo working set under `root`.
 ///
-/// Deterministic: the walk output is sorted, role classification is pure,
-/// and selection is the sorted eligible prefix of length
-/// `min(eligible, limit)`.
+/// Deterministic: retained candidates are the lexicographically smallest
+/// eligible paths, and the selected output is sorted. Walk memory is
+/// bounded by the working-set limit (#3666 review): each role retains a
+/// bounded max-heap of the smallest candidates seen, instead of holding
+/// every eligible path.
 pub(in crate::analysis::language::python) fn discover_repo_working_set(
     root: &Path,
     limit: usize,
 ) -> RepoDiscovery {
-    // Only eligible (path, role) pairs are retained: excluded-role and
-    // generated files are counted but never stored, so walk memory is
-    // bounded by the working-set cap rather than by workspace size
-    // (#3666 review).
-    let mut eligible: Vec<(PathBuf, PythonFileRole)> = Vec::new();
-    let mut excluded_by_role: usize = 0;
-    let mut unreadable_subtrees: usize = 0;
-    visit_repo_workspace(
-        root,
-        root,
-        &mut eligible,
-        &mut excluded_by_role,
-        &mut unreadable_subtrees,
-    );
-    eligible.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let mut state = BoundedWalkState {
+        production_heap: std::collections::BinaryHeap::new(),
+        evidence_heap: std::collections::BinaryHeap::new(),
+        excluded_by_role: 0,
+        unreadable_subtrees: 0,
+        production_seen_total: 0,
+        evidence_seen_total: 0,
+        limit,
+    };
+    visit_repo_workspace(root, root, &mut state);
 
-    let discovered_count = eligible.len() + excluded_by_role;
+    // True totals: the bounded heaps can drop the largest candidates when
+    // a workspace exceeds the limit, so the run tracks seen counts
+    // separately from retained heap contents.
+    let production_seen = state.production_seen_total;
+    let evidence_seen = state.evidence_seen_total;
+
+    // A max-heap pops largest-first, so draining into a vector and
+    // reversing yields the retained candidates in ascending order.
+    let mut production: Vec<PathBuf> = state.production_heap.into_vec();
+    production.sort();
+    let mut evidence: Vec<(PathBuf, PythonFileRole)> = state.evidence_heap.into_vec();
+    evidence.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let excluded_by_role = state.excluded_by_role;
+    let unreadable_subtrees = state.unreadable_subtrees;
+
     // Production files are the analysis subjects and get cap priority
-    // (#3666 review): a role-blind sorted prefix could fill the cap with
+    // (#3666 review): a role-blind prefix could fill the cap with
     // evidence files and hide production source behind `capped`, which
-    // would misreport the workspace as having no Python production
-    // source at all.
-    let mut production: Vec<(PathBuf, PythonFileRole)> = Vec::new();
-    let mut evidence: Vec<(PathBuf, PythonFileRole)> = Vec::new();
-    for (path, role) in &eligible {
-        if *role == PythonFileRole::Production {
-            production.push((path.clone(), *role));
-        } else {
-            evidence.push((path.clone(), *role));
-        }
-    }
+    // would misreport the workspace as having no production source at
+    // all.
+    let selected_production = production.len().min(limit);
+    let evidence_budget = limit - selected_production;
+    let selected: Vec<(PathBuf, PythonFileRole)> = production
+        .iter()
+        .take(selected_production)
+        .map(|path| (path.clone(), PythonFileRole::Production))
+        .chain(
+            evidence
+                .iter()
+                .take(evidence_budget)
+                .map(|(path, role)| (path.clone(), *role)),
+        )
+        .collect();
 
-    let capped;
-    let mut selected_production = production.clone();
-    let mut selected_evidence: Vec<(PathBuf, PythonFileRole)> = Vec::new();
-    if production.len() >= limit {
-        // The cap excludes production subjects directly.
-        selected_production.truncate(limit);
-        capped = production.len() - limit + evidence.len();
-    } else {
-        let evidence_budget = limit - production.len();
-        capped = evidence.len().saturating_sub(evidence_budget);
-        selected_evidence = evidence.into_iter().take(evidence_budget).collect();
-    }
-
-    let selected_count = selected_production.len() + selected_evidence.len();
-    let analyzed_candidates = selected_production.len();
-
-    let mut selected: Vec<(PathBuf, PythonFileRole)> = selected_production.into_iter().collect();
-    selected.extend(selected_evidence);
-    selected.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let selected_count = selected.len();
+    let analyzed_candidates = selected_production;
+    // Every routed file is either selected or capped (excluded files are
+    // accounted separately), so the identity
+    // `discovered == selected + skipped` pins the split.
+    let capped = (production_seen + evidence_seen) - selected_count;
 
     RepoDiscovery {
         selected,
         counts: DiscoveryCounts {
-            discovered: discovered_count,
+            discovered: production_seen + evidence_seen + excluded_by_role,
             selected: selected_count,
             analyzed_candidates,
             skipped: excluded_by_role + capped,
@@ -233,22 +235,47 @@ pub(in crate::analysis::language::python) fn discover_repo_working_set(
 /// Pruned workspace walk.
 ///
 /// Mirrors the adapter's `visit_workspace` pattern (no descent into
-/// excluded-directory subtrees). Eligible files are stored with their
-/// role; excluded-role and generated files are counted but never stored,
-/// so walk memory is bounded by the working-set cap (#3666 review).
-/// Read failures on subtrees or entries count as incomplete-discovery
-/// accounting.
-fn visit_repo_workspace(
-    root: &Path,
-    dir: &Path,
-    eligible: &mut Vec<(PathBuf, PythonFileRole)>,
-    excluded_by_role: &mut usize,
-    unreadable_subtrees: &mut usize,
-) {
+/// excluded-directory subtrees). Eligible files are retained in the
+/// bounded per-role heaps; excluded-role and generated files are counted
+/// but never stored, so walk memory is bounded by the working-set cap
+/// (#3666 review). Read failures on subtrees or entries count as
+/// incomplete-discovery accounting.
+/// Accumulated bounded-retention walk state: per-role candidate heaps
+/// (bounded by the working-set limit), the incomplete-discovery
+/// accounting, and the true seen totals.
+struct BoundedWalkState {
+    production_heap: std::collections::BinaryHeap<PathBuf>,
+    evidence_heap: std::collections::BinaryHeap<(PathBuf, PythonFileRole)>,
+    excluded_by_role: usize,
+    unreadable_subtrees: usize,
+    production_seen_total: usize,
+    evidence_seen_total: usize,
+    limit: usize,
+}
+
+impl BoundedWalkState {
+    fn retain_eligible(&mut self, relative: PathBuf, role: PythonFileRole) {
+        if role == PythonFileRole::Production {
+            self.production_seen_total += 1;
+            self.production_heap.push(relative);
+            if self.production_heap.len() > self.limit {
+                self.production_heap.pop();
+            }
+        } else {
+            self.evidence_seen_total += 1;
+            self.evidence_heap.push((relative, role));
+            if self.evidence_heap.len() > self.limit {
+                self.evidence_heap.pop();
+            }
+        }
+    }
+}
+
+fn visit_repo_workspace(root: &Path, dir: &Path, state: &mut BoundedWalkState) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => {
-            *unreadable_subtrees += 1;
+            state.unreadable_subtrees += 1;
             return;
         }
     };
@@ -258,7 +285,7 @@ fn visit_repo_workspace(
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => {
-                *unreadable_subtrees += 1;
+                state.unreadable_subtrees += 1;
                 continue;
             }
         };
@@ -270,22 +297,22 @@ fn visit_repo_workspace(
         let file_type = match entry.file_type() {
             Ok(file_type) => file_type,
             Err(_) => {
-                *unreadable_subtrees += 1;
+                state.unreadable_subtrees += 1;
                 continue;
             }
         };
         let path = entry.path();
         if file_type.is_dir() {
-            visit_repo_workspace(root, &path, eligible, excluded_by_role, unreadable_subtrees);
+            visit_repo_workspace(root, &path, state);
         } else if file_type.is_file() {
             let adapter = PythonAdapter;
             if adapter.accepts_path(&path) {
                 let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
                 let role = classify_python_file_role(&relative);
                 if role_is_excluded_from_analysis(role) {
-                    *excluded_by_role += 1;
+                    state.excluded_by_role += 1;
                 } else {
-                    eligible.push((relative, role));
+                    state.retain_eligible(relative, role);
                 }
             }
         }
