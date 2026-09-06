@@ -484,20 +484,46 @@ impl LanguageAdapter for PythonAdapter {
 
     fn analyze_repo(
         &self,
-        _options: &AnalysisOptions,
+        options: &AnalysisOptions,
         _oracle_policy: &OraclePolicy,
     ) -> Result<LanguageRepoResult, String> {
-        // Repo-mode preview output lands in a follow-up. The current
-        // sub-slice scopes to diff-mode for the smallest useful fixture.
-        // This stub returns an empty result; callers that consume
-        // repo-scoped formats on a Python-only workspace get zero seams
-        // with no warning. See docs/LANGUAGE_ADAPTER_PREVIEW.md
-        // § "Repo-Mode Analysis Is Rust-Only" for the limitation contract.
+        // #2109: the shared repo working-set override bounds the run before
+        // any read; an invalid override fails closed as a named error.
+        let working_set_limit = repo::repo_working_set_limit()?;
+        PythonAdapter::analyze_repo_with_limit(&options.root, working_set_limit)
+    }
+}
+
+impl PythonAdapter {
+    /// The deterministic repo-mode core of
+    /// [`LanguageAdapter::analyze_repo`] with the working-set limit
+    /// injected (#2109, #3554 PR C).
+    ///
+    /// Calls the producer-owned input authority
+    /// (`select_repo_input_with_limit`) and the native evidence producer
+    /// (`build_repo_evidence`), then projects onto the shared
+    /// `LanguageRepoResult`: findings keep their native Python diff-mode
+    /// shape, counts come from the input authority, harness projections
+    /// stay empty (no registrations in repo mode), and a capped/partial run
+    /// discloses itself through `partial_reason` so the pipeline records a
+    /// partial `LanguageRun` that gates fail closed on.
+    pub(in crate::analysis::language::python) fn analyze_repo_with_limit(
+        root: &Path,
+        working_set_limit: repo::RepoWorkingSetLimit,
+    ) -> Result<LanguageRepoResult, String> {
+        let input = repo::select_repo_input_with_limit(root, working_set_limit);
+        let evidence = repo::build_repo_evidence(&input, root);
+        let partial_reason = repo::partial_disclosure(&evidence);
+        let production_files = input.production_files.len();
+        let skipped_files = evidence.counts.skipped;
         Ok(LanguageRepoResult {
-            findings: Vec::new(),
+            findings: evidence.findings,
+            // No test-harness registry registrations exist in repo mode
+            // (#3532): the projection is empty.
             harness_projections: Vec::new(),
-            production_files: 0,
-            skipped_files: 0,
+            production_files,
+            skipped_files,
+            partial_reason,
         })
     }
 }

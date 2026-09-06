@@ -267,6 +267,7 @@ impl LanguageAdapter for PerlAdapter {
             // Perl has no harness registry: the projection is empty, as
             // for every non-Rust adapter (#3532).
             harness_projections: Vec::new(),
+            partial_reason: None,
         })
     }
 }
