@@ -49,6 +49,7 @@ mod oracles;
 mod owners_tests;
 mod probe_shape;
 mod related_tests;
+pub(crate) mod repo_input;
 mod sink_alignment;
 mod source_facts;
 #[cfg(test)]
@@ -89,6 +90,7 @@ use related_tests::{
     first_parenthesized_string_argument, import_source_module_matches_owner,
     strong_test_calls_owner_method_on_bound_receiver, strong_test_imports_owner_from_module,
 };
+pub(crate) use repo_input::PythonRepoInput;
 #[cfg(test)]
 use sink_alignment::strong_oracle_observes_owner;
 #[cfg(test)]
@@ -122,9 +124,10 @@ mod workspace;
 #[cfg(test)]
 use workspace::visit_workspace;
 use workspace::{
-    collect_workspace_python_files, is_detectable_generated_python_file, line_is_in_ranges,
-    owner_for_changed_line, reconstruct_old_source,
+    collect_workspace_python_files, line_is_in_ranges, owner_for_changed_line,
+    reconstruct_old_source,
 };
+pub(super) use workspace::{is_detectable_generated_python_file, is_python_workspace_excluded_dir};
 
 const PYTHON_WORKSPACE_EXCLUDED_DIRS: &[&str] = &[
     ".git",
@@ -152,22 +155,22 @@ const PYTHON_WORKSPACE_EXCLUDED_DIRS: &[&str] = &[
 pub(crate) struct PythonAdapter;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct PythonOwner {
-    name: String,
-    qualified_name: String,
-    file: PathBuf,
-    start_line: usize,
-    end_line: usize,
-    owner_kind: Option<OwnerKind>,
-    decorators: Vec<String>,
-    imports: Vec<PythonImport>,
-    cli_receiver_names: Vec<String>,
-    route_paths: Vec<String>,
-    dynamic_route_decorators: Vec<String>,
+pub(crate) struct PythonOwner {
+    pub(crate) name: String,
+    pub(crate) qualified_name: String,
+    pub(crate) file: PathBuf,
+    pub(crate) start_line: usize,
+    pub(crate) end_line: usize,
+    pub(crate) owner_kind: Option<OwnerKind>,
+    pub(crate) decorators: Vec<String>,
+    pub(crate) imports: Vec<PythonImport>,
+    pub(crate) cli_receiver_names: Vec<String>,
+    pub(crate) route_paths: Vec<String>,
+    pub(crate) dynamic_route_decorators: Vec<String>,
 }
 
 impl PythonOwner {
-    fn symbol_id(&self) -> SymbolId {
+    pub(crate) fn symbol_id(&self) -> SymbolId {
         SymbolId(format!(
             "python:{}::{}",
             normalized_path(&self.file),
@@ -211,42 +214,42 @@ impl PythonOwner {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct PythonTest {
-    name: String,
-    qualified_name: String,
-    file: PathBuf,
-    line: usize,
-    body_text: String,
-    imports: Vec<PythonImport>,
-    decorators: Vec<String>,
-    fixtures: Vec<String>,
-    parametrized: bool,
-    framework: &'static str,
-    assertions: Vec<PythonAssertion>,
+pub(crate) struct PythonTest {
+    pub(crate) name: String,
+    pub(crate) qualified_name: String,
+    pub(crate) file: PathBuf,
+    pub(crate) line: usize,
+    pub(crate) body_text: String,
+    pub(crate) imports: Vec<PythonImport>,
+    pub(crate) decorators: Vec<String>,
+    pub(crate) fixtures: Vec<String>,
+    pub(crate) parametrized: bool,
+    pub(crate) framework: &'static str,
+    pub(crate) assertions: Vec<PythonAssertion>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct PythonImport {
-    imported: String,
-    alias: String,
+pub(crate) struct PythonImport {
+    pub(crate) imported: String,
+    pub(crate) alias: String,
     /// The dotted source module of a `from M import Y` statement (e.g. `src.handler`).
     /// Relative imports are resolved against the importing file when possible (for
     /// example, `from .handler import validate` in `tests/test_api.py` resolves to
     /// `tests.handler`). Empty for a plain `import X`.
-    source_module: String,
+    pub(crate) source_module: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct PythonAssertion {
-    text: String,
-    line: usize,
-    oracle_kind: OracleKind,
-    oracle_strength: OracleStrength,
-    oracle_shape: PythonOracleShape,
+pub(crate) struct PythonAssertion {
+    pub(crate) text: String,
+    pub(crate) line: usize,
+    pub(crate) oracle_kind: OracleKind,
+    pub(crate) oracle_strength: OracleStrength,
+    pub(crate) oracle_shape: PythonOracleShape,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum PythonOracleShape {
+pub(crate) enum PythonOracleShape {
     ExactAssertion,
     BoundaryAssertion,
     ExceptionAssertion,
@@ -483,15 +486,10 @@ impl LanguageAdapter for PythonAdapter {
 
     fn analyze_repo(
         &self,
-        _options: &AnalysisOptions,
+        options: &AnalysisOptions,
         _oracle_policy: &OraclePolicy,
     ) -> Result<LanguageRepoResult, String> {
-        // Repo-mode preview output lands in a follow-up. The current
-        // sub-slice scopes to diff-mode for the smallest useful fixture.
-        // This stub returns an empty result; callers that consume
-        // repo-scoped formats on a Python-only workspace get zero seams
-        // with no warning. See docs/LANGUAGE_ADAPTER_PREVIEW.md
-        // § "Repo-Mode Analysis Is Rust-Only" for the limitation contract.
+        let _repo_input = PythonRepoInput::discover(&options.root)?;
         Ok(LanguageRepoResult {
             findings: Vec::new(),
             harness_projections: Vec::new(),

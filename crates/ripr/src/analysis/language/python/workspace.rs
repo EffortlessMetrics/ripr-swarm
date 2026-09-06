@@ -56,11 +56,11 @@ pub(super) fn visit_workspace(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn is_python_workspace_excluded_dir(name: &str) -> bool {
+pub(crate) fn is_python_workspace_excluded_dir(name: &str) -> bool {
     PYTHON_WORKSPACE_EXCLUDED_DIRS.contains(&name)
 }
 
-pub(super) fn is_detectable_generated_python_file(path: &Path) -> bool {
+pub(crate) fn is_detectable_generated_python_file(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
     };
