@@ -53,6 +53,8 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RustRepairTrustReport => super::reports::rust_repair_trust_report(),
         XtaskCommand::RustJudgedPanel(args) => super::rust_judged_panel::run(&args),
         XtaskCommand::CheckRustJudgedPanel => super::check_rust_judged_panel(),
+        XtaskCommand::PythonJudgedPanel(args) => super::python_judged_panel::run(&args),
+        XtaskCommand::CheckPythonJudgedPanel => super::check_python_judged_panel(),
         XtaskCommand::TestOracleReport => super::reports::test_oracle_report(),
         XtaskCommand::TestEfficiencyReport => super::reports::test_efficiency_report(),
         XtaskCommand::BadgeArtifacts => super::reports::badge_artifacts(),
