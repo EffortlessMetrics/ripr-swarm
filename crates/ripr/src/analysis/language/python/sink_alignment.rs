@@ -82,6 +82,22 @@ pub(super) fn classify_sink_alignment(
     classify_sink_alignment_with_old(owner, line_text, None, related, all_tests)
 }
 
+/// Whether a strong related-test oracle actually observes the changed behavior's
+/// sink — not merely reaches the owner. Derived from [`classify_sink_alignment`]
+/// so the boolean and the surfaced `oracle_alignment` can never disagree. Now a
+/// `#[cfg(test)]` regression helper: production code reads the alignment directly
+/// via [`SinkAlignment::observes`], and the existing boolean tests pin that the
+/// derivation stays equivalent to the prior decision.
+#[cfg(test)]
+pub(super) fn strong_oracle_observes_owner(
+    owner: &PythonOwner,
+    line_text: &str,
+    related: &[RelatedTest],
+    all_tests: &[PythonTest],
+) -> bool {
+    classify_sink_alignment(owner, line_text, related, all_tests).observes()
+}
+
 /// Whether the changed line is genuinely a control-flow construct (a predicate or
 /// error-path), for the empty-token-delta fallback gate. This mirrors the
 /// `Predicate` and `ErrorPath` conditions of [`classify_probe_shape`] WITHOUT its
