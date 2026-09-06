@@ -53,8 +53,8 @@ pub(crate) const POWERSHELL_UNAVAILABLE_DISCLOSURE: &str =
 ///   consumers would reject. The target is rendered as a PowerShell string
 ///   literal — method-call arguments parse in expression mode, where a bare
 ///   path is a parse error (PR #3617 review) — and the redirect is detected
-///   only outside single-quoted regions, so a quoted `>` inside an argument
-///   cannot hijack it.
+///   only outside single- and double-quoted regions, so a quoted `>` inside
+///   an argument cannot hijack it. A quote of the other kind is literal data.
 /// - The artifact write is guarded: the invocation's output is captured, the
 ///   write happens only `if ($LASTEXITCODE -eq 0)`, and a nonzero status
 ///   throws `"ripr exited with code $LASTEXITCODE"`. Without the guard, a
@@ -78,26 +78,7 @@ pub(crate) fn powershell_command(command: &str) -> Option<String> {
         return None;
     }
     let command = command.replace("'\\''", "''");
-    let mut chars = command.char_indices().peekable();
-    let mut in_single_quote = false;
-    let mut redirect = None;
-    while let Some((index, ch)) = chars.next() {
-        if ch == '\'' {
-            if in_single_quote && chars.peek().is_some_and(|(_, next)| *next == '\'') {
-                chars.next();
-                continue;
-            }
-            in_single_quote = !in_single_quote;
-        } else if !in_single_quote
-            && ch == '>'
-            && command[..index].ends_with(' ')
-            && command[index + ch.len_utf8()..].starts_with(' ')
-        {
-            redirect = Some(index);
-            break;
-        }
-    }
-    if let Some(index) = redirect {
+    if let Some(index) = powershell_redirect_offset(&command) {
         let invocation = command[..index].trim_end();
         let output = powershell_literal(command[index + 1..].trim());
         return Some(format!(
@@ -105,6 +86,41 @@ pub(crate) fn powershell_command(command: &str) -> Option<String> {
         ));
     }
     Some(command)
+}
+
+/// Find the generated ` > ` operator after apostrophe translation. This is
+/// only quote-aware boundary selection; unsupported escapes and compound
+/// shell forms are rejected before this helper runs. Offsets remain UTF-8
+/// byte indices, including when quoted arguments contain non-ASCII text.
+fn powershell_redirect_offset(command: &str) -> Option<usize> {
+    let mut chars = command.char_indices().peekable();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    while let Some((index, ch)) = chars.next() {
+        if in_single_quote {
+            if ch == '\'' {
+                if chars.peek().is_some_and(|(_, next)| *next == '\'') {
+                    chars.next();
+                } else {
+                    in_single_quote = false;
+                }
+            }
+        } else if in_double_quote {
+            if ch == '"' {
+                in_double_quote = false;
+            }
+        } else if ch == '\'' {
+            in_single_quote = true;
+        } else if ch == '"' {
+            in_double_quote = true;
+        } else if ch == '>'
+            && command[..index].ends_with(' ')
+            && command[index + ch.len_utf8()..].starts_with(' ')
+        {
+            return Some(index);
+        }
+    }
+    None
 }
 
 /// Decide whether a bash command is compound: forms whose PowerShell
@@ -220,6 +236,34 @@ mod tests {
         assert_eq!(
             powershell_command("ripr check --root 'café' > 'résumé.json'"),
             Some("$ripr = ((ripr check --root 'café') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+        );
+    }
+
+    #[test]
+    fn powershell_command_preserves_quoted_redirect_tokens_without_a_write() {
+        for command in [
+            "cargo test \"a > b\"",
+            "cargo test \"owner's > case\"",
+            "cargo test 'a \" > b'",
+            "cargo test \"résumé > café\"",
+        ] {
+            assert_eq!(powershell_command(command).as_deref(), Some(command));
+        }
+    }
+
+    #[test]
+    fn powershell_command_finds_real_redirect_after_double_quoted_argument() {
+        assert_eq!(
+            powershell_command("ripr check --root \"café > owner's repo\" > 'résumé.json'"),
+            Some("$ripr = ((ripr check --root \"café > owner's repo\") | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+        );
+    }
+
+    #[test]
+    fn powershell_command_keeps_double_quote_literal_inside_single_quotes() {
+        assert_eq!(
+            powershell_command("cargo test 'a \" > b' > evidence.txt"),
+            Some("$ripr = ((cargo test 'a \" > b') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('evidence.txt', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
