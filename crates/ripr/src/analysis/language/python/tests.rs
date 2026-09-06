@@ -3935,11 +3935,28 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
     Ok(())
 }
 
-#[test]
-fn analyze_repo_returns_empty_scaffold() -> Result<(), String> {
-    let adapter = PythonAdapter;
-    let options = AnalysisOptions {
-        root: PathBuf::from("."),
+/// Shared helpers for the repo-mode adapter tests (#3554 PR C): a tiny
+/// isolated workspace, explicit working-set limits (#2109), and a digest
+/// for the byte-determinism proof.
+fn unique_repo_test_root(label: &str) -> PathBuf {
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "ripr-py-repo-adapter-{label}-{}-{count}",
+        std::process::id()
+    ))
+}
+
+fn write_repo_file(path: &Path, contents: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| format!("create parent: {err}"))?;
+    }
+    std::fs::write(path, contents).map_err(|err| format!("write {}: {err}", path.display()))
+}
+
+fn repo_options(root: &Path) -> AnalysisOptions {
+    AnalysisOptions {
+        root: root.to_path_buf(),
         base: None,
         diff_file: None,
         mode: crate::analysis::AnalysisMode::Deep,
@@ -3951,10 +3968,245 @@ fn analyze_repo_returns_empty_scaffold() -> Result<(), String> {
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
-    };
-    let policy = OraclePolicy::default();
-    let result = adapter.analyze_repo(&options, &policy)?;
+    }
+}
+
+fn repo_working_set_limit(limit: usize) -> repo::RepoWorkingSetLimit {
+    repo::RepoWorkingSetLimit {
+        limit,
+        source: repo::RepoWorkingSetCapSource::Default,
+    }
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// The empty scaffold is gone (#3554 PR C): repo mode over a supported flat
+/// layout returns non-zero native Python evidence through the public
+/// adapter surface — diff-mode finding shapes, native Python identity, and
+/// input-authority counts.
+#[test]
+fn analyze_repo_returns_bounded_native_evidence() -> Result<(), String> {
+    let root = unique_repo_test_root("native-evidence");
+    write_repo_file(&root.join("app.py"), "def run():\n    return 1\n")?;
+    write_repo_file(
+        &root.join("test_app.py"),
+        "from app import run\n\n\ndef test_run():\n    assert run() == 1\n",
+    )?;
+    let adapter = PythonAdapter;
+    let result = adapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+
+    assert!(
+        !result.findings.is_empty(),
+        "repo mode must return non-zero evidence for a supported workspace"
+    );
+    assert_eq!(result.production_files, 1);
+    assert_eq!(result.skipped_files, 0);
+    assert!(
+        result.harness_projections.is_empty(),
+        "no harness registrations exist in repo mode"
+    );
+    assert_eq!(
+        result.partial_reason, None,
+        "a fully analyzed working set is not a partial run"
+    );
+    for finding in &result.findings {
+        assert_eq!(
+            finding.language,
+            Some(crate::domain::LanguageId::Python),
+            "native Python identity is retained"
+        );
+        assert_eq!(
+            finding.language_status,
+            Some(crate::domain::LanguageStatus::Preview),
+            "repo-mode Python findings stay preview-tier"
+        );
+        let gap = finding
+            .canonical_gap
+            .as_ref()
+            .ok_or("canonical gap expected for an unlimited behavior item")?;
+        assert!(
+            gap.id.starts_with("gap:python:app.py:"),
+            "canonical gap keeps native Python identity: {}",
+            gap.id
+        );
+        assert_eq!(gap.language, "python");
+        assert_eq!(
+            finding.probe.location.file,
+            PathBuf::from("app.py"),
+            "finding locations name the analyzed workspace-relative file"
+        );
+    }
+    // The discriminated owner carries the exact-value oracle evidence.
+    let run = result
+        .findings
+        .iter()
+        .find(|finding| {
+            finding
+                .probe
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.0.ends_with("::run"))
+        })
+        .ok_or("expected a finding for the `run` owner")?;
+    assert!(
+        matches!(run.class, crate::domain::ExposureClass::Exposed),
+        "a strong exact-value oracle that observes the changed owner is the exposed shape, got {:?}",
+        run.class
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+/// Repeated `analyze_repo` runs over identical input produce identical
+/// findings (byte- and digest-identical), and the result counts reflect the
+/// selected working set (#3554 PR C determinism/currentness proof). There
+/// is no cache in the Python producer, so determinism holds by
+/// construction; the digest pins it against accidental nondeterminism.
+#[test]
+fn analyze_repo_is_deterministic_and_candidate_current() -> Result<(), String> {
+    let root = unique_repo_test_root("determinism");
+    write_repo_file(&root.join("app.py"), "def run():\n    return 1\n")?;
+    write_repo_file(
+        &root.join("test_app.py"),
+        "from app import run\n\n\ndef test_run():\n    assert run() == 1\n",
+    )?;
+    // A vendor file is excluded by role and must show up in skipped_files.
+    write_repo_file(&root.join("vendor/dep.py"), "VALUE = 2\n")?;
+
+    let first = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(800))?;
+    let second = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(800))?;
+
+    assert_eq!(first.findings, second.findings);
+    let first_digest = fnv1a64(format!("{:?}", first.findings).as_bytes());
+    let second_digest = fnv1a64(format!("{:?}", second.findings).as_bytes());
+    assert_eq!(first_digest, second_digest);
+    assert!(!first.findings.is_empty());
+    // Input identity: counts come from the selected working-set authority.
+    assert_eq!(first.production_files, 1);
+    assert_eq!(first.skipped_files, 1, "the vendor file is role-excluded");
+    // Currentness: repo mode seeds probes from the live tree (#3280).
+    assert!(
+        first
+            .findings
+            .iter()
+            .all(|finding| finding.source_currentness
+                == crate::domain::SourceCurrentness::CandidateCurrent)
+    );
+    assert_eq!(first.partial_reason, None);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+/// Test and helper files contribute evidence but never seed production
+/// findings — pinned at the `analyze_repo` level (#3554 claim boundary).
+#[test]
+fn analyze_repo_test_files_never_seed_production_findings() -> Result<(), String> {
+    let root = unique_repo_test_root("no-seed");
+    write_repo_file(&root.join("app.py"), "def app_value():\n    return 1\n")?;
+    write_repo_file(
+        &root.join("test_helper.py"),
+        "def seeded():\n    return 42\n\n\ndef test_real():\n    assert True\n",
+    )?;
+    write_repo_file(&root.join("conftest.py"), "def helper():\n    return 7\n")?;
+    let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(800))?;
+
+    assert_eq!(result.production_files, 1);
+    assert!(
+        !result.findings.is_empty(),
+        "the production file still yields evidence"
+    );
+    for finding in &result.findings {
+        assert_eq!(
+            finding.probe.location.file,
+            PathBuf::from("app.py"),
+            "a production-looking def in a test/helper file must never seed a finding, got {}",
+            finding.probe.location.file.display()
+        );
+    }
+    assert_eq!(result.partial_reason, None);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+/// A run capped by the working-set limit (#2109) keeps its computed
+/// findings and discloses the cap through `partial_reason`, which the
+/// pipeline maps onto the shared partial-run channel.
+#[test]
+fn analyze_repo_discloses_a_capped_run_as_partial() -> Result<(), String> {
+    let root = unique_repo_test_root("capped");
+    write_repo_file(&root.join("alpha.py"), "def one():\n    return 1\n")?;
+    write_repo_file(&root.join("zeta.py"), "def two():\n    return 2\n")?;
+    let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(1))?;
+
+    assert_eq!(result.production_files, 1, "the cap selected one file");
+    assert_eq!(result.skipped_files, 1, "the capped file is counted");
+    let reason = result
+        .partial_reason
+        .ok_or("a capped run must disclose a partial reason")?;
+    assert!(reason.contains("capped"), "{reason}");
+    assert!(
+        reason.contains("RIPR_MAX_REPO_INDEX_FILES"),
+        "the recovery route is retained: {reason}"
+    );
+    // Findings cover only the selected file.
+    for finding in &result.findings {
+        assert_eq!(
+            finding.probe.location.file,
+            PathBuf::from("alpha.py"),
+            "findings beyond the cap must not exist"
+        );
+    }
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+/// A parse failure is disclosed as a partial run — the analyzed files keep
+/// their findings and the denominator stays explicit (#3554).
+#[test]
+fn analyze_repo_discloses_parse_failures_as_partial() -> Result<(), String> {
+    let root = unique_repo_test_root("parse-failure");
+    write_repo_file(&root.join("good.py"), "def good():\n    return 1\n")?;
+    write_repo_file(&root.join("broken.py"), "def broken(:\n    pass\n")?;
+    let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(800))?;
+
+    assert_eq!(result.production_files, 2);
+    let reason = result
+        .partial_reason
+        .ok_or("a parse-failure run must disclose a partial reason")?;
+    assert!(reason.contains("partial"), "{reason}");
+    assert!(reason.contains("failed to read or parse"), "{reason}");
+    assert!(
+        result
+            .findings
+            .iter()
+            .all(|finding| finding.probe.location.file == Path::new("good.py")),
+        "the failed file produced no findings"
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+/// A workspace with no Python production source is an honest zero — not a
+/// partial run and not a fabricated limitation (#3554).
+#[test]
+fn analyze_repo_returns_an_honest_zero_for_a_tests_only_workspace() -> Result<(), String> {
+    let root = unique_repo_test_root("tests-only");
+    write_repo_file(
+        &root.join("test_only.py"),
+        "def test_only():\n    assert True\n",
+    )?;
+    let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(800))?;
+
     assert!(result.findings.is_empty());
     assert_eq!(result.production_files, 0);
+    assert_eq!(result.partial_reason, None);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }

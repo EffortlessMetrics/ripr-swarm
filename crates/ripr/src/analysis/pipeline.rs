@@ -723,6 +723,18 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
         match attempted {
             Ok(result) => {
                 cancellation::checkpoint()?;
+                // Mirror the Rust repo path's generated-file skip
+                // disclosure: a capped/partial preview run records a
+                // `Partial` language run on the shared channel, so human
+                // and JSON output render the limitation and gates fail
+                // closed on the partial denominator (#3554, #2109).
+                if let Some(reason) = &result.partial_reason {
+                    language_runs.push(LanguageRun {
+                        language: language.as_str().to_string(),
+                        status: LanguageRunStatus::Partial,
+                        reason: Some(reason.clone()),
+                    });
+                }
                 findings.extend(result.findings);
                 files_by_language.push((*language, result.production_files));
             }
@@ -2232,6 +2244,137 @@ index 0000000..1111111 100644
 
         assert!(result.findings.is_empty());
         assert_eq!(result.summary.changed_rust_files, 0);
+        Ok(())
+    }
+
+    /// Mixed Rust/Python repo reconciliation (#3554 PR C, #2103): each
+    /// language keeps its own production-file count, Python evidence adds no
+    /// weight to `changed_rust_files`, and Python findings keep their native
+    /// identity.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn repo_pipeline_mixed_rust_python_keeps_per_language_counts() -> Result<(), String> {
+        use crate::domain::LanguageId as DomainLanguageId;
+        let root = temp_root("mixed-repo")?;
+        write(
+            &root.join("src").join("lib.rs"),
+            "pub fn discount(price: u32) -> u32 { price / 2 }\n",
+        )?;
+        write(&root.join("app.py"), "def run():\n    return 1\n")?;
+        write(
+            &root.join("test_app.py"),
+            "from app import run\n\n\ndef test_run():\n    assert run() == 1\n",
+        )?;
+
+        let result = run_repo_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Deep,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::Python],
+        )?;
+
+        // Both languages produced evidence.
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|finding| finding.language == Some(DomainLanguageId::Rust)),
+            "expected at least one Rust finding"
+        );
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|finding| finding.language == Some(DomainLanguageId::Python)),
+            "expected at least one Python finding"
+        );
+        // #2103: `changed_rust_files` counts the Rust adapter only.
+        assert_eq!(
+            result.summary.changed_rust_files, 1,
+            "Python production files must never inflate changed_rust_files"
+        );
+        let counts: Vec<(&str, usize)> = result
+            .summary
+            .changed_files_by_language
+            .iter()
+            .map(|count| (count.language.as_str(), count.files))
+            .collect();
+        assert_eq!(
+            counts,
+            vec![("python", 1), ("rust", 1)],
+            "per-language counts stay separate and sorted"
+        );
+        // Both runs completed: no partial-run disclosure.
+        assert!(
+            result.language_runs.is_empty(),
+            "unexpected language runs: {:?}",
+            result.language_runs
+        );
+        Ok(())
+    }
+
+    /// A partial Python repo run (a parse failure leaves the analyzed
+    /// denominator) records a `Partial` language run on the shared channel —
+    /// the same disclosure the Rust repo path uses for generated-file skips
+    /// (#3554, #2109) — while the analyzed files' findings still emit.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn repo_pipeline_records_partial_disclosure_for_python_parse_failures() -> Result<(), String> {
+        let root = temp_root("py-repo-partial")?;
+        write(&root.join("good.py"), "def good():\n    return 1\n")?;
+        write(&root.join("broken.py"), "def broken(:\n    pass\n")?;
+
+        let result = run_repo_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Deep,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Python],
+        )?;
+
+        let run = result
+            .language_runs
+            .iter()
+            .find(|run| run.language == "python")
+            .ok_or("expected a python language run disclosure")?;
+        assert_eq!(run.status, LanguageRunStatus::Partial);
+        let reason = run
+            .reason
+            .as_deref()
+            .ok_or("partial run must carry a reason")?;
+        assert!(reason.contains("partial"), "{reason}");
+        assert!(reason.contains("failed to read or parse"), "{reason}");
+        // The analyzed file's findings still emit.
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|finding| finding.language == Some(crate::domain::LanguageId::Python)),
+            "findings from the analyzed files must survive the partial disclosure"
+        );
         Ok(())
     }
 }

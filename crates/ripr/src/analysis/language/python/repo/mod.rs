@@ -1,17 +1,19 @@
-//! Python repo-mode input + evidence authorities (#3554 PR A / PR B).
+//! Python repo-mode input + evidence authorities (#3554 PR A / PR B) and
+//! the producer surface `PythonAdapter::analyze_repo` consumes (PR C).
 //!
-//! PR A builds the input structure beneath the documented repo-mode
-//! limitation (see `docs/LANGUAGE_ADAPTER_PREVIEW.md` § "Repo-Mode Analysis
-//! Is Rust-Only"): shared workspace role selection, bounded discovery
-//! (#2109), and typed run status. PR B adds the native evidence producer
-//! ([`evidence::build_repo_evidence`]): facts built once over the selected
-//! production/test set, native Python behavior items with related-test and
-//! oracle evidence, and typed limitations — exercised by unit tests only.
-//! `PythonAdapter::analyze_repo` keeps its empty-scaffold output until the
-//! pipeline projection (PR C) consumes the producer, so nothing here changes
-//! public behavior yet.
+//! PR A builds the input structure beneath the former repo-mode limitation
+//! (see `docs/LANGUAGE_ADAPTER_PREVIEW.md`): shared workspace role
+//! selection, bounded discovery (#2109), and typed run status. PR B adds
+//! the native evidence producer ([`evidence::build_repo_evidence`]): facts
+//! built once over the selected production/test set, native Python behavior
+//! items with related-test and oracle evidence, typed limitations, and the
+//! public `Finding` projection over the same pass. PR C wires
+//! `PythonAdapter::analyze_repo` to
+//! [`select_repo_input_with_limit`] + [`build_repo_evidence`] and maps
+//! [`evidence::partial_disclosure`] onto the pipeline's shared
+//! `LanguageRun` partial-run channel.
 //!
-//! [`select_repo_input`] composes the input modules into one
+//! [`select_repo_input_with_limit`] composes the input modules into one
 //! [`PythonRepoInput`]: the bounded selected working set partitioned by
 //! role, the typed discovery counts, the run status, the effective
 //! working-set limit with its cap source, the retained operator recovery
@@ -19,7 +21,7 @@
 
 #![allow(
     dead_code,
-    reason = "Python repo-mode input and evidence producers are exercised by unit tests until the PR C pipeline projection consumes them from analyze_repo (#3554)"
+    reason = "PythonRepoRunStatus::Disabled and the config-disabled wrappers stay typed ahead of a config producer; remaining unconsumed items are exercised by unit tests (#3554)"
 )]
 
 mod discovery;
@@ -27,9 +29,13 @@ mod evidence;
 mod roles;
 mod run_status;
 
-use discovery::{
-    CapRecoveryRoute, DiscoveryCounts, RepoWorkingSetLimit, discover_repo_working_set,
+#[cfg(test)]
+pub(in crate::analysis::language::python) use discovery::RepoWorkingSetCapSource;
+use discovery::{CapRecoveryRoute, DiscoveryCounts, discover_repo_working_set};
+pub(in crate::analysis::language::python) use discovery::{
+    RepoWorkingSetLimit, repo_working_set_limit,
 };
+pub(in crate::analysis::language::python) use evidence::{build_repo_evidence, partial_disclosure};
 use roles::PythonFileRole;
 use run_status::{PartialRunReason, PythonRepoRunStatus};
 use std::path::{Path, PathBuf};
@@ -67,19 +73,11 @@ pub(in crate::analysis::language::python) struct PythonRepoInput {
     pub(in crate::analysis::language::python) test_framework: Option<&'static str>,
 }
 
-/// Select the Python repo analysis input for `root`, reading the shared
-/// working-set override from the process environment (#2109).
-pub(in crate::analysis::language::python) fn select_repo_input(
-    root: &Path,
-) -> Result<PythonRepoInput, String> {
-    let working_set_limit = discovery::repo_working_set_limit()?;
-    Ok(select_repo_input_with_limit(root, working_set_limit))
-}
-
 /// Select the Python repo analysis input with an explicit working-set limit.
 ///
-/// The deterministic core of [`select_repo_input`]; the env-reading wrapper
-/// only resolves the limit (#2109) before delegating here.
+/// The deterministic core of the repo input selection; the caller resolves
+/// the limit from the shared environment override (#2109, see
+/// [`repo_working_set_limit`]) before delegating here.
 pub(in crate::analysis::language::python) fn select_repo_input_with_limit(
     root: &Path,
     working_set_limit: RepoWorkingSetLimit,

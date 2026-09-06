@@ -260,6 +260,19 @@ impl LanguageAdapter for PerlAdapter {
             .filter(|f| f.role.iter().any(|r| matches!(r, FileRole::Source)))
             .count();
 
+        // A Partial fact packet analyzed only part of the repository: its
+        // findings are advisory and the run must not back a full
+        // denominator, so the pipeline records a partial `LanguageRun`
+        // (#3668 review).
+        let partial_reason = if packet.packet_status == PacketStatus::Partial {
+            Some(
+                "the Perl fact packet is partial: findings cover the packet's subjects only"
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+
         Ok(LanguageRepoResult {
             findings,
             production_files,
@@ -267,6 +280,7 @@ impl LanguageAdapter for PerlAdapter {
             // Perl has no harness registry: the projection is empty, as
             // for every non-Rust adapter (#3532).
             harness_projections: Vec::new(),
+            partial_reason,
         })
     }
 }

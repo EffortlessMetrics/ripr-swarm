@@ -1,4 +1,5 @@
-//! Native Python repo-mode evidence producer (#3554 PR B).
+//! Native Python repo-mode evidence producer (#3554 PR B) and its public
+//! Finding projection (#3554 PR C).
 //!
 //! [`build_repo_evidence`] builds facts ONCE over the selected working set
 //! (`PythonRepoInput`, PR A) and produces native Python behavior items with
@@ -33,6 +34,14 @@
 //!   order, with no timestamps, so identical input yields identical
 //!   evidence (pinned by a byte/digest test below).
 //!
+//! PR C projection: the same pass also emits the public `Finding`s
+//! ([`PythonRepoEvidence::findings`]) by running the diff-mode classifier
+//! (`classify_change_with_context`) over each representative behavior line,
+//! so repo-mode findings are indistinguishable in shape from diff-mode
+//! findings and retain native Python identity. [`partial_disclosure`]
+//! renders the typed partial/capped run state for the pipeline's shared
+//! `LanguageRun` channel; `analyze_repo` (PR C) is the production caller.
+//!
 //! Parse timeouts are NOT typed here: the parser substrate
 //! (`rustpython_parser::parse`) exposes no per-file timeout mechanism, and
 //! a fabricated timeout row would be invented evidence. The deferral is
@@ -40,6 +49,7 @@
 //! (#3554 PR B); read and parse failures are typed as
 //! [`PythonRepoLimitation::ParseFailure`] rows today.
 
+use super::super::classify::{PythonNoBehaviorContext, classify_change_with_context};
 use super::super::probe_shape::{canonical_python_gap_for, classify_probe_shape};
 use super::super::related_tests::{
     PythonRelatedCandidate, find_related_tests, related_test_candidates,
@@ -57,18 +67,20 @@ use super::roles::PythonFileRole;
 use super::run_status::{PartialRunReason, PythonRepoRunStatus};
 use super::{CapRecoveryRoute, DiscoveryCounts, PythonRepoInput, RepoWorkingSetLimit};
 use crate::domain::{
-    DeltaKind, FindingCanonicalGap, OracleKind, OracleStrength, ProbeFamily, RelatedTest,
+    DeltaKind, Finding, FindingCanonicalGap, OracleKind, OracleStrength, ProbeFamily, RelatedTest,
     StaticLimitKind,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
 
-/// Native Python repo-mode evidence for one bounded run (#3554 PR B).
+/// Native Python repo-mode evidence for one bounded run (#3554).
 ///
-/// This is the producer-level shape: PR C owns the public
-/// `LanguageRepoResult` projection, so nothing here is rendered or bridged
-/// to Rust seam vocabulary yet.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The producer-level shape and the public projection in one deterministic
+/// pass: [`Self::findings`] carries the `LanguageRepoResult` payload that
+/// `analyze_repo` (PR C) publishes, built by the same diff-mode classifier
+/// over the same representative behavior lines, so the two views can never
+/// disagree about what the run analyzed.
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::analysis::language::python) struct PythonRepoEvidence {
     /// Post-analysis run status. Only [`PythonRepoRunStatus::Complete`] can
     /// back a full-denominator claim.
@@ -89,6 +101,13 @@ pub(in crate::analysis::language::python) struct PythonRepoEvidence {
     pub(in crate::analysis::language::python) owners: Vec<PythonRepoOwnerEvidence>,
     /// Typed limitations, in deterministic construction order.
     pub(in crate::analysis::language::python) limitations: Vec<PythonRepoLimitation>,
+    /// Public `Finding` projection over the production behavior items,
+    /// in production-file order and ascending line order within each file.
+    /// Built by `classify_change_with_context` — the same classifier diff
+    /// mode uses — so findings are shape-identical to diff-mode findings
+    /// with native Python identity (`language: python`, preview status,
+    /// `gap:python:` canonical gaps); no Rust `SeamKind` bridge (#3039).
+    pub(in crate::analysis::language::python) findings: Vec<Finding>,
 }
 
 /// Per-file input identity for one selected file (#3554).
@@ -228,11 +247,10 @@ pub(in crate::analysis::language::python) enum PythonRepoLimitation {
     },
 }
 
-/// Build the native Python repo evidence for one selected input (#3554 PR
-/// B).
+/// Build the native Python repo evidence for one selected input (#3554).
 ///
 /// Deterministic: `build_repo_evidence` over identical workspace content
-/// and identical inputs returns identical evidence.
+/// and identical inputs returns identical evidence and identical findings.
 pub(in crate::analysis::language::python) fn build_repo_evidence(
     input: &PythonRepoInput,
     root: &Path,
@@ -241,6 +259,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     let mut files = Vec::new();
     let mut limitations = Vec::new();
     let mut owners = Vec::new();
+    let mut findings = Vec::new();
 
     // No-subject and disabled runs analyze nothing: an honest zero with the
     // status reason, never fabricated limitations (#3554).
@@ -257,6 +276,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
             files,
             owners,
             limitations,
+            findings,
         };
     }
 
@@ -307,13 +327,19 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     }
 
     // Production subjects: owners + behavior items, related against the
-    // evidence pool built above.
+    // evidence pool built above. The public Finding projection is built in
+    // the same pass so both views share one read+parse per file (PR C).
     for relative in &input.production_files {
         match load_facts(root, relative) {
             Ok(facts) => {
                 analyzed += 1;
-                let owner_evidence =
-                    build_production_file_evidence(relative, &facts, &all_tests, &mut limitations);
+                let owner_evidence = build_production_file_evidence(
+                    relative,
+                    &facts,
+                    &all_tests,
+                    &mut limitations,
+                    &mut findings,
+                );
                 let behavior_item_count = owner_evidence
                     .iter()
                     .map(|owner| owner.behavior_items.len())
@@ -399,6 +425,54 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         files,
         owners,
         limitations,
+        findings,
+    }
+}
+
+/// Typed partial-run disclosure for the pipeline's shared `LanguageRun`
+/// channel (#3554, #2109).
+///
+/// `Some` exactly when the post-analysis status is capped or partial — the
+/// same condition that refuses a full-denominator claim — so the pipeline
+/// records a `Partial` language run that human/JSON output renders and
+/// gates fail closed on. A `Complete` run and an honest zero
+/// (`NoPythonSource`) disclose nothing: neither is a partial denominator.
+pub(in crate::analysis::language::python) fn partial_disclosure(
+    evidence: &PythonRepoEvidence,
+) -> Option<String> {
+    match &evidence.status {
+        PythonRepoRunStatus::Complete
+        | PythonRepoRunStatus::Selected
+        | PythonRepoRunStatus::NoPythonSource
+        | PythonRepoRunStatus::Disabled => None,
+        PythonRepoRunStatus::Capped => {
+            let routes = evidence
+                .recovery_routes
+                .iter()
+                .map(|route| route.describe())
+                .collect::<Vec<_>>()
+                .join("; ");
+            let recovery_suffix = if routes.is_empty() {
+                String::new()
+            } else {
+                format!(" Recovery: {routes}")
+            };
+            Some(format!(
+                "repo run capped: {} Python file(s) beyond the working-set limit of {}; findings cover the selected files only.{}",
+                evidence.counts.capped, evidence.working_set_limit.limit, recovery_suffix
+            ))
+        }
+        PythonRepoRunStatus::Partial { reason } => Some(match reason {
+            PartialRunReason::ParseFailures { failed } => format!(
+                "repo run partial: {failed} selected Python file(s) failed to read or parse and left the analyzed denominator"
+            ),
+            PartialRunReason::DiscoveryIncomplete { unreadable } => format!(
+                "repo run partial: {unreadable} workspace subtree(s) could not be read, so discovery may have missed Python source"
+            ),
+            PartialRunReason::UnanalyzedAmbiguous { count } => format!(
+                "repo run partial: {count} selected Python file(s) had an ambiguous role and were counted but never analyzed"
+            ),
+        }),
     }
 }
 
@@ -418,11 +492,19 @@ fn load_facts(root: &Path, relative: &Path) -> Result<PythonSourceFacts, String>
 /// Build owner evidence for one successfully parsed production file:
 /// behavior items grouped per owner via the shared line-to-owner mapping,
 /// with relations matched once per owner against the evidence pool.
+///
+/// The public `Finding`s are built in the same pass by
+/// [`classify_change_with_context`] — the same classifier diff mode runs on
+/// a changed line — so repo-mode findings are shape-identical to diff-mode
+/// findings (#3554 PR C). `old_line_text` is `None` (repo mode has no diff
+/// side); the classifier's currentness derivation then records
+/// `CandidateCurrent`, matching repo mode's live-tree seeding (#3280).
 fn build_production_file_evidence(
     relative: &Path,
     facts: &PythonSourceFacts,
     all_tests: &[PythonTest],
     limitations: &mut Vec<PythonRepoLimitation>,
+    findings: &mut Vec<Finding>,
 ) -> Vec<PythonRepoOwnerEvidence> {
     let file_owners = &facts.owners;
     let mut items_per_owner: Vec<Vec<PythonRepoBehaviorItem>> = vec![Vec::new(); file_owners.len()];
@@ -460,6 +542,39 @@ fn build_production_file_evidence(
             });
         }
         items_per_owner[index].push(item);
+        if let Some(mut finding) = classify_change_with_context(
+            relative,
+            line,
+            &text,
+            None,
+            file_owners,
+            all_tests,
+            PythonNoBehaviorContext::default(),
+        ) {
+            // Repo mode classifies every representative behavior line, so
+            // identical statements under one owner produce identical probe
+            // ids. Suffix the duplicates (.2, .3, ...) the way the repo
+            // probe inventory does, so suppression and selection resolve a
+            // single finding instead of hiding the rest (#3668 review).
+            let base_id = finding.id.clone();
+            let count = findings
+                .iter()
+                .filter(|existing| {
+                    existing.id == base_id
+                        || existing.id.strip_prefix(&base_id).is_some_and(|suffix| {
+                            suffix.starts_with('.')
+                                && suffix[1..].chars().all(|c| c.is_ascii_digit())
+                        })
+                })
+                .count()
+                + 1;
+            if count > 1 {
+                let suffixed = format!("{base_id}.{count}");
+                finding.id = suffixed.clone();
+                finding.probe.id.0 = suffixed;
+            }
+            findings.push(finding);
+        }
     }
 
     file_owners
@@ -1177,6 +1292,36 @@ mod tests {
                 .any(|owner| !owner.behavior_items.is_empty())
         );
         assert_eq!(first.counts.excluded_by_role, 2);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_identical_statements_in_owner_get_sequential_finding_and_probe_ids()
+    -> Result<(), String> {
+        let root = unique_test_root("repeated_stmt_ids");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        // Three identical statements under the same function
+        write_file(
+            &root.join("app.py"),
+            "def run():\n    x = 1\n    x = 1\n    x = 1\n",
+        )?;
+        let evidence = build_repo_evidence(
+            &super::super::select_repo_input_with_limit(&root, default_limit()),
+            &root,
+        );
+        assert_eq!(evidence.findings.len(), 3);
+        let id0 = &evidence.findings[0].id;
+        let id1 = &evidence.findings[1].id;
+        let id2 = &evidence.findings[2].id;
+        assert_ne!(id0, id1);
+        assert_ne!(id1, id2);
+        assert_ne!(id0, id2);
+        assert_eq!(id1, &format!("{id0}.2"));
+        assert_eq!(id2, &format!("{id0}.3"));
+        assert_eq!(&evidence.findings[0].probe.id.0, id0);
+        assert_eq!(&evidence.findings[1].probe.id.0, id1);
+        assert_eq!(&evidence.findings[2].probe.id.0, id2);
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
