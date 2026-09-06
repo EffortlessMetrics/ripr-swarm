@@ -114,10 +114,14 @@ pub(in crate::analysis::language::python) fn repo_working_set_limit()
 /// - `discovered == selected + skipped`
 /// - `skipped == excluded_by_role + capped`
 /// - `analyzed_candidates <= selected` (the production-role subset)
+/// - when analysis ran: `analyzed + failed == selected - ambiguous`
+///   (ambiguous-role files are counted, never read; the current role
+///   authority never routes one, so the identity reads
+///   `analyzed + failed == selected`)
 ///
-/// `failed` counts selected files the evidence producer could not read or
-/// parse. Discovery itself performs no source reads, so it is always 0 here;
-/// the producer (PR B) owns populating it.
+/// `failed` and `analyzed` describe source reads, which discovery performs
+/// none of: both are always 0 here. The evidence producer (#3554 PR B) owns
+/// populating them over the selected working set.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::analysis::language::python) struct DiscoveryCounts {
     /// Adapter-routed Python files seen by the pruned walk, including
@@ -136,8 +140,12 @@ pub(in crate::analysis::language::python) struct DiscoveryCounts {
     /// Eligible files beyond the cap: counted, not analyzed.
     pub(in crate::analysis::language::python) capped: usize,
     /// Selected files the evidence producer could not read or parse; zero
-    /// until that producer lands (PR B).
+    /// after discovery — the producer (PR B) owns populating it.
     pub(in crate::analysis::language::python) failed: usize,
+    /// Selected files the evidence producer successfully read and parsed;
+    /// zero after discovery — the producer (PR B) owns populating it.
+    /// Together with `failed` this keeps the analyzed denominator explicit.
+    pub(in crate::analysis::language::python) analyzed: usize,
     /// Directory subtrees or entries the walk could not read (permission
     /// or I/O errors). Their contents were never discovered, so a
     /// non-zero count means the discovered set is incomplete: a
@@ -231,6 +239,7 @@ pub(in crate::analysis::language::python) fn discover_repo_working_set(
             excluded_by_role,
             capped,
             failed: 0,
+            analyzed: 0,
             unreadable_subtrees,
         },
     }
