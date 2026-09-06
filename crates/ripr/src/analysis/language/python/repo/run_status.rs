@@ -14,9 +14,10 @@
 /// Status of one Python repo-mode run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::analysis::language::python) enum PythonRepoRunStatus {
-    /// The full eligible working set was selected and analyzed; nothing was
-    /// capped or failed. The only status that can back a full-denominator
-    /// claim.
+    /// The full eligible working set was selected and analyzed; nothing
+    /// was capped, failed, or unreadable. Produced only by the evidence
+    /// producer (PR B) after successful analysis — never by discovery
+    /// alone. The only status that can back a full-denominator claim.
     Complete,
     /// Analysis ran, but part of the requested corpus was not analyzed.
     Partial {
@@ -24,6 +25,12 @@ pub(in crate::analysis::language::python) enum PythonRepoRunStatus {
         /// denominator explicit.
         reason: PartialRunReason,
     },
+    /// The bounded input was selected (full discovery, no cap hit), but
+    /// analysis has not run yet. Discovery alone cannot claim a
+    /// full-denominator outcome — only post-analysis [`Complete`] can
+    /// (#3666 review: a discovery-stage `Complete` would fabricate
+    /// completion evidence).
+    Selected,
     /// The eligible working set hit the repo working-set cap (#2109).
     /// Files beyond the cap were counted, not analyzed.
     Capped,
@@ -63,6 +70,7 @@ impl PythonRepoRunStatus {
     pub(in crate::analysis::language::python) fn as_str(&self) -> &'static str {
         match self {
             Self::Complete => "complete",
+            Self::Selected => "selected",
             Self::Partial { .. } => "partial",
             Self::Capped => "capped",
             Self::NoPythonSource => "no_python_source",
@@ -113,8 +121,17 @@ mod tests {
     }
 
     #[test]
+    fn selected_is_the_discovery_stage_state() {
+        // Discovery alone cannot claim a full denominator (#3666 review):
+        // the evidence producer (PR B) must complete analysis first.
+        assert!(!PythonRepoRunStatus::Selected.can_support_full_denominator());
+        assert_eq!(PythonRepoRunStatus::Selected.as_str(), "selected");
+    }
+
+    #[test]
     fn status_labels_are_stable() {
         assert_eq!(PythonRepoRunStatus::Complete.as_str(), "complete");
+        assert_eq!(PythonRepoRunStatus::Selected.as_str(), "selected");
         assert_eq!(
             PythonRepoRunStatus::Partial {
                 reason: PartialRunReason::ParseFailures { failed: 1 },

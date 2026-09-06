@@ -138,6 +138,11 @@ pub(in crate::analysis::language::python) struct DiscoveryCounts {
     /// Selected files the evidence producer could not read or parse; zero
     /// until that producer lands (PR B).
     pub(in crate::analysis::language::python) failed: usize,
+    /// Directory subtrees the walk could not read (permission or I/O
+    /// errors). Their contents were never discovered, so a non-zero count
+    /// means the discovered set is incomplete and a full-denominator claim
+    /// is not earned (#3666 review).
+    pub(in crate::analysis::language::python) unreadable_subtrees: usize,
 }
 
 /// Result of one bounded discovery pass: the selected working set with
@@ -158,34 +163,52 @@ pub(in crate::analysis::language::python) fn discover_repo_working_set(
     limit: usize,
 ) -> RepoDiscovery {
     let mut discovered: Vec<PathBuf> = Vec::new();
-    visit_repo_workspace(root, root, &mut discovered);
+    let mut unreadable_subtrees: usize = 0;
+    visit_repo_workspace(root, root, &mut discovered, &mut unreadable_subtrees);
     discovered.sort();
 
     let discovered_count = discovered.len();
-    let mut roles: Vec<(PathBuf, PythonFileRole)> = discovered
-        .into_iter()
-        .map(|path| {
-            let role = classify_python_file_role(&path);
-            (path, role)
-        })
-        .collect();
-    let excluded_by_role = roles
-        .iter()
-        .filter(|(_, role)| role_is_excluded_from_analysis(*role))
-        .count();
-    let eligible = roles.len() - excluded_by_role;
-    let selected_count = eligible.min(limit);
-    let capped = eligible - selected_count;
+    // Production files are the analysis subjects and get cap priority
+    // (#3666 review): a role-blind sorted prefix could fill the cap with
+    // evidence files and hide production source behind `capped`, which
+    // would misreport the workspace as having no Python production
+    // source at all.
+    let mut production: Vec<PathBuf> = Vec::new();
+    let mut evidence: Vec<(PathBuf, PythonFileRole)> = Vec::new();
+    let mut excluded_by_role = 0usize;
+    for path in &discovered {
+        let role = classify_python_file_role(path);
+        if role_is_excluded_from_analysis(role) {
+            excluded_by_role += 1;
+        } else if role == PythonFileRole::Production {
+            production.push(path.clone());
+        } else {
+            evidence.push((path.clone(), role));
+        }
+    }
 
-    let selected: Vec<(PathBuf, PythonFileRole)> = roles
-        .drain(..)
-        .filter(|(_, role)| !role_is_excluded_from_analysis(*role))
-        .take(selected_count)
+    let capped;
+    let mut selected_production = production.clone();
+    let mut selected_evidence: Vec<(PathBuf, PythonFileRole)> = Vec::new();
+    if production.len() >= limit {
+        // The cap excludes production subjects directly.
+        selected_production.truncate(limit);
+        capped = production.len() - limit + evidence.len();
+    } else {
+        let evidence_budget = limit - production.len();
+        capped = evidence.len().saturating_sub(evidence_budget);
+        selected_evidence = evidence.into_iter().take(evidence_budget).collect();
+    }
+
+    let selected_count = selected_production.len() + selected_evidence.len();
+    let analyzed_candidates = selected_production.len();
+
+    let mut selected: Vec<(PathBuf, PythonFileRole)> = selected_production
+        .into_iter()
+        .map(|path| (path, PythonFileRole::Production))
         .collect();
-    let analyzed_candidates = selected
-        .iter()
-        .filter(|(_, role)| *role == PythonFileRole::Production)
-        .count();
+    selected.extend(selected_evidence);
+    selected.sort_by(|(left, _), (right, _)| left.cmp(right));
 
     RepoDiscovery {
         selected,
@@ -197,6 +220,7 @@ pub(in crate::analysis::language::python) fn discover_repo_working_set(
             excluded_by_role,
             capped,
             failed: 0,
+            unreadable_subtrees,
         },
     }
 }
@@ -206,8 +230,17 @@ pub(in crate::analysis::language::python) fn discover_repo_working_set(
 /// Mirrors the adapter's `visit_workspace` pattern (no descent into
 /// excluded-directory subtrees) but retains generated files so the role
 /// authority can exclude them with counts.
-fn visit_repo_workspace(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
+fn visit_repo_workspace(
+    root: &Path,
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+    unreadable_subtrees: &mut usize,
+) {
     let Ok(entries) = std::fs::read_dir(dir) else {
+        // The subtree's contents were never discovered: count it so the
+        // run cannot claim a full denominator over an incomplete scan
+        // (#3666 review).
+        *unreadable_subtrees += 1;
         return;
     };
     for entry in entries.flatten() {
@@ -223,7 +256,7 @@ fn visit_repo_workspace(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
             continue;
         };
         if file_type.is_dir() {
-            visit_repo_workspace(root, &path, out);
+            visit_repo_workspace(root, &path, out, unreadable_subtrees);
         } else if file_type.is_file() {
             let adapter = PythonAdapter;
             if adapter.accepts_path(&path) {
