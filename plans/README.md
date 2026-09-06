@@ -74,22 +74,31 @@ ADR, and this plan only for durable sequence/context. See
 
 These entries are durable plan artifacts. Their own status fields describe the
 plan artifact and its historical/declared sequence; GitHub/worktree state decides
-what is being executed now.
+what is being executed now. Any retained `Active goal` header pointing to
+`.ripr/goals/active.toml` is historical, not a live link or execution instruction.
+This includes headers in plans linked below; following a link does not restore
+the retired scheduler's authority.
 
 ### Proposed Plans
 
-- [Python repair routing](python-repair-routing/implementation-plan.md)
-  (proposed; live implementation is selected through GitHub issues/PRs)
-- [TypeScript preview completion](typescript-preview-completion/implementation-plan.md)
-  (proposed lane plan; preview/advisory boundary preserved)
-- [Cross-language evidence router UX](cross-language-evidence-router-ux/implementation-plan.md)
-  (proposed successor plan; preview/advisory cross-language routing only)
 - [Use-case spec layer](use-case-specs/implementation-plan.md)
   (proposed; sequences the RIPR-SPEC-0065 through RIPR-SPEC-0073
   implementation slices after the spec set lands)
 
+### Retained Plans With Historical Execution Headers
+
+- [Python repair routing](python-repair-routing/implementation-plan.md)
+  (partially delivered historical work-item ledger; its delivery note and
+  linked promotion issue distinguish landed work from the remaining scope;
+  the former active-manifest reference is historical)
+- [Cross-language evidence router UX](cross-language-evidence-router-ux/implementation-plan.md)
+  (retained implementation record; its `Active goal` pointer to the deleted
+  manifest is historical and does not select current work)
+
 ### Closed or Complete Plans
 
+- [TypeScript preview completion](typescript-preview-completion/implementation-plan.md)
+  (closed lane plan; not a support-tier promotion)
 - [Actionable surface translation](actionable-surface-translation/implementation-plan.md)
   (closed cross-surface translation rail)
 - [Editor actionable gap queue](editor-actionable-gap-queue/implementation-plan.md)
