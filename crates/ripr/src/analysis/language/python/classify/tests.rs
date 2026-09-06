@@ -33,7 +33,8 @@ fn assert_strong_oracle_is_not_discrimination(finding: &Finding) {
 /// Explicit positional and keyword arguments both bypass the changed default.
 #[test]
 fn overridden_default_does_not_get_a_positive_discriminator_summary() -> Result<(), String> {
-    let source = "def render(name, verbose=True):\n    return f\"[debug] {name}\" if verbose else name\n";
+    let source =
+        "def render(name, verbose=True):\n    return f\"[debug] {name}\" if verbose else name\n";
     for invocation in ["render(\"Sam\", verbose=False)", "render(\"Sam\", False)"] {
         let tests = format!(
             "from src.subject import render\n\ndef test_render():\n    assert {invocation} == \"Sam\"\n"
@@ -79,8 +80,7 @@ fn exercised_default_retains_its_positive_discriminator_summary() -> Result<(), 
 
 /// Observing the unchanged input is not observing the changed return value.
 #[test]
-fn orthogonal_strong_oracle_does_not_get_a_positive_discriminator_summary()
--> Result<(), String> {
+fn orthogonal_strong_oracle_does_not_get_a_positive_discriminator_summary() -> Result<(), String> {
     let finding = classify_case(
         "def next_value(count):\n    return count - 1\n",
         "from src.subject import next_value\n\ndef test_input():\n    count = 5\n    result = next_value(count)\n    assert count == 5\n    assert result > 0\n",
