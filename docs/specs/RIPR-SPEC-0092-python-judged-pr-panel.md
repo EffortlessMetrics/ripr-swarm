@@ -12,6 +12,17 @@ accepted threshold, or scaled promotion corpus is established, and the seed
 artifacts are historical evidence, not a measured current
 false-actionable/false-`exposed` rate.
 
+Status note (2026-09-04, #3555 PR A): a typed loader and semantic validator
+now exist — `xtask/src/python_judged_panel.rs` behind
+`cargo xtask python-judged-panel check [--check]`, wired into
+`cargo xtask precommit` as `cargo xtask check-python-judged-panel`. It
+validates envelope identity, direction and judgment contracts, row-derived
+totals, and diff/anchor proofs over the retained inventory, and keeps null
+labels unjudged. The spec's remaining acceptance criteria (a current
+replayed panel covering all three directions, a current promotion-grade
+rerun, an accepted threshold, and a scaled promotion corpus) remain unmet;
+the status stays **proposed**.
+
 Owner: language-adapter / swarm
 
 Linked proposal:
@@ -196,17 +207,21 @@ ripr fails closed to static_unknown with no card -> limitation_quality = "precis
 
 ## Test Mapping
 
-This spec has no executable judging surface or semantic validator. The
+The panel now has a typed loader and semantic validator
+(`xtask/src/python_judged_panel.rs`, `cargo xtask python-judged-panel check`);
+replay, adjudication workflow, and reports remain future work. The
 manifest-only fixture helper only exempts this schema fixture from an unrelated
 generic requirement; doc gates validate registration and traceability, not the
 meaning of the manual judgments.
 
-Planned (a later judging PR):
+Landed with #3555 PR A (validator):
 
-- `python_judged_pr_panel::manifest_load_validates` — envelope + per-item field
-  validation (unique ids, valid `expected_direction`, lattice consistency).
-- `python_judged_pr_panel::lattice_rejects_double_error` — at most one error
-  label `true` per item.
+- `python_judged_panel::tests::retained_and_alternate_inventories_validate` —
+  the retained inventory validates with row-derived aggregates, and a fully
+  synthetic alternate inventory proves the validator is not hard coded.
+- `python_judged_panel::tests::panel_contract_rejects_inventory_judgment_and_totals_drift` —
+  direction/lattice consistency, at most one error label true per item, and
+  hand-entered totals that disagree with rows.
 
 ## Implementation Mapping
 
@@ -216,6 +231,8 @@ Planned (a later judging PR):
 | Historical manual panels | `fixtures/python-judged-pr-panel/{starter-judged.json, scaled-judged.json}` |
 | Seed diffs | `fixtures/python-judged-pr-panel/diffs/*.diff` |
 | Manifest-only fixture exemption | `xtask/src/reports/fixtures.rs` (`is_manifest_only_fixture_dir`) |
+| Typed loader + semantic validator | `xtask/src/python_judged_panel.rs` |
+| Panel check command | `cargo xtask python-judged-panel check [--check]`; precommit alias `cargo xtask check-python-judged-panel` |
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |
 
