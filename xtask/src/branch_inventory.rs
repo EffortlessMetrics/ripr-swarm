@@ -1901,7 +1901,7 @@ pub(crate) fn parse_rfc3339_epoch_seconds(text: &str) -> Result<i64, String> {
     // time (#3674 review round 6); its instant equals the next minute
     // boundary, so the epoch math below needs no special case.
     let leap_second = second == 60;
-    if second > 60 {
+    if !(0..=60).contains(&second) {
         return Err(format!(
             "RFC3339 timestamp `{text}` has second `{second}` outside 00-60"
         ));
@@ -2862,6 +2862,7 @@ mod tests {
             "2026-09-04T00:00:60Z",      // second 60 outside 23:59:60
             "2016-12-31T12:59:60Z",      // leap second at the wrong local hour
             "2026-09-04T00:00:61Z",      // second 61
+            "2026-09-04T00:00:-1Z",      // negative second (round-7 catch)
             "2026-09-04T00:00:00+24:00", // offset hours 24
             "2026-09-04T00:00:00+99:99", // both offset parts out of range
             "2026-09-04T00:00:00+0200",  // missing offset colon
