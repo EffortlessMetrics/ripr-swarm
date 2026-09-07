@@ -29,7 +29,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Retained, immutable panel inventory. Never written by this module.
 pub(crate) const INVENTORY_PATHS: [&str; 3] = [
@@ -45,7 +45,9 @@ const KNOWN_SPEC: &str = "RIPR-SPEC-0092";
 const KNOWN_TIER: &str = "B";
 const KNOWN_AUTHORITY_BOUNDARY: &str = "review_advisory_only";
 /// The repo-wide conservative static vocabulary (AGENTS.md language rules).
-const KNOWN_CLASSIFICATIONS: [&str; 7] = [
+/// Shared with the #3555 adjudication workflow: a recorded judgment must use
+/// the same vocabulary, never a private one.
+pub(crate) const KNOWN_CLASSIFICATIONS: [&str; 7] = [
     "exposed",
     "weakly_exposed",
     "reachable_unrevealed",
@@ -55,7 +57,7 @@ const KNOWN_CLASSIFICATIONS: [&str; 7] = [
     "static_unknown",
 ];
 const KNOWN_ORACLE_ALIGNMENTS: [&str; 3] = ["changed_sink_token", "orthogonal", "unknown"];
-const KNOWN_LIMITATION_QUALITIES: [&str; 4] =
+pub(crate) const KNOWN_LIMITATION_QUALITIES: [&str; 4] =
     ["precise", "imprecise", "wrong_kind", "over_limited"];
 /// The product-contract StaticLimitKind vocabulary, mirrored exactly from
 /// `crates/ripr/src/domain/language.rs` (`StaticLimitKind::as_str`). Do not
@@ -122,7 +124,7 @@ pub(crate) struct PythonJudgedPanelMeasurementSummary {
     updated: Nullable<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PythonJudgedPanelItem {
     pub(crate) id: String,
@@ -132,17 +134,17 @@ pub(crate) struct PythonJudgedPanelItem {
     #[serde(default)]
     head: Nullable<String>,
     pub(crate) diff_path: String,
-    shape: Vec<String>,
+    pub(crate) shape: Vec<String>,
     pub(crate) expected_direction: String,
     pub(crate) anchor: PythonJudgedPanelAnchor,
     #[serde(default)]
     pub(crate) expected_classification: Nullable<String>,
     #[serde(default)]
-    expected_static_limit_kind: Nullable<String>,
+    pub(crate) expected_static_limit_kind: Nullable<String>,
     #[serde(default)]
     pub(crate) actual_classification: Nullable<String>,
     #[serde(default)]
-    actual_oracle_alignment: Nullable<String>,
+    pub(crate) actual_oracle_alignment: Nullable<String>,
     labels: PythonJudgedPanelLabels,
     #[serde(default)]
     pub(crate) judgment_source: Nullable<String>,
@@ -153,11 +155,11 @@ pub(crate) struct PythonJudgedPanelItem {
     authority_boundary: String,
     repair_packet_ready: bool,
     #[serde(default)]
-    must_not_claim: Nullable<Vec<String>>,
+    pub(crate) must_not_claim: Nullable<Vec<String>>,
     reason: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PythonJudgedPanelAnchor {
     #[serde(default)]
@@ -168,7 +170,7 @@ pub(crate) struct PythonJudgedPanelAnchor {
     boundary: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct PythonJudgedPanelLabels {
     #[serde(default)]
@@ -217,6 +219,17 @@ impl<T> Nullable<T> {
         match self {
             Self::Value(value) => Some(value),
             Self::Missing | Self::Null => None,
+        }
+    }
+}
+
+impl<T: Serialize> Serialize for Nullable<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Value(value) => value.serialize(serializer),
+            // Missing and Null both serialize as null: they carry the same
+            // row content for revision-digest purposes.
+            Self::Null | Self::Missing => serializer.serialize_none(),
         }
     }
 }
@@ -327,7 +340,9 @@ impl<'de> Visitor<'de> for StrictJsonVisitor {
     }
 }
 
-fn parse_json_without_duplicate_keys(body: &str) -> Result<serde_json::Value, serde_json::Error> {
+pub(crate) fn parse_json_without_duplicate_keys(
+    body: &str,
+) -> Result<serde_json::Value, serde_json::Error> {
     let mut deserializer = serde_json::Deserializer::from_str(body);
     let StrictJson(value) = StrictJson::deserialize(&mut deserializer)?;
     deserializer.end()?;
@@ -453,8 +468,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Some("replay") => super::python_judged_panel_replay::run(&args[1..]),
+        Some("report") => super::python_judged_panel_report::run_report(&args[1..]),
+        Some("adjudicate") => super::python_judged_panel_report::run_adjudicate(&args[1..]),
         _ => Err(format!(
-            "python-judged-panel requires `check [--check]` or `replay [--check] [--limit <n>] [--network]` (report lands in a later #3555 slice)\nrerun: {RERUN_COMMAND}"
+            "python-judged-panel requires `check [--check]`, `replay [--check] [--limit <n>] [--network]`, `report [--records <dir>] [--adjudications <dir>] [--threshold-policy <path>] [--out <dir>] [--check]`, or `adjudicate --case <id> --verdict <classification> --role <role> (--reviewer <identity> | env RIPR_PANEL_ADJUDICATOR) --evidence <ref> [--adjudications <dir>] [--records <dir>]`\nrerun: {RERUN_COMMAND}"
         )),
     }
 }
@@ -922,7 +939,7 @@ fn validate_judgment_identity(
 /// routed against discriminated behavior); `should_limit` measures BOTH —
 /// `false_actionable` when ripr routes past the limitation and
 /// `false_exposed` when it credits exposed past the limitation.
-fn direction_admits_error(direction: &str, label: &str) -> bool {
+pub(crate) fn direction_admits_error(direction: &str, label: &str) -> bool {
     matches!(
         (direction, label),
         ("should_gap", "false_exposed")

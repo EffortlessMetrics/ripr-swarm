@@ -43,10 +43,58 @@ canonical gap a language-qualified probe-owner suffix — with no proximity
 fallback; each run clears its own records directory; a case-id slug
 collision fails the run before any execution; and every record binds the
 base-tree digest plus the retained-rendition-head disclosure alongside the
-binary, diff, and config identities. The spec's remaining acceptance criteria (a current replayed
-panel covering all three directions with recorded adjudication, an accepted
-threshold, and a scaled promotion corpus) remain unmet; the status stays
-**proposed**.
+binary, diff, and config identities.
+
+Status note (2026-09-04, #3555 PR C): adjudication and reporting now exist —
+`cargo xtask python-judged-panel adjudicate --case <id> --verdict
+<classification> --role <role> (--reviewer <identity> | env
+RIPR_PANEL_ADJUDICATOR) --evidence <ref>` records current independent
+judgments under `target/ripr/python-judged-panel/adjudications/` without
+touching the accepted panel: reviewer identity is required, at least one own
+evidence citation is required, `must_not_claim` is echoed from the validated
+row, RIPR's replay candidate is stored only as a named advisory reference,
+and a case counts as adjudicated only with two distinct recorded roles and
+identities (independence is self-claimed, not verified); one role stays `pending_second_role`, disagreement is
+`disputed`, and an agreeing judgment with no direction-admitted error axis
+decided is `inconclusive` — never a pass.
+`cargo xtask python-judged-panel report` derives deterministic, byte-stable
+JSON and Markdown from the validated inventory, the replay records, and the
+adjudication records: separate false-actionable and false-`exposed`
+numerators/denominators/rates scoped by the direction lattice, coverage by
+direction, repository, behavior family, oracle alignment, and limitation
+kind (relation basis is disclosed unavailable — the retained schema carries
+no such field and none is invented), wrong-target/invalid-command/
+limitation-correctness counts, unjudged and no-replay-record counts, and
+per-case references; every rate carries its exact numerator, denominator,
+coverage boundary, denominator case ids, and the records' binary as-of
+identity bound by the denominator cases' own replay records, and no
+denominator means no rate. With an explicit
+`--threshold-policy <file>` the report evaluates the supplied candidate per
+threshold as `pass`/`fail`/`not_evaluable` and echoes the policy's own
+rationale and authority; it never selects a threshold from observed results,
+never promotes support, and never writes a tier claim. The historical `n=7`
+is not inherited; the report states its actual achieved denominator
+(currently: 11 selected, 3 replayed, 0 adjudicated — both error rates
+`not_evaluable`). The spec's remaining acceptance criteria (a current
+replayed panel covering all three directions with recorded adjudication, an
+accepted threshold, and a scaled promotion corpus) remain unmet; the status
+stays **proposed**.
+
+Status note (2026-09-07, #3555 PR C review round): the adjudication and
+report lane hardened — adjudication records publish atomically (staged temp
+sibling + flush + rename, with a copy fallback) and an unreadable record
+fails instead of being overwritten; every stored judgment is re-checked
+against the same semantic rules the CLI enforces (violations fail the report
+named per case); carryover rows can never be adjudicated and are excluded
+defensively; verdict-to-error coherence mirrors the retained validator's
+outcome table (`exposed` on a should_gap/should_limit row requires
+false_exposed true); a rate's as-of identity binds only the denominator
+cases' own replay records (`no_common_binary_identity` otherwise); records
+bind the full row revision (every field plus the diff content) and drift
+marks them `stale_row` with stored-vs-current digests; report.json and
+report.md publish as one generation with rollback on partial publication;
+independence of the two recorded roles/identities is disclosed as
+self-claimed, not verified. The status stays **proposed**.
 
 Owner: language-adapter / swarm
 
@@ -233,12 +281,14 @@ ripr fails closed to static_unknown with no card -> limitation_quality = "precis
 ## Test Mapping
 
 The panel now has a typed loader and semantic validator
-(`xtask/src/python_judged_panel.rs`, `cargo xtask python-judged-panel check`)
-and an offline replay lane (`xtask/src/python_judged_panel_replay.rs`,
-`cargo xtask python-judged-panel replay`); adjudication workflow and reports
-remain future work. The manifest-only fixture helper only exempts this schema
-fixture from an unrelated generic requirement; doc gates validate registration
-and traceability, not the meaning of the manual judgments.
+(`xtask/src/python_judged_panel.rs`, `cargo xtask python-judged-panel check`),
+an offline replay lane (`xtask/src/python_judged_panel_replay.rs`,
+`cargo xtask python-judged-panel replay`), and an adjudication + reporting
+lane (`xtask/src/python_judged_panel_report.rs`, `cargo xtask
+python-judged-panel adjudicate` / `report`). The manifest-only fixture helper
+only exempts this schema fixture from an unrelated generic requirement; doc
+gates validate registration and traceability, not the meaning of the manual
+judgments.
 
 Landed with #3555 PR A (validator):
 
@@ -288,6 +338,58 @@ Landed with #3555 PR B (replay):
   — the workspace build guard removes the temp tree on failure and keeps
   it when the value completes.
 
+Landed with #3555 PR C (adjudication + reports):
+
+- `python_judged_panel_report::tests::report_bytes_are_stable_across_independent_runs`
+  — the byte-stability pin: two independent replay runs (records embed
+  different temp workspace paths and command lines) plus two adjudication
+  sets stamped at different times render byte-identical JSON and Markdown,
+  no volatile path leaks into the report, the two-role case counts as
+  adjudicated, and both surfaces state the same counts with the honesty
+  notes (no combined score, unavailable relation basis) visible.
+- `python_judged_panel_report::tests::report_derives_separate_error_denominators_and_rates`
+  — direction-scoped denominators (a decided `should_gap` label feeds only
+  the false-`exposed` rate), wrong-target/invalid-command counts from
+  adjudications only, inconclusive rows excluded from limitation
+  correctness, and the empty state discloses its actual achieved
+  denominator with no rate where no denominator exists.
+- `python_judged_panel_report::tests::threshold_evaluation_is_explicit_per_threshold_and_non_authoritative`
+  — per-threshold `pass`/`fail`/`not_evaluable`, the policy rationale
+  echoed, `not_evaluable` without denominators, a failing measured rate
+  reported next to passing ones, and the no-tier-claim note present.
+- `python_judged_panel_report::tests::adjudicate_rejects_unattributed_lattice_and_vocabulary_drift`
+  — reviewer identity and own evidence citations required, conservative
+  verdict vocabulary, the terminal lattice and direction admission gates,
+  `should_limit`-scoped limitation grading, and the
+  pending/disputed/inconclusive state machine.
+- `python_judged_panel_report::tests::report_fails_closed_on_record_set_rot`
+  — unknown case ids, mixed as-of binary identity, and foreign record
+  kinds are rejected instead of folded into the counts.
+- `python_judged_panel_report::tests::adjudication_writes_are_atomic_and_read_failures_are_refused`
+  — an injected write failure preserves the prior record bytes with no temp
+  residue, and invalid UTF-8 at the record path is a named error, never an
+  overwrite.
+- `python_judged_panel_report::tests::report_fails_on_semantically_invalid_stored_judgments`
+  — empty evidence, unknown verdicts, and both-error-flag records fail the
+  report named per case (the stored judgments re-run the CLI's semantic
+  rules).
+- `python_judged_panel_report::tests::carryover_rows_are_never_adjudicated_or_counted`
+  — the retained carryover shape (null expected_classification) refuses
+  adjudication and an injected record stays out of every adjudicated count.
+- `python_judged_panel_report::tests::verdict_error_coherence_follows_the_direction_lattice`
+  — `exposed` on a should_gap row requires false_exposed true on the CLI and
+  in stored judgments; the coherent over-credit judgment feeds the
+  false_exposed numerator.
+- `python_judged_panel_report::tests::rate_as_of_identity_binds_the_denominator_cases_records`
+  — a denominator case without its own replay record forces the
+  `no_common_binary_identity` disclosure; bound cases cite their identity.
+- `python_judged_panel_report::tests::adjudications_stale_against_a_changed_row_revision`
+  — a row or diff change after adjudication makes the record `stale_row`,
+  excluded from the denominator and disclosed with stored-vs-current
+  digests.
+- `python_judged_panel_report::tests::report_publication_is_one_generation`
+  — a failure between the two report publications is rolled back to the
+  prior pair with no staged temp residue.
 ## Implementation Mapping
 
 | Concern | Artifact |
@@ -302,6 +404,11 @@ Landed with #3555 PR B (replay):
 | Panel replay command | `cargo xtask python-judged-panel replay [--check] [--limit <n>] [--network]` |
 | Replay record output | one record per case at `target/ripr/python-judged-panel/replay/<stable_case_slug(case_id)>.json` — slug collisions fail the run before any execution (`python_judged_panel_replay_record` 0.1: binary/diff/config identity, head+base workspace digests, reconstruction disclosure, typed outcome, comparison) |
 | Replay tests | `xtask/src/python_judged_panel_replay.rs` `mod tests` (end-to-end real-binary run, panel immutability, typed mismatches, `not_run` identity, stale/current notes, limit accounting, network refusal, reconstruction, record clearing, slug collisions, comparison availability, owner binding, parse survival, workspace guard) |
+| Adjudication + report lane (implementation) | `xtask/src/python_judged_panel_report.rs` |
+| Panel adjudicate command | `cargo xtask python-judged-panel adjudicate --case <id> --verdict <classification> --role <role> (--reviewer <identity> \| env RIPR_PANEL_ADJUDICATOR) --evidence <ref> [--adjudications <dir>] [--records <dir>]` |
+| Adjudication record output | `target/ripr/python-judged-panel/adjudications/<stable_case_slug(case_id)>.json` (`python_judged_panel_adjudication_record` 0.1: echoed must_not_claim/envelope/direction, cited replay record as advisory reference only, per-role judgments with own evidence citations) |
+| Panel report command | `cargo xtask python-judged-panel report [--records <dir>] [--adjudications <dir>] [--threshold-policy <path>] [--out <dir>] [--check]` |
+| Report output | `target/ripr/python-judged-panel/report.{json,md}` (`python_judged_panel_report` 0.1: byte-stable across runs on identical inputs; separate two-error lattice, guarded denominators, per-threshold non-authoritative evaluation when a policy is supplied) |
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |
 
