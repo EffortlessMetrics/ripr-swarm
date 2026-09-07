@@ -591,11 +591,23 @@ fn adjudicate_case_at(
             authority_boundary: AUTHORITY_BOUNDARY.to_string(),
         },
     };
-    // A re-adjudication by the same (role, identity) replaces that role's
-    // prior judgment so the record always carries each role's current view.
-    record.judgments.retain(|existing| {
-        existing.reviewer_role != request.role || existing.reviewer_identity != request.identity
-    });
+    // FIX fqGSD (CodeRabbit #3681): one judgment per role — a role's current
+    // judgment replaces whatever that role recorded before (including a
+    // re-record under a changed reviewer identity), so role-to-identity stays
+    // one-to-one and the record always carries each role's current view.
+    record
+        .judgments
+        .retain(|existing| existing.reviewer_role != request.role);
+    // One identity may never occupy two roles: the independence claim behind
+    // `adjudicated` would be false.
+    if record.judgments.iter().any(|existing| {
+        existing.reviewer_role != request.role && existing.reviewer_identity == request.identity
+    }) {
+        return Err(format!(
+            "identity `{}` is already recorded under a different role on case `{}`; one identity must never occupy two roles — independence requires distinct people\nrerun: {ADJUDICATE_RERUN}",
+            request.identity, request.case_id
+        ));
+    }
     record.judgments.push(judgment);
     record.cited_replay_record = cite_replay_record(records_dir, &request.case_id);
 
@@ -1465,6 +1477,31 @@ fn build_report_at(
                         judgment.reviewer_role, judgment.reviewer_identity
                     ));
                 }
+            }
+            // FIX fqGSD (CodeRabbit #3681): independence needs a one-to-one
+            // role-to-identity mapping — one identity occupying two roles (or
+            // one role carrying two identities) can satisfy both count checks
+            // while the "independent roles" claim is false. Stored records are
+            // re-checked here so a hand-edited record can never reach
+            // `Adjudicated` with a shared identity.
+            let mut identities_by_role: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+            let mut roles_by_identity: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+            for judgment in &record.judgments {
+                identities_by_role
+                    .entry(judgment.reviewer_role.as_str())
+                    .or_default()
+                    .insert(judgment.reviewer_identity.as_str());
+                roles_by_identity
+                    .entry(judgment.reviewer_identity.as_str())
+                    .or_default()
+                    .insert(judgment.reviewer_role.as_str());
+            }
+            if identities_by_role.values().any(|set| set.len() > 1)
+                || roles_by_identity.values().any(|set| set.len() > 1)
+            {
+                return Err(format!(
+                    "adjudication record `{file_name}` case `{case_id}`: role-to-identity mapping is not one-to-one; one identity must never occupy two roles and one role must never carry two identities — independence requires it"
+                ));
             }
             Ok(derive_adjudication_view(record, item, &row_revision))
         });
@@ -2656,22 +2693,44 @@ mod tests {
     }
 
     fn worktree_binary() -> Result<String, String> {
+        // FIX fqGSK (CodeRabbit #3681): resolve the binary cargo actually
+        // built for this run — the RIPR_TEST_BINARY override first, then the
+        // active CARGO_TARGET_DIR (the required rust-gates workflow points it
+        // at an external directory), then the repo-local target directory —
+        // selecting the profile from the test build itself (`cargo test
+        // --release` puts the binary under `release`, not `debug`).
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+        let file_name = format!("ripr{}", std::env::consts::EXE_SUFFIX);
+        let mut candidates = Vec::new();
+        if let Ok(override_path) = std::env::var("RIPR_TEST_BINARY") {
+            candidates.push(PathBuf::from(override_path));
+        }
+        if let Ok(target_root) = std::env::var("CARGO_TARGET_DIR") {
+            candidates.push(Path::new(&target_root).join(profile).join(&file_name));
+        }
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .ok_or("xtask manifest has no repository parent")?;
-        let binary = root
-            .join("target")
-            .join("debug")
-            .join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
-        if !binary.is_file() {
-            return Err(format!(
-                "the worktree ripr debug binary is missing at `{}`; run `cargo build -p ripr` first (report tests resolve the binary and never spawn a nested build)",
-                binary.display()
-            ));
+        candidates.push(root.join("target").join(profile).join(&file_name));
+        let attempted = candidates
+            .iter()
+            .map(|candidate| candidate.display().to_string())
+            .collect::<Vec<_>>()
+            .join("`, `");
+        for candidate in &candidates {
+            if candidate.is_file() {
+                return std::path::absolute(candidate)
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .map_err(|error| format!("resolve worktree ripr binary: {error}"));
+            }
         }
-        std::path::absolute(&binary)
-            .map(|path| path.to_string_lossy().into_owned())
-            .map_err(|error| format!("resolve worktree ripr binary: {error}"))
+        Err(format!(
+            "no built ripr binary found (looked at `{attempted}`); run `cargo build -p ripr` first (report tests resolve the binary and never spawn a nested build)"
+        ))
     }
 
     fn ensure(condition: bool, message: &str) -> Result<(), String> {
@@ -3331,9 +3390,9 @@ mod tests {
         Ok(())
     }
     /// FIX f2THL/f2XZZ: the record replacement is atomic and read-failure
-    /// safe — an injected write failure preserves the prior record bytes and
-    /// leaves no temp residue, and invalid UTF-8 at the record path is a
-    /// named error instead of a silent overwrite.
+    /// safe — an injected rename failure fails named with the obstruction
+    /// untouched and leaves no temp residue, and invalid UTF-8 at the record
+    /// path is a named error instead of a silent overwrite.
     #[test]
     fn adjudication_writes_are_atomic_and_read_failures_are_refused() -> Result<(), String> {
         let fixture = TempFixture::new("atomic-writes")?;
@@ -3361,9 +3420,17 @@ mod tests {
         ))?;
         let prior = fs::read(&dest).map_err(|error| error.to_string())?;
 
-        // Injected write failure: the staged rename cannot replace the
-        // destination, so the writer must fail and the prior record must
-        // survive byte-for-byte with no temp residue.
+        // Injected write failure (FIX fqGSQ, CodeRabbit #3681). Each platform
+        // injects the failure where it actually can, and the assertion names
+        // the mechanism that really fired — the old single loose assertion
+        // accepted a lock-step failure on Unix while claiming rename coverage:
+        // - Windows: a read-only record file is still readable (the read and
+        //   lock steps succeed) but the staged rename cannot replace it, so
+        //   the rename-failure path is genuinely exercised.
+        // - Unix: a parent directory unwritable for the lock fails the lock
+        //   step first, and a record path that is a directory fails the read;
+        //   the latter is asserted here because it is reachable regardless of
+        //   the effective uid (root bypasses permission bits).
         #[cfg(windows)]
         {
             let mut permissions = fs::metadata(&dest)
@@ -3374,9 +3441,8 @@ mod tests {
         }
         #[cfg(not(windows))]
         {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(Path::new(&dir), fs::Permissions::from_mode(0o555))
-                .map_err(|error| error.to_string())?;
+            fs::remove_file(&dest).map_err(|error| error.to_string())?;
+            fs::create_dir(&dest).map_err(|error| error.to_string())?;
         }
         let failure = judge(request(
             "report-gap-row",
@@ -3391,10 +3457,19 @@ mod tests {
             failure.contains("adjudication record"),
             "the write failure must name the record",
         )?;
+        #[cfg(windows)]
         ensure(
-            fs::read(&dest).map_err(|error| error.to_string())? == prior,
-            "the prior record must survive an injected write failure",
+            failure.contains("rename failed"),
+            &format!("the rename failure must be named, got: {failure}"),
         )?;
+        #[cfg(not(windows))]
+        ensure(
+            failure.contains("refusing to overwrite an unreadable record"),
+            &format!("the read refusal must be named, got: {failure}"),
+        )?;
+
+        // Restore the record path and the prior bytes; the second role then
+        // records normally and no staged temp file survives in the directory.
         #[cfg(windows)]
         {
             // Clearing FILE_ATTRIBUTE_READONLY is the only way to undo the
@@ -3411,12 +3486,21 @@ mod tests {
                 permissions.set_readonly(false);
                 fs::set_permissions(&dest, permissions).map_err(|error| error.to_string())?;
             }
+            ensure(
+                fs::read(&dest).map_err(|error| error.to_string())? == prior,
+                "the prior record must survive an injected write failure",
+            )?;
         }
         #[cfg(not(windows))]
         {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(Path::new(&dir), fs::Permissions::from_mode(0o755))
-                .map_err(|error| error.to_string())?;
+            ensure(
+                fs::metadata(&dest)
+                    .map_err(|error| error.to_string())?
+                    .is_dir(),
+                "the writer must leave the injected obstruction untouched",
+            )?;
+            fs::remove_dir(&dest).map_err(|error| error.to_string())?;
+            fs::write(&dest, &prior).map_err(|error| error.to_string())?;
         }
 
         // After restoring, the second role records normally and no staged
@@ -3507,6 +3591,101 @@ mod tests {
         )
         .map_err(|error| error.to_string())?;
         Ok(dir)
+    }
+
+    /// FIX fqGSD (CodeRabbit #3681): independence requires a one-to-one
+    /// role-to-identity mapping. One identity occupying two roles is refused
+    /// at write time, one role carrying two identities is replaced by a
+    /// re-adjudication, and a hand-edited record that slips a shared identity
+    /// past both count checks fails the report named.
+    #[test]
+    fn role_to_identity_must_be_one_to_one() -> Result<(), String> {
+        let fixture = TempFixture::new("identity-bijection")?;
+        let refs = write_inventory(&fixture)?;
+        let ref_strs = refs.iter().map(String::as_str).collect::<Vec<_>>();
+        let dir = fixture.path("adjudications")?;
+        let judge = |role: &str, identity: &str| {
+            adjudicate_case_at(
+                fixture.root.as_path(),
+                &ref_strs,
+                &dir,
+                "records",
+                &request(
+                    "report-gap-row",
+                    role,
+                    identity,
+                    "weakly_exposed",
+                    "2026-09-04T00:00:00Z",
+                ),
+            )
+        };
+        judge("human_operator", "alice")?;
+
+        // alice cannot take a second role on the same case.
+        let refusal = judge("second_human_reviewer", "alice")
+            .err()
+            .ok_or("bijection test failed: the shared identity must be refused")?;
+        ensure(
+            refusal.contains("already recorded under a different role"),
+            &format!("the shared-identity refusal must be named, got: {refusal}"),
+        )?;
+
+        // A role re-recording under a changed identity replaces its prior
+        // judgment instead of accumulating two identities on one role.
+        judge("human_operator", "carol")?;
+        let record_path = Path::new(&dir).join("report-gap-row.json");
+        let value = serde_json::from_str::<Value>(
+            &fs::read_to_string(&record_path).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        ensure(
+            value["judgments"]
+                .as_array()
+                .is_some_and(|judgments| judgments.len() == 1)
+                && value["judgments"][0]["reviewer_identity"] == "carol",
+            "the role re-record must replace its prior judgment",
+        )?;
+
+        // A hand-edited record that satisfies both count checks with a shared
+        // identity still fails the report named.
+        let mut forged = value.clone();
+        forged["judgments"]
+            .as_array_mut()
+            .ok_or("judgments array")?
+            .push(json!({
+                "reviewer_role": "second_human_reviewer",
+                "reviewer_identity": "carol",
+                "recorded_at": "2026-09-04T00:00:00Z",
+                "verdict": "weakly_exposed",
+                "false_actionable": null,
+                "false_exposed": null,
+                "wrong_target": null,
+                "invalid_command": null,
+                "limitation_quality": null,
+                "evidence_references": ["pricing.py:2"],
+                "notes": null
+            }));
+        fs::write(
+            &record_path,
+            serde_json::to_string_pretty(&forged).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let report_error = build_report_at(
+            fixture.root.as_path(),
+            &ref_strs,
+            Path::new("records"),
+            "records",
+            Path::new(&dir),
+            "adjudications",
+            None,
+        )
+        .err()
+        .ok_or("bijection test failed: the forged record must fail the report")?;
+        ensure(
+            report_error.contains("not one-to-one"),
+            &format!("the bijection violation must be named, got: {report_error}"),
+        )?;
+        Ok(())
     }
 
     /// FIX f2XZU: every stored judgment runs through the same semantic rules
