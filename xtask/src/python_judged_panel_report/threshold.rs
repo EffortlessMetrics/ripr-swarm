@@ -11,9 +11,8 @@ use serde_json::{Value, json};
 
 use crate::python_judged_panel::parse_json_without_duplicate_keys;
 
-use super::{
-    ErrorRate, POLICY_KIND, REPORT_RERUN, REPORT_SCHEMA_VERSION, SPEC, THRESHOLD_AUTHORITY_NOTE,
-};
+use super::report::ErrorRate;
+use super::{POLICY_KIND, REPORT_RERUN, REPORT_SCHEMA_VERSION, SPEC, THRESHOLD_AUTHORITY_NOTE};
 
 // ---------------------------------------------------------------------------
 // Threshold policy: explicit input, explicit evaluation, non-authoritative
