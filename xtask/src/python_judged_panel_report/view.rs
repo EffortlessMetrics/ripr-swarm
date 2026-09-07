@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use crate::python_judged_panel::{PythonJudgedPanelItem, direction_admits_error};
 
-use super::{AdjudicationJudgment, AdjudicationRecord};
+use super::adjudication::{AdjudicationJudgment, AdjudicationRecord};
 
 // ---------------------------------------------------------------------------
 // Adjudication views: the two-independent-roles derivation
