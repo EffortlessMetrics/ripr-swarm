@@ -163,7 +163,7 @@ pub(crate) fn run_adjudicate(args: &[String]) -> Result<(), String> {
         invalid_command: None,
         limitation_quality: None,
         notes: None,
-        recorded_at: utc_now_rfc3339(),
+        recorded_at: utc_now_rfc3339()?,
     };
     let mut adjudications = ADJUDICATIONS_DIR.to_string();
     let mut records = RECORDS_DIR.to_string();
@@ -313,14 +313,20 @@ fn parse_bool_flag(value: &str, flag: &str, undecided: &str) -> Result<Option<bo
     }
 }
 
-fn utc_now_rfc3339() -> String {
+fn utc_now_rfc3339() -> Result<String, String> {
+    // FIX fqP (devin round 2): a pre-epoch system clock is a broken
+    // environment. Fabricating `1970-01-01T00:00:00Z` would stamp valid-looking
+    // provenance over an environment the run cannot trust, so the error is
+    // named and the command fails closed instead.
     let epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
-        // A pre-epoch system clock is a broken environment; name it instead
-        // of silently recording a negative-year timestamp.
-        .unwrap_or(0);
-    rfc3339_from_epoch_seconds(epoch)
+        .map_err(|error| {
+            format!(
+                "system clock is before the Unix epoch ({error}); refusing to stamp adjudication provenance with a fabricated timestamp"
+            )
+        })?
+        .as_secs() as i64;
+    Ok(rfc3339_from_epoch_seconds(epoch))
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +402,49 @@ struct AdjudicationJudgment {
 }
 
 /// Records the judgment and returns a one-line disposition summary.
+/// FIX fqlm (devin round 2): adjudicating one case is a read-modify-write
+/// cycle on its record file, so two concurrent reviewers could each publish a
+/// replacement and silently discard the other's judgment. An exclusive
+/// sibling lock file serializes the cycle per case; a second concurrent run
+/// gets a named error instead. The lock releases on drop, covering every
+/// error path after acquisition, and a crash-left stale lock is named in the
+/// error so it can be removed deliberately.
+struct RecordLockGuard {
+    lock_path: PathBuf,
+}
+
+impl Drop for RecordLockGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.lock_path);
+    }
+}
+
+fn acquire_record_lock(record_path: &Path) -> Result<RecordLockGuard, String> {
+    let file_name = record_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("record file name is not UTF-8: `{}`", record_path.display()))?;
+    let parent = record_path
+        .parent()
+        .ok_or_else(|| format!("no parent directory for `{}`", record_path.display()))?;
+    let lock_path = parent.join(format!(".{file_name}.lock"));
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+    {
+        Ok(_) => Ok(RecordLockGuard { lock_path }),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(format!(
+            "adjudication lock `{}` already exists: another adjudication for this case may be in progress; if none is running, remove the stale lock\nrerun: {ADJUDICATE_RERUN}",
+            lock_path.display()
+        )),
+        Err(error) => Err(format!(
+            "create adjudication lock `{}`: {error}\nrerun: {ADJUDICATE_RERUN}",
+            lock_path.display()
+        )),
+    }
+}
+
 fn adjudicate_case_at(
     root: &Path,
     displays: &[&str],
@@ -446,6 +495,17 @@ fn adjudicate_case_at(
 
     let record_path = PathBuf::from(adjudications_dir)
         .join(format!("{}.json", stable_case_slug(&request.case_id)));
+    // The adjudications directory must exist before the lock file can, so
+    // this runs ahead of lock acquisition (FIX fqlm).
+    if let Some(parent) = record_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "create adjudications directory `{}`: {error}\nrerun: {ADJUDICATE_RERUN}",
+                parent.display()
+            )
+        })?;
+    }
+    let _record_lock = acquire_record_lock(&record_path)?;
     // FIX f2XZZ: only a missing record initializes a new one — every other
     // read failure returns a named error so an unreadable record is never
     // truncated or overwritten by a re-adjudication.
@@ -507,14 +567,6 @@ fn adjudicate_case_at(
     record.judgments.push(judgment);
     record.cited_replay_record = cite_replay_record(records_dir, &request.case_id);
 
-    if let Some(parent) = record_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "create adjudications directory `{}`: {error}\nrerun: {ADJUDICATE_RERUN}",
-                parent.display()
-            )
-        })?;
-    }
     let body = serde_json::to_string_pretty(&record)
         .map_err(|error| format!("serialize adjudication record: {error}"))?;
     write_adjudication_record_atomic(&record_path, &body)?;
@@ -788,6 +840,26 @@ fn read_replay_records(records_dir: &Path) -> Result<ReplayRecordSet, String> {
             return Err(format!(
                 "replay record `{}` declares a blank case id",
                 path.display()
+            ));
+        }
+        // FIX fqoP (devin round 2): a record file is addressable only by its
+        // case's stable slug — the same contract the adjudication reader
+        // enforces — and a second record for one case id is a contradiction,
+        // not a silent overwrite: filename order must never select which
+        // evidence the report counts.
+        let expected_file = format!("{}.json", stable_case_slug(&record.case_id));
+        if file_name != expected_file {
+            return Err(format!(
+                "replay record `{}` declares case `{}` but is not named `{expected_file}`; rename it or re-run `cargo xtask python-judged-panel replay`",
+                path.display(),
+                record.case_id
+            ));
+        }
+        if views.contains_key(&record.case_id) {
+            return Err(format!(
+                "replay record `{}` re-declares case `{}`, which already has a record in this set; keep one record per case and re-run `cargo xtask python-judged-panel replay`",
+                path.display(),
+                record.case_id
             ));
         }
         let version = record
@@ -1895,17 +1967,28 @@ fn write_report_generation(
     }
     if let Err(error) = fs::rename(&markdown_temp, markdown_path) {
         // Roll the first publication back so the pair stays one generation.
-        match &prior_json {
-            Some(bytes) => {
-                let _ = fs::write(json_path, bytes);
-            }
-            None => {
-                let _ = fs::remove_file(json_path);
-            }
-        }
+        // FIX fTNz (devin round 1): a failed restoration must be named, not
+        // claimed — "restored" in the message would otherwise be a false
+        // confidence surface when the restore write itself failed.
+        let restored = match &prior_json {
+            Some(bytes) => fs::write(json_path, bytes).is_ok(),
+            None => match fs::remove_file(json_path) {
+                Ok(()) => true,
+                Err(remove_error) if remove_error.kind() == std::io::ErrorKind::NotFound => true,
+                Err(_) => false,
+            },
+        };
         let _ = fs::remove_file(&markdown_temp);
+        let restoration_note = if restored {
+            format!(
+                "the prior report.json generation was restored; retry or inspect `{}`",
+                json_path.display()
+            )
+        } else {
+            "RESTORATION FAILED: report.json may hold the new generation without its markdown pair — delete the mismatched pair and re-run".to_string()
+        };
         return Err(format!(
-            "publish `{}` failed after `{}` was replaced; the prior report.json generation was restored: {error}",
+            "publish `{}` failed after `{}` was replaced ({error}); {restoration_note}",
             markdown_path.display(),
             json_path.display()
         ));
@@ -1916,9 +1999,12 @@ fn write_report_generation(
 /// FIX f2XZZ: the adjudication record replacement is atomic — serialize,
 /// stage a unique temp sibling in the same directory, flush, then rename over
 /// the destination. `std::fs::rename` replaces an existing destination on
-/// Windows (MoveFileEx with MOVEFILE_REPLACE_EXISTING); the copy fallback
-/// covers filesystems that refuse rename-over-existing. Any failure before
-/// the rename removes the staged temp and leaves the prior record intact.
+/// Windows (MoveFileEx with MOVEFILE_REPLACE_EXISTING). FIX fqm (devin round
+/// 2): there is deliberately no copy fallback — `fs::copy` truncates the
+/// destination before writing, so a mid-copy failure would destroy the prior
+/// record. A rename failure therefore fails the command and leaves the prior
+/// record byte-identical. Any failure before the rename removes the staged
+/// temp.
 fn write_adjudication_record_atomic(path: &Path, body: &str) -> Result<(), String> {
     let parent = path
         .parent()
@@ -1950,15 +2036,11 @@ rerun: {ADJUDICATE_RERUN}",
         ));
     }
     if let Err(rename_error) = fs::rename(&temp, path) {
-        if let Err(copy_error) = fs::copy(&temp, path) {
-            let _ = fs::remove_file(&temp);
-            return Err(format!(
-                "publish adjudication record `{}`: rename ({rename_error}) and copy fallback ({copy_error}) both failed; the prior record is unchanged
-rerun: {ADJUDICATE_RERUN}",
-                path.display()
-            ));
-        }
         let _ = fs::remove_file(&temp);
+        return Err(format!(
+            "publish adjudication record `{}`: rename failed ({rename_error}); the prior record is unchanged\nrerun: {ADJUDICATE_RERUN}",
+            path.display()
+        ));
     }
     Ok(())
 }
@@ -2299,7 +2381,10 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::{AdjudicationRequest, RenderedReport, adjudicate_case_at, build_report_at};
+    use super::{
+        AdjudicationRequest, RECORD_KIND, RECORD_SCHEMA_VERSION, RenderedReport, SPEC,
+        acquire_record_lock, adjudicate_case_at, build_report_at, parse_replay_record_bytes,
+    };
 
     const PANEL_DIR: &str = "fixtures/python-judged-pr-panel";
 
@@ -3058,6 +3143,93 @@ mod tests {
             failure("rot")?.contains("unknown identity"),
             "foreign kinds must be named",
         )?;
+        Ok(())
+    }
+
+    /// FIX fqoP (devin round 2): a replay record file is addressable only by
+    /// its case's stable slug — a renamed record is rejected instead of
+    /// silently folding its evidence into the counts under filename order.
+    #[test]
+    fn report_replay_records_reject_a_slug_mismatch() -> Result<(), String> {
+        let pipeline = pipeline("record-slug-binding")?;
+        let records = Path::new(&pipeline.records_a);
+        let body = fs::read_to_string(records.join("report-quiet-row.json"))
+            .map_err(|error| error.to_string())?;
+        fs::write(records.join("misnamed.json"), body).map_err(|error| error.to_string())?;
+        let failure = build_report_at(
+            pipeline.fixture.root.as_path(),
+            &pipeline.refs.iter().map(String::as_str).collect::<Vec<_>>(),
+            records,
+            "records",
+            Path::new("adjudications"),
+            "adjudications",
+            None,
+        )
+        .err()
+        .ok_or("report test failed: expected slug-mismatch rejection")?;
+        ensure(
+            failure.contains("is not named"),
+            &format!("the slug contract must be named, got: {failure}"),
+        )?;
+        Ok(())
+    }
+
+    /// FIX fqqq (devin round 2): the replay reader deliberately tolerates
+    /// unknown producer fields — forward compatibility, so an older report
+    /// reader keeps reading records from a newer replay producer. This test
+    /// pins that contract: unknown fields at every level parse, and the
+    /// projected view stays limited to the documented keys so a future
+    /// producer fact can never silently leak into report bytes.
+    #[test]
+    fn replay_record_input_pins_the_compatibility_contract() -> Result<(), String> {
+        let body = json!({
+            "schema_version": RECORD_SCHEMA_VERSION,
+            "kind": RECORD_KIND,
+            "spec": SPEC,
+            "case_id": "compat-case",
+            "row_kind": "gap",
+            "binary": {"version": "0.0.0-test", "sha256": "a".repeat(64), "future_binary_fact": 1},
+            "diff": {"sha256": "b".repeat(64), "path": "case.diff", "future_diff_fact": true},
+            "outcome": {"kind": "not_run", "future_outcome_fact": []},
+            "comparison": {"kind": "comparison_unavailable", "future_comparison_fact": "x"},
+            "future_top_level_fact": {"nested": [1, 2, 3]}
+        });
+        let serialized = serde_json::to_string(&body).map_err(|error| error.to_string())?;
+        let record = parse_replay_record_bytes(&serialized, "compat-test")?;
+        ensure(
+            record.case_id == "compat-case" && record.row_kind == "gap",
+            "the documented consumed fields must still project",
+        )?;
+        ensure(
+            record.binary.is_some() && record.diff.is_some(),
+            "the documented identity fields must still project",
+        )?;
+        Ok(())
+    }
+
+    /// FIX fqlm (devin round 2): adjudicating one case is a read-modify-write
+    /// cycle, so a second concurrent adjudication while the record lock is
+    /// held must fail closed with a named error instead of silently
+    /// discarding one judgment.
+    #[test]
+    fn concurrent_adjudication_is_refused_while_a_record_lock_is_held() -> Result<(), String> {
+        let fixture = TempFixture::new("adjudicate-lock")?;
+        let record_path = fixture.root.join("adjudications").join("some-case.json");
+        let parent_dir = record_path
+            .parent()
+            .ok_or("lock test failed: record path has no parent")?;
+        fs::create_dir_all(parent_dir).map_err(|error| error.to_string())?;
+        let _held = acquire_record_lock(&record_path)?;
+        let second = acquire_record_lock(&record_path)
+            .err()
+            .ok_or("lock test failed: expected the second acquisition to be refused")?;
+        ensure(
+            second.contains("already exists"),
+            &format!("the lock contract must be named, got: {second}"),
+        )?;
+        drop(_held);
+        acquire_record_lock(&record_path)
+            .map_err(|error| format!("the lock must release on drop: {error}"))?;
         Ok(())
     }
     /// FIX f2THL/f2XZZ: the record replacement is atomic and read-failure
