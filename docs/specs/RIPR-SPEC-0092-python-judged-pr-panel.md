@@ -18,10 +18,24 @@ now exist — `xtask/src/python_judged_panel.rs` behind
 `cargo xtask precommit` as `cargo xtask check-python-judged-panel`. It
 validates envelope identity, direction and judgment contracts, row-derived
 totals, and diff/anchor proofs over the retained inventory, and keeps null
-labels unjudged. The spec's remaining acceptance criteria (a current
-replayed panel covering all three directions, a current promotion-grade
-rerun, an accepted threshold, and a scaled promotion corpus) remain unmet;
-the status stays **proposed**.
+labels unjudged.
+
+Status note (2026-09-04, #3555 PR B): an offline replay lane now exists —
+`cargo xtask python-judged-panel replay [--check] [--limit <n>] [--network]`
+(`xtask/src/python_judged_panel_replay.rs`) consumes the same validated
+loader, materializes diff-proved temp workspaces for rows whose base/head
+content is fully determined by the retained diff, invokes the real `ripr
+check --mode fast --json` binary with isolated `RIPR_CACHE_DIR`, and retains
+typed candidate records with mismatch reasons outside the accepted panel
+under `target/ripr/python-judged-panel/replay/`. Accepted judgments,
+directions, labels, and historical artifacts are never rewritten; judged-row
+comparisons are candidate-vs-prior-actual with a `PriorActualStale` note when
+the retained `judged_against` identity does not name the replayed binary
+version. `--network` is declared and refused: live materialization lands with
+a later slice. The spec's remaining acceptance criteria (a current replayed
+panel covering all three directions with recorded adjudication, an accepted
+threshold, and a scaled promotion corpus) remain unmet; the status stays
+**proposed**.
 
 Owner: language-adapter / swarm
 
@@ -208,11 +222,12 @@ ripr fails closed to static_unknown with no card -> limitation_quality = "precis
 ## Test Mapping
 
 The panel now has a typed loader and semantic validator
-(`xtask/src/python_judged_panel.rs`, `cargo xtask python-judged-panel check`);
-replay, adjudication workflow, and reports remain future work. The
-manifest-only fixture helper only exempts this schema fixture from an unrelated
-generic requirement; doc gates validate registration and traceability, not the
-meaning of the manual judgments.
+(`xtask/src/python_judged_panel.rs`, `cargo xtask python-judged-panel check`)
+and an offline replay lane (`xtask/src/python_judged_panel_replay.rs`,
+`cargo xtask python-judged-panel replay`); adjudication workflow and reports
+remain future work. The manifest-only fixture helper only exempts this schema
+fixture from an unrelated generic requirement; doc gates validate registration
+and traceability, not the meaning of the manual judgments.
 
 Landed with #3555 PR A (validator):
 
@@ -222,6 +237,29 @@ Landed with #3555 PR A (validator):
 - `python_judged_panel::tests::panel_contract_rejects_inventory_judgment_and_totals_drift` —
   direction/lattice consistency, at most one error label true per item, and
   hand-entered totals that disagree with rows.
+
+Landed with #3555 PR B (replay):
+
+- `python_judged_panel_replay::tests::replay_materializes_row_and_runs_real_check_end_to_end` —
+  a synthetic row is materialized from its retained diff alone, the real
+  `ripr check` binary runs over the temp workspace, the candidate
+  classification is extracted at the anchor, the record lands outside the
+  panel, and the panel digest is unchanged.
+- `python_judged_panel_replay::tests::replay_records_typed_mismatch_without_touching_accepted_judgment` —
+  divergent (or quiet) candidates produce typed mismatches against the
+  accepted expectation and the accepted envelope bytes stay identical.
+- `python_judged_panel_replay::tests::replay_types_insufficient_identity_as_not_run` —
+  a tenacity-style row whose hunks start at line 88 replays as typed
+  `not_run` with a reason, no workspace, and no fabricated comparison.
+- `python_judged_panel_replay::tests::replay_notes_prior_actual_stale_for_judged_rows`
+  and `replay_omits_stale_note_when_identity_names_current_version` — the
+  `PriorActualStale` note keys on the retained judged-against identity, not
+  the row kind.
+- `python_judged_panel_replay::tests::replay_honors_limit_and_discloses_bounded_out`,
+  `replay_network_flag_fails_closed`,
+  `reconstruction_reverses_added_lines_and_skips_unproved_sides`, and
+  `outcome_kind_mapping_stays_total` — limit accounting, the `--network`
+  refusal, side reconstruction, and the outcome taxonomy.
 
 ## Implementation Mapping
 
@@ -233,6 +271,8 @@ Landed with #3555 PR A (validator):
 | Manifest-only fixture exemption | `xtask/src/reports/fixtures.rs` (`is_manifest_only_fixture_dir`) |
 | Typed loader + semantic validator | `xtask/src/python_judged_panel.rs` |
 | Panel check command | `cargo xtask python-judged-panel check [--check]`; precommit alias `cargo xtask check-python-judged-panel` |
+| Offline replay lane | `xtask/src/python_judged_panel_replay.rs` |
+| Panel replay command | `cargo xtask python-judged-panel replay [--check] [--limit <n>] [--network]` (writes `target/ripr/python-judged-panel/replay/<case_id>.json`) |
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |
 

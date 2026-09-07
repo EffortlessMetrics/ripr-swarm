@@ -369,6 +369,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "rust-judged-panel packet [--host-current target/ripr/<path>/current.json]",
         "check-rust-judged-panel",
         "python-judged-panel check [--check]",
+        "python-judged-panel replay [--check] [--limit <n>] [--network]",
         "check-python-judged-panel",
         "test-oracle-report",
         "check-test-oracles",
@@ -752,6 +753,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates the retained Python judged PR panel inventory (RIPR-SPEC-0092 seed plus the two historical judged panels): envelope identity, judgment and direction contracts, derived totals, and diff/anchor proofs. Read-only over immutable fixtures; replay and report land in later #3555 slices.",
+        ),
+        command_entry(
+            "python-judged-panel replay [--check] [--limit <n>] [--network]",
+            "report_only",
+            "target/ripr/python-judged-panel/replay/<case_id>.json",
+            false,
+            false,
+            "Replays the retained Python judged-panel inventory against the real ripr check binary over diff-proved temp workspaces (offline; --network is declared and refused until a later #3555 slice) and writes typed candidate records outside the accepted panel; accepted judgments are never rewritten.",
         ),
         command_entry(
             "check-python-judged-panel",
