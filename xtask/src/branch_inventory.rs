@@ -1845,7 +1845,7 @@ pub(crate) fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (if month <= 2 { year + 1 } else { year }, month, day)
 }
 
-fn parse_rfc3339_epoch_seconds(text: &str) -> Result<i64, String> {
+pub(crate) fn parse_rfc3339_epoch_seconds(text: &str) -> Result<i64, String> {
     let bytes = text.as_bytes();
     if bytes.len() < 20 {
         return Err(format!("RFC3339 timestamp `{text}` is too short"));

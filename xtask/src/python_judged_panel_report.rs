@@ -42,7 +42,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::branch_inventory::rfc3339_from_epoch_seconds;
+use crate::branch_inventory::{parse_rfc3339_epoch_seconds, rfc3339_from_epoch_seconds};
 use crate::python_judged_panel::{
     INVENTORY_PATHS, KNOWN_CLASSIFICATIONS, KNOWN_LIMITATION_QUALITIES, PythonJudgedPanelItem,
     RowKind, direction_admits_error, load_validated_inventory, parse_json_without_duplicate_keys,
@@ -404,22 +404,45 @@ struct AdjudicationJudgment {
 /// Records the judgment and returns a one-line disposition summary.
 /// FIX fqlm (devin round 2): adjudicating one case is a read-modify-write
 /// cycle on its record file, so two concurrent reviewers could each publish a
-/// replacement and silently discard the other's judgment. An exclusive
-/// sibling lock file serializes the cycle per case; a second concurrent run
+/// replacement and silently discard the other's judgment. FIX fqNv (devin
+/// round 4): concurrent report commands can likewise interleave their json
+/// and markdown renames into a mixed generation. Both are serialized by one
+/// exclusive sibling lock file per contended path; a second concurrent run
 /// gets a named error instead. The lock releases on drop, covering every
 /// error path after acquisition, and a crash-left stale lock is named in the
 /// error so it can be removed deliberately.
-struct RecordLockGuard {
+struct PathLockGuard {
     lock_path: PathBuf,
 }
 
-impl Drop for RecordLockGuard {
+impl Drop for PathLockGuard {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.lock_path);
     }
 }
 
-fn acquire_record_lock(record_path: &Path) -> Result<RecordLockGuard, String> {
+fn acquire_path_lock(
+    lock_path: PathBuf,
+    what: &str,
+    already_exists: impl FnOnce(&Path) -> String,
+) -> Result<PathLockGuard, String> {
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+    {
+        Ok(_file) => Ok(PathLockGuard { lock_path }),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(already_exists(&lock_path))
+        }
+        Err(error) => Err(format!(
+            "write {what}: create lock `{}`: {error}",
+            lock_path.display()
+        )),
+    }
+}
+
+fn acquire_record_lock(record_path: &Path) -> Result<PathLockGuard, String> {
     let file_name = record_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -428,21 +451,13 @@ fn acquire_record_lock(record_path: &Path) -> Result<RecordLockGuard, String> {
         .parent()
         .ok_or_else(|| format!("no parent directory for `{}`", record_path.display()))?;
     let lock_path = parent.join(format!(".{file_name}.lock"));
-    match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&lock_path)
-    {
-        Ok(_) => Ok(RecordLockGuard { lock_path }),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(format!(
-            "adjudication lock `{}` already exists: another adjudication for this case may be in progress; if none is running, remove the stale lock\nrerun: {ADJUDICATE_RERUN}",
+    acquire_path_lock(lock_path, "adjudication record", |lock_path| {
+        format!(
+            "adjudication record `{}` is locked (`{}` exists): another adjudication for this case may be in progress; if none is running, remove the stale lock\nrerun: {ADJUDICATE_RERUN}",
+            record_path.display(),
             lock_path.display()
-        )),
-        Err(error) => Err(format!(
-            "create adjudication lock `{}`: {error}\nrerun: {ADJUDICATE_RERUN}",
-            lock_path.display()
-        )),
-    }
+        )
+    })
 }
 
 fn adjudicate_case_at(
@@ -541,6 +556,23 @@ fn adjudicate_case_at(
                     record_path.display(),
                     request.case_id,
                     existing.row_revision_sha256
+                ));
+            }
+            // FIX fqNa (devin round 4): the stored provenance echoes must
+            // match the row this request was validated against, so a drifted
+            // record never accumulates judgments under contradictory
+            // provenance.
+            if existing.source_envelope != source_envelope
+                || existing.expected_direction != item.expected_direction
+                || existing.must_not_claim != must_not_claim_echo(item)
+            {
+                return Err(format!(
+                    "adjudication record `{}` carries provenance that contradicts the current validated row (envelope `{}` vs `{}`, direction `{}` vs `{}`); re-record every role's judgment against the current row\nrerun: {ADJUDICATE_RERUN}",
+                    record_path.display(),
+                    existing.source_envelope,
+                    source_envelope,
+                    existing.expected_direction,
+                    item.expected_direction
                 ));
             }
             existing
@@ -720,6 +752,12 @@ fn cite_replay_record(records_dir: &str, case_id: &str) -> Option<Value> {
         &path.display().to_string(),
     )
     .ok()?;
+    // FIX fqNz (devin round 4): a file at the expected name is cited only
+    // when it declares the requested case; foreign content under the right
+    // name is never attributed as this case's advisory evidence.
+    if record.case_id != case_id {
+        return None;
+    }
     Some(json!({
         "file": format!("{}.json", stable_case_slug(case_id)),
         "binary_version": text(record.binary.as_ref()?, "version")?,
@@ -1341,6 +1379,12 @@ fn build_report_at(
     let mut wrong_target = AxisCounts::default();
     let mut invalid_command = AxisCounts::default();
     let mut limitation_correctness: BTreeMap<String, usize> = BTreeMap::new();
+    // FIX fqNy (devin round 4): per case, the rate as-of identity this run
+    // may cite — `None` when the case has no replay record or its record is
+    // not current against the present diff/row kind, so a stale replay can
+    // never label current adjudications with a binary that never replayed
+    // this revision.
+    let mut rate_identity: BTreeMap<String, Option<(String, String)>> = BTreeMap::new();
     for key in KNOWN_LIMITATION_QUALITIES
         .iter()
         .map(|quality| quality.to_string())
@@ -1372,7 +1416,27 @@ fn build_report_at(
             // semantic rules the CLI enforces; a violation fails the report
             // named per case and judgment, it is never silently excluded.
             let file_name = format!("{}.json", stable_case_slug(case_id));
+            // FIX fqNa (devin round 4): the stored provenance echoes must
+            // match the current validated row — a hand-edited or drifted
+            // echo is a contradiction, never preservable report input.
+            if record.source_envelope != *source_envelope
+                || record.expected_direction != item.expected_direction
+                || record.must_not_claim != must_not_claim_echo(item)
+            {
+                return Err(format!(
+                    "adjudication record `{file_name}` case `{case_id}`: stored provenance contradicts the current validated row (envelope `{}` vs `{}`, direction `{}` vs `{}`); re-record the adjudication against the current row",
+                    record.source_envelope, source_envelope,
+                    record.expected_direction, item.expected_direction
+                ));
+            }
             for judgment in &record.judgments {
+                // FIX fqNa: stored provenance must carry a real instant.
+                if parse_rfc3339_epoch_seconds(&judgment.recorded_at).is_err() {
+                    return Err(format!(
+                        "adjudication record `{file_name}` case `{case_id}` judgment by role `{}`: recorded_at `{}` is not a parseable RFC 3339 timestamp",
+                        judgment.reviewer_role, judgment.recorded_at
+                    ));
+                }
                 if let Err(violation) = validate_judgment_semantics(JudgmentSemantics {
                     role: &judgment.reviewer_role,
                     identity: &judgment.reviewer_identity,
@@ -1437,6 +1501,12 @@ fn build_report_at(
         if replay_view.is_some() && !identity_current {
             *counts.entry("stale").or_insert(0) += 1;
         }
+        rate_identity.insert(
+            case_id.clone(),
+            replay_view
+                .filter(|_| identity_current)
+                .map(|view| (view.binary_version.clone(), view.binary_sha256.clone())),
+        );
 
         // Adjudication side.
         let is_adjudicated = adjudication_view
@@ -1583,18 +1653,15 @@ fn build_report_at(
         if rate.denominator > 0 {
             rate.rate = Some(rate.numerator as f64 / rate.denominator as f64);
         }
-        // FIX f2TMb: the as-of identity comes only from the denominator
-        // cases' own replay records — every denominator case must bind a
-        // record with one shared binary identity, else the rate discloses
-        // `no_common_binary_identity` instead of citing the directory-wide
-        // identity.
+        // FIX f2TMb + FIX fqNy: the as-of identity comes only from the
+        // denominator cases' own *current* replay records — every denominator
+        // case must bind a record with one shared binary identity, else the
+        // rate discloses `no_common_binary_identity` instead of citing the
+        // directory-wide identity.
         let mut shared: Option<(String, String)> = None;
         let mut common = rate.denominator > 0;
         for id in &rate.denominator_case_ids {
-            match records
-                .get(id)
-                .map(|view| (view.binary_version.clone(), view.binary_sha256.clone()))
-            {
+            match rate_identity.get(id).and_then(|bound| bound.clone()) {
                 Some(identity) => match &shared {
                     None => shared = Some(identity),
                     Some(previous) if *previous != identity => common = false,
@@ -1951,6 +2018,29 @@ fn write_report_generation(
     json: &str,
     markdown: &str,
 ) -> Result<(), String> {
+    // FIX fqNv (devin round 4): two concurrent report commands could
+    // interleave their separate renames and publish a json from one
+    // generation with markdown from another; one exclusive lock per output
+    // directory serializes the pair.
+    let out_parent = json_path
+        .parent()
+        .ok_or_else(|| format!("no parent directory for `{}`", json_path.display()))?;
+    fs::create_dir_all(out_parent).map_err(|error| {
+        format!(
+            "create report output directory `{}`: {error}",
+            out_parent.display()
+        )
+    })?;
+    let _generation_lock = acquire_path_lock(
+        out_parent.join(".report-generation.lock"),
+        "report generation",
+        |lock_path| {
+            format!(
+                "another report generation is publishing to this output directory (`{}` exists); if none is running, remove the stale lock",
+                lock_path.display()
+            )
+        },
+    )?;
     let json_temp = stage_temp_sibling(json_path, json)?;
     let markdown_temp = match stage_temp_sibling(markdown_path, markdown) {
         Ok(temp) => temp,
@@ -3224,7 +3314,7 @@ mod tests {
             .err()
             .ok_or("lock test failed: expected the second acquisition to be refused")?;
         ensure(
-            second.contains("already exists"),
+            second.contains("is locked"),
             &format!("the lock contract must be named, got: {second}"),
         )?;
         drop(_held);
@@ -3380,7 +3470,7 @@ mod tests {
             "case_id": case_id,
             "source_envelope": "fixtures/python-judged-pr-panel/report-panel.json",
             "expected_direction": direction,
-            "must_not_claim": [],
+            "must_not_claim": ["Do not treat a null label as a passing judgment."],
             "judgments": [{
                 "reviewer_role": "human_operator",
                 "reviewer_identity": "alice",
@@ -3788,6 +3878,204 @@ mod tests {
         ensure(
             value["rates"]["false_exposed"]["as_of_basis"] == "denominator_case_records",
             "denominator cases that do bind records still cite their identity",
+        )?;
+
+        // FIX fqNy: a denominator record whose bound diff no longer matches
+        // the case's current diff is stale; its binary identity must not
+        // label the rate either.
+        let stale_dir = fixture.root.join("records-stale");
+        fs::create_dir_all(&stale_dir).map_err(|error| error.to_string())?;
+        for entry in fs::read_dir(&records).map_err(|error| error.to_string())? {
+            let path = entry.map_err(|error| error.to_string())?.path();
+            let name = path
+                .file_name()
+                .ok_or("record file name")?
+                .to_string_lossy()
+                .to_string();
+            let body = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+            let mut value =
+                serde_json::from_str::<Value>(&body).map_err(|error| error.to_string())?;
+            if name == "report-quiet-row.json" {
+                value["diff"]["sha256"] = json!("f".repeat(64));
+            }
+            fs::write(
+                stale_dir.join(&name),
+                serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        let stale_report = render(&stale_dir, &adjudications)?;
+        let value =
+            serde_json::from_str::<Value>(&stale_report.json).map_err(|error| error.to_string())?;
+        ensure(
+            value["rates"]["false_actionable"]["as_of_basis"] == "no_common_binary_identity",
+            "a stale denominator record must not label the rate with its identity",
+        )?;
+        Ok(())
+    }
+
+    /// FIX fqNa (devin round 4): stored provenance echoes (envelope,
+    /// direction, non-claims) and the stored recorded_at must stay consistent
+    /// with the validated row; a drifted echo fails the report and refuses
+    /// re-adjudication instead of being preserved.
+    #[test]
+    fn stored_provenance_echoes_must_match_the_validated_row() -> Result<(), String> {
+        let fixture = TempFixture::new("provenance-echo")?;
+        let refs = write_inventory(&fixture)?;
+        let ref_strs = refs.iter().map(String::as_str).collect::<Vec<_>>();
+        let dir = fixture.path("adjudications")?;
+        adjudicate_case_at(
+            fixture.root.as_path(),
+            &ref_strs,
+            &dir,
+            "records",
+            &request(
+                "report-gap-row",
+                "human_operator",
+                "alice",
+                "weakly_exposed",
+                "2026-09-04T00:00:00Z",
+            ),
+        )?;
+        let record_path = Path::new(&dir).join("report-gap-row.json");
+        let mutate = |edit: &dyn Fn(&mut Value)| -> Result<(), String> {
+            let mut value = serde_json::from_str::<Value>(
+                &fs::read_to_string(&record_path).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            edit(&mut value);
+            fs::write(
+                &record_path,
+                serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())
+        };
+        let report_error = || -> Result<String, String> {
+            build_report_at(
+                fixture.root.as_path(),
+                &ref_strs,
+                Path::new("records"),
+                "records",
+                Path::new(&dir),
+                "adjudications",
+                None,
+            )
+            .err()
+            .ok_or("report test failed: drifted provenance must fail the report".to_string())
+        };
+
+        // Direction echo drift fails the report and refuses re-adjudication.
+        mutate(&|value: &mut Value| value["expected_direction"] = json!("should_limit"))?;
+        ensure(
+            report_error()?.contains("stored provenance contradicts"),
+            "a drifted direction echo must fail the report",
+        )?;
+        let refusal = adjudicate_case_at(
+            fixture.root.as_path(),
+            &ref_strs,
+            &dir,
+            "records",
+            &request(
+                "report-gap-row",
+                "second_human_reviewer",
+                "bob",
+                "weakly_exposed",
+                "2026-09-04T00:00:00Z",
+            ),
+        )
+        .err()
+        .ok_or("report test failed: drifted provenance must refuse re-adjudication")?;
+        ensure(
+            refusal.contains("contradicts the current validated row"),
+            "re-adjudication must refuse a drifted record",
+        )?;
+        mutate(&|value: &mut Value| value["expected_direction"] = json!("should_gap"))?;
+
+        // Non-claims echo drift fails the report too.
+        mutate(&|value: &mut Value| value["must_not_claim"] = json!(["never claim X"]))?;
+        ensure(
+            report_error()?.contains("stored provenance contradicts"),
+            "a drifted non-claims echo must fail the report",
+        )?;
+        mutate(&|value: &mut Value| {
+            value["must_not_claim"] = json!(["Do not treat a null label as a passing judgment."])
+        })?;
+
+        // A stored timestamp that is not a parseable RFC 3339 instant is
+        // rejected provenance.
+        mutate(&|value: &mut Value| value["judgments"][0]["recorded_at"] = json!("not-a-time"))?;
+        ensure(
+            report_error()?.contains("parseable RFC 3339"),
+            "a fabricated timestamp must fail the report",
+        )?;
+        Ok(())
+    }
+
+    /// FIX fqNz (devin round 4): cite_replay_record cites a record at the
+    /// expected name only when it declares the requested case; foreign
+    /// content under the right file name is never attributed as the case's
+    /// advisory evidence.
+    #[test]
+    fn cite_replay_record_refuses_foreign_case_content() -> Result<(), String> {
+        let fixture = TempFixture::new("cite-foreign")?;
+        let records = fixture.root.join("records");
+        fs::create_dir_all(&records).map_err(|error| error.to_string())?;
+        let write_record = |case_id: &str| -> Result<(), String> {
+            let body = json!({
+                "schema_version": RECORD_SCHEMA_VERSION,
+                "kind": RECORD_KIND,
+                "spec": SPEC,
+                "case_id": case_id,
+                "binary": {"version": "0.0.0-test", "sha256": "a".repeat(64)},
+                "diff": {"sha256": "b".repeat(64)},
+                "outcome": {"kind": "not_run"},
+                "comparison": {"kind": "comparison_unavailable"}
+            });
+            fs::write(
+                records.join("report-gap-row.json"),
+                serde_json::to_string(&body).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())
+        };
+        let records_display = records.to_str().ok_or("records utf-8")?;
+        write_record("some-other-case")?;
+        ensure(
+            super::cite_replay_record(records_display, "report-gap-row").is_none(),
+            "foreign case content under the expected name must not be cited",
+        )?;
+        write_record("report-gap-row")?;
+        ensure(
+            super::cite_replay_record(records_display, "report-gap-row").is_some(),
+            "the honest record is cited",
+        )?;
+        Ok(())
+    }
+
+    /// FIX fqNv (devin round 4): report generations are serialized per output
+    /// directory; a held generation lock refuses a second publisher with a
+    /// named error instead of letting two renames interleave into a mixed
+    /// json/markdown pair.
+    #[test]
+    fn report_generations_are_serialized_by_the_output_lock() -> Result<(), String> {
+        let fixture = TempFixture::new("report-lock")?;
+        let out = fixture.root.join("out");
+        fs::create_dir_all(&out).map_err(|error| error.to_string())?;
+        let _held = super::acquire_path_lock(
+            out.join(".report-generation.lock"),
+            "report generation",
+            |_| "held".to_string(),
+        )?;
+        let failure = super::write_report_generation(
+            &out.join("report.json"),
+            &out.join("report.md"),
+            "{\"v\":1}\n",
+            "# v1\n",
+        )
+        .err()
+        .ok_or("report test failed: the held lock must refuse a second publisher")?;
+        ensure(
+            failure.contains("another report generation"),
+            "the lock contract must be named, got: {failure}",
         )?;
         Ok(())
     }

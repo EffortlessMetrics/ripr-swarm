@@ -5871,13 +5871,20 @@ metrics = [
 id = "RIPR-SPEC-0092"
 name = "python tier b judged-diff panel schema"
 spec = "docs/specs/RIPR-SPEC-0092-python-judged-pr-panel.md"
-tests = []
+tests = [
+  "xtask/src/python_judged_panel.rs::tests",
+  "xtask/src/python_judged_panel_replay.rs::tests",
+  "xtask/src/python_judged_panel_report.rs::tests"
+]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/python-judged-pr-panel"
 ]
 code = [
-  "xtask/src/reports/fixtures.rs::is_manifest_only_fixture_dir"
+  "xtask/src/reports/fixtures.rs::is_manifest_only_fixture_dir",
+  "xtask/src/python_judged_panel.rs",
+  "xtask/src/python_judged_panel_replay.rs",
+  "xtask/src/python_judged_panel_report.rs"
 ]
 outputs = [
   "fixtures/python-judged-pr-panel/manifest.json",
