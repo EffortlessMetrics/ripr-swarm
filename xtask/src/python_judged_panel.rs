@@ -1213,6 +1213,10 @@ pub(crate) fn parse_unified_diff(body: &str) -> Result<ParsedDiff, String> {
     let mut current: Option<DiffSection> = None;
     let mut hunk: Option<DiffHunk> = None;
     let mut source_header_seen = false;
+    // Tracks whether the immediately preceding physical line inside a hunk
+    // was the no-newline marker, so a doubled marker is rejected (fxi3X
+    // round-3 review).
+    let mut marker_seen = false;
     for raw in body.lines() {
         let line = raw.strip_suffix('\r').unwrap_or(raw);
         if line.starts_with("diff --cc ")
@@ -1278,19 +1282,29 @@ pub(crate) fn parse_unified_diff(body: &str) -> Result<ParsedDiff, String> {
             // FIX fxi3X: the `\ No newline at end of file` marker flags the
             // immediately preceding hunk line as lacking the trailing
             // newline on the side(s) it feeds. Any other backslash line is
-            // a malformed diff, and the marker with no preceding hunk line
-            // is likewise malformed (fx75U).
+            // a malformed diff, the marker with no preceding hunk line is
+            // likewise malformed, and a doubled marker is malformed too —
+            // the second cannot attach to a line that already has one
+            // (fx75U, round-3 review).
             if line != "\\ No newline at end of file" {
                 return Err("malformed diff: unexpected backslash line inside hunk".to_string());
+            }
+            if marker_seen {
+                return Err("malformed diff: repeated no-newline marker".to_string());
             }
             let Some(last) = state.lines.last_mut() else {
                 return Err(
                     "malformed diff: no-newline marker with no preceding hunk line".to_string(),
                 );
             };
+            if last.no_newline {
+                return Err("malformed diff: repeated no-newline marker".to_string());
+            }
             last.no_newline = true;
+            marker_seen = true;
             continue;
         }
+        marker_seen = false;
         if let Some(text) = line.strip_prefix('+') {
             state.consume_new()?;
             state.added.insert(state.next_new - 1);
@@ -2297,6 +2311,28 @@ mod tests {
         if missing_directions(&empty) != ["should_gap", "should_stay_quiet", "should_limit"] {
             return Err("empty aggregate lost the required-direction gap".to_string());
         }
+        Ok(())
+    }
+
+    /// fxi3X round-3 review: a doubled no-newline marker is malformed.
+    #[test]
+    fn diff_parser_rejects_doubled_no_newline_marker() -> Result<(), String> {
+        let body = concat!(
+            "--- a/file.py\n",
+            "+++ b/file.py\n",
+            "@@ -1 +1 @@\n",
+            "-old\n",
+            "+new\n",
+            r"\ No newline at end of file",
+            "\n",
+            r"\ No newline at end of file",
+            "\n",
+        );
+        let err = parse_unified_diff(body).err().ok_or("expected rejection")?;
+        assert!(
+            err.contains("repeated no-newline marker"),
+            "unexpected error: {err}"
+        );
         Ok(())
     }
 
