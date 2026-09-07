@@ -1897,18 +1897,16 @@ pub(crate) fn parse_rfc3339_epoch_seconds(text: &str) -> Result<i64, String> {
             "RFC3339 timestamp `{text}` has minute `{minute}` outside 00-59"
         ));
     }
-    // RFC 3339 section 5.7 permits `:60` as a leap second at 23:59 local
-    // time (#3674 review round 6); its instant equals the next minute
-    // boundary, so the epoch math below needs no special case.
+    // RFC 3339 section 5.7 permits `:60` as a leap second. Its placement
+    // follows the UTC instant — a numeric offset shifts the local wall clock,
+    // so `1990-12-31T15:59:60-08:00` is the same leap second as
+    // `1990-12-31T23:59:60Z` (round-8 review). The check therefore runs after
+    // offset normalization below; the instant itself equals the next minute
+    // boundary, so the epoch math needs no special case.
     let leap_second = second == 60;
     if !(0..=60).contains(&second) {
         return Err(format!(
             "RFC3339 timestamp `{text}` has second `{second}` outside 00-60"
-        ));
-    }
-    if leap_second && (hour != 23 || minute != 59) {
-        return Err(format!(
-            "RFC3339 timestamp `{text}` has leap second `{second}` outside `23:59:60`"
         ));
     }
     let tail = &text[19..];
@@ -1943,6 +1941,15 @@ pub(crate) fn parse_rfc3339_epoch_seconds(text: &str) -> Result<i64, String> {
             "RFC3339 timestamp `{text}` must end in `Z` or a `+hh:mm` offset"
         ));
     };
+    if leap_second {
+        // The minute holding the leap second must be `23:59` in UTC.
+        let utc_second_of_day = (hour * 3600 + minute * 60 - offset_seconds).rem_euclid(86_400);
+        if utc_second_of_day != 23 * 3600 + 59 * 60 {
+            return Err(format!(
+                "RFC3339 timestamp `{text}` has leap second `{second}` outside a `23:59:60` UTC instant"
+            ));
+        }
+    }
     Ok(
         days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second
             - offset_seconds,
@@ -2852,7 +2859,16 @@ mod tests {
             leap_second == next_minute,
             "the leap second must resolve to the next minute boundary",
         )?;
+        // Round-8 review: the placement follows the UTC instant, so a numeric
+        // offset may carry the `:60` at a shifted local wall clock.
+        let offset_leap = parse_rfc3339_epoch_seconds("1990-12-31T15:59:60-08:00")?;
+        let utc_form = parse_rfc3339_epoch_seconds("1990-12-31T23:59:60Z")?;
+        ensure(
+            offset_leap == utc_form,
+            "an offset-shifted leap second must equal its UTC form",
+        )?;
         for impossible in [
+            "1990-12-31T16:59:60-08:00", // offset does not reach the UTC minute
             "2026-02-30T00:00:00Z",      // day overflow (normalized by the math)
             "2026-02-29T00:00:00Z",      // non-leap year
             "2026-13-01T00:00:00Z",      // month 13
