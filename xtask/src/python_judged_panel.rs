@@ -97,55 +97,55 @@ fn admitted_classifications(direction: &str) -> &'static [&'static str] {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PythonJudgedPanelEnvelope {
+pub(crate) struct PythonJudgedPanelEnvelope {
     schema_version: String,
     kind: String,
     spec: String,
     tier: String,
     description: String,
     #[serde(default)]
-    measurement_summary: Option<PythonJudgedPanelMeasurementSummary>,
+    pub(crate) measurement_summary: Option<PythonJudgedPanelMeasurementSummary>,
     limits: Vec<String>,
-    items: Vec<PythonJudgedPanelItem>,
+    pub(crate) items: Vec<PythonJudgedPanelItem>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PythonJudgedPanelMeasurementSummary {
+pub(crate) struct PythonJudgedPanelMeasurementSummary {
     items_judged: u64,
     false_exposed_count: u64,
     false_actionable_count: u64,
     note: String,
     #[serde(default)]
-    judged_against: Nullable<String>,
+    pub(crate) judged_against: Nullable<String>,
     #[serde(default)]
     updated: Nullable<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PythonJudgedPanelItem {
-    id: String,
-    repo: String,
+pub(crate) struct PythonJudgedPanelItem {
+    pub(crate) id: String,
+    pub(crate) repo: String,
     #[serde(default)]
     base: Nullable<String>,
     #[serde(default)]
     head: Nullable<String>,
-    diff_path: String,
+    pub(crate) diff_path: String,
     shape: Vec<String>,
-    expected_direction: String,
-    anchor: PythonJudgedPanelAnchor,
+    pub(crate) expected_direction: String,
+    pub(crate) anchor: PythonJudgedPanelAnchor,
     #[serde(default)]
-    expected_classification: Nullable<String>,
+    pub(crate) expected_classification: Nullable<String>,
     #[serde(default)]
     expected_static_limit_kind: Nullable<String>,
     #[serde(default)]
-    actual_classification: Nullable<String>,
+    pub(crate) actual_classification: Nullable<String>,
     #[serde(default)]
     actual_oracle_alignment: Nullable<String>,
     labels: PythonJudgedPanelLabels,
     #[serde(default)]
-    judgment_source: Nullable<String>,
+    pub(crate) judgment_source: Nullable<String>,
     #[serde(default)]
     judged_at: Nullable<String>,
     #[serde(default)]
@@ -159,12 +159,12 @@ struct PythonJudgedPanelItem {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PythonJudgedPanelAnchor {
+pub(crate) struct PythonJudgedPanelAnchor {
     #[serde(default)]
-    file: Nullable<String>,
+    pub(crate) file: Nullable<String>,
     #[serde(default)]
-    line: Nullable<u64>,
-    owner: String,
+    pub(crate) line: Nullable<u64>,
+    pub(crate) owner: String,
     boundary: String,
 }
 
@@ -201,7 +201,7 @@ impl PythonJudgedPanelLabels {
 
 /// Distinguishes a missing key from an explicit JSON null.
 #[derive(Debug, Default)]
-enum Nullable<T> {
+pub(crate) enum Nullable<T> {
     #[default]
     Missing,
     Null,
@@ -209,11 +209,11 @@ enum Nullable<T> {
 }
 
 impl<T> Nullable<T> {
-    fn is_null(&self) -> bool {
+    pub(crate) fn is_null(&self) -> bool {
         matches!(self, Self::Null | Self::Missing)
     }
 
-    fn value(&self) -> Option<&T> {
+    pub(crate) fn value(&self) -> Option<&T> {
         match self {
             Self::Value(value) => Some(value),
             Self::Missing | Self::Null => None,
@@ -222,7 +222,7 @@ impl<T> Nullable<T> {
 }
 
 impl Nullable<String> {
-    fn non_blank_value(&self) -> Option<&str> {
+    pub(crate) fn non_blank_value(&self) -> Option<&str> {
         self.value()
             .map(|value| value.as_str())
             .filter(|value| !value.trim().is_empty())
@@ -241,13 +241,13 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Nullable<T> {
 /// Row status: unjudged seed rows, completed usefulness judgments, and Tier A
 /// robustness carryover rows excluded from the judged denominator.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-enum RowKind {
+pub(crate) enum RowKind {
     Seed,
     Judged,
     Carryover,
 }
 
-fn row_kind(item: &PythonJudgedPanelItem) -> RowKind {
+pub(crate) fn row_kind(item: &PythonJudgedPanelItem) -> RowKind {
     // A blank judgment_source is not a declared source: the row stays
     // unjudged instead of entering the judged denominator.
     if item.judgment_source.non_blank_value().is_none() {
@@ -346,9 +346,9 @@ fn load_envelope_at(root: &Path, display: &str) -> Result<PythonJudgedPanelEnvel
     })
 }
 
-struct LoadedEnvelope {
-    display: String,
-    envelope: PythonJudgedPanelEnvelope,
+pub(crate) struct LoadedEnvelope {
+    pub(crate) display: String,
+    pub(crate) envelope: PythonJudgedPanelEnvelope,
 }
 
 /// One validated inventory: row-derived aggregates plus non-failing warnings.
@@ -447,23 +447,16 @@ fn missing_directions(aggregates: &PanelAggregates) -> Vec<&'static str> {
 }
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
-    match args {
-        [subcommand] if subcommand == "check" => {}
-        [subcommand, flag] if subcommand == "check" && flag == "--check" => {}
-        [] => {
-            return Err(format!(
-                "python-judged-panel requires `check [--check]` (replay and report land in later #3555 slices)\nrerun: {RERUN_COMMAND}"
-            ));
+    match args.first().map(String::as_str) {
+        Some("check") if args.len() == 1 || args == ["check", "--check"] => {
+            print_report(&check_inventory_at(Path::new("."), &INVENTORY_PATHS)?);
+            Ok(())
         }
-        _ => {
-            return Err(format!(
-                "unknown python-judged-panel arguments `{}`\nrerun: {RERUN_COMMAND}",
-                args.join(" ")
-            ));
-        }
+        Some("replay") => super::python_judged_panel_replay::run(&args[1..]),
+        _ => Err(format!(
+            "python-judged-panel requires `check [--check]` or `replay [--check] [--limit <n>] [--network]` (report lands in a later #3555 slice)\nrerun: {RERUN_COMMAND}"
+        )),
     }
-    print_report(&check_inventory_at(Path::new("."), &INVENTORY_PATHS)?);
-    Ok(())
 }
 
 /// Precommit alias (`cargo xtask check-python-judged-panel`): the same
@@ -530,6 +523,23 @@ fn disclosed_rate(value: Option<f64>) -> String {
 /// Validates the given repo-relative envelope files as one inventory under
 /// `root`; every declared diff path must resolve under `root`/`fixtures/`.
 pub(crate) fn check_inventory_at(root: &Path, displays: &[&str]) -> Result<CheckReport, String> {
+    let loaded = load_validated_inventory(root, displays)?;
+    let (_, mut warnings) = validate_inventory(root, &loaded);
+    warnings.sort();
+    warnings.dedup();
+    Ok(CheckReport {
+        aggregates: derive_aggregates(&loaded),
+        warnings,
+    })
+}
+
+/// The one semantic loader behind `check` and `replay` (#3555): strict parse,
+/// full semantic validation, then the validated rows. Replay consumes only
+/// rows this loader accepted; it never re-parses envelopes in parallel.
+pub(crate) fn load_validated_inventory(
+    root: &Path,
+    displays: &[&str],
+) -> Result<Vec<LoadedEnvelope>, String> {
     let loaded = displays
         .iter()
         .map(|display| {
@@ -539,7 +549,7 @@ pub(crate) fn check_inventory_at(root: &Path, displays: &[&str]) -> Result<Check
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let (mut violations, mut warnings) = validate_inventory(root, &loaded);
+    let (mut violations, _) = validate_inventory(root, &loaded);
     violations.sort();
     violations.dedup();
     if !violations.is_empty() {
@@ -550,12 +560,7 @@ pub(crate) fn check_inventory_at(root: &Path, displays: &[&str]) -> Result<Check
             violations.join("\n- ")
         ));
     }
-    warnings.sort();
-    warnings.dedup();
-    Ok(CheckReport {
-        aggregates: derive_aggregates(&loaded),
-        warnings,
-    })
+    Ok(loaded)
 }
 
 fn validate_inventory(root: &Path, loaded: &[LoadedEnvelope]) -> (Vec<String>, Vec<String>) {
@@ -1118,7 +1123,7 @@ fn validate_anchor_and_diff(
 }
 
 /// Confined diff loading: repo-relative, no traversal, under `fixtures/`.
-fn load_diff_body(
+pub(crate) fn load_diff_body(
     root: &Path,
     diff_path: &str,
     subject: &str,
@@ -1201,7 +1206,9 @@ fn normalize_path(path: &Path) -> String {
 /// binary, rename, copy, quoted, unbound-hunk, and false-extent forms.
 /// Empty lines inside a hunk are blank context lines (the retained seed
 /// rendition of `decorator_indirection_limit.diff` ends its hunk with two).
-fn parse_unified_diff(body: &str) -> Result<ParsedDiff, String> {
+/// Hunk line text is retained (`DiffHunk.lines`) so replay can reconstruct
+/// the proved base/head content (#3555 PR B).
+pub(crate) fn parse_unified_diff(body: &str) -> Result<ParsedDiff, String> {
     let mut sections = Vec::new();
     let mut current: Option<DiffSection> = None;
     let mut hunk: Option<DiffHunk> = None;
@@ -1270,15 +1277,28 @@ fn parse_unified_diff(body: &str) -> Result<ParsedDiff, String> {
         if line.starts_with('\\') {
             continue;
         }
-        if line.starts_with('+') {
+        if let Some(text) = line.strip_prefix('+') {
             state.consume_new()?;
             state.added.insert(state.next_new - 1);
-        } else if line.starts_with('-') {
+            state.lines.push(DiffLine {
+                kind: DiffLineKind::Added,
+                text: text.to_string(),
+            });
+        } else if let Some(text) = line.strip_prefix('-') {
             state.consume_old()?;
             state.deleted.insert(state.next_old - 1);
+            state.lines.push(DiffLine {
+                kind: DiffLineKind::Deleted,
+                text: text.to_string(),
+            });
         } else if line.starts_with(' ') || line.is_empty() {
             state.consume_old()?;
             state.consume_new()?;
+            let text = line.strip_prefix(' ').unwrap_or("");
+            state.lines.push(DiffLine {
+                kind: DiffLineKind::Context,
+                text: text.to_string(),
+            });
         } else {
             return Err(format!("unsupported line inside unified hunk `{line}`"));
         }
@@ -1289,25 +1309,44 @@ fn parse_unified_diff(body: &str) -> Result<ParsedDiff, String> {
 }
 
 #[derive(Debug, Default)]
-struct ParsedDiff {
-    sections: Vec<DiffSection>,
+pub(crate) struct ParsedDiff {
+    pub(crate) sections: Vec<DiffSection>,
 }
 
 #[derive(Debug)]
-struct DiffSection {
-    old_path: Option<String>,
-    new_path: Option<String>,
-    hunks: Vec<DiffHunk>,
+pub(crate) struct DiffSection {
+    pub(crate) old_path: Option<String>,
+    pub(crate) new_path: Option<String>,
+    pub(crate) hunks: Vec<DiffHunk>,
 }
 
 #[derive(Debug)]
-struct DiffHunk {
+pub(crate) struct DiffHunk {
+    pub(crate) old_start: u64,
+    pub(crate) new_start: u64,
     old_remaining: u64,
     new_remaining: u64,
-    next_old: u64,
-    next_new: u64,
-    added: BTreeSet<u64>,
-    deleted: BTreeSet<u64>,
+    pub(crate) next_old: u64,
+    pub(crate) next_new: u64,
+    pub(crate) added: BTreeSet<u64>,
+    pub(crate) deleted: BTreeSet<u64>,
+    /// Hunk body in document order with the leading mode character stripped.
+    pub(crate) lines: Vec<DiffLine>,
+}
+
+/// One retained hunk body line: its diff role plus the text after the role
+/// character (`\ No newline at end of file` markers are not retained).
+#[derive(Debug)]
+pub(crate) struct DiffLine {
+    pub(crate) kind: DiffLineKind,
+    pub(crate) text: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum DiffLineKind {
+    Context,
+    Added,
+    Deleted,
 }
 
 impl DiffHunk {
@@ -1373,12 +1412,15 @@ fn parse_hunk_header(line: &str) -> Result<DiffHunk, String> {
     let (old_start, old_count) = parse_hunk_range(old, '-')?;
     let (new_start, new_count) = parse_hunk_range(new, '+')?;
     Ok(DiffHunk {
+        old_start,
+        new_start,
         old_remaining: old_count,
         new_remaining: new_count,
         next_old: old_start,
         next_new: new_start,
         added: BTreeSet::new(),
         deleted: BTreeSet::new(),
+        lines: Vec::new(),
     })
 }
 
