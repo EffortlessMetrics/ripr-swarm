@@ -1897,9 +1897,18 @@ pub(crate) fn parse_rfc3339_epoch_seconds(text: &str) -> Result<i64, String> {
             "RFC3339 timestamp `{text}` has minute `{minute}` outside 00-59"
         ));
     }
-    if !(0..=59).contains(&second) {
+    // RFC 3339 section 5.7 permits `:60` as a leap second at 23:59 local
+    // time (#3674 review round 6); its instant equals the next minute
+    // boundary, so the epoch math below needs no special case.
+    let leap_second = second == 60;
+    if second > 60 {
         return Err(format!(
-            "RFC3339 timestamp `{text}` has second `{second}` outside 00-59"
+            "RFC3339 timestamp `{text}` has second `{second}` outside 00-60"
+        ));
+    }
+    if leap_second && (hour != 23 || minute != 59) {
+        return Err(format!(
+            "RFC3339 timestamp `{text}` has leap second `{second}` outside `23:59:60`"
         ));
     }
     let tail = &text[19..];
@@ -2835,6 +2844,14 @@ mod tests {
             rfc3339_from_epoch_seconds(leap) == "2024-02-29T00:00:00Z",
             "the leap-day control must round-trip",
         )?;
+        // RFC 3339 section 5.7: `23:59:60` is a valid leap-second stamp; its
+        // instant equals the next minute boundary (the real 2016-12-31 one).
+        let leap_second = parse_rfc3339_epoch_seconds("2016-12-31T23:59:60Z")?;
+        let next_minute = parse_rfc3339_epoch_seconds("2017-01-01T00:00:00Z")?;
+        ensure(
+            leap_second == next_minute,
+            "the leap second must resolve to the next minute boundary",
+        )?;
         for impossible in [
             "2026-02-30T00:00:00Z",      // day overflow (normalized by the math)
             "2026-02-29T00:00:00Z",      // non-leap year
@@ -2842,7 +2859,9 @@ mod tests {
             "2026-00-10T00:00:00Z",      // month 0
             "2026-09-04T24:00:00Z",      // hour 24
             "2026-09-04T00:60:00Z",      // minute 60
-            "2026-09-04T00:00:60Z",      // second 60
+            "2026-09-04T00:00:60Z",      // second 60 outside 23:59:60
+            "2016-12-31T12:59:60Z",      // leap second at the wrong local hour
+            "2026-09-04T00:00:61Z",      // second 61
             "2026-09-04T00:00:00+24:00", // offset hours 24
             "2026-09-04T00:00:00+99:99", // both offset parts out of range
             "2026-09-04T00:00:00+0200",  // missing offset colon
