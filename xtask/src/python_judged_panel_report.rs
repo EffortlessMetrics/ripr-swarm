@@ -599,10 +599,14 @@ fn adjudicate_case_at(
         .judgments
         .retain(|existing| existing.reviewer_role != request.role);
     // One identity may never occupy two roles: the independence claim behind
-    // `adjudicated` would be false.
-    if record.judgments.iter().any(|existing| {
-        existing.reviewer_role != request.role && existing.reviewer_identity == request.identity
-    }) {
+    // `adjudicated` would be false. (After the retain above, no remaining
+    // judgment carries this role — the role-condition simplification is
+    // credited to the gemini review.)
+    if record
+        .judgments
+        .iter()
+        .any(|existing| existing.reviewer_identity == request.identity)
+    {
         return Err(format!(
             "identity `{}` is already recorded under a different role on case `{}`; one identity must never occupy two roles — independence requires distinct people\nrerun: {ADJUDICATE_RERUN}",
             request.identity, request.case_id
@@ -675,6 +679,14 @@ fn validate_judgment_semantics(judgment: JudgmentSemantics<'_>) -> Result<(), St
         return Err(format!(
             "reviewer identity is required: pass --reviewer <identity> or set env {REVIEWER_ENV}"
         ));
+    }
+    // FIX fA8C (devin #3682): `" alice"` and `"alice"` are different people
+    // only to a string comparison — padding must never be able to borrow a
+    // clean identity's record or dodge its independence conflict.
+    if judgment.role.trim() != judgment.role || judgment.identity.trim() != judgment.identity {
+        return Err(
+            "reviewer role and identity must not carry leading or trailing whitespace".to_string(),
+        );
     }
     if judgment.evidence_references.is_empty()
         || judgment
@@ -1467,6 +1479,8 @@ fn build_report_at(
                 }
             }
             let mut seen_pairs = BTreeSet::new();
+            let mut seen_roles = BTreeSet::new();
+            let mut seen_identities = BTreeSet::new();
             for judgment in &record.judgments {
                 if !seen_pairs.insert((
                     judgment.reviewer_role.clone(),
@@ -1477,28 +1491,18 @@ fn build_report_at(
                         judgment.reviewer_role, judgment.reviewer_identity
                     ));
                 }
+                seen_roles.insert(judgment.reviewer_role.as_str());
+                seen_identities.insert(judgment.reviewer_identity.as_str());
             }
             // FIX fqGSD (CodeRabbit #3681): independence needs a one-to-one
             // role-to-identity mapping — one identity occupying two roles (or
             // one role carrying two identities) can satisfy both count checks
-            // while the "independent roles" claim is false. Stored records are
-            // re-checked here so a hand-edited record can never reach
+            // while the "independent roles" claim is false. With duplicate
+            // pairs already rejected above, the mapping is one-to-one exactly
+            // when every set has the pair count (simplification credited to
+            // the gemini review), so a hand-edited record can never reach
             // `Adjudicated` with a shared identity.
-            let mut identities_by_role: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-            let mut roles_by_identity: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-            for judgment in &record.judgments {
-                identities_by_role
-                    .entry(judgment.reviewer_role.as_str())
-                    .or_default()
-                    .insert(judgment.reviewer_identity.as_str());
-                roles_by_identity
-                    .entry(judgment.reviewer_identity.as_str())
-                    .or_default()
-                    .insert(judgment.reviewer_role.as_str());
-            }
-            if identities_by_role.values().any(|set| set.len() > 1)
-                || roles_by_identity.values().any(|set| set.len() > 1)
-            {
+            if seen_pairs.len() != seen_roles.len() || seen_pairs.len() != seen_identities.len() {
                 return Err(format!(
                     "adjudication record `{file_name}` case `{case_id}`: role-to-identity mapping is not one-to-one; one identity must never occupy two roles and one role must never carry two identities — independence requires it"
                 ));
@@ -3628,6 +3632,17 @@ mod tests {
         ensure(
             refusal.contains("already recorded under a different role"),
             &format!("the shared-identity refusal must be named, got: {refusal}"),
+        )?;
+
+        // FIX fA8C (devin #3682): a padded identity is rejected outright — it
+        // must neither borrow a clean identity's record nor dodge its
+        // independence conflict through a string-comparison gap.
+        let padded = judge("second_human_reviewer", " alice ")
+            .err()
+            .ok_or("bijection test failed: the padded identity must be refused")?;
+        ensure(
+            padded.contains("must not carry leading or trailing whitespace"),
+            &format!("the padded-identity refusal must be named, got: {padded}"),
         )?;
 
         // A role re-recording under a changed identity replaces its prior
