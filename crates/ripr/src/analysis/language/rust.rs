@@ -1996,6 +1996,7 @@ impl RustAdapter {
             ),
             production_files: production_files.len(),
             skipped_files,
+            partial_reason: None,
         })
     }
 }

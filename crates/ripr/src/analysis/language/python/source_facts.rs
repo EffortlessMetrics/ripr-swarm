@@ -190,6 +190,23 @@ pub(super) fn parse_module(path: &Path, source: &str) -> Option<Mod> {
     parse_module_result(path, source).ok()
 }
 
+/// The producer-owned parse-error row of a failed snapshot, if any.
+///
+/// `extract_source_facts` types a failed module parse as an
+/// `UnsupportedSyntax` limitation whose evidence carries the
+/// `source_fact_parse_error` prefix; this keeps the failure-shape knowledge
+/// inside the producer that owns it. The repo-mode evidence producer
+/// (#3554 PR B) uses this to emit a typed `ParseFailure` limitation and drop
+/// the file from the analyzed denominator.
+pub(super) fn source_facts_parse_error(
+    facts: &PythonSourceFacts,
+) -> Option<&PythonSourceLimitation> {
+    facts.limitations.iter().find(|limitation| {
+        limitation.kind == StaticLimitKind::UnsupportedSyntax
+            && limitation.evidence.starts_with("source_fact_parse_error")
+    })
+}
+
 pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFacts {
     let mut snapshot = PythonSourceFacts {
         file: file.to_path_buf(),

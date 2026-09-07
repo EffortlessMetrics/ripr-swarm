@@ -12,6 +12,42 @@ accepted threshold, or scaled promotion corpus is established, and the seed
 artifacts are historical evidence, not a measured current
 false-actionable/false-`exposed` rate.
 
+Status note (2026-09-04, #3555 PR A): a typed loader and semantic validator
+now exist — `xtask/src/python_judged_panel.rs` behind
+`cargo xtask python-judged-panel check [--check]`, wired into
+`cargo xtask precommit` as `cargo xtask check-python-judged-panel`. It
+validates envelope identity, direction and judgment contracts, row-derived
+totals, and diff/anchor proofs over the retained inventory, and keeps null
+labels unjudged.
+
+Status note (2026-09-04, #3555 PR B): an offline replay lane now exists —
+`cargo xtask python-judged-panel replay [--check] [--limit <n>] [--network]`
+(`xtask/src/python_judged_panel_replay.rs`) consumes the same validated
+loader, materializes diff-proved temp workspaces for rows whose base/head
+content is fully determined by the retained diff, invokes the real `ripr
+check --mode fast --json` binary with isolated `RIPR_CACHE_DIR`, and retains
+typed candidate records with mismatch reasons outside the accepted panel
+under `target/ripr/python-judged-panel/replay/`. Accepted judgments,
+directions, labels, and historical artifacts are never rewritten; judged-row
+comparisons are candidate-vs-prior-actual with a `PriorActualStale` note when
+the retained `judged_against` identity does not name the replayed binary
+version. `--network` is declared and refused: live materialization lands with
+a later slice, so replay exists offline over retained content only.
+Review-round hardening: parse-failure typing consumes producer-owned facts
+(analysis kind and limitation records) rather than candidate-count
+heuristics; comparisons are emitted only for completed analyses (timeouts,
+failed runs, parse failures, and partial analyses carry an explicit
+comparison-unavailable marker); the anchor candidate binds by exact owner
+identity — the canonical-gap owner, or for exposed findings without a
+canonical gap a language-qualified probe-owner suffix — with no proximity
+fallback; each run clears its own records directory; a case-id slug
+collision fails the run before any execution; and every record binds the
+base-tree digest plus the retained-rendition-head disclosure alongside the
+binary, diff, and config identities. The spec's remaining acceptance criteria (a current replayed
+panel covering all three directions with recorded adjudication, an accepted
+threshold, and a scaled promotion corpus) remain unmet; the status stays
+**proposed**.
+
 Owner: language-adapter / swarm
 
 Linked proposal:
@@ -196,17 +232,61 @@ ripr fails closed to static_unknown with no card -> limitation_quality = "precis
 
 ## Test Mapping
 
-This spec has no executable judging surface or semantic validator. The
-manifest-only fixture helper only exempts this schema fixture from an unrelated
-generic requirement; doc gates validate registration and traceability, not the
-meaning of the manual judgments.
+The panel now has a typed loader and semantic validator
+(`xtask/src/python_judged_panel.rs`, `cargo xtask python-judged-panel check`)
+and an offline replay lane (`xtask/src/python_judged_panel_replay.rs`,
+`cargo xtask python-judged-panel replay`); adjudication workflow and reports
+remain future work. The manifest-only fixture helper only exempts this schema
+fixture from an unrelated generic requirement; doc gates validate registration
+and traceability, not the meaning of the manual judgments.
 
-Planned (a later judging PR):
+Landed with #3555 PR A (validator):
 
-- `python_judged_pr_panel::manifest_load_validates` — envelope + per-item field
-  validation (unique ids, valid `expected_direction`, lattice consistency).
-- `python_judged_pr_panel::lattice_rejects_double_error` — at most one error
-  label `true` per item.
+- `python_judged_panel::tests::retained_and_alternate_inventories_validate` —
+  the retained inventory validates with row-derived aggregates, and a fully
+  synthetic alternate inventory proves the validator is not hard coded.
+- `python_judged_panel::tests::panel_contract_rejects_inventory_judgment_and_totals_drift` —
+  direction/lattice consistency, at most one error label true per item, and
+  hand-entered totals that disagree with rows.
+
+Landed with #3555 PR B (replay):
+
+- `python_judged_panel_replay::tests::replay_materializes_row_and_runs_real_check_end_to_end` —
+  a synthetic row is materialized from its retained diff alone, the real
+  `ripr check` binary runs over the temp workspace, the candidate
+  classification is extracted at the anchor, the record lands outside the
+  panel, and the panel digest is unchanged.
+- `python_judged_panel_replay::tests::replay_records_typed_mismatch_without_touching_accepted_judgment` —
+  divergent (or quiet) candidates produce typed mismatches against the
+  accepted expectation and the accepted envelope bytes stay identical.
+- `python_judged_panel_replay::tests::replay_types_insufficient_identity_as_not_run` —
+  a tenacity-style row whose hunks start at line 88 replays as typed
+  `not_run` with a reason, no workspace, and no fabricated comparison.
+- `python_judged_panel_replay::tests::replay_notes_prior_actual_stale_for_judged_rows`
+  — the `PriorActualStale` note keys on the retained judged-against
+  identity (naming the current version suppresses it), not the row kind.
+- `python_judged_panel_replay::tests::replay_honors_limit_and_discloses_bounded_out`,
+  `replay_network_flag_fails_closed`, and
+  `reconstruction_reverses_added_lines_and_skips_unproved_sides` — limit
+  accounting, the `--network` refusal, and proved-side reconstruction.
+- `python_judged_panel_replay::tests::replay_clears_stale_records_between_runs`
+  and `replay_rejects_slug_collision_as_setup_violation` — each run
+  retains exactly its own record set, and a case-id slug collision fails
+  before any execution.
+- `python_judged_panel_replay::tests::comparison_unavailable_for_non_completed_outcomes`
+  — failed runs carry `ComparisonUnavailable` (never a quiet mismatch);
+  a completed quiet run still types `ExpectedButQuiet`.
+- `python_judged_panel_replay::tests::candidate_binds_exposed_findings_by_owner_identity`
+  — exposed findings without a canonical gap bind by exact
+  language-qualified probe-owner suffix; conflicts and near-suffixes do
+  not bind.
+- `python_judged_panel_replay::tests::outcome_parse_failure_uses_producer_facts`
+  — a valid complete run with no behavioral candidates stays a complete
+  quiet comparison; `analysis_failed`/`unsupported_input` and
+  parse/input limitations map to the typed parse-failed outcome.
+- `python_judged_panel_replay::tests::workspace_guard_removes_tree_on_failure`
+  — the workspace build guard removes the temp tree on failure and keeps
+  it when the value completes.
 
 ## Implementation Mapping
 
@@ -216,6 +296,12 @@ Planned (a later judging PR):
 | Historical manual panels | `fixtures/python-judged-pr-panel/{starter-judged.json, scaled-judged.json}` |
 | Seed diffs | `fixtures/python-judged-pr-panel/diffs/*.diff` |
 | Manifest-only fixture exemption | `xtask/src/reports/fixtures.rs` (`is_manifest_only_fixture_dir`) |
+| Typed loader + semantic validator | `xtask/src/python_judged_panel.rs` |
+| Panel check command | `cargo xtask python-judged-panel check [--check]`; precommit alias `cargo xtask check-python-judged-panel` |
+| Offline replay lane (implementation) | `xtask/src/python_judged_panel_replay.rs` |
+| Panel replay command | `cargo xtask python-judged-panel replay [--check] [--limit <n>] [--network]` |
+| Replay record output | one record per case at `target/ripr/python-judged-panel/replay/<stable_case_slug(case_id)>.json` — slug collisions fail the run before any execution (`python_judged_panel_replay_record` 0.1: binary/diff/config identity, head+base workspace digests, reconstruction disclosure, typed outcome, comparison) |
+| Replay tests | `xtask/src/python_judged_panel_replay.rs` `mod tests` (end-to-end real-binary run, panel immutability, typed mismatches, `not_run` identity, stale/current notes, limit accounting, network refusal, reconstruction, record clearing, slug collisions, comparison availability, owner binding, parse survival, workspace guard) |
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |
 

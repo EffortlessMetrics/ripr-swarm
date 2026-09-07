@@ -325,6 +325,40 @@ fn perl_diff_projection_keeps_partial_packet_incomplete() -> Result<(), String> 
     Ok(())
 }
 
+/// #3668 review: a Partial fact packet analyzed in repo mode retains its
+/// findings but must disclose the partial run through `partial_reason`,
+/// so the pipeline records a partial `LanguageRun` and gates fail
+/// closed on the truncated denominator.
+#[test]
+fn perl_repo_projection_discloses_partial_packet() -> Result<(), String> {
+    let packet_path = std::env::temp_dir().join(format!(
+        "ripr-perl-partial-repo-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(
+        &packet_path,
+        bless_fingerprint(PARTIAL_DYNAMIC_BOUNDARY_PACKET),
+    )
+    .map_err(|error| error.to_string())?;
+    let mut options = packet_test_options();
+    options.perl_facts_path = Some(packet_path.clone());
+    let result = PerlAdapter.analyze_repo(&options, &OraclePolicy::default())?;
+    assert!(
+        !result.findings.is_empty(),
+        "partial packet findings are retained"
+    );
+    let reason = result
+        .partial_reason
+        .as_deref()
+        .ok_or("partial packet must disclose the partial run")?;
+    assert!(
+        reason.contains("partial"),
+        "reason should name the partial packet: {reason}"
+    );
+    std::fs::remove_file(packet_path).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[test]
 fn perl_fact_packet_adapter_keeps_verify_command_as_fact_not_result() -> Result<(), String> {
     let packet = consume(EXACT_RETURN_PACKET)?;

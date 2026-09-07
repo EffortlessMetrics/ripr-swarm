@@ -58,6 +58,14 @@ pub(crate) struct LanguageRepoResult {
     /// Number of discovered-language files intentionally excluded as generated
     /// source. The pipeline records this as a partial run disclosure.
     pub(crate) skipped_files: usize,
+    /// Typed partial-run disclosure (#3554, #2109): `Some` only when the
+    /// adapter ran over a capped or otherwise partial repo working set, so
+    /// the run can never back a full-denominator claim. The pipeline records
+    /// it as a `LanguageRun` with status `Partial` — the same disclosure
+    /// channel the Rust repo path uses for generated-file skips — which
+    /// human/JSON output renders and gates fail closed on. `None` for
+    /// complete runs and honest zeros.
+    pub(crate) partial_reason: Option<String>,
 }
 
 /// Boundary trait for per-language adapters.
