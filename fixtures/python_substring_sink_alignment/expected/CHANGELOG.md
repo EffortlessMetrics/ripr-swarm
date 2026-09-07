@@ -155,3 +155,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_substring_sink_alignment (2)
+
+Reason:
+RIPR-SPEC-0108: bind discriminator narration to final verdict (#3670)
+
+Command:
+`cargo xtask goldens bless python_substring_sink_alignment --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

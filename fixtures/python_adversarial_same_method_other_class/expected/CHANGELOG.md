@@ -179,3 +179,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_same_method_other_class (2)
+
+Reason:
+RIPR-SPEC-0108: bind discriminator narration to final verdict (#3670)
+
+Command:
+`cargo xtask goldens bless python_adversarial_same_method_other_class --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

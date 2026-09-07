@@ -191,3 +191,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_free_function_module_collision (2)
+
+Reason:
+RIPR-SPEC-0108: bind discriminator narration to final verdict (#3670)
+
+Command:
+`cargo xtask goldens bless python_adversarial_free_function_module_collision --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
