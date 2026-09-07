@@ -35,6 +35,7 @@ mod product_gate_plan;
 mod public_api_surface;
 mod python_judged_panel;
 mod python_judged_panel_replay;
+mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
 mod types;

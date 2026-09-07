@@ -1821,7 +1821,9 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
+/// Shared with the #3555 adjudication lane: UTC timestamps for recorded
+/// judgments are rendered through the same civil-calendar conversion.
+pub(crate) fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let shifted = days + 719_468;
     let era = if shifted >= 0 {
         shifted
@@ -1893,7 +1895,8 @@ fn parse_rfc3339_epoch_seconds(text: &str) -> Result<i64, String> {
     )
 }
 
-fn rfc3339_from_epoch_seconds(epoch: i64) -> String {
+/// Shared with the #3555 adjudication lane: renders one UTC RFC3339 stamp.
+pub(crate) fn rfc3339_from_epoch_seconds(epoch: i64) -> String {
     let days = epoch.div_euclid(86_400);
     let seconds_of_day = epoch.rem_euclid(86_400);
     let (year, month, day) = civil_from_days(days);

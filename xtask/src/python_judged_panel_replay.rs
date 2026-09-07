@@ -48,7 +48,9 @@ use crate::python_judged_panel::{
 use crate::run::{TimedBytesOutput, capture_bytes_in_dir_with_timeout, run_output_owned};
 
 const RERUN_COMMAND: &str = "cargo xtask python-judged-panel replay";
-const RECORDS_DIR: &str = "target/ripr/python-judged-panel/replay";
+/// Shared with the #3555 report lane: the default record directory the report
+/// reads back (an explicit `--records <dir>` overrides it).
+pub(crate) const RECORDS_DIR: &str = "target/ripr/python-judged-panel/replay";
 const RECORD_SCHEMA_VERSION: &str = "0.1";
 const RECORD_KIND: &str = "python_judged_panel_replay_record";
 const SPEC: &str = "RIPR-SPEC-0092";
@@ -1111,7 +1113,9 @@ fn write_record(records_dir: &Path, record: &ReplayRecord) -> Result<(), String>
         .map_err(|error| format!("write replay record `{}`: {error}", path.display()))
 }
 
-fn stable_case_slug(case_id: &str) -> String {
+/// Shared with the #3555 adjudication lane so record and adjudication file
+/// names derive from case ids through one slug rule.
+pub(crate) fn stable_case_slug(case_id: &str) -> String {
     case_id
         .chars()
         .map(|c| {
@@ -1225,7 +1229,8 @@ fn sha256_file_or_blank(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+/// Shared digest helper for the #3555 report/adjudication identity binding.
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut digest = Sha256::new();
     digest.update(bytes);
     to_hex(&digest.finalize())
@@ -1249,7 +1254,7 @@ fn first_lines(text: &str, max: usize) -> String {
 }
 
 pub(crate) struct ReplaySummary {
-    replayed: usize,
+    pub(crate) replayed: usize,
     not_run: usize,
     mismatched: usize,
     comparison_unavailable: usize,
