@@ -1275,12 +1275,20 @@ pub(crate) fn parse_unified_diff(body: &str) -> Result<ParsedDiff, String> {
             continue;
         };
         if line.starts_with('\\') {
-            // FIX fxi3X: a `\ No newline at end of file` marker
-            // flags the immediately preceding hunk line as lacking the
-            // trailing newline on the side(s) it feeds.
-            if let Some(last) = state.lines.last_mut() {
-                last.no_newline = true;
+            // FIX fxi3X: the `\ No newline at end of file` marker flags the
+            // immediately preceding hunk line as lacking the trailing
+            // newline on the side(s) it feeds. Any other backslash line is
+            // a malformed diff, and the marker with no preceding hunk line
+            // is likewise malformed (fx75U).
+            if line != "\\ No newline at end of file" {
+                return Err("malformed diff: unexpected backslash line inside hunk".to_string());
             }
+            let Some(last) = state.lines.last_mut() else {
+                return Err(
+                    "malformed diff: no-newline marker with no preceding hunk line".to_string(),
+                );
+            };
+            last.no_newline = true;
             continue;
         }
         if let Some(text) = line.strip_prefix('+') {

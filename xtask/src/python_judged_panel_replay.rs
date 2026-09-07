@@ -630,6 +630,7 @@ fn build_run_record(
             head_from_retained_diff: true,
         }),
         authority_boundary: "review_advisory_only",
+        source_only_candidates: true,
         accepted_judgment_modified: false,
     }
 }
@@ -933,6 +934,11 @@ struct ReplayRecord {
     /// FIX fwt5i: replayed subjects are the retained-rendition head, not
     /// a verified upstream checkout; absent for not_run records.
     reconstruction: Option<ReconstructionDisclosure>,
+    /// fx3kS: the materialized head contains only diff-derived files —
+    /// the tests behind accepted judgments are not materialized — so
+    /// downstream adjudication must treat candidate results as
+    /// source-only, never as current judgment reruns.
+    source_only_candidates: bool,
     authority_boundary: &'static str,
     accepted_judgment_modified: bool,
 }
@@ -1073,6 +1079,7 @@ fn not_run_record(case: &CasePlan, binary: &BinaryIdentity, reason: &str) -> Rep
         },
         reconstruction: None,
         authority_boundary: "review_advisory_only",
+        source_only_candidates: true,
         accepted_judgment_modified: false,
     }
 }
