@@ -1870,10 +1870,45 @@ pub(crate) fn parse_rfc3339_epoch_seconds(text: &str) -> Result<i64, String> {
     let hour = number(11..13, "hour")?;
     let minute = number(14..16, "minute")?;
     let second = number(17..19, "second")?;
+    // FIX (#3674 review round 5): `days_from_civil` normalizes out-of-range
+    // fields, so a structurally valid string like `2026-02-30` would silently
+    // become March 2 and enter stored provenance as a real instant. Every
+    // field is therefore range-checked against the calendar before the math.
+    if !(1..=12).contains(&month) {
+        return Err(format!(
+            "RFC3339 timestamp `{text}` has month `{month}` outside 01-12"
+        ));
+    }
+    let month_start = days_from_civil(year, month, 1);
+    let next_month_start = days_from_civil(year, if month == 12 { 13 } else { month + 1 }, 1);
+    let days_in_month = next_month_start - month_start;
+    if !(1..=days_in_month).contains(&day) {
+        return Err(format!(
+            "RFC3339 timestamp `{text}` has day `{day}` outside 01-{days_in_month} for {year}-{month:02}"
+        ));
+    }
+    if !(0..=23).contains(&hour) {
+        return Err(format!(
+            "RFC3339 timestamp `{text}` has hour `{hour}` outside 00-23"
+        ));
+    }
+    if !(0..=59).contains(&minute) {
+        return Err(format!(
+            "RFC3339 timestamp `{text}` has minute `{minute}` outside 00-59"
+        ));
+    }
+    if !(0..=59).contains(&second) {
+        return Err(format!(
+            "RFC3339 timestamp `{text}` has second `{second}` outside 00-59"
+        ));
+    }
     let tail = &text[19..];
     let offset_seconds: i64 = if tail == "Z" {
         0
-    } else if tail.len() == 6 && (tail.starts_with('+') || tail.starts_with('-')) {
+    } else if tail.len() == 6
+        && (tail.starts_with('+') || tail.starts_with('-'))
+        && tail.as_bytes()[3] == b':'
+    {
         let sign: i64 = if tail.starts_with('-') { -1 } else { 1 };
         let offset_hours = tail
             .get(1..3)
@@ -1883,6 +1918,16 @@ pub(crate) fn parse_rfc3339_epoch_seconds(text: &str) -> Result<i64, String> {
             .get(4..6)
             .and_then(|part| part.parse::<i64>().ok())
             .ok_or_else(|| format!("RFC3339 timestamp `{text}` has invalid offset minutes"))?;
+        if !(0..=23).contains(&offset_hours) {
+            return Err(format!(
+                "RFC3339 timestamp `{text}` has offset hours `{offset_hours}` outside 00-23"
+            ));
+        }
+        if !(0..=59).contains(&offset_minutes) {
+            return Err(format!(
+                "RFC3339 timestamp `{text}` has offset minutes `{offset_minutes}` outside 00-59"
+            ));
+        }
         sign * (offset_hours * 3600 + offset_minutes * 60)
     } else {
         return Err(format!(
@@ -2775,6 +2820,39 @@ mod tests {
             parse_rfc3339_epoch_seconds("not a date").is_err(),
             "invalid timestamps must be rejected",
         )?;
+        Ok(())
+    }
+
+    /// FIX (#3674 review round 5): `days_from_civil` normalizes out-of-range
+    /// calendar fields, so the parser must reject them semantically — a
+    /// normalized non-instant like `2026-02-30` must never enter stored
+    /// provenance as a real time.
+    #[test]
+    fn branch_inventory_rfc3339_rejects_semantically_impossible_dates() -> Result<(), String> {
+        // Control: the real leap day parses, and normalizes back identically.
+        let leap = parse_rfc3339_epoch_seconds("2024-02-29T00:00:00Z")?;
+        ensure(
+            rfc3339_from_epoch_seconds(leap) == "2024-02-29T00:00:00Z",
+            "the leap-day control must round-trip",
+        )?;
+        for impossible in [
+            "2026-02-30T00:00:00Z",      // day overflow (normalized by the math)
+            "2026-02-29T00:00:00Z",      // non-leap year
+            "2026-13-01T00:00:00Z",      // month 13
+            "2026-00-10T00:00:00Z",      // month 0
+            "2026-09-04T24:00:00Z",      // hour 24
+            "2026-09-04T00:60:00Z",      // minute 60
+            "2026-09-04T00:00:60Z",      // second 60
+            "2026-09-04T00:00:00+24:00", // offset hours 24
+            "2026-09-04T00:00:00+99:99", // both offset parts out of range
+            "2026-09-04T00:00:00+0200",  // missing offset colon
+        ] {
+            let parsed = parse_rfc3339_epoch_seconds(impossible);
+            ensure(
+                parsed.is_err(),
+                &format!("`{impossible}` must be rejected, got {parsed:?}"),
+            )?;
+        }
         Ok(())
     }
 

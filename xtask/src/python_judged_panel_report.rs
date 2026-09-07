@@ -2012,6 +2012,14 @@ fn stage_temp_sibling(path: &Path, body: &str) -> Result<PathBuf, String> {
 /// files are staged completely as temp siblings first, then renamed into
 /// place. If the second rename fails, the first publication is rolled back
 /// from the prior bytes held in memory, so no half-updated pair survives.
+/// Publish one report generation: both files staged, then renamed in — the
+/// json first, the markdown second, with the json rolled back when the
+/// markdown rename fails. Residual, disclosed (#3674 review round 5): a
+/// process termination between the two renames can still leave a mixed pair
+/// on disk; the one-generation guarantee holds for observable errors, not
+/// for a crash mid-publication. A crashed pair self-heals on the next
+/// successful publication, and the generation lock excludes concurrent
+/// publishers.
 fn write_report_generation(
     json_path: &Path,
     markdown_path: &Path,
