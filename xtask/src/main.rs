@@ -37,6 +37,7 @@ mod repo_readiness;
 mod schema_pattern;
 mod types;
 pub(crate) use types::*;
+mod python_judged_panel;
 mod reports;
 mod ripr_swarm;
 mod run;
@@ -596,6 +597,10 @@ fn precommit() -> Result<(), String> {
 
 fn check_rust_judged_panel() -> Result<(), String> {
     rust_judged_panel::check_canonical()
+}
+
+fn check_python_judged_panel() -> Result<(), String> {
+    python_judged_panel::check_canonical()
 }
 
 /// Diff-aware fast gate runner (#2343). Runs only the gates relevant to
