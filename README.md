@@ -77,10 +77,15 @@ interface.
 When the selected gap is repair-ready, use the dedicated two-phase transaction:
 
 ```bash
-ripr agent repair --root . --seam-id <id> --phase before
+ripr agent repair --root . --seam-id <seam-id> --phase before
 # edit one focused test outside ripr
-ripr agent repair --root . --seam-id <id> --phase after
+ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
+
+The before phase prints the exact `--attempt` command to run after the test
+edit. Keep that command: its repair-attempt ID identifies the prepared
+transaction. See [repair attempt identity](docs/REPAIR_ATTEMPT.md) for
+continuation and recovery.
 
 RIPR owns the before/after evidence plumbing. The human or external coding agent
 owns the focused test edit. `ripr pilot --root .` remains the guided

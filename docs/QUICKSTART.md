@@ -32,6 +32,11 @@ The [public command hierarchy](COMMAND_HIERARCHY.md) keeps the first-hour roles
 distinct: `check` is ordinary first value, `pilot` is guided repo adoption,
 `agent repair` is the repair transaction, and `first-pr` composes PR evidence.
 
+Each repair's before phase prints the exact `--attempt` command needed after
+the test edit. Retain it: the repair-attempt ID identifies the prepared
+transaction and differs from the seam ID used to select the gap.
+[Repair attempt identity](REPAIR_ATTEMPT.md) documents continuation and recovery.
+
 The Rust gap-repair loop is `usable alpha`. Its package, editor, bounded packet,
 and before/after transaction paths are proved when RIPR emits a complete route;
 the governed real-repository corpus does not yet establish how often ordinary
@@ -78,7 +83,7 @@ before/edit/after idea. The explicit CLI/agent equivalent is:
 ```bash
 ripr agent repair --root . --seam-id <id> --phase before
 # edit one focused test outside RIPR
-ripr agent repair --root . --seam-id <id> --phase after
+ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
 Normal editor install should not require `cargo install ripr`. The extension
@@ -160,7 +165,7 @@ ripr agent repair --root . --seam-id <id> --phase before
 Make one focused test edit outside RIPR, then finish:
 
 ```bash
-ripr agent repair --root . --seam-id <id> --phase after
+ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
 The before phase writes the pre-edit snapshot and repair packet. The after phase
@@ -228,7 +233,7 @@ When a current finding supplies a seam ID, use the primary repair command:
 ```bash
 ripr agent repair --root . --seam-id <seam_id> --phase before
 # edit one focused test outside RIPR
-ripr agent repair --root . --seam-id <seam_id> --phase after
+ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
 Ask RIPR what local artifacts already exist when resuming or diagnosing:
