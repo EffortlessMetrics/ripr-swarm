@@ -381,6 +381,10 @@ pub(super) fn render_markdown(report: &Value) -> String {
         );
         for evaluation in thresholds["evaluations"].as_array().into_iter().flatten() {
             let measured = match evaluation["measured"].as_f64() {
+                // FIX (#3686, CodeRabbit #3685): integral metrics (counts like
+                // adjudicated_count) render without decimals, matching the
+                // threshold column; rates keep three decimals.
+                Some(measured) if measured.fract() == 0.0 => format!("{measured}"),
                 Some(measured) => format!("{measured:.3}"),
                 None => "n/a".to_string(),
             };

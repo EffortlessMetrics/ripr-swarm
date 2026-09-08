@@ -537,6 +537,16 @@ fn threshold_evaluation_is_explicit_per_threshold_and_non_authoritative() -> Res
         after.json.contains("\"result\": \"pass\"") && after.json.contains("\"result\": \"fail\""),
         "a failing measured rate must be reported next to passing ones",
     )?;
+    // FIX #3686: the threshold table renders integral metrics (counts)
+    // without decimals — matching the threshold column — while fractional
+    // rates keep three decimals.
+    ensure(
+        after
+            .markdown
+            .contains("| adjudicated_count | min | 2 | 2 |")
+            && !after.markdown.contains("2.000"),
+        "integral measured metrics render without decimals, never as N.000",
+    )?;
     Ok(())
 }
 
@@ -748,6 +758,7 @@ fn report_fails_closed_on_record_set_rot() -> Result<(), String> {
         "spec": "RIPR-SPEC-0092",
         "case_id": "ghost-case",
         "binary": shared_binary,
+        "diff": {"sha256": "b".repeat(64)},
         "outcome": {"kind": "not_run"},
         "comparison": {"kind": "comparison_unavailable"}
     });
@@ -770,6 +781,29 @@ fn report_fails_closed_on_record_set_rot() -> Result<(), String> {
         failure("rot")?.contains("mixed binary identity"),
         "mixed identity must be named",
     )?;
+
+    // Stage 2b (FIX #3686): a blank or malformed diff digest must fail the
+    // read — a blank-to-blank currency match at report time would otherwise
+    // let a hand-edited record report a stale replay as current.
+    rewrite("report-gap-row.json", &|value: &mut Value| {
+        value["binary"] = shared_binary.clone();
+        value["diff"]["sha256"] = json!("");
+    })?;
+    ensure(
+        failure("rot")?.contains("malformed diff sha256"),
+        "the blank digest must be named",
+    )?;
+    rewrite("report-gap-row.json", &|value: &mut Value| {
+        value["diff"]["sha256"] = json!("xyz-not-hex");
+    })?;
+    ensure(
+        failure("rot")?.contains("malformed diff sha256"),
+        "the non-hex digest must be named",
+    )?;
+    // Restore a valid digest so stage 3 exercises the kind check alone.
+    rewrite("report-gap-row.json", &|value: &mut Value| {
+        value["diff"]["sha256"] = json!("b".repeat(64));
+    })?;
 
     // Stage 3: a foreign kind is rejected even with a consistent identity
     // (the record is rewritten back onto the shared identity so the kind
