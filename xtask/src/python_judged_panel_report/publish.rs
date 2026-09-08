@@ -161,7 +161,7 @@ pub(super) fn print_report_summary(report: &RenderedReport) {
     let value = serde_json::from_str::<Value>(&report.json).unwrap_or(Value::Null);
     let count = |key: &str| value["counts"][key].as_u64().unwrap_or(0);
     println!(
-        "Python judged PR panel report: selected={} replayed={} not_run={} adjudicated={} inconclusive={} disputed={} pending_second_role={} stale_row={} stale={} mismatched={} comparison_unavailable={}",
+        "Python judged PR panel report: selected={} replayed={} not_run={} adjudicated={} inconclusive={} disputed={} pending_second_role={} stale_row={} stale={} anchor_stale={} mismatched={} comparison_unavailable={}",
         count("selected"),
         count("replayed"),
         count("not_run"),
@@ -171,6 +171,7 @@ pub(super) fn print_report_summary(report: &RenderedReport) {
         count("pending_second_role"),
         count("stale_row"),
         count("stale"),
+        count("anchor_stale"),
         count("mismatched"),
         count("comparison_unavailable"),
     );
@@ -252,6 +253,7 @@ pub(super) fn render_markdown(report: &Value) -> String {
         "inconclusive",
         "stale_row",
         "stale",
+        "anchor_stale",
         "mismatched",
         "comparison_unavailable",
         "unjudged",
@@ -464,8 +466,15 @@ pub(super) fn render_markdown(report: &Value) -> String {
             ),
             None => ("unjudged".to_string(), "n/a".to_string()),
         };
+        // FIX #3685-review round 2: the anchor-staleness reason must reach
+        // the human surface, not only the JSON — a count without a visible
+        // reason is a false-confidence surface.
+        let anchor_note = replay["anchor_stale_reason"]
+            .as_str()
+            .map(|reason| format!(" (anchor: {reason})"))
+            .unwrap_or_default();
         out.push_str(&format!(
-            "| {} | {} | {} | {outcome} | {candidate} | {mismatches} | {state} | {roles} |\n",
+            "| {} | {} | {} | {outcome}{anchor_note} | {candidate} | {mismatches} | {state} | {roles} |\n",
             case["case_id"].as_str().unwrap_or("?"),
             case["expected_direction"].as_str().unwrap_or("?"),
             case["row_kind"].as_str().unwrap_or("?"),

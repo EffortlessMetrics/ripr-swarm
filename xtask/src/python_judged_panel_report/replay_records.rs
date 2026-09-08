@@ -264,9 +264,12 @@ pub(super) fn read_replay_records(records_dir: &Path) -> Result<ReplayRecordSet,
     Ok((views, binary_identity))
 }
 
-/// FIX #3677: a present echo must be well-shaped (non-blank file and owner);
-/// absence is legal — it marks a record written before the echo existed, and
-/// the report consumes that as anchor-staleness, never as currency.
+/// FIX #3677: a present echo must be well-shaped (non-blank file and owner,
+/// integer line when present); absence is legal — it marks a record written
+/// before the echo existed, and the report consumes that as anchor-staleness,
+/// never as currency. File and owner are stored verbatim (round-2 review):
+/// the echo is producer-copied row data, and trimming here would break the
+/// comparison against a row whose declared value carries padding.
 fn require_anchor_echo(
     value: Option<&Value>,
     display: &str,
@@ -279,26 +282,31 @@ fn require_anchor_echo(
             "replay record `{display}` carries a malformed anchor echo (expected an object with file, line, owner); re-run `cargo xtask python-judged-panel replay`"
         ));
     }
-    let file = text(anchor, "file")
-        .map(str::trim)
-        .filter(|file| !file.is_empty())
-        .ok_or_else(|| {
+    let non_blank = |key: &str| -> Result<String, String> {
+        let raw = text(anchor, key).ok_or_else(|| {
             format!(
-                "replay record `{display}` carries an anchor echo without a file; re-run `cargo xtask python-judged-panel replay`"
+                "replay record `{display}` carries an anchor echo without a {key}; re-run `cargo xtask python-judged-panel replay`"
             )
         })?;
-    let owner = text(anchor, "owner")
-        .map(str::trim)
-        .filter(|owner| !owner.is_empty())
-        .ok_or_else(|| {
+        if raw.trim().is_empty() {
+            return Err(format!(
+                "replay record `{display}` carries an anchor echo with a blank {key}; re-run `cargo xtask python-judged-panel replay`"
+            ));
+        }
+        Ok(raw.to_string())
+    };
+    let line = match anchor.get("line") {
+        None | Some(Value::Null) => None,
+        Some(value) => value.as_u64().map(Some).ok_or_else(|| {
             format!(
-                "replay record `{display}` carries an anchor echo without an owner; re-run `cargo xtask python-judged-panel replay`"
+                "replay record `{display}` carries a malformed anchor echo line (`{value}` is not an integer); re-run `cargo xtask python-judged-panel replay`"
             )
-        })?;
+        })?,
+    };
     Ok(Some(RecordAnchor {
-        file: file.to_string(),
-        line: anchor.get("line").and_then(Value::as_u64),
-        owner: owner.to_string(),
+        file: non_blank("file")?,
+        line,
+        owner: non_blank("owner")?,
     }))
 }
 

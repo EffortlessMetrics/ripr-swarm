@@ -290,7 +290,10 @@ pub(super) fn build_report_at(
         // written before the echo existed) means the replay evaluated a
         // different subject, so it can never be silently current: the row
         // lands in the `stale` aggregate, the `anchor_stale` disclosure names
-        // the reason, and the rate as-of identity excludes it.
+        // the reason, and the rate as-of identity excludes it. Rows without a
+        // declared anchor (carryover/historical) have no anchor identity to
+        // bind — anchor currency does not apply to them (round-2 review).
+        let row_has_anchor = item.anchor.file.non_blank_value().is_some();
         let current_anchor = RecordAnchor {
             file: item
                 .anchor
@@ -301,10 +304,14 @@ pub(super) fn build_report_at(
             line: item.anchor.line.value().copied(),
             owner: item.anchor.owner.clone(),
         };
-        let anchor_state = match replay_view.and_then(|view| view.anchor.clone()) {
-            None => replay_view.map(|_| "missing_echo".to_string()),
-            Some(echo) if echo != current_anchor => Some("anchor_moved".to_string()),
-            Some(_) => None,
+        let anchor_state = if !row_has_anchor {
+            None
+        } else {
+            match replay_view.and_then(|view| view.anchor.clone()) {
+                None => Some("missing_echo".to_string()),
+                Some(echo) if echo != current_anchor => Some("anchor_moved".to_string()),
+                Some(_) => None,
+            }
         };
         let identity_current = replay_view
             .map(|view| {
