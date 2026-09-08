@@ -2,6 +2,7 @@
 
 use super::loop_commands::{
     agent_brief_command, agent_packet_command, agent_receipt_command, agent_verify_command,
+    shell_arg,
 };
 use crate::domain::{
     CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, CommandExecutionMode,
@@ -167,10 +168,14 @@ pub(crate) fn agent_inspection_command_spec(
     root: &str,
     seam_id: &str,
 ) -> CommandSpec {
-    let display = super::loop_commands::agent_artifact_inspection_command(
+    // The display is formatted here rather than in loop_commands: the
+    // inspection producer is the only consumer until its surface slice
+    // wires it, and loop_commands is for builders with live callers.
+    let display = format!(
+        "ripr agent {} --root {} --seam-id {} --json",
         route.command_word(),
-        root,
-        seam_id,
+        shell_arg(root),
+        shell_arg(seam_id)
     );
     command_spec(
         route.command_id(),
