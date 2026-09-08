@@ -21,6 +21,12 @@ struct TempFixture {
     root: PathBuf,
 }
 
+impl Drop for TempFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
 impl TempFixture {
     fn new(name: &str) -> Result<Self, String> {
         let unique = std::time::SystemTime::now()
@@ -389,6 +395,17 @@ fn feedback_check_verifies_staging_and_detects_drift() -> Result<(), String> {
         drifted.contains("does not match a fresh derivation"),
         &format!("the drift must be named, got: {drifted}"),
     )?;
+    // A stale proposal whose confirmation disappeared must also fail: the
+    // entry set on disk is compared against the fresh derivation.
+    let stale_proposal = out.join("feedback-quiet-row.proposal.json");
+    fs::write(&stale_proposal, "{}").map_err(|error| error.to_string())?;
+    let extra = verify_staged(&out, &derive()?)
+        .err()
+        .ok_or("feedback test failed: an extra staging file must fail --check")?;
+    ensure(
+        extra.contains("unexpected file set"),
+        &format!("the extra file must be named, got: {extra}"),
+    )?;
     Ok(())
 }
 
@@ -401,20 +418,25 @@ fn feedback_ignores_non_over_credit_confirmations() -> Result<(), String> {
     // The quiet row judged `exposed` is only reachable with false_actionable
     // decided — that family feeds no proposal.
     let ref_strs = refs.iter().map(String::as_str).collect::<Vec<_>>();
-    adjudicate_case_at(
-        fixture.root.as_path(),
-        &ref_strs,
-        &adjudications,
-        &records,
-        &judge_request(
-            "feedback-quiet-row",
-            "human_operator",
-            "alice",
-            "exposed",
-            None,
-            Some(true),
-        ),
-    )?;
+    for (role, identity) in [
+        ("human_operator", "alice"),
+        ("second_human_reviewer", "bob"),
+    ] {
+        adjudicate_case_at(
+            fixture.root.as_path(),
+            &ref_strs,
+            &adjudications,
+            &records,
+            &judge_request(
+                "feedback-quiet-row",
+                role,
+                identity,
+                "exposed",
+                None,
+                Some(true),
+            ),
+        )?;
+    }
     let out = fixture.root.join("feedback");
     let staged = derive_feedback(
         fixture.root.as_path(),
@@ -431,6 +453,11 @@ fn feedback_ignores_non_over_credit_confirmations() -> Result<(), String> {
     ensure(
         index["confirmed_over_credits"].as_u64() == Some(1),
         "the quiet-row false_actionable confirmation must not stage a proposal",
+    )?;
+    let gap_proposal = out.join("feedback-gap-row.proposal.json");
+    ensure(
+        gap_proposal.is_file() && !out.join("feedback-quiet-row.proposal.json").exists(),
+        "the fully-adjudicated quiet-row false_actionable case must stay excluded while the gap over-credit still proposes",
     )?;
     Ok(())
 }

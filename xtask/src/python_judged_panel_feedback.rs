@@ -135,7 +135,11 @@ fn confirmed_over_credits(report: &Value) -> Result<Vec<Value>, String> {
             && adjudication["verdict"].as_str() == Some("exposed")
             && adjudication["false_exposed"].as_str() == Some("true")
             && OVER_CREDIT_DIRECTIONS.contains(&direction)
-            && replay["identity_current"].as_bool() == Some(true);
+            && replay["identity_current"].as_bool() == Some(true)
+            // A confirmed over-credit rests on a completed comparison: a
+            // not_run (or partial/failed/timed_out) record carries no
+            // candidate evidence to confirm (round-1 review).
+            && replay["outcome"].as_str() == Some("complete");
         if !confirmed {
             continue;
         }
@@ -214,12 +218,9 @@ pub(crate) fn write_staging(out_dir: &Path, staged: &StagedFeedback) -> Result<(
     fs::create_dir_all(out_dir)
         .map_err(|error| format!("create feedback staging `{}`: {error}", out_dir.display()))?;
     for (file_name, bytes) in &staged.files {
-        fs::write(out_dir.join(file_name), bytes).map_err(|error| {
-            format!(
-                "write feedback staging `{}`: {error}",
-                out_dir.join(file_name).display()
-            )
-        })?;
+        let path = out_dir.join(file_name);
+        fs::write(&path, bytes)
+            .map_err(|error| format!("write feedback staging `{}`: {error}", path.display()))?;
     }
     Ok(())
 }
@@ -227,7 +228,46 @@ pub(crate) fn write_staging(out_dir: &Path, staged: &StagedFeedback) -> Result<(
 /// `--check`: the staged files must match a fresh derivation byte-for-byte
 /// except the disclosed `generated_at` field, which is stripped from both
 /// sides before comparison.
+/// Enumerates the staging file names on disk (relative, sorted).
+fn list_staging_files(out_dir: &Path) -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    for entry in fs::read_dir(out_dir)
+        .map_err(|error| format!("read staging `{}`: {error}", out_dir.display()))?
+    {
+        let path = entry
+            .map_err(|error| format!("read staging entry in `{}`: {error}", out_dir.display()))?
+            .path();
+        if path.is_file() {
+            names.push(
+                path.file_name()
+                    .ok_or_else(|| format!("staging entry without a name: `{}`", path.display()))?
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+    }
+    Ok(names)
+}
+
 pub(crate) fn verify_staged(out_dir: &Path, staged: &StagedFeedback) -> Result<(), String> {
+    // FIX (round-1 review): the entry set itself must match - a proposal
+    // whose confirmation disappeared must not survive `--check` as a stale
+    // leftover just because the fresh staging no longer names it.
+    let mut staged_names: Vec<&str> = staged.files.iter().map(|(name, _)| name.as_str()).collect();
+    staged_names.sort_unstable();
+    if !out_dir.is_dir() {
+        return Err(format!(
+            "feedback staging directory `{}` does not exist; run `cargo xtask python-judged-panel feedback` first\nrerun: {RERUN}",
+            out_dir.display(),
+        ));
+    }
+    let on_disk = list_staging_files(out_dir)?;
+    if on_disk != staged_names {
+        return Err(format!(
+            "feedback staging `{}` carries an unexpected file set (on disk: {on_disk:?}, fresh derivation: {staged_names:?}); re-run `cargo xtask python-judged-panel feedback` to restage\nrerun: {RERUN}",
+            out_dir.display(),
+        ));
+    }
     for (file_name, fresh_bytes) in &staged.files {
         let path = out_dir.join(file_name);
         let staged_bytes = fs::read(&path).map_err(|error| {
@@ -249,13 +289,7 @@ pub(crate) fn verify_staged(out_dir: &Path, staged: &StagedFeedback) -> Result<(
 }
 
 fn strip_generated_at(file_name: &Path, bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let text = String::from_utf8(bytes.to_vec()).map_err(|error| {
-        format!(
-            "feedback staging `{}` is not UTF-8: {error}",
-            file_name.display()
-        )
-    })?;
-    let mut value = serde_json::from_str::<Value>(&text)
+    let mut value = serde_json::from_slice::<Value>(bytes)
         .map_err(|error| format!("parse feedback staging `{}`: {error}", file_name.display()))?;
     if let Some(object) = value.as_object_mut() {
         object.remove("generated_at");
@@ -286,6 +320,13 @@ fn take_value(args: &[String], index: &mut usize, flag: &str) -> Result<String, 
     let value = args
         .get(*index + 1)
         .ok_or_else(|| format!("{flag} requires a value\nrerun: {RERUN}"))?;
+    // FIX (round-1 review): a following flag is a missing value, never a
+    // path - `--records --out x` must fail instead of reading from `--out`.
+    if value.starts_with('-') {
+        return Err(format!(
+            "{flag} requires a value (found flag `{value}`)\nrerun: {RERUN}"
+        ));
+    }
     *index += 1;
     Ok(value.clone())
 }

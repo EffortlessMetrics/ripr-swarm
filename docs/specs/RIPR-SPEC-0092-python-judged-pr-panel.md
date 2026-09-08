@@ -70,6 +70,21 @@ same PR. Proposals never write the corpus and never change analyzer
 behaviour; promotion is a human-reviewed PR, and a promotion case that
 fails the meta-gate means the analyzer genuinely over-promotes, so the
 analyzer fix lands in that same PR.
+Staged shapes (output contract): `index.json` carries `schema_version`
+("0.1"), `kind` `python_judged_panel_feedback_index`, `spec`,
+`generated_at` (the single non-deterministic field),
+`confirmed_over_credits`, `proposal_files`, `authority_boundary`, and the
+never-writes note; each `<case-slug>.proposal.json` carries
+`schema_version`, `kind` `python_judged_panel_feedback_proposal`, `spec`,
+`case_id`, `authority_boundary`, `confirmed_over_credit` (verdict,
+false_exposed, roles, expected_direction, row_kind, behavior_family),
+`provenance` (panel_digest, source_envelope, diff_path,
+adjudication_record, replay_record, replay_candidate_classification), and
+`promotion_recipe` (four steps: fixture extraction, corpus case with
+must_not_promote, meta-gate run, golden re-bless). `--check` re-derives
+and compares every staged file after stripping `generated_at`, and also
+fails on an unexpected file set (a proposal whose confirmation
+disappeared must not survive as a stale leftover).
 
 Status note (2026-09-04, #3555 PR C): adjudication and reporting now exist —
 `cargo xtask python-judged-panel adjudicate --case <id> --verdict
