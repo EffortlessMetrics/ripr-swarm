@@ -246,6 +246,7 @@ fn list_staging_files(out_dir: &Path) -> Result<Vec<String>, String> {
             );
         }
     }
+    names.sort();
     Ok(names)
 }
 
