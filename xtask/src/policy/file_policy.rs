@@ -82,7 +82,7 @@ fn validate_test_covered_by(path: &str, commands: &[(usize, String)]) -> Result<
         } else {
             String::new()
         };
-        let stderr = format!("{timeout}status: {status}");
+        let stderr = format!("{timeout}status: {status}\n{}", output.stderr.trim_end());
         Ok((
             output.status.is_some_and(|status| status.success()) && !output.timed_out,
             output.stdout,
@@ -184,6 +184,27 @@ mod tests {
             "cargo test -p xtask test_covered_by_classification_is_token_aware".to_string(),
         )];
         validate_test_covered_by("policy.toml", &commands)
+    }
+
+    #[test]
+    fn test_covered_by_production_wrapper_preserves_cargo_stderr() -> Result<(), String> {
+        let commands = [(
+            17,
+            "cargo test -p package-that-does-not-exist-3528".to_string(),
+        )];
+        let error = match validate_test_covered_by("policy.toml", &commands) {
+            Ok(()) => return Err("failed Cargo enumeration unexpectedly passed".to_string()),
+            Err(error) => error,
+        };
+
+        if error.contains("did not match any packages")
+            && error.contains("stderr:")
+            && error.contains("status:")
+        {
+            Ok(())
+        } else {
+            Err(format!("Cargo enumeration diagnostics were lost: {error}"))
+        }
     }
 
     #[test]
