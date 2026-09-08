@@ -254,17 +254,17 @@ fn utc_now_rfc3339() -> Result<String, String> {
 }
 /// One adjudication request: the reviewer's own current judgment for a case.
 /// Tests inject `recorded_at`; the CLI stamps UTC now.
-pub(super) struct AdjudicationRequest {
-    pub(super) case_id: String,
-    pub(super) verdict: String,
-    pub(super) role: String,
-    pub(super) identity: String,
-    pub(super) evidence: Vec<String>,
-    pub(super) false_actionable: Option<bool>,
-    pub(super) false_exposed: Option<bool>,
-    pub(super) wrong_target: Option<bool>,
-    pub(super) invalid_command: Option<bool>,
-    pub(super) limitation_quality: Option<String>,
-    pub(super) notes: Option<String>,
-    pub(super) recorded_at: String,
+pub(crate) struct AdjudicationRequest {
+    pub(crate) case_id: String,
+    pub(crate) verdict: String,
+    pub(crate) role: String,
+    pub(crate) identity: String,
+    pub(crate) evidence: Vec<String>,
+    pub(crate) false_actionable: Option<bool>,
+    pub(crate) false_exposed: Option<bool>,
+    pub(crate) wrong_target: Option<bool>,
+    pub(crate) invalid_command: Option<bool>,
+    pub(crate) limitation_quality: Option<String>,
+    pub(crate) notes: Option<String>,
+    pub(crate) recorded_at: String,
 }

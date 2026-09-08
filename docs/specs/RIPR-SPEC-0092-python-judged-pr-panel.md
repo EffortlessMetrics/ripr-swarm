@@ -54,6 +54,38 @@ the echo (`missing_echo`) lands in the `anchor_stale` count with a per-case
 named reason and can never bind a rate's as-of identity. Malformed echoes
 (blank file or owner) fail the record read.
 
+Status note (2026-09-08, #3680): regression feedback exists —
+`cargo xtask python-judged-panel feedback [--records <dir>] [--adjudications
+<dir>] [--out <dir>] [--check]` derives the report through the shared
+report pipeline and stages one deterministic proposal per confirmed
+over-credit (two independent roles agreeing verdict `exposed` with
+`false_exposed` decided `true`, on a should_gap/should_limit row whose
+replay is still current) under
+`target/ripr/python-judged-panel/feedback/`, each with the full provenance
+chain and a promotion recipe: extract a minimal regular fixture (the
+SPEC-0108 meta-gate rejects manifest-only fixture dirs), add a corpus case
+with `must_not_promote` assertions, run
+`cargo xtask check-evidence-promotion-honesty`, and re-bless goldens in the
+same PR. Proposals never write the corpus and never change analyzer
+behaviour; promotion is a human-reviewed PR, and a promotion case that
+fails the meta-gate means the analyzer genuinely over-promotes, so the
+analyzer fix lands in that same PR.
+Staged shapes (output contract): `index.json` carries `schema_version`
+("0.1"), `kind` `python_judged_panel_feedback_index`, `spec`,
+`generated_at` (the single non-deterministic field),
+`confirmed_over_credits`, `proposal_files`, `authority_boundary`, and the
+never-writes note; each `<case-slug>.proposal.json` carries
+`schema_version`, `kind` `python_judged_panel_feedback_proposal`, `spec`,
+`case_id`, `authority_boundary`, `confirmed_over_credit` (verdict,
+false_exposed, roles, expected_direction, row_kind, behavior_family),
+`provenance` (panel_digest, source_envelope, diff_path,
+adjudication_record, replay_record, replay_candidate_classification), and
+`promotion_recipe` (four steps: fixture extraction, corpus case with
+must_not_promote, meta-gate run, golden re-bless). `--check` re-derives
+and compares every staged file after stripping `generated_at`, and also
+fails on an unexpected file set (a proposal whose confirmation
+disappeared must not survive as a stale leftover).
+
 Status note (2026-09-04, #3555 PR C): adjudication and reporting now exist —
 `cargo xtask python-judged-panel adjudicate --case <id> --verdict
 <classification> --role <role> (--reviewer <identity> | env

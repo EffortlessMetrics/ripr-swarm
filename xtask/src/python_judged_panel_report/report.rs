@@ -34,9 +34,9 @@ use super::{
 
 /// The complete rendered report: `json` and `markdown` render from the same
 /// derived Value, so the two surfaces can never disagree.
-pub(super) struct RenderedReport {
-    pub(super) json: String,
-    pub(super) markdown: String,
+pub(crate) struct RenderedReport {
+    pub(crate) json: String,
+    pub(crate) markdown: String,
 }
 
 /// One error axis's rate with its full provenance. `rate` is omitted (never a
@@ -70,7 +70,7 @@ struct AxisCounts {
 /// the report (the CLI passes the same string it resolves); tests pass a
 /// stable display while pointing at different physical directories so the
 /// determinism proof can compare two independent replay runs.
-pub(super) fn build_report_at(
+pub(crate) fn build_report_at(
     root: &Path,
     displays: &[&str],
     records_dir: &Path,
@@ -450,6 +450,7 @@ pub(super) fn build_report_at(
             "case_id": case_id,
             "source_envelope": source_envelope,
             "repo": item.repo.clone(),
+            "diff_path": item.diff_path.clone(),
             "expected_direction": item.expected_direction.clone(),
             "row_kind": row_kind_name(row_kind(item)),
             "behavior_family": item.shape.clone(),
