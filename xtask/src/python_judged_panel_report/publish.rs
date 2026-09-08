@@ -380,11 +380,17 @@ pub(super) fn render_markdown(report: &Value) -> String {
             "\n| metric | operator | threshold | measured | result | reason |\n| --- | --- | --- | --- | --- | --- |\n",
         );
         for evaluation in thresholds["evaluations"].as_array().into_iter().flatten() {
+            // FIX (#3686): count metrics render integral values without
+            // decimals (adjudicated_count shows 2, not 2.000), matching the
+            // threshold column. Rates always keep three decimals even when
+            // they land exactly on 0 or 1 (the common zero-tolerance case) —
+            // the fixed precision is part of the rate's format, not noise
+            // (round-2 review: fract() alone would misclassify them).
+            let metric = evaluation["metric"].as_str().unwrap_or("?");
             let measured = match evaluation["measured"].as_f64() {
-                // FIX (#3686, CodeRabbit #3685): integral metrics (counts like
-                // adjudicated_count) render without decimals, matching the
-                // threshold column; rates keep three decimals.
-                Some(measured) if measured.fract() == 0.0 => format!("{measured}"),
+                Some(measured) if metric.ends_with("_count") && measured.fract() == 0.0 => {
+                    format!("{measured}")
+                }
                 Some(measured) => format!("{measured:.3}"),
                 None => "n/a".to_string(),
             };

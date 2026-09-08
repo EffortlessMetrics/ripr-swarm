@@ -251,20 +251,23 @@ pub(super) fn read_replay_records(records_dir: &Path) -> Result<ReplayRecordSet,
 /// or malformed one must fail the read with a named error instead of
 /// participating in a blank-to-blank currency match at report time (a
 /// hand-edited blank digest plus a missing diff file would otherwise let a
-/// stale replay report as current).
+/// stale replay report as current). Lowercase only: the producer's
+/// `sha256_file_or_blank` emits lowercase, and an accepted uppercase variant
+/// could never match, silently reporting every such record stale (round-2
+/// review).
 fn require_sha256_digest(value: Option<&str>, what: &str, display: &str) -> Result<String, String> {
     let digest = value.ok_or_else(|| {
         format!(
             "replay record `{display}` carries no {what}; re-run `cargo xtask python-judged-panel replay`"
         )
     })?;
-    let hex = digest
+    let lowercase_hex = digest
         .as_bytes()
         .iter()
-        .all(|byte| byte.is_ascii_hexdigit());
-    if digest.len() != 64 || !hex {
+        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
+    if digest.len() != 64 || !lowercase_hex {
         return Err(format!(
-            "replay record `{display}` carries a malformed {what} (`{digest}` is not a 64-character hex sha256); re-run `cargo xtask python-judged-panel replay`"
+            "replay record `{display}` carries a malformed {what} (`{digest}` is not a 64-character lowercase hex sha256); re-run `cargo xtask python-judged-panel replay`"
         ));
     }
     Ok(digest.to_string())
