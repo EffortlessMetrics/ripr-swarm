@@ -355,6 +355,32 @@ fn feedback_stages_a_proposal_for_a_confirmed_over_credit() -> Result<(), String
         corpus_digest()? == corpus_before,
         "the corpus must be untouched by feedback staging",
     )?;
+
+    // An incomplete replay (round-1 review) can never confirm anything: the
+    // same case downgraded to not_run drops out of feedback entirely.
+    let path = Path::new(&records).join("feedback-gap-row.json");
+    let mut value = serde_json::from_str::<Value>(
+        &fs::read_to_string(&path).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    value["outcome"]["kind"] = json!("not_run");
+    value["comparison"] = json!({"kind": "comparison_unavailable", "outcome": "not_run"});
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let staged = derive_feedback(
+        fixture.root.as_path(),
+        &ref_strs,
+        Path::new(&records),
+        Path::new(&adjudications),
+        &adjudications,
+    )?;
+    ensure(
+        staged.confirmed_over_credits == 0,
+        "an incomplete replay must not confirm an over-credit",
+    )?;
     Ok(())
 }
 
