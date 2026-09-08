@@ -290,7 +290,7 @@ mod tests {
         Ok(())
     }
 
-    /// FIX (round-1 review): the Some partition must be proven end to end —
+    /// FIX (round-1 review): the Some partition must be demonstrated end to end —
     /// a typed spec on a command renders as a structured `command_spec`
     /// object beside the display, not just as the legacy string.
     #[test]
