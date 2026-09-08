@@ -1,6 +1,9 @@
 //! Producer-owned typed descriptions for the canonical agent routes.
 
-use super::loop_commands::{agent_receipt_command, agent_verify_command};
+use super::loop_commands::{
+    agent_brief_command, agent_packet_command, agent_receipt_command, agent_verify_command,
+    shell_arg,
+};
 use crate::domain::{
     CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, CommandExecutionMode,
     CommandPlatform, CommandRole, CommandSpec, EnvironmentPolicy, ExpectedResultParser,
@@ -92,6 +95,103 @@ pub(crate) fn agent_receipt_command_spec(
     )
 }
 
+/// The retained-artifact routes a regeneration command rebuilds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentArtifactRoute {
+    /// `ripr agent packet` — the seam packet document.
+    Packet,
+    /// `ripr agent brief` — the seam brief document.
+    Brief,
+}
+
+impl AgentArtifactRoute {
+    fn command_word(self) -> &'static str {
+        match self {
+            AgentArtifactRoute::Packet => "packet",
+            AgentArtifactRoute::Brief => "brief",
+        }
+    }
+
+    fn command_id(self) -> &'static str {
+        match self {
+            AgentArtifactRoute::Packet => "ripr:agent:packet",
+            AgentArtifactRoute::Brief => "ripr:agent:brief",
+        }
+    }
+}
+
+/// FIX #1617: the regeneration route rebuilds a retained artifact document
+/// into a file — the `> <out>` redirect is shell semantics, so the route is
+/// `ShellRequired` and names the file as its expected write.
+pub(crate) fn agent_regeneration_command_spec(
+    route: AgentArtifactRoute,
+    root: &str,
+    seam_id: &str,
+    out_path: &str,
+) -> CommandSpec {
+    let display = match route {
+        AgentArtifactRoute::Packet => agent_packet_command(root, seam_id, out_path),
+        AgentArtifactRoute::Brief => agent_brief_command(root, seam_id, out_path),
+    };
+    command_spec(
+        route.command_id(),
+        CommandRole::Regeneration,
+        CommandExecutionMode::ShellRequired,
+        vec![
+            "agent".to_string(),
+            route.command_word().to_string(),
+            "--root".to_string(),
+            root.to_string(),
+            "--seam-id".to_string(),
+            seam_id.to_string(),
+            "--json".to_string(),
+        ],
+        vec![out_path.to_string()],
+        display,
+    )
+}
+
+/// FIX #1617: the inspection route reads the same document on stdout — no
+/// redirect, no writes, directly executable.
+/// Consumed by the #1617 follow-up slices (hover/protocol surfaces) once
+/// they carry the inspection route; the stdout display and recovery are
+/// already pinned here so the contract cannot drift before wiring.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "wired by the #1617 slice that carries inspection routes"
+    )
+)]
+pub(crate) fn agent_inspection_command_spec(
+    route: AgentArtifactRoute,
+    root: &str,
+    seam_id: &str,
+) -> CommandSpec {
+    let display = format!(
+        "ripr agent {} --root {} --seam-id {} --json",
+        route.command_word(),
+        shell_arg(root),
+        shell_arg(seam_id)
+    );
+    command_spec(
+        route.command_id(),
+        CommandRole::Inspection,
+        CommandExecutionMode::Direct,
+        vec![
+            "agent".to_string(),
+            route.command_word().to_string(),
+            "--root".to_string(),
+            root.to_string(),
+            "--seam-id".to_string(),
+            seam_id.to_string(),
+            "--json".to_string(),
+        ],
+        Vec::new(),
+        display,
+    )
+}
+
 /// Recover a typed spec only for canonical agent routes. Arbitrary
 /// user-supplied test commands remain legacy advisory text until a producer
 /// supplies their executable and argument boundary.
@@ -135,6 +235,45 @@ pub(crate) fn agent_command_spec_from_display(command: &str) -> Option<CommandSp
             Some(command_spec(
                 "ripr:agent:verify",
                 CommandRole::Verify,
+                execution_mode,
+                args,
+                expected_writes,
+                command.to_string(),
+            ))
+        }
+        Some("packet") | Some("brief") => {
+            let route = if words[2] == "packet" {
+                AgentArtifactRoute::Packet
+            } else {
+                AgentArtifactRoute::Brief
+            };
+            let redirect = words.iter().position(|word| word == ">");
+            let (role, execution_mode, args, expected_writes) = match redirect {
+                Some(redirect) => {
+                    if redirect + 2 != words.len() {
+                        return None;
+                    }
+                    let out_path = words.get(redirect + 1)?.as_str();
+                    (
+                        CommandRole::Regeneration,
+                        CommandExecutionMode::ShellRequired,
+                        words.get(1..redirect)?.to_vec(),
+                        vec![out_path.to_string()],
+                    )
+                }
+                None => (
+                    CommandRole::Inspection,
+                    CommandExecutionMode::Direct,
+                    words.get(1..)?.to_vec(),
+                    Vec::new(),
+                ),
+            };
+            if args.is_empty() || args.iter().any(|arg| arg == "--out") {
+                return None;
+            }
+            Some(command_spec(
+                route.command_id(),
+                role,
                 execution_mode,
                 args,
                 expected_writes,
@@ -265,6 +404,22 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
         words.push(current);
     }
     Some(words)
+}
+
+/// Shared role/boundary coherence assertion for the route specs.
+#[cfg(test)]
+fn ensure_role(
+    spec: &crate::domain::CommandSpec,
+    role: crate::domain::CommandRole,
+    boundary: crate::domain::CommandAuthorityBoundary,
+) -> Result<(), String> {
+    if spec.role != role || spec.authority_boundary != boundary {
+        return Err(format!(
+            "spec `{}` carried role/boundary {:?}/{:?}, expected {:?}/{:?}",
+            spec.command_id, spec.role, spec.authority_boundary, role, boundary
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -497,5 +652,133 @@ mod tests {
             return Err("receipt route accepted a missing --out path".to_string());
         }
         receipt.validate().map_err(|err| err.to_string())
+    }
+
+    /// FIX #1617: regeneration and inspection specs exist for the retained
+    /// artifact routes, keep their roles and authority boundaries distinct
+    /// from verify/receipt, and round-trip semantic argv through shell
+    /// quoting (spaces, quotes, unicode) without argument loss.
+    #[test]
+    fn regeneration_and_inspection_specs_round_trip() -> Result<(), String> {
+        let root = "./my repo";
+        let seam_id = "seam:ünïcode \"quoted\"";
+        let out_path = "target/ripr/artifacts/out file.json";
+
+        let regeneration = super::agent_regeneration_command_spec(
+            super::AgentArtifactRoute::Packet,
+            root,
+            seam_id,
+            out_path,
+        );
+        ensure_role(
+            &regeneration,
+            crate::domain::CommandRole::Regeneration,
+            crate::domain::CommandAuthorityBoundary::RegenerationRouteOnly,
+        )?;
+        if regeneration.execution_mode != crate::domain::CommandExecutionMode::ShellRequired {
+            return Err("a redirect-writing regeneration route must be ShellRequired".to_string());
+        }
+        if regeneration.expected_writes != [out_path.to_string()] {
+            return Err(format!(
+                "regeneration expected writes must name the redirect target: {:?}",
+                regeneration.expected_writes
+            ));
+        }
+        // Semantic argv equality: the program args carry the values whole
+        // (spaces, quotes, unicode included) — joining for the shell is the
+        // display's job, never the spec's.
+        let expected_args = vec![
+            "agent".to_string(),
+            "packet".to_string(),
+            "--root".to_string(),
+            root.to_string(),
+            "--seam-id".to_string(),
+            seam_id.to_string(),
+            "--json".to_string(),
+        ];
+        if regeneration.args != expected_args {
+            return Err(format!(
+                "regeneration args must equal the semantic argv: {:?}",
+                regeneration.args
+            ));
+        }
+        // The display is produced by the same builder the legacy surfaces
+        // render, so byte-parity with existing output is structural.
+        if regeneration.display != super::agent_packet_command(root, seam_id, out_path) {
+            return Err("regeneration display must match the legacy packet display".to_string());
+        }
+        regeneration.validate().map_err(|err| err.to_string())?;
+
+        let inspection =
+            super::agent_inspection_command_spec(super::AgentArtifactRoute::Brief, root, seam_id);
+        ensure_role(
+            &inspection,
+            crate::domain::CommandRole::Inspection,
+            crate::domain::CommandAuthorityBoundary::InspectionRouteOnly,
+        )?;
+        if inspection.execution_mode != crate::domain::CommandExecutionMode::Direct {
+            return Err("a stdout inspection route must be Direct".to_string());
+        }
+        if !inspection.expected_writes.is_empty() {
+            return Err("an inspection route must not declare writes".to_string());
+        }
+        inspection.validate().map_err(|err| err.to_string())?;
+
+        // Roles are distinct slots: the four canonical ids never collide and
+        // each carries its own role.
+        let verify = super::agent_verify_command_spec(root, "before.json", "after.json", None);
+        let receipt =
+            super::agent_receipt_command_spec(root, "verify.json", seam_id, Some("r.json"));
+        let ids = [
+            (verify.command_id.as_str(), verify.role),
+            (receipt.command_id.as_str(), receipt.role),
+            (regeneration.command_id.as_str(), regeneration.role),
+            (inspection.command_id.as_str(), inspection.role),
+        ];
+        for (index, (id, role)) in ids.iter().enumerate() {
+            if ids[index + 1..]
+                .iter()
+                .any(|(other_id, other_role)| other_id == id || other_role == role)
+            {
+                return Err(format!("route id/role collision at `{id}` ({role:?})"));
+            }
+        }
+
+        // Display recovery recognizes both artifact routes in both modes
+        // and rejects their non-canonical shapes.
+        let recovered = super::agent_command_spec_from_display(&regeneration.display)
+            .ok_or("the regeneration display was not recoverable")?;
+        if recovered.role != crate::domain::CommandRole::Regeneration
+            || recovered.execution_mode != crate::domain::CommandExecutionMode::ShellRequired
+            || recovered.expected_writes != [out_path.to_string()]
+        {
+            return Err("regeneration recovery lost the typed facts".to_string());
+        }
+        let recovered = super::agent_command_spec_from_display(&inspection.display)
+            .ok_or("the inspection display was not recoverable")?;
+        if recovered.role != crate::domain::CommandRole::Inspection
+            || recovered.execution_mode != crate::domain::CommandExecutionMode::Direct
+        {
+            return Err("inspection recovery lost the typed facts".to_string());
+        }
+        if super::agent_command_spec_from_display(
+            "ripr agent packet --root . --seam-id s --json --out out.json",
+        )
+        .is_some()
+        {
+            return Err(
+                "artifact routes must not accept --out (the write is the redirect)".to_string(),
+            );
+        }
+        if super::agent_command_spec_from_display(
+            "ripr agent packet --root . --seam-id s --json > out.json extra",
+        )
+        .is_some()
+        {
+            return Err(
+                "artifact routes must not accept a redirect with trailing tokens".to_string(),
+            );
+        }
+        Ok(())
     }
 }

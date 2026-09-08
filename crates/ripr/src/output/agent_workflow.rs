@@ -77,12 +77,19 @@ fn artifact_json(artifact: &AgentWorkflowArtifact) -> Value {
 }
 
 fn command_json(command: &AgentWorkflowCommand) -> Value {
-    json!({
+    // FIX #1617: the typed spec rides alongside the display where a producer
+    // owns one; legacy-string-only steps simply omit the key.
+    let mut value = json!({
         "step": command.step,
         "artifact": command.artifact,
         "purpose": command.purpose,
         "command": command.command,
-    })
+    });
+    if let Some(spec) = &command.command_spec {
+        value["command_spec"] = serde_json::to_value(spec)
+            .unwrap_or_else(|error| json!({"serialization_error": error.to_string()}));
+    }
+    value
 }
 
 fn command_label(step: &str) -> String {
@@ -239,12 +246,14 @@ mod tests {
                 artifact: "target/ripr/workflow/before.repo-exposure.json".to_string(),
                 purpose: "Capture static seam evidence before editing tests.".to_string(),
                 command: "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json".to_string(),
+                command_spec: None,
             }],
             missing_inputs: vec![AgentWorkflowCommand {
                 step: "before_snapshot".to_string(),
                 artifact: "target/ripr/workflow/before.repo-exposure.json".to_string(),
                 purpose: "Capture static seam evidence before editing tests.".to_string(),
                 command: "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json".to_string(),
+                command_spec: None,
             }],
         }
     }

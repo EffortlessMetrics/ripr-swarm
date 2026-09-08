@@ -1,3 +1,4 @@
+use crate::agent::command_specs::{AgentArtifactRoute, agent_regeneration_command_spec};
 use crate::agent::loop_commands::{
     WORKFLOW_AGENT_RECEIPT_ARTIFACT, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
     WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT, WORKFLOW_MANIFEST_ARTIFACT, agent_brief_command,
@@ -6,6 +7,7 @@ use crate::agent::loop_commands::{
     display_path, workflow_artifact_path,
 };
 use crate::app::Mode;
+use crate::domain::CommandSpec;
 use serde_json::Value;
 use std::path::Path;
 
@@ -74,6 +76,10 @@ pub(crate) struct AgentWorkflowCommand {
     pub(crate) artifact: String,
     pub(crate) purpose: String,
     pub(crate) command: String,
+    /// FIX #1617: the typed, direct-execution-safe form of the route where a
+    /// producer owns one (regeneration routes for the packet/brief steps);
+    /// `None` leaves the step legacy-string-only.
+    pub(crate) command_spec: Option<CommandSpec>,
 }
 
 pub(crate) fn build_agent_workflow_manifest(
@@ -188,6 +194,7 @@ fn workflow_manifest_command(
 ) -> AgentWorkflowCommand {
     AgentWorkflowCommand {
         step: "workflow_manifest".to_string(),
+        command_spec: None,
         artifact: paths.workflow_manifest.clone(),
         purpose: "Regenerate this source-edit-free workflow manifest.".to_string(),
         command: agent_start_command(root, seam_id, &paths.out_dir),
@@ -201,6 +208,7 @@ fn before_snapshot_command(
 ) -> AgentWorkflowCommand {
     AgentWorkflowCommand {
         step: "before_snapshot".to_string(),
+        command_spec: None,
         artifact: paths.before_snapshot.clone(),
         purpose: "Capture static seam evidence before editing tests.".to_string(),
         command: check_repo_exposure_command(root, mode.as_str(), &paths.before_snapshot),
@@ -214,6 +222,7 @@ fn agent_seam_packets_command_item(
 ) -> AgentWorkflowCommand {
     AgentWorkflowCommand {
         step: "agent_seam_packets".to_string(),
+        command_spec: None,
         artifact: paths.agent_seam_packets.clone(),
         purpose: "Render the full agent seam packet set for reference.".to_string(),
         command: agent_seam_packets_command(root, mode.as_str(), &paths.agent_seam_packets),
@@ -230,6 +239,12 @@ fn agent_packet_command_item(
         artifact: paths.agent_packet.clone(),
         purpose: "Expand the selected seam into a bounded agent packet.".to_string(),
         command: agent_packet_command(root, seam_id, &paths.agent_packet),
+        command_spec: Some(agent_regeneration_command_spec(
+            AgentArtifactRoute::Packet,
+            root,
+            seam_id,
+            &paths.agent_packet,
+        )),
     }
 }
 
@@ -243,6 +258,12 @@ fn agent_brief_command_item(
         artifact: paths.agent_brief.clone(),
         purpose: "Refresh this seam's working-set brief.".to_string(),
         command: agent_brief_command(root, seam_id, &paths.agent_brief),
+        command_spec: Some(agent_regeneration_command_spec(
+            AgentArtifactRoute::Brief,
+            root,
+            seam_id,
+            &paths.agent_brief,
+        )),
     }
 }
 
@@ -253,6 +274,7 @@ fn after_snapshot_command(
 ) -> AgentWorkflowCommand {
     AgentWorkflowCommand {
         step: "after_snapshot".to_string(),
+        command_spec: None,
         artifact: paths.after_snapshot.clone(),
         purpose: "Capture static seam evidence after adding one focused test.".to_string(),
         command: check_repo_exposure_command(root, mode.as_str(), &paths.after_snapshot),
@@ -262,6 +284,7 @@ fn after_snapshot_command(
 fn agent_verify_command_item(root: &str, paths: &AgentWorkflowPaths) -> AgentWorkflowCommand {
     AgentWorkflowCommand {
         step: "agent_verify".to_string(),
+        command_spec: None,
         artifact: paths.agent_verify.clone(),
         purpose: "Compare before and after static evidence for the agent loop.".to_string(),
         command: agent_verify_command(
@@ -280,6 +303,7 @@ fn analysis_outcome_command_item(
 ) -> AgentWorkflowCommand {
     AgentWorkflowCommand {
         step: "analysis_outcome".to_string(),
+        command_spec: None,
         artifact: paths.analysis_outcome.clone(),
         purpose:
             "Capture the producer-backed diff completeness outcome after the focused test change."
@@ -295,6 +319,7 @@ fn agent_receipt_command_item(
 ) -> AgentWorkflowCommand {
     AgentWorkflowCommand {
         step: "agent_receipt".to_string(),
+        command_spec: None,
         artifact: paths.agent_receipt.clone(),
         purpose: "Write a review handoff receipt for the selected seam.".to_string(),
         command: agent_receipt_command(
