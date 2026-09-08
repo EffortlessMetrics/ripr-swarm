@@ -186,7 +186,7 @@ mod tests {
                     "compiler stderr",
                     false,
                 ),
-                "status: exit code: 1",
+                ("status: exit code: 1", "compiler stderr"),
             ),
             (
                 timed_output(
@@ -195,23 +195,25 @@ mod tests {
                     "partial stderr",
                     true,
                 ),
-                "timed out after 5m",
+                ("timed out after 300s", "partial stderr"),
             ),
             (
                 timed_output(None, "selected_case: test\n", "spawn stderr", false),
-                "status: not available",
+                ("status: not available", "spawn stderr"),
             ),
         ];
 
-        for (output, expected_status) in cases {
+        for (output, (expected_status, expected_stderr)) in cases {
             let (success, stdout, stderr) = map_test_covered_by_enumeration_output(output);
             if success || stdout != "selected_case: test\n" || !stderr.contains(expected_status) {
                 return Err(format!(
                     "enumeration output mapping was not fail-closed: success={success}, stdout={stdout:?}, stderr={stderr:?}"
                 ));
             }
-            if !stderr.contains("stderr") {
-                return Err(format!("enumeration stderr was lost: {stderr:?}"));
+            if !stderr.contains(expected_stderr) {
+                return Err(format!(
+                    "enumeration stderr payload was lost: expected={expected_stderr:?}, actual={stderr:?}"
+                ));
             }
         }
 
