@@ -291,14 +291,22 @@ pub(crate) fn agent_command_spec_from_display(command: &str) -> Option<CommandSp
             if args.is_empty() || args.iter().any(|arg| arg == "--out") {
                 return None;
             }
-            Some(command_spec(
+            // FIX (round-4 review): a recovered spec passes the same
+            // validation a producer spec must - a traversing or absolute
+            // expected write stays legacy-string-only instead of gaining
+            // typed authority.
+            let spec = command_spec(
                 route.command_id(),
                 role,
                 execution_mode,
                 args,
                 expected_writes,
                 command.to_string(),
-            ))
+            );
+            if spec.validate().is_err() {
+                return None;
+            }
+            Some(spec)
         }
         Some("receipt") => {
             let args = words.get(1..)?.to_vec();
@@ -798,6 +806,15 @@ mod tests {
             return Err(
                 "artifact routes must not accept a redirect with trailing tokens".to_string(),
             );
+        }
+        // FIX (round-4 review): a traversing expected write fails validation,
+        // so recovery keeps the route legacy-string-only.
+        if super::agent_command_spec_from_display(
+            "ripr agent packet --root . --seam-id s --json > ../outside.json",
+        )
+        .is_some()
+        {
+            return Err("a traversing expected write must stay legacy-string-only".to_string());
         }
         Ok(())
     }
