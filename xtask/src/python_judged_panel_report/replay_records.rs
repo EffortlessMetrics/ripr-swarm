@@ -61,6 +61,11 @@ pub(super) struct ReplayRecordInput {
     pub(super) outcome: Option<Value>,
     #[serde(default)]
     pub(super) comparison: Option<Value>,
+    /// FIX #3677: the anchor identity the subject was reconstructed from
+    /// (additive under schema 0.1 — older records simply lack it, and the
+    /// report treats them as anchor-stale, never silently current).
+    #[serde(default)]
+    pub(super) anchor: Option<Value>,
 }
 
 /// One replay record projected onto the fields the report is allowed to echo.
@@ -75,6 +80,17 @@ pub(super) struct RecordView {
     pub(super) binary_sha256: String,
     pub(super) diff_sha256: String,
     pub(super) row_kind: String,
+    /// The echoed anchor (file, line, owner); `None` for a record written
+    /// before the echo existed.
+    pub(super) anchor: Option<RecordAnchor>,
+}
+
+/// The anchor echo, typed and validated at read time.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct RecordAnchor {
+    pub(super) file: String,
+    pub(super) line: Option<u64>,
+    pub(super) owner: String,
 }
 
 fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
@@ -240,11 +256,58 @@ pub(super) fn read_replay_records(records_dir: &Path) -> Result<ReplayRecordSet,
                 "diff sha256",
                 &path.display().to_string(),
             )?,
+            anchor: require_anchor_echo(record.anchor.as_ref(), &path.display().to_string())?,
             row_kind: record.row_kind,
         };
         views.insert(record.case_id, view);
     }
     Ok((views, binary_identity))
+}
+
+/// FIX #3677: a present echo must be well-shaped (non-blank file and owner,
+/// integer line when present); absence is legal — it marks a record written
+/// before the echo existed, and the report consumes that as anchor-staleness,
+/// never as currency. File and owner are stored verbatim (round-2 review):
+/// the echo is producer-copied row data, and trimming here would break the
+/// comparison against a row whose declared value carries padding.
+fn require_anchor_echo(
+    value: Option<&Value>,
+    display: &str,
+) -> Result<Option<RecordAnchor>, String> {
+    let Some(anchor) = value else {
+        return Ok(None);
+    };
+    if !anchor.is_object() {
+        return Err(format!(
+            "replay record `{display}` carries a malformed anchor echo (expected an object with file, line, owner); re-run `cargo xtask python-judged-panel replay`"
+        ));
+    }
+    let non_blank = |key: &str| -> Result<String, String> {
+        let raw = text(anchor, key).ok_or_else(|| {
+            format!(
+                "replay record `{display}` carries an anchor echo without a {key}; re-run `cargo xtask python-judged-panel replay`"
+            )
+        })?;
+        if raw.trim().is_empty() {
+            return Err(format!(
+                "replay record `{display}` carries an anchor echo with a blank {key}; re-run `cargo xtask python-judged-panel replay`"
+            ));
+        }
+        Ok(raw.to_string())
+    };
+    let line = match anchor.get("line") {
+        None | Some(Value::Null) => None,
+        Some(value) => value.as_u64().map(Some).ok_or_else(|| {
+            format!(
+                "replay record `{display}` carries a malformed anchor echo line (`{value}` is not an integer); re-run `cargo xtask python-judged-panel replay`"
+            )
+        })?,
+    };
+    Ok(Some(RecordAnchor {
+        file: non_blank("file")?,
+        line,
+        owner: non_blank("owner")?,
+    }))
 }
 
 /// FIX (#3686, CodeRabbit #3685): digests bind evidence identity, so a blank

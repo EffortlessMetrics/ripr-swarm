@@ -265,9 +265,32 @@ struct CasePlan {
     expected_classification: Option<String>,
     actual_classification: Option<String>,
     judged_against: Option<String>,
+    /// FIX #3677: the anchor identity the subject was reconstructed from —
+    /// echoed into the record so the report can mark a replay stale when the
+    /// row's anchor moves without its diff changing. Absent for rows without
+    /// a declared anchor file.
+    anchor: Option<AnchorEcho>,
     plan: CasePlanKind,
     /// Sorted head-relative file names the materialization will write.
     workspace_files: Vec<String>,
+}
+
+/// The replayed subject's anchor identity, persisted in the record (additive
+/// field under schema 0.1: older records simply lack the echo and the report
+/// treats them as anchor-stale — never silently current).
+#[derive(Debug, Clone, Serialize)]
+struct AnchorEcho {
+    file: String,
+    line: Option<u64>,
+    owner: String,
+}
+
+fn anchor_echo_of(item: &PythonJudgedPanelItem) -> Option<AnchorEcho> {
+    Some(AnchorEcho {
+        file: item.anchor.file.non_blank_value()?.to_string(),
+        line: item.anchor.line.value().copied(),
+        owner: item.anchor.owner.clone(),
+    })
 }
 
 fn build_case_plan(
@@ -294,6 +317,7 @@ fn build_case_plan(
             .non_blank_value()
             .map(str::to_string),
         judged_against: judged_against.map(str::to_string),
+        anchor: anchor_echo_of(item),
         plan,
         workspace_files,
     }
@@ -617,6 +641,7 @@ fn build_run_record(
             path: case.diff_path.clone(),
             sha256: case.diff_sha256.clone(),
         },
+        anchor: case.anchor.clone(),
         config: config_identity(),
         workspace: Some(WorkspaceIdentity {
             root_digest: workspace.head_digest.clone(),
@@ -928,6 +953,11 @@ struct ReplayRecord {
     expected_direction: String,
     binary: BinaryIdentity,
     diff: DiffIdentity,
+    /// FIX #3677: the anchor identity the subject was reconstructed from;
+    /// absent only for rows without a declared anchor file. The report marks
+    /// a record whose echo no longer matches the row (or that predates the
+    /// echo) stale — never silently current.
+    anchor: Option<AnchorEcho>,
     config: ConfigIdentity,
     workspace: Option<WorkspaceIdentity>,
     command: Option<Vec<String>>,
@@ -1070,6 +1100,7 @@ fn not_run_record(case: &CasePlan, binary: &BinaryIdentity, reason: &str) -> Rep
             path: case.diff_path.clone(),
             sha256: case.diff_sha256.clone(),
         },
+        anchor: case.anchor.clone(),
         config: config_identity(),
         workspace: None,
         command: None,
@@ -2231,6 +2262,7 @@ mod tests {
             expected_classification: Some("weakly_exposed".to_string()),
             actual_classification: None,
             judged_against: None,
+            anchor: None,
             plan: super::CasePlanKind::NotRun("unused".to_string()),
             workspace_files: Vec::new(),
         };
@@ -2373,6 +2405,7 @@ mod tests {
             expected_classification: Some("weakly_exposed".to_string()),
             actual_classification: None,
             judged_against: None,
+            anchor: None,
             plan: super::CasePlanKind::NotRun("unused".to_string()),
             workspace_files: Vec::new(),
         };

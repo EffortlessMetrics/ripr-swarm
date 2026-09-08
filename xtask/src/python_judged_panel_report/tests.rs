@@ -829,6 +829,16 @@ fn report_fails_closed_on_record_set_rot() -> Result<(), String> {
         failure("rot")?.contains("unknown identity"),
         "foreign kinds must be named",
     )?;
+
+    // Stage 4 (FIX #3677): a malformed anchor echo is a named read error.
+    rewrite("report-gap-row.json", &|value: &mut Value| {
+        value["kind"] = json!("python_judged_panel_replay_record");
+        value["anchor"] = json!({"line": 3});
+    })?;
+    ensure(
+        failure("rot")?.contains("anchor echo without a file"),
+        "the malformed anchor echo must be named",
+    )?;
     Ok(())
 }
 
@@ -878,6 +888,7 @@ fn replay_record_input_pins_the_compatibility_contract() -> Result<(), String> {
         "diff": {"sha256": "b".repeat(64), "path": "case.diff", "future_diff_fact": true},
         "outcome": {"kind": "not_run", "future_outcome_fact": []},
         "comparison": {"kind": "comparison_unavailable", "future_comparison_fact": "x"},
+        "anchor": {"file": "case.py", "line": 7, "owner": "case_owner", "future_anchor_fact": true},
         "future_top_level_fact": {"nested": [1, 2, 3]}
     });
     let serialized = serde_json::to_string(&body).map_err(|error| error.to_string())?;
@@ -889,6 +900,10 @@ fn replay_record_input_pins_the_compatibility_contract() -> Result<(), String> {
     ensure(
         record.binary.is_some() && record.diff.is_some(),
         "the documented identity fields must still project",
+    )?;
+    ensure(
+        record.anchor.is_some(),
+        "the anchor echo projects as a documented field",
     )?;
     Ok(())
 }
@@ -1800,6 +1815,100 @@ fn report_generations_are_serialized_by_the_output_lock() -> Result<(), String> 
     ensure(
         failure.contains("another report generation"),
         "the lock contract must be named, got: {failure}",
+    )?;
+    Ok(())
+}
+
+/// FIX #3677: a replay whose echoed anchor no longer matches the row (or
+/// that predates the echo) is anchor-stale — disclosed with a named
+/// reason, never silently current, and excluded from the rate as-of
+/// identity.
+#[test]
+fn anchor_drift_marks_replay_stale() -> Result<(), String> {
+    let pipeline = pipeline("anchor-drift")?;
+    let refs = pipeline.refs.iter().map(String::as_str).collect::<Vec<_>>();
+    let records = Path::new(&pipeline.records_a);
+    let render = || {
+        build_report_at(
+            pipeline.fixture.root.as_path(),
+            &refs,
+            records,
+            "records",
+            Path::new("no-such-adjudications"),
+            "adjudications",
+            None,
+        )
+    };
+    // The producer echoes the row anchor into every record.
+    let fresh = render()?;
+    let value = serde_json::from_str::<Value>(&fresh.json).map_err(|error| error.to_string())?;
+    ensure(
+        value["counts"]["anchor_stale"].as_u64() == Some(0)
+            && value["counts"]["stale"].as_u64() == Some(0),
+        "a fresh record set has no anchor staleness",
+    )?;
+
+    // An anchor move (same diff, same row kind) marks the replay stale
+    // with the named reason and drops the case from the rate identity.
+    let mutate = |edit: &dyn Fn(&mut Value)| -> Result<(), String> {
+        let path = records.join("report-gap-row.json");
+        let mut value = serde_json::from_str::<Value>(
+            &fs::read_to_string(&path).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        edit(&mut value);
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())
+    };
+    mutate(&|value: &mut Value| {
+        value["anchor"]["owner"] = json!("moved_owner");
+    })?;
+    let drifted = render()?;
+    let value = serde_json::from_str::<Value>(&drifted.json).map_err(|error| error.to_string())?;
+    ensure(
+        value["counts"]["anchor_stale"].as_u64() == Some(1),
+        "the anchor-moved record must land in the anchor_stale disclosure",
+    )?;
+    let gap_case = value["cases"]
+        .as_array()
+        .and_then(|cases| {
+            cases
+                .iter()
+                .find(|case| case["case_id"] == "report-gap-row")
+        })
+        .ok_or("the gap case must be present")?;
+    ensure(
+        gap_case["replay"]["anchor_stale_reason"] == "anchor_moved"
+            && gap_case["replay"]["identity_current"] == false,
+        "the moved anchor must be named per case and never count as current",
+    )?;
+    // (The rate as-of exclusion follows from identity_current == false via
+    // the fqNy rate-identity binding, pinned by the rate as-of test.)
+
+    // A record written before the echo existed is anchor-stale too.
+    mutate(&|value: &mut Value| {
+        value["anchor"] = Value::Null;
+    })?;
+    let legacy = render()?;
+    let value = serde_json::from_str::<Value>(&legacy.json).map_err(|error| error.to_string())?;
+    ensure(
+        value["counts"]["anchor_stale"].as_u64() == Some(1),
+        "the echo-less record must land in the anchor_stale disclosure",
+    )?;
+    let gap_case = value["cases"]
+        .as_array()
+        .and_then(|cases| {
+            cases
+                .iter()
+                .find(|case| case["case_id"] == "report-gap-row")
+        })
+        .ok_or("the gap case must be present")?;
+    ensure(
+        gap_case["replay"]["anchor_stale_reason"] == "missing_echo",
+        "a missing echo must be named as such",
     )?;
     Ok(())
 }
