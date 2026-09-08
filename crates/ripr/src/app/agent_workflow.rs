@@ -257,12 +257,12 @@ fn regeneration_spec_if_root_relative(
     seam_id: &str,
     out_path: &str,
 ) -> Option<CommandSpec> {
-    if Path::new(out_path).is_absolute() {
-        return None;
-    }
-    Some(agent_regeneration_command_spec(
-        route, root, seam_id, out_path,
-    ))
+    // FIX (round-3 review): the workflow must never advertise a spec that
+    // fails its own validation (an absolute or `..`-traversing output path,
+    // for instance) — those steps stay legacy-string-only instead.
+    let spec = agent_regeneration_command_spec(route, root, seam_id, out_path);
+    spec.validate().ok()?;
+    Some(spec)
 }
 
 fn agent_brief_command_item(
@@ -454,6 +454,36 @@ fn first_nested_string(value: &Value, array_key: &str, field: &str) -> Option<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FIX (round-3 review): a typed regeneration spec is attached only when
+    /// it passes its own validation - root-relative writes, no `..`
+    /// traversal; escaping outputs keep the step legacy-string-only.
+    #[test]
+    fn regeneration_specs_require_valid_root_relative_writes() {
+        let good = regeneration_spec_if_root_relative(
+            AgentArtifactRoute::Packet,
+            ".",
+            "seam-a",
+            "target/ripr/workflow/agent-packet.json",
+        );
+        assert!(
+            good.is_some(),
+            "a root-relative write must keep the typed spec"
+        );
+        assert!(good.as_ref().is_some_and(|spec| spec.validate().is_ok()));
+
+        let escaping = regeneration_spec_if_root_relative(
+            AgentArtifactRoute::Packet,
+            ".",
+            "seam-a",
+            "../outside/agent-packet.json",
+        );
+        assert!(
+            escaping.is_none(),
+            "a `..`-traversing write must fall back to legacy-string-only"
+        );
+    }
+
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_workflow_test_dir(label: &str) -> std::path::PathBuf {

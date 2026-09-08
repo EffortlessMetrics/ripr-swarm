@@ -254,20 +254,16 @@ pub(crate) fn agent_command_spec_from_display(command: &str) -> Option<CommandSp
             // authority when it is byte-canonically shaped — exactly the
             // producer argv (stdout form, or the redirect form) with no
             // missing, extra, or reordered flags.
-            let stdout_shape = words.len() == 8
+            // Values are matched positionally — exactly how the agent CLI
+            // parses them (cli/parse::expect_value accepts any token,
+            // dash-prefixed included) — so dash-prefixed roots, seam ids,
+            // and output paths keep typed recovery (round-3 review).
+            let flags_in_position = words.len() >= 8
                 && words[3] == "--root"
                 && words[5] == "--seam-id"
-                && words[7] == "--json"
-                && !words[4].starts_with('-')
-                && !words[6].starts_with('-');
-            let redirect_shape = words.len() == 10
-                && words[3] == "--root"
-                && words[5] == "--seam-id"
-                && words[7] == "--json"
-                && words[8] == ">"
-                && !words[4].starts_with('-')
-                && !words[6].starts_with('-')
-                && !words[9].starts_with('-');
+                && words[7] == "--json";
+            let stdout_shape = words.len() == 8 && flags_in_position;
+            let redirect_shape = words.len() == 10 && flags_in_position && words[8] == ">";
             if !stdout_shape && !redirect_shape {
                 return None;
             }
