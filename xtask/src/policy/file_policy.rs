@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use crate::run::TimedOutput;
 use crate::{
     FixKind, PolicyReportSpec, capture_output_with_timeout, collect_files, finish_policy_report,
     is_cargo_test_command, is_file_policy_candidate, is_non_rust_programming_candidate,
@@ -70,25 +71,29 @@ fn validate_test_covered_by(path: &str, commands: &[(usize, String)]) -> Result<
             TEST_COVERED_BY_ENUMERATION_TIMEOUT,
             "test-valued covered_by enumeration",
         )?;
-        let status = output
-            .status
-            .map(|status| status.to_string())
-            .unwrap_or_else(|| "not available".to_string());
-        let timeout = if output.timed_out {
-            format!(
-                "timed out after {:?}; ",
-                TEST_COVERED_BY_ENUMERATION_TIMEOUT
-            )
-        } else {
-            String::new()
-        };
-        let stderr = format!("{timeout}status: {status}\n{}", output.stderr.trim_end());
-        Ok((
-            output.status.is_some_and(|status| status.success()) && !output.timed_out,
-            output.stdout,
-            stderr,
-        ))
+        Ok(map_test_covered_by_enumeration_output(output))
     })
+}
+
+fn map_test_covered_by_enumeration_output(output: TimedOutput) -> (bool, String, String) {
+    let status = output
+        .status
+        .map(|status| status.to_string())
+        .unwrap_or_else(|| "not available".to_string());
+    let timeout = if output.timed_out {
+        format!(
+            "timed out after {:?}; ",
+            TEST_COVERED_BY_ENUMERATION_TIMEOUT
+        )
+    } else {
+        String::new()
+    };
+    let stderr = format!("{timeout}status: {status}\n{}", output.stderr.trim_end());
+    (
+        output.status.is_some_and(|status| status.success()) && !output.timed_out,
+        output.stdout,
+        stderr,
+    )
 }
 
 fn validate_test_covered_by_with(
@@ -133,9 +138,85 @@ fn validate_test_covered_by_with(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use super::map_test_covered_by_enumeration_output;
     use super::validate_test_covered_by;
     use super::validate_test_covered_by_with;
     use crate::is_cargo_test_command;
+    use crate::run::TimedOutput;
+
+    #[cfg(windows)]
+    fn status(code: u32) -> std::process::ExitStatus {
+        use std::os::windows::process::ExitStatusExt;
+
+        ExitStatusExt::from_raw(code)
+    }
+
+    #[cfg(unix)]
+    fn status(code: i32) -> std::process::ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+
+        ExitStatusExt::from_raw(code << 8)
+    }
+
+    fn timed_output(
+        status: Option<std::process::ExitStatus>,
+        stdout: &str,
+        stderr: &str,
+        timed_out: bool,
+    ) -> TimedOutput {
+        TimedOutput {
+            status,
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
+            duration: Duration::ZERO,
+            timed_out,
+        }
+    }
+
+    #[test]
+    fn test_covered_by_output_mapping_fails_closed_with_partial_diagnostics() -> Result<(), String>
+    {
+        let cases = [
+            (
+                timed_output(
+                    Some(status(1)),
+                    "selected_case: test\n",
+                    "compiler stderr",
+                    false,
+                ),
+                "status: exit code: 1",
+            ),
+            (
+                timed_output(
+                    Some(status(0)),
+                    "selected_case: test\n",
+                    "partial stderr",
+                    true,
+                ),
+                "timed out after 5m",
+            ),
+            (
+                timed_output(None, "selected_case: test\n", "spawn stderr", false),
+                "status: not available",
+            ),
+        ];
+
+        for (output, expected_status) in cases {
+            let (success, stdout, stderr) = map_test_covered_by_enumeration_output(output);
+            if success || stdout != "selected_case: test\n" || !stderr.contains(expected_status) {
+                return Err(format!(
+                    "enumeration output mapping was not fail-closed: success={success}, stdout={stdout:?}, stderr={stderr:?}"
+                ));
+            }
+            if !stderr.contains("stderr") {
+                return Err(format!("enumeration stderr was lost: {stderr:?}"));
+            }
+        }
+
+        Ok(())
+    }
 
     #[test]
     fn test_covered_by_classification_is_token_aware() -> Result<(), String> {
