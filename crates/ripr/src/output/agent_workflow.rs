@@ -32,9 +32,21 @@ pub(crate) fn render_agent_workflow_json(
             "agent_brief": manifest.outputs.agent_brief,
         },
         "artifacts": manifest.artifacts.iter().map(artifact_json).collect::<Vec<_>>(),
-        "commands": manifest.commands.iter().map(command_json).collect::<Vec<_>>(),
-        "missing_inputs": manifest.missing_inputs.iter().map(command_json).collect::<Vec<_>>(),
-        "next_command": manifest.missing_inputs.first().map(command_json),
+        "commands": manifest
+            .commands
+            .iter()
+            .map(command_json)
+            .collect::<Result<Vec<_>, _>>()?,
+        "missing_inputs": manifest
+            .missing_inputs
+            .iter()
+            .map(command_json)
+            .collect::<Result<Vec<_>, _>>()?,
+        "next_command": manifest
+            .missing_inputs
+            .first()
+            .map(command_json)
+            .transpose()?,
         "boundaries": {
             "source_edits": false,
             "generated_tests": false,
@@ -76,9 +88,11 @@ fn artifact_json(artifact: &AgentWorkflowArtifact) -> Value {
     })
 }
 
-fn command_json(command: &AgentWorkflowCommand) -> Value {
+fn command_json(command: &AgentWorkflowCommand) -> Result<Value, String> {
     // FIX #1617: the typed spec rides alongside the display where a producer
-    // owns one; legacy-string-only steps simply omit the key.
+    // owns one; legacy-string-only steps simply omit the key. Serialization
+    // failures propagate (round-1 review) instead of emitting a non-spec
+    // placeholder while the workflow claims ready.
     let mut value = json!({
         "step": command.step,
         "artifact": command.artifact,
@@ -86,10 +100,11 @@ fn command_json(command: &AgentWorkflowCommand) -> Value {
         "command": command.command,
     });
     if let Some(spec) = &command.command_spec {
-        value["command_spec"] = serde_json::to_value(spec)
-            .unwrap_or_else(|error| json!({"serialization_error": error.to_string()}));
+        let serialized = serde_json::to_value(spec)
+            .map_err(|error| format!("serialize command spec for `{}`: {error}", command.step))?;
+        value["command_spec"] = serialized;
     }
-    value
+    Ok(value)
 }
 
 fn command_label(step: &str) -> String {
@@ -271,6 +286,32 @@ mod tests {
         assert_eq!(
             value["next_command"]["command"],
             "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json"
+        );
+        Ok(())
+    }
+
+    /// FIX (round-1 review): the Some partition must be proven end to end —
+    /// a typed spec on a command renders as a structured `command_spec`
+    /// object beside the display, not just as the legacy string.
+    #[test]
+    fn workflow_json_carries_the_typed_command_spec() -> Result<(), String> {
+        let mut manifest = manifest();
+        let spec = crate::agent::command_specs::agent_regeneration_command_spec(
+            crate::agent::command_specs::AgentArtifactRoute::Packet,
+            ".",
+            "67fc764ba37d77bd",
+            "target/ripr/workflow/agent-packet.json",
+        );
+        let spec_json = serde_json::to_value(&spec).map_err(|err| err.to_string())?;
+        manifest.commands[0].command_spec = Some(spec.clone());
+        let rendered = render_agent_workflow_json(&manifest)?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
+        assert_eq!(value["commands"][0]["command_spec"], spec_json);
+        assert_eq!(value["commands"][0]["command_spec"]["role"], "regeneration");
+        assert_eq!(
+            value["commands"][0]["command_spec"]["execution_mode"],
+            "shell_required"
         );
         Ok(())
     }

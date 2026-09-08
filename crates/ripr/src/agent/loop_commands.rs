@@ -99,6 +99,21 @@ pub(crate) fn agent_brief_command(root: &str, seam_id: &str, out_path: &str) -> 
     )
 }
 
+/// The stdout inspection form of an artifact route: the same command the
+/// regeneration display renders, without the redirect (FIX #1617 slice 1).
+pub(crate) fn agent_artifact_inspection_command(
+    route_word: &str,
+    root: &str,
+    seam_id: &str,
+) -> String {
+    format!(
+        "ripr agent {} --root {} --seam-id {} --json",
+        route_word,
+        shell_arg(root),
+        shell_arg(seam_id)
+    )
+}
+
 pub(crate) fn agent_verify_command(
     root: &str,
     before_path: &str,

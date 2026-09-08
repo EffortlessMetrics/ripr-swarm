@@ -2,7 +2,6 @@
 
 use super::loop_commands::{
     agent_brief_command, agent_packet_command, agent_receipt_command, agent_verify_command,
-    shell_arg,
 };
 use crate::domain::{
     CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, CommandExecutionMode,
@@ -168,11 +167,10 @@ pub(crate) fn agent_inspection_command_spec(
     root: &str,
     seam_id: &str,
 ) -> CommandSpec {
-    let display = format!(
-        "ripr agent {} --root {} --seam-id {} --json",
+    let display = super::loop_commands::agent_artifact_inspection_command(
         route.command_word(),
-        shell_arg(root),
-        shell_arg(seam_id)
+        root,
+        seam_id,
     );
     command_spec(
         route.command_id(),
@@ -247,6 +245,27 @@ pub(crate) fn agent_command_spec_from_display(command: &str) -> Option<CommandSp
             } else {
                 AgentArtifactRoute::Brief
             };
+            // FIX (round-1 review): the display is only granted typed
+            // authority when it is byte-canonically shaped — exactly the
+            // producer argv (stdout form, or the redirect form) with no
+            // missing, extra, or reordered flags.
+            let stdout_shape = words.len() == 8
+                && words[3] == "--root"
+                && words[5] == "--seam-id"
+                && words[7] == "--json"
+                && !words[4].starts_with('-')
+                && !words[6].starts_with('-');
+            let redirect_shape = words.len() == 10
+                && words[3] == "--root"
+                && words[5] == "--seam-id"
+                && words[7] == "--json"
+                && words[8] == ">"
+                && !words[4].starts_with('-')
+                && !words[6].starts_with('-')
+                && !words[9].starts_with('-');
+            if !stdout_shape && !redirect_shape {
+                return None;
+            }
             let redirect = words.iter().position(|word| word == ">");
             let (role, execution_mode, args, expected_writes) = match redirect {
                 Some(redirect) => {

@@ -239,13 +239,30 @@ fn agent_packet_command_item(
         artifact: paths.agent_packet.clone(),
         purpose: "Expand the selected seam into a bounded agent packet.".to_string(),
         command: agent_packet_command(root, seam_id, &paths.agent_packet),
-        command_spec: Some(agent_regeneration_command_spec(
+        command_spec: regeneration_spec_if_root_relative(
             AgentArtifactRoute::Packet,
             root,
             seam_id,
             &paths.agent_packet,
-        )),
+        ),
     }
+}
+
+/// FIX (round-1 review): the typed regeneration spec binds root-relative
+/// expected writes; an absolute workflow output directory would produce an
+/// invalid spec, so those steps stay legacy-string-only instead.
+fn regeneration_spec_if_root_relative(
+    route: AgentArtifactRoute,
+    root: &str,
+    seam_id: &str,
+    out_path: &str,
+) -> Option<CommandSpec> {
+    if Path::new(out_path).is_absolute() {
+        return None;
+    }
+    Some(agent_regeneration_command_spec(
+        route, root, seam_id, out_path,
+    ))
 }
 
 fn agent_brief_command_item(
@@ -258,12 +275,12 @@ fn agent_brief_command_item(
         artifact: paths.agent_brief.clone(),
         purpose: "Refresh this seam's working-set brief.".to_string(),
         command: agent_brief_command(root, seam_id, &paths.agent_brief),
-        command_spec: Some(agent_regeneration_command_spec(
+        command_spec: regeneration_spec_if_root_relative(
             AgentArtifactRoute::Brief,
             root,
             seam_id,
             &paths.agent_brief,
-        )),
+        ),
     }
 }
 
