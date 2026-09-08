@@ -6843,19 +6843,24 @@ pub(crate) fn metrics_report_impl() -> Result<(), String> {
     write_report("metrics.json", &capability_metrics_json(&capabilities))
 }
 
-pub(crate) fn test_oracle_report_impl() -> Result<(), String> {
-    let tests = collect_test_oracle_tests()?;
-    write_report("test-oracles.md", &test_oracle_report_markdown(&tests))?;
-    write_report("test-oracles.json", &test_oracle_report_json(&tests))
+fn collect_test_oracle_tests() -> Result<Vec<TestOracleTest>, String> {
+    let roots = test_oracle_source_roots();
+    collect_test_oracle_tests_from_roots(&roots)
 }
 
-fn collect_test_oracle_tests() -> Result<Vec<TestOracleTest>, String> {
-    let mut tests = Vec::new();
-    for root in [
+pub(crate) fn test_oracle_source_roots() -> [&'static Path; 3] {
+    [
         Path::new("crates/ripr/src"),
         Path::new("crates/ripr/tests"),
         Path::new("xtask/src"),
-    ] {
+    ]
+}
+
+pub(crate) fn collect_test_oracle_tests_from_roots(
+    roots: &[&Path],
+) -> Result<Vec<TestOracleTest>, String> {
+    let mut tests = Vec::new();
+    for root in roots {
         if !root.exists() {
             continue;
         }
@@ -7083,7 +7088,7 @@ fn test_oracle_observation_for(
     }
 }
 
-fn is_bdd_test_name(name: &str) -> bool {
+pub(crate) fn is_bdd_test_name(name: &str) -> bool {
     let compact = name.to_ascii_lowercase();
     if !compact.starts_with("given_") {
         return false;
@@ -7099,7 +7104,7 @@ fn is_bdd_test_name(name: &str) -> bool {
     when_index > "given_".len() && then_index > when_index + "_when_".len()
 }
 
-fn test_oracle_counts(tests: &[TestOracleTest]) -> BTreeMap<&'static str, usize> {
+pub(crate) fn test_oracle_counts(tests: &[TestOracleTest]) -> BTreeMap<&'static str, usize> {
     let mut counts = BTreeMap::from([
         ("strong", 0usize),
         ("medium", 0usize),
@@ -7112,133 +7117,6 @@ fn test_oracle_counts(tests: &[TestOracleTest]) -> BTreeMap<&'static str, usize>
         }
     }
     counts
-}
-
-fn test_oracle_report_status(tests: &[TestOracleTest]) -> &'static str {
-    if tests
-        .iter()
-        .any(|test| matches!(test.class, TestOracleClass::Weak | TestOracleClass::Smoke))
-    {
-        "warn"
-    } else {
-        "pass"
-    }
-}
-
-fn test_oracle_report_markdown(tests: &[TestOracleTest]) -> String {
-    let counts = test_oracle_counts(tests);
-    let bdd_named = tests
-        .iter()
-        .filter(|test| is_bdd_test_name(&test.name))
-        .count();
-    let mut body = format!(
-        "# ripr test oracle report\n\nStatus: {}\n\nMode: advisory\n\nThis report measures the apparent discriminator strength of `ripr`'s own Rust tests. It does not fail existing debt yet.\n\n## Summary\n\n- Strong: {}\n- Medium: {}\n- Weak: {}\n- Smoke: {}\n- BDD-shaped names: {} / {}\n\n",
-        test_oracle_report_status(tests),
-        counts.get("strong").copied().unwrap_or(0),
-        counts.get("medium").copied().unwrap_or(0),
-        counts.get("weak").copied().unwrap_or(0),
-        counts.get("smoke").copied().unwrap_or(0),
-        bdd_named,
-        tests.len(),
-    );
-
-    body.push_str("## Weak Or Smoke Tests\n\n");
-    let weak_or_smoke = tests
-        .iter()
-        .filter(|test| matches!(test.class, TestOracleClass::Weak | TestOracleClass::Smoke))
-        .collect::<Vec<_>>();
-    if weak_or_smoke.is_empty() {
-        body.push_str("None detected.\n\n");
-    } else {
-        for test in weak_or_smoke {
-            body.push_str(&format!(
-                "- `{}`:{} `{}` classified `{}`\n",
-                normalize_path(&test.path),
-                test.line,
-                test.name,
-                test.class.as_str()
-            ));
-            for observation in &test.observations {
-                body.push_str(&format!(
-                    "  - line {}: `{}` - {}\n",
-                    observation.line, observation.pattern, observation.detail
-                ));
-            }
-        }
-        body.push('\n');
-    }
-
-    body.push_str("## All Tests\n\n| Test | Class | Evidence |\n| --- | --- | --- |\n");
-    for test in tests {
-        let evidence = test
-            .observations
-            .iter()
-            .map(|observation| format!("{}: {}", observation.line, observation.pattern))
-            .collect::<Vec<_>>()
-            .join("<br>");
-        body.push_str(&format!(
-            "| `{}`:{} `{}` | `{}` | {} |\n",
-            normalize_path(&test.path),
-            test.line,
-            markdown_cell(&test.name),
-            test.class.as_str(),
-            markdown_cell(&evidence)
-        ));
-    }
-    body
-}
-
-fn test_oracle_report_json(tests: &[TestOracleTest]) -> String {
-    let counts = test_oracle_counts(tests);
-    let mut body = format!(
-        "{{\n  \"schema_version\": \"0.1\",\n  \"status\": \"{}\",\n  \"advisory\": true,\n  \"counts\": {{\n    \"strong\": {},\n    \"medium\": {},\n    \"weak\": {},\n    \"smoke\": {}\n  }},\n  \"tests\": [\n",
-        test_oracle_report_status(tests),
-        counts.get("strong").copied().unwrap_or(0),
-        counts.get("medium").copied().unwrap_or(0),
-        counts.get("weak").copied().unwrap_or(0),
-        counts.get("smoke").copied().unwrap_or(0)
-    );
-
-    for (test_index, test) in tests.iter().enumerate() {
-        if test_index > 0 {
-            body.push_str(",\n");
-        }
-        body.push_str("    {\n");
-        body.push_str(&format!(
-            "      \"path\": \"{}\",\n",
-            json_escape(&normalize_path(&test.path))
-        ));
-        body.push_str(&format!(
-            "      \"name\": \"{}\",\n",
-            json_escape(&test.name)
-        ));
-        body.push_str(&format!("      \"line\": {},\n", test.line));
-        body.push_str(&format!("      \"class\": \"{}\",\n", test.class.as_str()));
-        body.push_str("      \"observations\": [\n");
-        for (observation_index, observation) in test.observations.iter().enumerate() {
-            if observation_index > 0 {
-                body.push_str(",\n");
-            }
-            body.push_str("        {\n");
-            body.push_str(&format!("          \"line\": {},\n", observation.line));
-            body.push_str(&format!(
-                "          \"class\": \"{}\",\n",
-                observation.class.as_str()
-            ));
-            body.push_str(&format!(
-                "          \"pattern\": \"{}\",\n",
-                json_escape(&observation.pattern)
-            ));
-            body.push_str(&format!(
-                "          \"detail\": \"{}\"\n",
-                json_escape(&observation.detail)
-            ));
-            body.push_str("        }");
-        }
-        body.push_str("\n      ]\n    }");
-    }
-    body.push_str("\n  ]\n}\n");
-    body
 }
 
 pub(crate) fn test_efficiency_report_impl() -> Result<(), String> {

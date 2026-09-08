@@ -24,6 +24,9 @@ use super::policy::droid_review::{
     active_yaml_lines, check_droid_action_refs, check_droid_common,
     check_droid_security_scan_config, forbids_active_line, has_active_line, strip_yaml_comment,
 };
+use super::reports::{
+    test_oracle_report_impl_for_roots, test_oracle_report_json, test_oracle_report_markdown,
+};
 use super::ripr_swarm_attempt_ledger_latest_attempts;
 use super::ripr_swarm_attempt_ledger_repair_route_quality;
 use super::ripr_swarm_repair_route_quality_attempt_is_failure;
@@ -182,9 +185,8 @@ use super::{
     static_language_allowlist_covers, static_language_violation_message, suggested_fixes_patch,
     suspicious_runtime_file_names, targeted_test_outcome, targeted_test_outcome_report_json,
     targeted_test_outcome_report_markdown, test_efficiency_entry, test_efficiency_report_json,
-    test_efficiency_report_markdown, test_oracle_report_json, test_oracle_report_markdown,
-    test_oracle_tests_in_text, traceability_recommended_fixes, unknown_command_message,
-    user_surface_projection_required_run_status_violations,
+    test_efficiency_report_markdown, test_oracle_tests_in_text, traceability_recommended_fixes,
+    unknown_command_message, user_surface_projection_required_run_status_violations,
     validate_actionable_gap_outcomes_fixture_case, validate_actionable_gap_outcomes_fixture_corpus,
     validate_local_context_allowlist, validate_swarm_plan_packet_fixture_case,
     validate_swarm_plan_packet_fixture_corpus, vscode_compile_command, vscode_extension_dir,
@@ -11833,6 +11835,90 @@ fn weak_contains() {
     assert!(markdown.contains("BDD-shaped names: 0 / 1"));
     assert!(json.contains("\"advisory\": true"));
     assert!(json.contains("\"weak\": 1"));
+}
+
+#[test]
+fn test_oracle_command_reports_empty_selection_as_not_run() -> Result<(), String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("clock before unix epoch: {err}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-xtask-test-oracle-empty-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root)
+        .map_err(|err| format!("failed to create empty oracle test directory: {err}"))?;
+    let missing_root = root.join("no-selected-tests");
+    let report_dir = root.join("reports");
+    let result = (|| {
+        test_oracle_report_impl_for_roots(&[missing_root.as_path()], &report_dir)?;
+
+        let markdown = fs::read_to_string(report_dir.join("test-oracles.md"))
+            .map_err(|err| format!("failed to read empty oracle markdown: {err}"))?;
+        let json = fs::read_to_string(report_dir.join("test-oracles.json"))
+            .map_err(|err| format!("failed to read empty oracle JSON: {err}"))?;
+
+        if !markdown.contains("Status: not_run") {
+            return Err("empty oracle markdown did not report not_run".to_string());
+        }
+        if !markdown.contains("Explanation: No tests were selected") {
+            return Err("empty oracle markdown omitted the explanation".to_string());
+        }
+        if !markdown.contains("BDD-shaped names: 0 / 0") {
+            return Err("empty oracle markdown omitted the zero denominator".to_string());
+        }
+        let value: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("empty oracle JSON is invalid: {err}"))?;
+        if value.get("status").and_then(Value::as_str) != Some("not_run") {
+            return Err("empty oracle JSON did not report not_run".to_string());
+        }
+        if value.get("explanation").and_then(Value::as_str)
+            != Some("No tests were selected; oracle evidence was not established for this report.")
+        {
+            return Err("empty oracle JSON omitted the explanation".to_string());
+        }
+        if value.get("tests").and_then(Value::as_array).map(Vec::len) != Some(0) {
+            return Err("empty oracle JSON did not contain zero tests".to_string());
+        }
+        Ok(())
+    })();
+    let cleanup = fs::remove_dir_all(&root)
+        .map_err(|err| format!("failed to clean empty oracle test directory: {err}"));
+    result.and(cleanup)
+}
+
+#[test]
+fn test_oracle_report_status_preserves_nonempty_controls() -> Result<(), String> {
+    let strong = test_oracle_tests_in_text(
+        Path::new("crates/ripr/tests/strong.rs"),
+        "#[test]\nfn exact() { assert_eq!(actual, expected); }\n",
+    );
+    let warning = test_oracle_tests_in_text(
+        Path::new("crates/ripr/tests/warning.rs"),
+        "#[test]\nfn broad() { assert!(actual.is_ok()); }\n",
+    );
+    if strong.len() != 1 || warning.len() != 1 {
+        return Err(format!(
+            "controls selected unexpected test counts: strong={}, warning={}",
+            strong.len(),
+            warning.len()
+        ));
+    }
+
+    let strong_json = test_oracle_report_json(&strong);
+    let strong_markdown = test_oracle_report_markdown(&strong);
+    if !strong_json.contains("\"status\": \"pass\"") || !strong_markdown.contains("Status: pass") {
+        return Err("strong oracle control lost its positive status".to_string());
+    }
+
+    let warning_json = test_oracle_report_json(&warning);
+    let warning_markdown = test_oracle_report_markdown(&warning);
+    if !warning_json.contains("\"status\": \"warn\"") || !warning_markdown.contains("Status: warn")
+    {
+        return Err("weak oracle control lost its warning status".to_string());
+    }
+    Ok(())
 }
 
 #[test]

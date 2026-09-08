@@ -142,6 +142,10 @@ pub(crate) use spec_receipts::validate_receipt;
 pub(crate) use targeted_rerun::targeted_rerun_benchmark;
 pub(crate) use targeted_test::targeted_test_outcome;
 pub(crate) use test_oracles::{test_efficiency_report, test_oracle_report};
+#[cfg(test)]
+pub(crate) use test_oracles::{
+    test_oracle_report_impl_for_roots, test_oracle_report_json, test_oracle_report_markdown,
+};
 
 fn ensure_parent_dir(path: &std::path::Path, label: &str) -> Result<(), String> {
     let Some(parent) = path.parent() else {
