@@ -261,11 +261,11 @@ All lanes must pass the same global gates:
 | F. Operator UX / Product Surface | First-useful "what now?" guidance and recovery docs | Roadmap/operator guidance artifacts | Create status-only docs churn |
 | G. Bounded Attempts (gated) | Attempt contracts and receipt model for dry-run/test-only work | Attempt schemas + attempt outcome receipts | Run production source edits by default |
 
-Lanes **A-F may proceed in parallel** only through PR-sized slices selected by
-the active goal, issue ledger, implementation plan, or source-of-truth stack.
-Lane **G is design-eligible** under the same selection rule, but execution
-remains gated on control-plane truth, judgment routing, evidence ladder
-readiness semantics, and explicit authority checks.
+In that historical model, lanes **A-F** were eligible for parallel PR-sized
+work. Lane **G** was design-eligible, while execution depended on control-plane
+truth, judgment routing, evidence ladder readiness semantics, and explicit
+authority checks. These historical eligibility labels do not select work
+today.
 
 ### Shared Evidence Vocabulary
 
