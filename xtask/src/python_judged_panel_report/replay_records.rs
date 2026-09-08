@@ -158,17 +158,14 @@ pub(super) fn read_replay_records(records_dir: &Path) -> Result<ReplayRecordSet,
                     path.display()
                 )
             })?;
-        let sha256 = record
-            .binary
-            .as_ref()
-            .and_then(|binary| text(binary, "sha256"))
-            .map(str::to_string)
-            .ok_or_else(|| {
-                format!(
-                    "replay record `{}` carries no binary sha256; re-run `cargo xtask python-judged-panel replay`",
-                    path.display()
-                )
-            })?;
+        let sha256 = require_sha256_digest(
+            record
+                .binary
+                .as_ref()
+                .and_then(|binary| text(binary, "sha256")),
+            "binary sha256",
+            &path.display().to_string(),
+        )?;
         let identity = (version.clone(), sha256.clone());
         match &binary_identity {
             Some(existing) if *existing != identity => {
@@ -238,17 +235,42 @@ pub(super) fn read_replay_records(records_dir: &Path) -> Result<ReplayRecordSet,
                 .is_some_and(|stale| !stale.is_null()),
             binary_version: identity.0.clone(),
             binary_sha256: identity.1.clone(),
-            diff_sha256: record
-                .diff
-                .as_ref()
-                .and_then(|diff| text(diff, "sha256"))
-                .unwrap_or_default()
-                .to_string(),
+            diff_sha256: require_sha256_digest(
+                record.diff.as_ref().and_then(|diff| text(diff, "sha256")),
+                "diff sha256",
+                &path.display().to_string(),
+            )?,
             row_kind: record.row_kind,
         };
         views.insert(record.case_id, view);
     }
     Ok((views, binary_identity))
+}
+
+/// FIX (#3686, CodeRabbit #3685): digests bind evidence identity, so a blank
+/// or malformed one must fail the read with a named error instead of
+/// participating in a blank-to-blank currency match at report time (a
+/// hand-edited blank digest plus a missing diff file would otherwise let a
+/// stale replay report as current). Lowercase only: the producer's
+/// `sha256_file_or_blank` emits lowercase, and an accepted uppercase variant
+/// could never match, silently reporting every such record stale (round-2
+/// review).
+fn require_sha256_digest(value: Option<&str>, what: &str, display: &str) -> Result<String, String> {
+    let digest = value.ok_or_else(|| {
+        format!(
+            "replay record `{display}` carries no {what}; re-run `cargo xtask python-judged-panel replay`"
+        )
+    })?;
+    let lowercase_hex = digest
+        .as_bytes()
+        .iter()
+        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
+    if digest.len() != 64 || !lowercase_hex {
+        return Err(format!(
+            "replay record `{display}` carries a malformed {what} (`{digest}` is not a 64-character lowercase hex sha256); re-run `cargo xtask python-judged-panel replay`"
+        ));
+    }
+    Ok(digest.to_string())
 }
 
 pub(super) fn list_json_files(dir: &Path) -> Result<Vec<String>, String> {
