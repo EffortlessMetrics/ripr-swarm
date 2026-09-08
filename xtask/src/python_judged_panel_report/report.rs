@@ -308,7 +308,9 @@ pub(super) fn build_report_at(
             None
         } else {
             match replay_view.and_then(|view| view.anchor.clone()) {
-                None => Some("missing_echo".to_string()),
+                // FIX (round-3 review): no record means nothing to be stale —
+                // `no_replay_record` already discloses that state.
+                None => replay_view.map(|_| "missing_echo".to_string()),
                 Some(echo) if echo != current_anchor => Some("anchor_moved".to_string()),
                 Some(_) => None,
             }
