@@ -6844,18 +6844,32 @@ pub(crate) fn metrics_report_impl() -> Result<(), String> {
 }
 
 pub(crate) fn test_oracle_report_impl() -> Result<(), String> {
-    let tests = collect_test_oracle_tests()?;
+    let roots = [
+        Path::new("crates/ripr/src"),
+        Path::new("crates/ripr/tests"),
+        Path::new("xtask/src"),
+    ];
+    test_oracle_report_impl_for_roots(&roots)
+}
+
+fn test_oracle_report_impl_for_roots(roots: &[&Path]) -> Result<(), String> {
+    let tests = collect_test_oracle_tests_from_roots(roots)?;
     write_report("test-oracles.md", &test_oracle_report_markdown(&tests))?;
     write_report("test-oracles.json", &test_oracle_report_json(&tests))
 }
 
 fn collect_test_oracle_tests() -> Result<Vec<TestOracleTest>, String> {
-    let mut tests = Vec::new();
-    for root in [
+    let roots = [
         Path::new("crates/ripr/src"),
         Path::new("crates/ripr/tests"),
         Path::new("xtask/src"),
-    ] {
+    ];
+    collect_test_oracle_tests_from_roots(&roots)
+}
+
+fn collect_test_oracle_tests_from_roots(roots: &[&Path]) -> Result<Vec<TestOracleTest>, String> {
+    let mut tests = Vec::new();
+    for root in roots {
         if !root.exists() {
             continue;
         }
@@ -7115,6 +7129,9 @@ fn test_oracle_counts(tests: &[TestOracleTest]) -> BTreeMap<&'static str, usize>
 }
 
 fn test_oracle_report_status(tests: &[TestOracleTest]) -> &'static str {
+    if tests.is_empty() {
+        return "not_run";
+    }
     if tests
         .iter()
         .any(|test| matches!(test.class, TestOracleClass::Weak | TestOracleClass::Smoke))
@@ -7123,6 +7140,12 @@ fn test_oracle_report_status(tests: &[TestOracleTest]) -> &'static str {
     } else {
         "pass"
     }
+}
+
+fn test_oracle_report_explanation(tests: &[TestOracleTest]) -> Option<&'static str> {
+    tests
+        .is_empty()
+        .then_some("No tests were selected; oracle evidence was not established for this report.")
 }
 
 fn test_oracle_report_markdown(tests: &[TestOracleTest]) -> String {
@@ -7141,6 +7164,9 @@ fn test_oracle_report_markdown(tests: &[TestOracleTest]) -> String {
         bdd_named,
         tests.len(),
     );
+    if let Some(explanation) = test_oracle_report_explanation(tests) {
+        body.push_str(&format!("Explanation: {explanation}\n\n"));
+    }
 
     body.push_str("## Weak Or Smoke Tests\n\n");
     let weak_or_smoke = tests
@@ -7190,9 +7216,13 @@ fn test_oracle_report_markdown(tests: &[TestOracleTest]) -> String {
 
 fn test_oracle_report_json(tests: &[TestOracleTest]) -> String {
     let counts = test_oracle_counts(tests);
+    let explanation = test_oracle_report_explanation(tests)
+        .map(|value| format!("  \"explanation\": \"{}\",\n", json_escape(value)))
+        .unwrap_or_default();
     let mut body = format!(
-        "{{\n  \"schema_version\": \"0.1\",\n  \"status\": \"{}\",\n  \"advisory\": true,\n  \"counts\": {{\n    \"strong\": {},\n    \"medium\": {},\n    \"weak\": {},\n    \"smoke\": {}\n  }},\n  \"tests\": [\n",
+        "{{\n  \"schema_version\": \"0.1\",\n  \"status\": \"{}\",\n{}  \"advisory\": true,\n  \"counts\": {{\n    \"strong\": {},\n    \"medium\": {},\n    \"weak\": {},\n    \"smoke\": {}\n  }},\n  \"tests\": [\n",
         test_oracle_report_status(tests),
+        explanation,
         counts.get("strong").copied().unwrap_or(0),
         counts.get("medium").copied().unwrap_or(0),
         counts.get("weak").copied().unwrap_or(0),

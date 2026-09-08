@@ -182,9 +182,9 @@ use super::{
     static_language_allowlist_covers, static_language_violation_message, suggested_fixes_patch,
     suspicious_runtime_file_names, targeted_test_outcome, targeted_test_outcome_report_json,
     targeted_test_outcome_report_markdown, test_efficiency_entry, test_efficiency_report_json,
-    test_efficiency_report_markdown, test_oracle_report_json, test_oracle_report_markdown,
-    test_oracle_tests_in_text, traceability_recommended_fixes, unknown_command_message,
-    user_surface_projection_required_run_status_violations,
+    test_efficiency_report_markdown, test_oracle_report_impl_for_roots, test_oracle_report_json,
+    test_oracle_report_markdown, test_oracle_tests_in_text, traceability_recommended_fixes,
+    unknown_command_message, user_surface_projection_required_run_status_violations,
     validate_actionable_gap_outcomes_fixture_case, validate_actionable_gap_outcomes_fixture_corpus,
     validate_local_context_allowlist, validate_swarm_plan_packet_fixture_case,
     validate_swarm_plan_packet_fixture_corpus, vscode_compile_command, vscode_extension_dir,
@@ -11833,6 +11833,44 @@ fn weak_contains() {
     assert!(markdown.contains("BDD-shaped names: 0 / 1"));
     assert!(json.contains("\"advisory\": true"));
     assert!(json.contains("\"weak\": 1"));
+}
+
+#[test]
+fn test_oracle_command_reports_empty_selection_as_not_run() -> Result<(), String> {
+    with_temp_cwd("test-oracle-empty-selection", |root| {
+        let missing_root = root.join("no-selected-tests");
+        test_oracle_report_impl_for_roots(&[missing_root.as_path()])?;
+
+        let markdown = fs::read_to_string("target/ripr/reports/test-oracles.md")
+            .map_err(|err| format!("failed to read empty oracle markdown: {err}"))?;
+        let json = fs::read_to_string("target/ripr/reports/test-oracles.json")
+            .map_err(|err| format!("failed to read empty oracle JSON: {err}"))?;
+
+        assert!(markdown.contains("Status: not_run"));
+        assert!(markdown.contains("Explanation: No tests were selected"));
+        assert!(markdown.contains("BDD-shaped names: 0 / 0"));
+        assert!(json.contains("\"status\": \"not_run\""));
+        assert!(json.contains("\"explanation\": \"No tests were selected"));
+        let value: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("empty oracle JSON is invalid: {err}"))?;
+        assert_eq!(value["tests"].as_array().map(Vec::len), Some(0));
+        Ok(())
+    })
+}
+
+#[test]
+fn test_oracle_report_status_preserves_nonempty_controls() {
+    let strong = test_oracle_tests_in_text(
+        Path::new("crates/ripr/tests/strong.rs"),
+        "#[test]\nfn exact() { assert_eq!(actual, expected); }\n",
+    );
+    let warning = test_oracle_tests_in_text(
+        Path::new("crates/ripr/tests/warning.rs"),
+        "#[test]\nfn broad() { assert!(actual.is_ok()); }\n",
+    );
+
+    assert!(test_oracle_report_json(&strong).contains("\"status\": \"pass\""));
+    assert!(test_oracle_report_markdown(&warning).contains("Status: warn"));
 }
 
 #[test]
