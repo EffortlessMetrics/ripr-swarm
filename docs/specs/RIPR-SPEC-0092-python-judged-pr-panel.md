@@ -54,6 +54,23 @@ the echo (`missing_echo`) lands in the `anchor_stale` count with a per-case
 named reason and can never bind a rate's as-of identity. Malformed echoes
 (blank file or owner) fail the record read.
 
+Status note (2026-09-08, #3680): regression feedback exists —
+`cargo xtask python-judged-panel feedback [--records <dir>] [--adjudications
+<dir>] [--out <dir>] [--check]` derives the report through the shared
+report pipeline and stages one deterministic proposal per confirmed
+over-credit (two independent roles agreeing verdict `exposed` with
+`false_exposed` decided `true`, on a should_gap/should_limit row whose
+replay is still current) under
+`target/ripr/python-judged-panel/feedback/`, each with the full provenance
+chain and a promotion recipe: extract a minimal regular fixture (the
+SPEC-0108 meta-gate rejects manifest-only fixture dirs), add a corpus case
+with `must_not_promote` assertions, run
+`cargo xtask check-evidence-promotion-honesty`, and re-bless goldens in the
+same PR. Proposals never write the corpus and never change analyzer
+behaviour; promotion is a human-reviewed PR, and a promotion case that
+fails the meta-gate means the analyzer genuinely over-promotes, so the
+analyzer fix lands in that same PR.
+
 Status note (2026-09-04, #3555 PR C): adjudication and reporting now exist —
 `cargo xtask python-judged-panel adjudicate --case <id> --verdict
 <classification> --role <role> (--reviewer <identity> | env

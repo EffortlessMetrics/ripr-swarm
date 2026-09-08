@@ -470,8 +470,9 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         Some("replay") => super::python_judged_panel_replay::run(&args[1..]),
         Some("report") => super::python_judged_panel_report::run_report(&args[1..]),
         Some("adjudicate") => super::python_judged_panel_report::run_adjudicate(&args[1..]),
+        Some("feedback") => super::python_judged_panel_feedback::run_feedback(&args[1..]),
         _ => Err(format!(
-            "python-judged-panel requires `check [--check]`, `replay [--check] [--limit <n>] [--network]`, `report [--records <dir>] [--adjudications <dir>] [--threshold-policy <path>] [--out <dir>] [--check]`, or `adjudicate --case <id> --verdict <classification> --role <role> (--reviewer <identity> | env RIPR_PANEL_ADJUDICATOR) --evidence <ref> [--adjudications <dir>] [--records <dir>]`\nrerun: {RERUN_COMMAND}"
+            "python-judged-panel requires `check [--check]`, `replay [--check] [--limit <n>] [--network]`, `report [--records <dir>] [--adjudications <dir>] [--threshold-policy <path>] [--out <dir>] [--check]`, `feedback [--records <dir>] [--adjudications <dir>] [--out <dir>] [--check]`, or `adjudicate --case <id> --verdict <classification> --role <role> (--reviewer <identity> | env RIPR_PANEL_ADJUDICATOR) --evidence <ref> [--adjudications <dir>] [--records <dir>]`\nrerun: {RERUN_COMMAND}"
         )),
     }
 }

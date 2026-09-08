@@ -5874,7 +5874,8 @@ spec = "docs/specs/RIPR-SPEC-0092-python-judged-pr-panel.md"
 tests = [
   "xtask/src/python_judged_panel.rs::tests",
   "xtask/src/python_judged_panel_replay.rs::tests",
-  "xtask/src/python_judged_panel_report.rs::tests"
+  "xtask/src/python_judged_panel_report.rs::tests",
+  "xtask/src/python_judged_panel_feedback.rs::tests"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -5884,7 +5885,8 @@ code = [
   "xtask/src/reports/fixtures.rs::is_manifest_only_fixture_dir",
   "xtask/src/python_judged_panel.rs",
   "xtask/src/python_judged_panel_replay.rs",
-  "xtask/src/python_judged_panel_report.rs"
+  "xtask/src/python_judged_panel_report.rs",
+  "xtask/src/python_judged_panel_feedback.rs"
 ]
 outputs = [
   "fixtures/python-judged-pr-panel/manifest.json",

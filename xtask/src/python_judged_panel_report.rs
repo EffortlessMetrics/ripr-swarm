@@ -45,20 +45,23 @@ mod view;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use adjudication::adjudicate_case_at;
+#[cfg(test)]
+pub(crate) use cli::AdjudicationRequest;
 pub(crate) use cli::{run_adjudicate, run_report};
+pub(crate) use report::{RenderedReport, build_report_at};
 
 // Re-imported at the facade so `tests.rs` keeps reaching the moved items
-// through `super::` exactly as it did when this module was one file.
+// through `super::` exactly as it did when this module was one file. The
+// items now re-exported `pub(crate)` above (adjudicate_case_at,
+// AdjudicationRequest, RenderedReport, build_report_at) are covered there.
 #[cfg(test)]
-use adjudication::{acquire_path_lock, acquire_record_lock, adjudicate_case_at};
-#[cfg(test)]
-use cli::AdjudicationRequest;
+use adjudication::{acquire_path_lock, acquire_record_lock};
 #[cfg(test)]
 use publish::write_report_generation;
 #[cfg(test)]
 use replay_records::{cite_replay_record, parse_replay_record_bytes};
-#[cfg(test)]
-use report::{RenderedReport, build_report_at};
 
 const SPEC: &str = "RIPR-SPEC-0092";
 const REPORT_SCHEMA_VERSION: &str = "0.1";

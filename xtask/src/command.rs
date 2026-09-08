@@ -372,6 +372,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "python-judged-panel replay [--check] [--limit <n>] [--network]",
         "python-judged-panel report [--records <dir>] [--adjudications <dir>] [--threshold-policy <path>] [--out <dir>] [--check]",
         "python-judged-panel adjudicate --case <id> --verdict <classification> --role <role> (--reviewer <identity> | env RIPR_PANEL_ADJUDICATOR) --evidence <ref> [--adjudications <dir>] [--records <dir>]",
+        "python-judged-panel feedback [--records <dir>] [--adjudications <dir>] [--out <dir>] [--check]",
         "check-python-judged-panel",
         "test-oracle-report",
         "check-test-oracles",
@@ -779,6 +780,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Records a current independent judgment for one panel case outside the accepted panel: reviewer role and identity are required, at least one own evidence citation is required, must_not_claim is echoed from the validated row, and RIPR's replay candidate is stored only as a named advisory reference; a case counts as adjudicated only with two distinct recorded roles/identities (independence is self-claimed, not verified); records are published atomically and bound to the row revision they judged.",
+        ),
+        command_entry(
+            "python-judged-panel feedback [--records <dir>] [--adjudications <dir>] [--out <dir>] [--check]",
+            "report_only",
+            "target/ripr/python-judged-panel/feedback/",
+            false,
+            false,
+            "Stages deterministic regression-feedback proposals for confirmed over-credits (two independent roles agreeing verdict exposed with false_exposed decided true on a should_gap/should_limit row, replay still current) with full provenance and a promotion recipe; proposals never write the evidence-promotion corpus and never change analyzer behaviour - promotion is a human-reviewed PR.",
         ),
         command_entry(
             "check-python-judged-panel",

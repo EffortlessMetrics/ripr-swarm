@@ -139,7 +139,7 @@ pub(super) fn acquire_record_lock(record_path: &Path) -> Result<PathLockGuard, S
     })
 }
 
-pub(super) fn adjudicate_case_at(
+pub(crate) fn adjudicate_case_at(
     root: &Path,
     displays: &[&str],
     adjudications_dir: &str,
