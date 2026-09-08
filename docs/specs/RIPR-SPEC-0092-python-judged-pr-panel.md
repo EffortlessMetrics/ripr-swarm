@@ -45,6 +45,15 @@ collision fails the run before any execution; and every record binds the
 base-tree digest plus the retained-rendition-head disclosure alongside the
 binary, diff, and config identities.
 
+Status note (2026-09-08, #3677): every replay record echoes the anchor
+identity the subject was reconstructed from — `anchor: {file, line, owner}` —
+as an additive field under schema 0.1. The report treats currency as bound to
+the anchor as well as the diff, row kind, and prior-actual state: a record
+whose echo no longer matches the row's anchor (anchor moved) or that predates
+the echo (`missing_echo`) lands in the `anchor_stale` count with a per-case
+named reason and can never bind a rate's as-of identity. Malformed echoes
+(blank file or owner) fail the record read.
+
 Status note (2026-09-04, #3555 PR C): adjudication and reporting now exist —
 `cargo xtask python-judged-panel adjudicate --case <id> --verdict
 <classification> --role <role> (--reviewer <identity> | env

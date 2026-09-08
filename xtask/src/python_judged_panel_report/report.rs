@@ -19,7 +19,7 @@ use crate::python_judged_panel_replay::{sha256_hex, stable_case_slug};
 use super::adjudication::{must_not_claim_echo, read_adjudication_records, row_revision_sha256};
 use super::judgment_semantics::{JudgmentSemantics, validate_judgment_semantics};
 use super::publish::render_markdown;
-use super::replay_records::read_replay_records;
+use super::replay_records::{RecordAnchor, read_replay_records};
 use super::threshold::evaluate_threshold_policy;
 use super::view::{AdjudicationState, AxisValue, bool_token, derive_adjudication_view};
 use super::{
@@ -144,6 +144,7 @@ pub(super) fn build_report_at(
         ("inconclusive", 0),
         ("stale_row", 0),
         ("stale", 0),
+        ("anchor_stale", 0),
         ("mismatched", 0),
         ("comparison_unavailable", 0),
         ("no_replay_record", 0),
@@ -284,11 +285,33 @@ pub(super) fn build_report_at(
         let diff_matches = replay_view
             .map(|view| view.diff_sha256 == sha256_file_or_blank(&root.join(&item.diff_path)))
             .unwrap_or(false);
+        // FIX #3677: the replayed subject is only current when the row's
+        // anchor still matches the record's echo. A moved anchor (or a record
+        // written before the echo existed) means the replay evaluated a
+        // different subject, so it can never be silently current: the row
+        // lands in the `stale` aggregate, the `anchor_stale` disclosure names
+        // the reason, and the rate as-of identity excludes it.
+        let current_anchor = RecordAnchor {
+            file: item
+                .anchor
+                .file
+                .non_blank_value()
+                .unwrap_or_default()
+                .to_string(),
+            line: item.anchor.line.value().copied(),
+            owner: item.anchor.owner.clone(),
+        };
+        let anchor_state = match replay_view.and_then(|view| view.anchor.clone()) {
+            None => replay_view.map(|_| "missing_echo".to_string()),
+            Some(echo) if echo != current_anchor => Some("anchor_moved".to_string()),
+            Some(_) => None,
+        };
         let identity_current = replay_view
             .map(|view| {
                 diff_matches
                     && !view.prior_actual_stale
                     && view.row_kind == row_kind_name(row_kind(item))
+                    && anchor_state.is_none()
             })
             .unwrap_or(false);
         let replayed = replay_view.is_some_and(|view| view.outcome_kind != "not_run");
@@ -308,6 +331,9 @@ pub(super) fn build_report_at(
         }
         if replay_view.is_some() && !identity_current {
             *counts.entry("stale").or_insert(0) += 1;
+        }
+        if anchor_state.is_some() {
+            *counts.entry("anchor_stale").or_insert(0) += 1;
         }
         rate_identity.insert(
             case_id.clone(),
@@ -425,6 +451,7 @@ pub(super) fn build_report_at(
                 "candidate_classification": view.candidate.clone(),
                 "diff_sha256": view.diff_sha256.clone(),
                 "identity_current": identity_current,
+                "anchor_stale_reason": anchor_state,
                 "mismatched": !view.mismatch_kinds.is_empty(),
                 "mismatch_kinds": view.mismatch_kinds.clone(),
                 "comparison_unavailable": view.comparison_unavailable,
