@@ -178,15 +178,17 @@ mod tests {
     #[test]
     fn test_covered_by_output_mapping_fails_closed_with_partial_diagnostics() -> Result<(), String>
     {
+        let failed_status = status(1);
+        let failed_status_text = failed_status.to_string();
         let cases = [
             (
                 timed_output(
-                    Some(status(1)),
+                    Some(failed_status),
                     "selected_case: test\n",
                     "compiler stderr",
                     false,
                 ),
-                ("status: exit code: 1", "compiler stderr"),
+                (format!("status: {failed_status_text}"), "compiler stderr"),
             ),
             (
                 timed_output(
@@ -195,17 +197,17 @@ mod tests {
                     "partial stderr",
                     true,
                 ),
-                ("timed out after 300s", "partial stderr"),
+                ("timed out after 300s".to_string(), "partial stderr"),
             ),
             (
                 timed_output(None, "selected_case: test\n", "spawn stderr", false),
-                ("status: not available", "spawn stderr"),
+                ("status: not available".to_string(), "spawn stderr"),
             ),
         ];
 
         for (output, (expected_status, expected_stderr)) in cases {
             let (success, stdout, stderr) = map_test_covered_by_enumeration_output(output);
-            if success || stdout != "selected_case: test\n" || !stderr.contains(expected_status) {
+            if success || stdout != "selected_case: test\n" || !stderr.contains(&expected_status) {
                 return Err(format!(
                     "enumeration output mapping was not fail-closed: success={success}, stdout={stdout:?}, stderr={stderr:?}"
                 ));
