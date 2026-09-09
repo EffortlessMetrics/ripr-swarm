@@ -30,7 +30,6 @@
 //!   conservative in the meantime.
 
 use super::FunctionSourceRole;
-use super::compilation_unit_path_from_parents;
 use super::model::{
     ModuleDeclarationFact, ModulePathTarget, ResolvedIncludeParent, RustIndex, SourceRoleProvenance,
 };
@@ -185,8 +184,27 @@ fn resolved_module_edges(
     let mut candidates: BTreeMap<PathBuf, BTreeSet<(PathBuf, usize, String, bool)>> =
         BTreeMap::new();
     let mut ambiguous: BTreeSet<PathBuf> = BTreeSet::new();
+    let containing_directory_files = index
+        .files
+        .iter()
+        .filter(|(_, facts)| !facts.used_lexical_fallback)
+        .flat_map(|(file, facts)| {
+            facts
+                .module_declarations
+                .iter()
+                .filter_map(move |declaration| {
+                    let ModulePathTarget::Literal(literal) = &declaration.path_target else {
+                        return None;
+                    };
+                    resolve_relative(&directory_of(file), literal)
+                })
+        })
+        .filter(|file| index.files.contains_key(file))
+        .chain(index.include_parents.keys().cloned())
+        .collect();
     let mut resolver = DeclarationResolver {
         index,
+        containing_directory_files: &containing_directory_files,
         workspace_root,
         crate_roots: CrateRoots::default(),
     };
@@ -195,15 +213,12 @@ fn resolved_module_edges(
         if facts.used_lexical_fallback || facts.module_declarations.is_empty() {
             continue;
         }
-        // Literal `#[path]` targets resolve relative to the file that
-        // physically contains the declaration (#3533): inside an include
-        // fragment that is the fragment file, not the compilation unit the
-        // fragment is pasted into. Default `mod name;` resolution follows
-        // the pasted compilation-unit context instead, so the two anchors
-        // differ for fragment declarations.
-        let unit_anchor = compilation_unit_path_from_parents(&index.include_parents, file);
+        // Both literal paths and default declarations inside include
+        // fragments resolve from the physical fragment's directory. The
+        // including unit remains an identity/role parent, not a file-search
+        // anchor; rebasing it here can select a different physical child.
         for declaration in &facts.module_declarations {
-            match resolver.declaration_targets(file, &unit_anchor, declaration) {
+            match resolver.declaration_targets(file, declaration) {
                 DeclarationTargets::Unresolvable => {
                     // Dynamic, conditional, or out-of-repository `#[path]`
                     // targets grant nothing; there is no child identity to
@@ -263,6 +278,7 @@ fn resolved_module_edges(
 /// the duration of one composition pass.
 struct DeclarationResolver<'index> {
     index: &'index RustIndex,
+    containing_directory_files: &'index BTreeSet<PathBuf>,
     workspace_root: &'index Path,
     crate_roots: CrateRoots,
 }
@@ -277,7 +293,6 @@ impl DeclarationResolver<'_> {
     fn declaration_targets(
         &mut self,
         physical_file: &Path,
-        unit_anchor: &Path,
         declaration: &ModuleDeclarationFact,
     ) -> DeclarationTargets {
         match &declaration.path_target {
@@ -292,7 +307,7 @@ impl DeclarationResolver<'_> {
             }
             ModulePathTarget::Default => {
                 let indexed: Vec<PathBuf> = self
-                    .default_candidates(unit_anchor, &declaration.name)
+                    .default_candidates(physical_file, &declaration.name)
                     .into_iter()
                     .filter(|candidate| self.index.files.contains_key(candidate))
                     .collect();
@@ -322,6 +337,12 @@ impl DeclarationResolver<'_> {
     /// otherwise the directory named after the file stem (`test_styles.rs`
     /// resolves child modules under `test_styles/`).
     fn module_directory(&mut self, file: &Path) -> PathBuf {
+        // Literal #[path] modules and included fragments start a source-
+        // directory anchor even for custom filenames. Applying the ordinary
+        // stem rule can select a different physical child.
+        if self.containing_directory_files.contains(file) {
+            return directory_of(file);
+        }
         let file_name = file
             .file_name()
             .and_then(|name| name.to_str())
@@ -938,6 +959,63 @@ mod tests {
         assert_eq!(
             role_of(&index, "src/support/shared.rs", "redirected_helper")?,
             FunctionSourceRole::CfgTestModule
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn path_selected_parent_resolves_default_children_from_its_directory() -> Result<(), String> {
+        let root = temp_dir("path-selected-child")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(test)] #[path = \"nested/renamed.rs\"] mod nested;",
+            )?,
+            write(&root, "src/nested/renamed.rs", "mod child;")?,
+            write(&root, "src/nested/child.rs", "pub fn correct_child() {}")?,
+            write(
+                &root,
+                "src/nested/renamed/child.rs",
+                "pub fn wrong_child() {}",
+            )?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        assert_eq!(
+            role_of(&index, "src/nested/child.rs", "correct_child")?,
+            FunctionSourceRole::CfgTestModule
+        );
+        assert_eq!(
+            role_of(&index, "src/nested/renamed/child.rs", "wrong_child")?,
+            FunctionSourceRole::Production
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn included_fragment_resolves_default_children_from_its_physical_directory()
+    -> Result<(), String> {
+        let root = temp_dir("included-default-child")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(test)] include!(\"fragments/body.rs\");",
+            )?,
+            write(&root, "src/fragments/body.rs", "mod child;")?,
+            write(&root, "src/fragments/child.rs", "pub fn correct_child() {}")?,
+            write(&root, "src/child.rs", "pub fn wrong_child() {}")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        assert_eq!(
+            role_of(&index, "src/fragments/child.rs", "correct_child")?,
+            FunctionSourceRole::CfgTestModule
+        );
+        assert_eq!(
+            role_of(&index, "src/child.rs", "wrong_child")?,
+            FunctionSourceRole::Production
         );
         Ok(())
     }

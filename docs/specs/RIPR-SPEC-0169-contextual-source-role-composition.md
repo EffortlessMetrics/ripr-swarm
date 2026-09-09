@@ -12,7 +12,7 @@ Linked ADRs:
 
 Linked plan:
 
-Linked issues: #3533 (builds on #3530 / RIPR-SPEC-0153 and #3531)
+Linked issues: #3533 (builds on #3530 / RIPR-SPEC-0153 and #3531), #3706 (source-directory resolution controls)
 
 Linked PRs: #3592
 
@@ -60,6 +60,12 @@ file occurrence under a closed rule set:
   manifest-declared `path = ...` targets — and at the stem directory of every
   ordinary module file. Manifest walks memoize the resolved nearest-ancestor
   answer per directory, so sibling files in one directory share the verdict.
+- **Physical source-directory anchors.** A file selected by literal `#[path]`
+  and an included fragment resolve default child modules from their containing
+  directory, including when their filename is custom. The including unit
+  remains an identity and role parent; it does not replace the fragment's
+  physical file-search directory. Compiler controls with both the correct
+  child and a misleading sibling pin this distinction.
 - **Unknown fails closed.** Ambiguous module ownership (two claiming
   parents, or both default layouts present), cyclic or depth-bounded chains,
   conflicting module/include contexts, dynamic or conditionally introduced
@@ -105,6 +111,9 @@ file occurrence under a closed rule set:
   `#[path]` anchors, crate-root identity (custom roots, autodiscovered
   targets, sibling memoization), cycle and non-ASCII controls, and the
   Unicode `cfg_attr` fail-closed regression.
+- Directory-anchor controls pin both sides: a `#[path]`-selected custom
+  filename and an included fragment grant the correct child's contextual role
+  while leaving the misleading stem-directory or outer-unit sibling unchanged.
 - `cargo xtask goldens check` stays green: composed roles change no pinned
   output contract.
 
@@ -127,6 +136,11 @@ file occurrence under a closed rule set:
   the provenance chain records the module edge.
 - `#[cfg(test)] include!("fragment.rs");` beside a production unit: the
   fragment's helpers gain `CfgTestModule` through the include edge.
+- `#[path = "nested/renamed.rs"] mod nested;` with `mod child;` inside
+  `renamed.rs`: the child is `nested/child.rs`, not
+  `nested/renamed/child.rs`. Likewise, `include!("fragments/body.rs")` with
+  `mod child;` inside the fragment selects `fragments/child.rs`, not the
+  outer including unit's `child.rs`.
 - `#[cfg_attr(é, path = "alternate.rs")] mod imp;` with `src/imp.rs` indexed:
   the unreadable condition fails closed to a typed unknown, so the
   default-layout file is not resolved as the module child.
