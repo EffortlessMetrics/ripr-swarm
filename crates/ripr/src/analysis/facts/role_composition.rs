@@ -189,6 +189,7 @@ fn resolved_module_edges(
         .iter()
         .filter(|(_, facts)| !facts.used_lexical_fallback)
         .flat_map(|(file, facts)| {
+            let directory = file.parent().unwrap_or_else(|| Path::new(""));
             facts
                 .module_declarations
                 .iter()
@@ -196,7 +197,7 @@ fn resolved_module_edges(
                     let ModulePathTarget::Literal(literal) = &declaration.path_target else {
                         return None;
                     };
-                    resolve_relative(&directory_of(file), literal)
+                    resolve_relative(directory, literal)
                 })
         })
         .filter(|file| index.files.contains_key(file))
