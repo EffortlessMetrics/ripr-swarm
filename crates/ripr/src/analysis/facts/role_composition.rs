@@ -30,7 +30,6 @@
 //!   conservative in the meantime.
 
 use super::FunctionSourceRole;
-use super::compilation_unit_path_from_parents;
 use super::model::{
     ModuleDeclarationFact, ModulePathTarget, ResolvedIncludeParent, RustIndex, SourceRoleProvenance,
 };
@@ -185,25 +184,45 @@ fn resolved_module_edges(
     let mut candidates: BTreeMap<PathBuf, BTreeSet<(PathBuf, usize, String, bool)>> =
         BTreeMap::new();
     let mut ambiguous: BTreeSet<PathBuf> = BTreeSet::new();
-    let mut resolver = DeclarationResolver {
+    let containing_directory_files = index
+        .files
+        .iter()
+        .filter(|(_, facts)| !facts.used_lexical_fallback)
+        .flat_map(|(file, facts)| {
+            let directory = file.parent().unwrap_or_else(|| Path::new(""));
+            facts
+                .module_declarations
+                .iter()
+                .filter_map(move |declaration| {
+                    let ModulePathTarget::Literal(literal) = &declaration.path_target else {
+                        return None;
+                    };
+                    resolve_relative(directory, literal)
+                })
+        })
+        .filter(|file| index.files.contains_key(file))
+        .chain(index.include_parents.keys().cloned())
+        .chain(index.include_targets.iter().cloned())
+        .collect();
+    let resolver = DeclarationResolver {
         index,
-        workspace_root,
-        crate_roots: CrateRoots::default(),
+        directory_anchors: module_directory_anchors(
+            index,
+            workspace_root,
+            &containing_directory_files,
+        ),
     };
 
     for (file, facts) in &index.files {
         if facts.used_lexical_fallback || facts.module_declarations.is_empty() {
             continue;
         }
-        // Literal `#[path]` targets resolve relative to the file that
-        // physically contains the declaration (#3533): inside an include
-        // fragment that is the fragment file, not the compilation unit the
-        // fragment is pasted into. Default `mod name;` resolution follows
-        // the pasted compilation-unit context instead, so the two anchors
-        // differ for fragment declarations.
-        let unit_anchor = compilation_unit_path_from_parents(&index.include_parents, file);
+        // Both literal paths and default declarations inside include
+        // fragments resolve from the physical fragment's directory. The
+        // including unit remains an identity/role parent, not a file-search
+        // anchor; rebasing it here can select a different physical child.
         for declaration in &facts.module_declarations {
-            match resolver.declaration_targets(file, &unit_anchor, declaration) {
+            match resolver.declaration_targets(file, declaration) {
                 DeclarationTargets::Unresolvable => {
                     // Dynamic, conditional, or out-of-repository `#[path]`
                     // targets grant nothing; there is no child identity to
@@ -259,12 +278,96 @@ fn resolved_module_edges(
     edges
 }
 
-/// Resolves declarations against the index, memoizing crate-root lookups for
-/// the duration of one composition pass.
+/// Retain each physical file's possible search directories. A file reached
+/// through an ordinary module and a literal path/include can have two anchors.
+/// Propagating both through default declarations prevents a descendant from
+/// silently disappearing when the single-identity index cannot represent the
+/// two occurrences separately. Each file has at most a containing-directory
+/// and an ordinary stem-directory anchor, so the work queue remains bounded.
+fn module_directory_anchors(
+    index: &RustIndex,
+    workspace_root: &Path,
+    containing_directory_files: &BTreeSet<PathBuf>,
+) -> BTreeMap<PathBuf, BTreeSet<PathBuf>> {
+    let mut crate_roots = CrateRoots::default();
+    let mut pending = index
+        .files
+        .iter()
+        .filter(|(_, facts)| !facts.used_lexical_fallback && !facts.module_declarations.is_empty())
+        .map(|(file, _)| {
+            let file_name = file.file_name().and_then(|name| name.to_str());
+            let directory = if containing_directory_files.contains(file)
+                || matches!(file_name, Some("mod.rs" | "lib.rs" | "main.rs"))
+                || crate_roots.is_crate_root(workspace_root, file)
+            {
+                directory_of(file)
+            } else {
+                ordinary_module_directory(file)
+            };
+            (file.clone(), directory)
+        })
+        .collect::<Vec<_>>();
+    let mut anchors: BTreeMap<PathBuf, BTreeSet<PathBuf>> = BTreeMap::new();
+    while let Some((file, directory)) = pending.pop() {
+        let Some(facts) = index.files.get(&file) else {
+            continue;
+        };
+        if facts.used_lexical_fallback || facts.module_declarations.is_empty() {
+            continue;
+        }
+        if !anchors
+            .entry(file.clone())
+            .or_default()
+            .insert(directory.clone())
+        {
+            continue;
+        }
+        for declaration in &facts.module_declarations {
+            match &declaration.path_target {
+                ModulePathTarget::Unknown => {}
+                ModulePathTarget::Literal(literal) => {
+                    if let Some(child) = resolve_relative(&directory_of(&file), literal)
+                        && index.files.contains_key(&child)
+                    {
+                        pending.push((child.clone(), directory_of(&child)));
+                    }
+                }
+                ModulePathTarget::Default => {
+                    for child in default_candidates(&directory, &declaration.name) {
+                        if index.files.contains_key(&child) {
+                            pending.push((child.clone(), ordinary_module_directory(&child)));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    anchors
+}
+
+fn ordinary_module_directory(file: &Path) -> PathBuf {
+    let directory = directory_of(file);
+    if file.file_name().is_some_and(|name| name == "mod.rs") {
+        return directory;
+    }
+    match file.file_stem() {
+        Some(stem) => directory.join(stem),
+        None => directory,
+    }
+}
+
+fn default_candidates(directory: &Path, name: &str) -> [PathBuf; 2] {
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    [
+        directory.join(format!("{name}.rs")),
+        directory.join(name).join("mod.rs"),
+    ]
+}
+
+/// Resolves declarations against all directory anchors of their source file.
 struct DeclarationResolver<'index> {
     index: &'index RustIndex,
-    workspace_root: &'index Path,
-    crate_roots: CrateRoots,
+    directory_anchors: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
 }
 
 impl DeclarationResolver<'_> {
@@ -272,12 +375,11 @@ impl DeclarationResolver<'_> {
     /// `#[path]` resolves relative to the directory of the file physically
     /// containing the declaration (the Rust reference rule for non-inline
     /// `#[path]` targets, which differs from the default stem-directory
-    /// rule). Default resolution prefers `<module-dir>/<name>.rs` over
-    /// `<module-dir>/<name>/mod.rs`.
+    /// rule). Default resolution checks both `<module-dir>/<name>.rs` and
+    /// `<module-dir>/<name>/mod.rs`, retaining ambiguity when both exist.
     fn declaration_targets(
-        &mut self,
+        &self,
         physical_file: &Path,
-        unit_anchor: &Path,
         declaration: &ModuleDeclarationFact,
     ) -> DeclarationTargets {
         match &declaration.path_target {
@@ -291,52 +393,26 @@ impl DeclarationResolver<'_> {
                 }
             }
             ModulePathTarget::Default => {
-                let indexed: Vec<PathBuf> = self
-                    .default_candidates(unit_anchor, &declaration.name)
-                    .into_iter()
+                let Some(directories) = self.directory_anchors.get(physical_file) else {
+                    return DeclarationTargets::Unresolvable;
+                };
+                let indexed = directories
+                    .iter()
+                    .flat_map(|directory| default_candidates(directory, &declaration.name))
                     .filter(|candidate| self.index.files.contains_key(candidate))
-                    .collect();
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                if directories.len() > 1 && !indexed.is_empty() {
+                    // Even if only one candidate exists in this index, the
+                    // other occurrence has an unresolved physical context.
+                    return DeclarationTargets::Ambiguous(indexed);
+                }
                 match indexed.as_slice() {
                     [] => DeclarationTargets::Unresolvable,
                     [single] => DeclarationTargets::Exact(single.clone()),
                     // Both default layouts indexed at once: ambiguous.
                     [..] => DeclarationTargets::Ambiguous(indexed.clone()),
-                }
-            }
-        }
-    }
-
-    /// The default-resolution candidate layouts for `mod <name>;` declared in
-    /// `anchor`: `<module-dir>/<name>.rs` and `<module-dir>/<name>/mod.rs`.
-    fn default_candidates(&mut self, anchor: &Path, name: &str) -> Vec<PathBuf> {
-        let name = name.strip_prefix("r#").unwrap_or(name);
-        let module_dir = self.module_directory(anchor);
-        vec![
-            module_dir.join(format!("{name}.rs")),
-            module_dir.join(name).join("mod.rs"),
-        ]
-    }
-
-    /// The module directory of a file: its containing directory for
-    /// `mod.rs`, `lib.rs`, `main.rs`, and every other crate root;
-    /// otherwise the directory named after the file stem (`test_styles.rs`
-    /// resolves child modules under `test_styles/`).
-    fn module_directory(&mut self, file: &Path) -> PathBuf {
-        let file_name = file
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        let directory = directory_of(file);
-        match file_name {
-            "mod.rs" | "lib.rs" | "main.rs" => directory,
-            _ => {
-                if self.crate_roots.is_crate_root(self.workspace_root, file) {
-                    directory
-                } else {
-                    match file.file_stem() {
-                        Some(stem) => directory.join(stem),
-                        None => directory,
-                    }
                 }
             }
         }
@@ -942,6 +1018,171 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn path_selected_parent_resolves_default_children_from_its_directory() -> Result<(), String> {
+        let root = temp_dir("path-selected-child")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(test)] #[path = \"nested/renamed.rs\"] mod nested;",
+            )?,
+            write(&root, "src/nested/renamed.rs", "mod child;")?,
+            write(&root, "src/nested/child.rs", "pub fn correct_child() {}")?,
+            write(
+                &root,
+                "src/nested/renamed/child.rs",
+                "pub fn wrong_child() {}",
+            )?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        assert_eq!(
+            role_of(&index, "src/nested/child.rs", "correct_child")?,
+            FunctionSourceRole::CfgTestModule
+        );
+        assert_eq!(
+            role_of(&index, "src/nested/renamed/child.rs", "wrong_child")?,
+            FunctionSourceRole::Production
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn included_fragment_resolves_default_children_from_its_physical_directory()
+    -> Result<(), String> {
+        let root = temp_dir("included-default-child")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(test)] include!(\"fragments/body.rs\");",
+            )?,
+            write(&root, "src/fragments/body.rs", "mod child;")?,
+            write(&root, "src/fragments/child.rs", "pub fn correct_child() {}")?,
+            write(&root, "src/child.rs", "pub fn wrong_child() {}")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        assert_eq!(
+            role_of(&index, "src/fragments/child.rs", "correct_child")?,
+            FunctionSourceRole::CfgTestModule
+        );
+        assert_eq!(
+            role_of(&index, "src/child.rs", "wrong_child")?,
+            FunctionSourceRole::Production
+        );
+        Ok(())
+    }
+
+    fn check_mixed_directory_children(label: &str, root_source: &str) -> Result<(), String> {
+        let root = temp_dir(label)?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", root_source)?,
+            write(&root, "src/alias.rs", "mod child;")?,
+            write(&root, "src/alias/child.rs", "pub fn ordinary_child() {}")?,
+            write(&root, "src/child.rs", "pub fn containing_child() {}")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        check_ambiguous_children(
+            &index,
+            &[
+                ("src/alias/child.rs", "ordinary_child"),
+                ("src/child.rs", "containing_child"),
+            ],
+        )
+    }
+
+    fn check_ambiguous_children(
+        index: &RustIndex,
+        children: &[(&str, &str)],
+    ) -> Result<(), String> {
+        for &(file, function) in children {
+            if role_of(index, file, function)? != FunctionSourceRole::Production {
+                return Err(format!("ambiguous child {file} received an evidence role"));
+            }
+            let facts = index
+                .files
+                .get(Path::new(file))
+                .ok_or_else(|| format!("missing child facts for {file}"))?;
+            if facts.role_provenance.earliest_unresolved_reason.as_deref()
+                != Some(REASON_MODULE_AMBIGUOUS_PARENT)
+            {
+                return Err(format!(
+                    "both directory occurrences must stay ambiguous: {file}: {:?}",
+                    facts.role_provenance.earliest_unresolved_reason
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_and_path_occurrences_keep_both_children_ambiguous() -> Result<(), String> {
+        check_mixed_directory_children(
+            "ordinary-and-path",
+            "#[cfg(test)] mod alias;\n#[cfg(test)] #[path = \"alias.rs\"] mod renamed;",
+        )
+    }
+
+    #[test]
+    fn ordinary_and_include_occurrences_keep_both_children_ambiguous() -> Result<(), String> {
+        check_mixed_directory_children(
+            "ordinary-and-include",
+            "mod alias;\n#[cfg(test)] include!(\"alias.rs\");",
+        )
+    }
+
+    #[test]
+    fn mixed_directory_anchors_do_not_select_the_only_indexed_layout() -> Result<(), String> {
+        let root = temp_dir("mixed-anchor-missing-layout")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(test)] mod alias;\n#[cfg(test)] include!(\"alias.rs\");",
+            )?,
+            write(&root, "src/alias.rs", "mod child;")?,
+            write(&root, "src/child.rs", "pub fn containing_child() {}")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        check_ambiguous_children(&index, &[("src/child.rs", "containing_child")])
+    }
+
+    #[test]
+    fn mixed_directory_anchors_propagate_through_default_children() -> Result<(), String> {
+        let root = temp_dir("mixed-anchor-grandchildren")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(test)] mod outer;\n\
+                 #[cfg(test)] #[path = \"outer.rs\"] mod renamed;\n\
+                 #[cfg(test)] #[path = \"outer/alias.rs\"] mod alias_path;",
+            )?,
+            write(&root, "src/outer.rs", "mod alias;")?,
+            write(&root, "src/alias.rs", "pub fn other_layout() {}")?,
+            write(&root, "src/outer/alias.rs", "mod child;")?,
+            write(
+                &root,
+                "src/outer/alias/child.rs",
+                "pub fn ordinary_child() {}",
+            )?,
+            write(&root, "src/outer/child.rs", "pub fn containing_child() {}")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        check_ambiguous_children(
+            &index,
+            &[
+                ("src/outer/alias/child.rs", "ordinary_child"),
+                ("src/outer/child.rs", "containing_child"),
+            ],
+        )
+    }
+
     /// A dynamic `#[path]` expression must not fall back to default name
     /// resolution: the typed unknown fails closed (law 6).
     #[test]
@@ -1131,6 +1372,111 @@ mod tests {
             role_of(&index, "src/fragment.rs", "contested_fragment_helper")?,
             FunctionSourceRole::Production,
             "the contested fragment keeps its standalone roles"
+        );
+        Ok(())
+    }
+
+    /// A conflicted include still has a physical source location for default
+    /// module lookup. The conflict must suppress contextual grants, while
+    /// `mod child;` in the fragment resolves beside the fragment (`src`), not
+    /// under the fragment's stem directory (`src/fragment`).
+    #[test]
+    fn conflicted_include_preserves_physical_anchor_without_role_grant() -> Result<(), String> {
+        let root = temp_dir("conflicting-include-anchor")?;
+        write_manifest(&root)?;
+        let mut files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "include!(\"fragment.rs\");\n\n#[cfg(test)]\ninclude!(\"fragment.rs\");\n",
+            )?,
+            write(
+                &root,
+                "src/fragment.rs",
+                "#[cfg(test)]\nmod child;\npub fn fragment_helper() -> i32 { 3 }\n",
+            )?,
+            write(
+                &root,
+                "src/child.rs",
+                "pub fn physically_anchored_child() -> i32 { 1 }\n",
+            )?,
+            write(
+                &root,
+                "src/fragment/child.rs",
+                "pub fn misleading_stem_child() -> i32 { 2 }\n",
+            )?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert!(
+            index.include_parents.is_empty(),
+            "conflicting cfg requirements must retain fail-closed contextual ownership"
+        );
+        assert!(
+            index.include_targets.contains(Path::new("src/fragment.rs")),
+            "physical include discovery must survive contextual conflict"
+        );
+        assert_eq!(
+            role_of(&index, "src/fragment.rs", "fragment_helper")?,
+            FunctionSourceRole::Production,
+            "physical discovery must not resolve the fragment's contextual role conflict"
+        );
+        assert!(
+            index
+                .files
+                .get(Path::new("src/child.rs"))
+                .ok_or("physical child facts missing")?
+                .role_provenance
+                .edges
+                .iter()
+                .any(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Module
+                    && edge.parent == Path::new("src/fragment.rs")),
+            "default module must resolve beside the physically included fragment"
+        );
+        assert!(
+            index
+                .files
+                .get(Path::new("src/fragment/child.rs"))
+                .ok_or("stem child facts missing")?
+                .role_provenance
+                .edges
+                .is_empty(),
+            "the fragment stem directory must not be selected as the anchor"
+        );
+        assert_eq!(
+            role_of(&index, "src/child.rs", "physically_anchored_child")?,
+            FunctionSourceRole::CfgTestModule,
+            "the module's own cfg(test) edge grants its child without resolving the conflicting include"
+        );
+        assert_eq!(
+            role_of(&index, "src/fragment/child.rs", "misleading_stem_child")?,
+            FunctionSourceRole::Production,
+            "the misleading stem child must not gain an evidence role"
+        );
+
+        // Rust does not fall back to the stem layout when the physical child
+        // is absent. Keep the misleading candidate in the full source index.
+        let physical_child = root.join("src/child.rs");
+        fs::remove_file(&physical_child).map_err(|error| error.to_string())?;
+        files.retain(|file| file != Path::new("src/child.rs"));
+        let missing = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            role_of(&missing, "src/fragment/child.rs", "misleading_stem_child")?,
+            FunctionSourceRole::Production,
+            "a missing physical child must not grant the stem candidate a role"
+        );
+        assert!(
+            missing
+                .files
+                .get(Path::new("src/fragment/child.rs"))
+                .ok_or("stem child facts missing after physical child removal")?
+                .role_provenance
+                .edges
+                .is_empty(),
+            "a missing physical child must not create a stem-directory edge"
         );
         Ok(())
     }

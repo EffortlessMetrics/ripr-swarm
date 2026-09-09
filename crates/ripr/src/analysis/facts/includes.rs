@@ -130,6 +130,11 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
 
     let mut parents_by_child: BTreeMap<PathBuf, Vec<(PathBuf, usize, String, bool)>> =
         BTreeMap::new();
+    // Preserve physical include discovery independently of whether the
+    // contextual role map can choose one parent. A conflict must fail closed
+    // for role grants, but it must not erase the fragment's source directory
+    // when resolving its own default modules.
+    index.include_targets = edges.iter().map(|(child, ..)| child.clone()).collect();
     for (child, parent, line, expression, requires_test) in edges {
         parents_by_child
             .entry(child)
