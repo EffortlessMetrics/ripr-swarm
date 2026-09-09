@@ -710,7 +710,7 @@ pub struct CheckInputExplicit {
 /// Version of the check-artifact config-identity contract (RIPR-SPEC-0140).
 ///
 /// Any PR that adds a finding-affecting `ripr.toml` field must classify it in
-/// [`RiprConfig::check_artifact_identity_fields`] and bump this version in the
+/// `RiprConfig::check_artifact_identity_fields` and bump this version in the
 /// same PR. The classification is closed: the field enumerator destructures
 /// every config struct without `..`, so an unclassified field fails to
 /// compile, and a unit test pins the resulting role of every field.

@@ -27,7 +27,7 @@ pub(crate) fn markdown_text(value: &str) -> String {
 /// One-line disclosure emitted in place of a PowerShell variant when the bash
 /// command is compound and no honest translation exists (#2628). Standalone
 /// emitters append the sentence period; emitters that name the command append
-/// `: `<command>`.
+/// `: <command>`.
 pub(crate) const POWERSHELL_UNAVAILABLE_DISCLOSURE: &str =
     "PowerShell form unavailable for compound commands";
 
