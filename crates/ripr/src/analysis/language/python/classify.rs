@@ -24,6 +24,10 @@ use crate::domain::{
     RiprEvidence, SourceLocation, StageEvidence, StageState,
 };
 use std::path::Path;
+
+#[cfg(test)]
+mod tests;
+
 #[cfg(test)]
 pub(super) fn classify_change(
     file: &Path,
@@ -61,6 +65,8 @@ pub(super) struct PythonNoBehaviorContext {
     pub(super) old_line_in_docstring: bool,
 }
 
+/// Classify a change from producer-owned owner, relation, and oracle facts.
+/// Discriminator narration follows the final class, not oracle strength alone.
 pub(super) fn classify_change_with_context(
     file: &Path,
     line: usize,
@@ -395,9 +401,16 @@ pub(super) fn classify_change_with_context(
             "Static limit `{}` prevents a safe Python discriminator claim.",
             limit.kind.as_str()
         )
-    } else if strongest_strength >= OracleStrength::Strong.rank() {
+    } else if matches!(class, ExposureClass::Exposed) {
         format!(
             "Related Python test uses a `{}` oracle; static evidence suggests the changed behavior is discriminated.",
+            strongest_kind.as_str()
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank() {
+        // Strength alone cannot override the classifier's alignment, error-path,
+        // or default-activation decision. Keep the narrative at that verdict.
+        format!(
+            "Related Python test uses a `{}` oracle, but static evidence does not establish discrimination of the changed behavior.",
             strongest_kind.as_str()
         )
     } else {
