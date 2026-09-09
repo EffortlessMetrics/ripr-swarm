@@ -203,11 +203,13 @@ fn resolved_module_edges(
         .filter(|file| index.files.contains_key(file))
         .chain(index.include_parents.keys().cloned())
         .collect();
-    let mut resolver = DeclarationResolver {
+    let resolver = DeclarationResolver {
         index,
-        containing_directory_files: &containing_directory_files,
-        workspace_root,
-        crate_roots: CrateRoots::default(),
+        directory_anchors: module_directory_anchors(
+            index,
+            workspace_root,
+            &containing_directory_files,
+        ),
     };
 
     for (file, facts) in &index.files {
@@ -275,13 +277,96 @@ fn resolved_module_edges(
     edges
 }
 
-/// Resolves declarations against the index, memoizing crate-root lookups for
-/// the duration of one composition pass.
+/// Retain each physical file's possible search directories. A file reached
+/// through an ordinary module and a literal path/include can have two anchors.
+/// Propagating both through default declarations prevents a descendant from
+/// silently disappearing when the single-identity index cannot represent the
+/// two occurrences separately. Each file has at most a containing-directory
+/// and an ordinary stem-directory anchor, so the work queue remains bounded.
+fn module_directory_anchors(
+    index: &RustIndex,
+    workspace_root: &Path,
+    containing_directory_files: &BTreeSet<PathBuf>,
+) -> BTreeMap<PathBuf, BTreeSet<PathBuf>> {
+    let mut crate_roots = CrateRoots::default();
+    let mut pending = index
+        .files
+        .iter()
+        .filter(|(_, facts)| !facts.used_lexical_fallback && !facts.module_declarations.is_empty())
+        .map(|(file, _)| {
+            let file_name = file.file_name().and_then(|name| name.to_str());
+            let directory = if containing_directory_files.contains(file)
+                || matches!(file_name, Some("mod.rs" | "lib.rs" | "main.rs"))
+                || crate_roots.is_crate_root(workspace_root, file)
+            {
+                directory_of(file)
+            } else {
+                ordinary_module_directory(file)
+            };
+            (file.clone(), directory)
+        })
+        .collect::<Vec<_>>();
+    let mut anchors: BTreeMap<PathBuf, BTreeSet<PathBuf>> = BTreeMap::new();
+    while let Some((file, directory)) = pending.pop() {
+        let Some(facts) = index.files.get(&file) else {
+            continue;
+        };
+        if facts.used_lexical_fallback || facts.module_declarations.is_empty() {
+            continue;
+        }
+        if !anchors
+            .entry(file.clone())
+            .or_default()
+            .insert(directory.clone())
+        {
+            continue;
+        }
+        for declaration in &facts.module_declarations {
+            match &declaration.path_target {
+                ModulePathTarget::Unknown => {}
+                ModulePathTarget::Literal(literal) => {
+                    if let Some(child) = resolve_relative(&directory_of(&file), literal)
+                        && index.files.contains_key(&child)
+                    {
+                        pending.push((child.clone(), directory_of(&child)));
+                    }
+                }
+                ModulePathTarget::Default => {
+                    for child in default_candidates(&directory, &declaration.name) {
+                        if index.files.contains_key(&child) {
+                            pending.push((child.clone(), ordinary_module_directory(&child)));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    anchors
+}
+
+fn ordinary_module_directory(file: &Path) -> PathBuf {
+    let directory = directory_of(file);
+    if file.file_name().is_some_and(|name| name == "mod.rs") {
+        return directory;
+    }
+    match file.file_stem() {
+        Some(stem) => directory.join(stem),
+        None => directory,
+    }
+}
+
+fn default_candidates(directory: &Path, name: &str) -> [PathBuf; 2] {
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    [
+        directory.join(format!("{name}.rs")),
+        directory.join(name).join("mod.rs"),
+    ]
+}
+
+/// Resolves declarations against all directory anchors of their source file.
 struct DeclarationResolver<'index> {
     index: &'index RustIndex,
-    containing_directory_files: &'index BTreeSet<PathBuf>,
-    workspace_root: &'index Path,
-    crate_roots: CrateRoots,
+    directory_anchors: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
 }
 
 impl DeclarationResolver<'_> {
@@ -289,10 +374,10 @@ impl DeclarationResolver<'_> {
     /// `#[path]` resolves relative to the directory of the file physically
     /// containing the declaration (the Rust reference rule for non-inline
     /// `#[path]` targets, which differs from the default stem-directory
-    /// rule). Default resolution prefers `<module-dir>/<name>.rs` over
-    /// `<module-dir>/<name>/mod.rs`.
+    /// rule). Default resolution checks both `<module-dir>/<name>.rs` and
+    /// `<module-dir>/<name>/mod.rs`, retaining ambiguity when both exist.
     fn declaration_targets(
-        &mut self,
+        &self,
         physical_file: &Path,
         declaration: &ModuleDeclarationFact,
     ) -> DeclarationTargets {
@@ -307,58 +392,26 @@ impl DeclarationResolver<'_> {
                 }
             }
             ModulePathTarget::Default => {
-                let indexed: Vec<PathBuf> = self
-                    .default_candidates(physical_file, &declaration.name)
-                    .into_iter()
+                let Some(directories) = self.directory_anchors.get(physical_file) else {
+                    return DeclarationTargets::Unresolvable;
+                };
+                let indexed = directories
+                    .iter()
+                    .flat_map(|directory| default_candidates(directory, &declaration.name))
                     .filter(|candidate| self.index.files.contains_key(candidate))
-                    .collect();
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                if directories.len() > 1 && !indexed.is_empty() {
+                    // Even if only one candidate exists in this index, the
+                    // other occurrence has an unresolved physical context.
+                    return DeclarationTargets::Ambiguous(indexed);
+                }
                 match indexed.as_slice() {
                     [] => DeclarationTargets::Unresolvable,
                     [single] => DeclarationTargets::Exact(single.clone()),
                     // Both default layouts indexed at once: ambiguous.
                     [..] => DeclarationTargets::Ambiguous(indexed.clone()),
-                }
-            }
-        }
-    }
-
-    /// The default-resolution candidate layouts for `mod <name>;` declared in
-    /// `anchor`: `<module-dir>/<name>.rs` and `<module-dir>/<name>/mod.rs`.
-    fn default_candidates(&mut self, anchor: &Path, name: &str) -> Vec<PathBuf> {
-        let name = name.strip_prefix("r#").unwrap_or(name);
-        let module_dir = self.module_directory(anchor);
-        vec![
-            module_dir.join(format!("{name}.rs")),
-            module_dir.join(name).join("mod.rs"),
-        ]
-    }
-
-    /// The module directory of a file: its containing directory for
-    /// `mod.rs`, `lib.rs`, `main.rs`, and every other crate root;
-    /// otherwise the directory named after the file stem (`test_styles.rs`
-    /// resolves child modules under `test_styles/`).
-    fn module_directory(&mut self, file: &Path) -> PathBuf {
-        // Literal #[path] modules and included fragments start a source-
-        // directory anchor even for custom filenames. Applying the ordinary
-        // stem rule can select a different physical child.
-        if self.containing_directory_files.contains(file) {
-            return directory_of(file);
-        }
-        let file_name = file
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        let directory = directory_of(file);
-        match file_name {
-            "mod.rs" | "lib.rs" | "main.rs" => directory,
-            _ => {
-                if self.crate_roots.is_crate_root(self.workspace_root, file) {
-                    directory
-                } else {
-                    match file.file_stem() {
-                        Some(stem) => directory.join(stem),
-                        None => directory,
-                    }
                 }
             }
         }
@@ -1019,6 +1072,114 @@ mod tests {
             FunctionSourceRole::Production
         );
         Ok(())
+    }
+
+    fn check_mixed_directory_children(label: &str, root_source: &str) -> Result<(), String> {
+        let root = temp_dir(label)?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", root_source)?,
+            write(&root, "src/alias.rs", "mod child;")?,
+            write(&root, "src/alias/child.rs", "pub fn ordinary_child() {}")?,
+            write(&root, "src/child.rs", "pub fn containing_child() {}")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        check_ambiguous_children(
+            &index,
+            &[
+                ("src/alias/child.rs", "ordinary_child"),
+                ("src/child.rs", "containing_child"),
+            ],
+        )
+    }
+
+    fn check_ambiguous_children(
+        index: &RustIndex,
+        children: &[(&str, &str)],
+    ) -> Result<(), String> {
+        for &(file, function) in children {
+            if role_of(index, file, function)? != FunctionSourceRole::Production {
+                return Err(format!("ambiguous child {file} received an evidence role"));
+            }
+            let facts = index
+                .files
+                .get(Path::new(file))
+                .ok_or_else(|| format!("missing child facts for {file}"))?;
+            if facts.role_provenance.earliest_unresolved_reason.as_deref()
+                != Some(REASON_MODULE_AMBIGUOUS_PARENT)
+            {
+                return Err(format!(
+                    "both directory occurrences must stay ambiguous: {file}: {:?}",
+                    facts.role_provenance.earliest_unresolved_reason
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_and_path_occurrences_keep_both_children_ambiguous() -> Result<(), String> {
+        check_mixed_directory_children(
+            "ordinary-and-path",
+            "#[cfg(test)] mod alias;\n#[cfg(test)] #[path = \"alias.rs\"] mod renamed;",
+        )
+    }
+
+    #[test]
+    fn ordinary_and_include_occurrences_keep_both_children_ambiguous() -> Result<(), String> {
+        check_mixed_directory_children(
+            "ordinary-and-include",
+            "mod alias;\n#[cfg(test)] include!(\"alias.rs\");",
+        )
+    }
+
+    #[test]
+    fn mixed_directory_anchors_do_not_select_the_only_indexed_layout() -> Result<(), String> {
+        let root = temp_dir("mixed-anchor-missing-layout")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(test)] mod alias;\n#[cfg(test)] include!(\"alias.rs\");",
+            )?,
+            write(&root, "src/alias.rs", "mod child;")?,
+            write(&root, "src/child.rs", "pub fn containing_child() {}")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        check_ambiguous_children(&index, &[("src/child.rs", "containing_child")])
+    }
+
+    #[test]
+    fn mixed_directory_anchors_propagate_through_default_children() -> Result<(), String> {
+        let root = temp_dir("mixed-anchor-grandchildren")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(test)] mod outer;\n\
+                 #[cfg(test)] #[path = \"outer.rs\"] mod renamed;\n\
+                 #[cfg(test)] #[path = \"outer/alias.rs\"] mod alias_path;",
+            )?,
+            write(&root, "src/outer.rs", "mod alias;")?,
+            write(&root, "src/alias.rs", "pub fn other_layout() {}")?,
+            write(&root, "src/outer/alias.rs", "mod child;")?,
+            write(
+                &root,
+                "src/outer/alias/child.rs",
+                "pub fn ordinary_child() {}",
+            )?,
+            write(&root, "src/outer/child.rs", "pub fn containing_child() {}")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        check_ambiguous_children(
+            &index,
+            &[
+                ("src/outer/alias/child.rs", "ordinary_child"),
+                ("src/outer/child.rs", "containing_child"),
+            ],
+        )
     }
 
     /// A dynamic `#[path]` expression must not fall back to default name

@@ -66,6 +66,12 @@ file occurrence under a closed rule set:
   remains an identity and role parent; it does not replace the fragment's
   physical file-search directory. Compiler controls with both the correct
   child and a misleading sibling pin this distinction.
+- **Mixed directory anchors.** One physical file may occur both as an ordinary
+  module and through a literal path, include, or crate-root context. Retain
+  both physical search directories and propagate them through default child
+  declarations. The single-identity index marks children from distinct
+  anchors `rust_module_ambiguous_parent`, even if only one layout is indexed;
+  it does not choose an anchor or mint an evidence role from partial context.
 - **Unknown fails closed.** Ambiguous module ownership (two claiming
   parents, or both default layouts present), cyclic or depth-bounded chains,
   conflicting module/include contexts, dynamic or conditionally introduced
@@ -114,6 +120,8 @@ file occurrence under a closed rule set:
 - Directory-anchor controls pin both sides: a `#[path]`-selected custom
   filename and an included fragment grant the correct child's contextual role
   while leaving the misleading stem-directory or outer-unit sibling unchanged.
+  Mixed ordinary/path and ordinary/include occurrences keep both children
+  ambiguous, including incomplete layouts and transitive default children.
 - `cargo xtask goldens check` stays green: composed roles change no pinned
   output contract.
 
