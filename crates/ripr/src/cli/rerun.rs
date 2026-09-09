@@ -12,6 +12,7 @@ use crate::cli::commands_context::{ensure_command_root, load_root_input_and_conf
 use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
+use crate::domain::{CommandExecutionMode, CommandSpec, CommandSpecDigest};
 use crate::output::gap_decision_ledger::{GapRecord, parse_gap_record_source_json};
 use crate::output::outcome::{TargetedRerunStaticSeam, targeted_rerun_movement_from_json};
 #[cfg(feature = "lang-typescript")]
@@ -307,6 +308,15 @@ struct TargetedRerunParityMismatch {
 struct TargetedRerunRoute {
     verify_commands: Vec<String>,
     receipt_command: Option<String>,
+    /// FIX #1617 slice 3: producer-owned typed routes carried beside the
+    /// legacy display strings — the machine-facing authority. Deduplicated
+    /// by semantic digest (same-id specs with different arguments both
+    /// survive); only present when the matching ledger records carry typed
+    /// specs.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    verify_command_specs: Vec<CommandSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt_command_spec: Option<CommandSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     receipt_command_conflict: Option<TargetedRerunLimitation>,
 }
@@ -1080,10 +1090,66 @@ fn route_from_gap_records(records: &[(usize, GapRecord)]) -> TargetedRerunRoute 
             receipt_commands.len()
         ),
     });
+    // FIX #1617 slice 3: typed specs ride beside the legacy strings. The
+    // specs are producer-owned and already validated at ledger
+    // deserialization; dedup by semantic digest keeps distinct invocations
+    // that reuse a command id.
+    let verify_command_specs = stable_unique_specs(
+        records
+            .iter()
+            .filter_map(|(_, record)| record.command_specs.as_ref())
+            .flat_map(|specs| specs.verify.iter().cloned()),
+    );
+    let mut receipt_specs = stable_unique_specs(
+        records
+            .iter()
+            .filter_map(|(_, record)| record.command_specs.as_ref())
+            .flat_map(|specs| specs.receipt.iter().cloned()),
+    );
+    // FIX (round-1 review): a typed receipt spec is only unambiguous when
+    // exactly one distinct receipt route matches AND the legacy string side
+    // agrees on a single route. A conflicting set must not keep a machine
+    // route while the string side discloses the conflict; records with no
+    // legacy receipt route stay legacy-string-only.
+    let receipt_command_spec = if receipt_command.is_some() && receipt_specs.len() == 1 {
+        Some(receipt_specs.remove(0))
+    } else {
+        None
+    };
     TargetedRerunRoute {
         verify_commands,
         receipt_command,
+        verify_command_specs,
+        receipt_command_spec,
         receipt_command_conflict,
+    }
+}
+
+/// FIX (round-1 review): producers reuse command ids across argument sets
+/// (every receipt spec id is `ripr:agent:receipt`), so distinct typed
+/// invocations must not collapse. Dedupe by the full semantic identity —
+/// the sha256 digest over the serialized spec — keeping the first
+/// occurrence. A spec whose digest cannot be computed has no stable
+/// identity and stays legacy-string-only (fail closed).
+fn stable_unique_specs(specs: impl IntoIterator<Item = CommandSpec>) -> Vec<CommandSpec> {
+    let mut seen = BTreeSet::new();
+    let mut unique = Vec::new();
+    for spec in specs {
+        let Ok(digest) = spec.command_spec_sha256() else {
+            continue;
+        };
+        if seen.insert(digest) {
+            unique.push(spec);
+        }
+    }
+    unique
+}
+
+fn execution_mode_label(mode: CommandExecutionMode) -> &'static str {
+    match mode {
+        CommandExecutionMode::Direct => "direct",
+        CommandExecutionMode::ShellRequired => "shell_required",
+        CommandExecutionMode::Manual => "manual",
     }
 }
 
@@ -1793,8 +1859,22 @@ fn render_human(report: &TargetedRerunReport) -> String {
         if !route.verify_commands.is_empty() {
             lines.push(format!("Verify: {}", route.verify_commands.join(" && ")));
         }
+        for spec in &route.verify_command_specs {
+            lines.push(format!(
+                "Verify (typed, {}): `{}`",
+                execution_mode_label(spec.execution_mode),
+                spec.display
+            ));
+        }
         if let Some(receipt_command) = route.receipt_command.as_deref() {
             lines.push(format!("Receipt: {receipt_command}"));
+        }
+        if let Some(spec) = route.receipt_command_spec.as_ref() {
+            lines.push(format!(
+                "Receipt (typed, {}): `{}`",
+                execution_mode_label(spec.execution_mode),
+                spec.display
+            ));
         }
         if let Some(conflict) = route.receipt_command_conflict.as_ref() {
             lines.push(format!(
@@ -1880,6 +1960,28 @@ mod tests {
             receipt_command: receipt_command.map(str::to_string),
             ..GapRecord::default()
         }
+    }
+
+    fn gap_record_with_specs(
+        canonical_gap_id: &str,
+        file: Option<&str>,
+        owner: Option<&str>,
+        verification_commands: &[&str],
+        receipt_command: Option<&str>,
+        verify_spec: Option<crate::domain::CommandSpec>,
+        receipt_spec: Option<crate::domain::CommandSpec>,
+    ) -> GapRecord {
+        let mut record = gap_record(
+            canonical_gap_id,
+            file,
+            owner,
+            verification_commands,
+            receipt_command,
+        );
+        let specs = record.command_specs.get_or_insert_with(Default::default);
+        specs.verify = verify_spec.into_iter().collect();
+        specs.receipt = receipt_spec.into_iter().collect();
+        record
     }
 
     #[cfg(feature = "lang-typescript")]
@@ -2481,6 +2583,372 @@ mod tests {
             return Err(format!(
                 "conflicting receipt command route was not explicit: {:?}",
                 route.receipt_command
+            ));
+        }
+        Ok(())
+    }
+
+    /// FIX #1617 slice 3: producer-owned typed specs ride the targeted-rerun
+    /// route beside the legacy strings — specs dedupe by semantic digest
+    /// (same-id different-args invocations both survive), an unambiguous
+    /// receipt spec carries, and conflicting receipt specs drop the typed
+    /// receipt while the string conflict stays explicit.
+    /// Builds one verify CommandSpec with overridable id/display/args — the
+    /// shared fixture for the typed-route tests.
+    fn verify_spec_fixture(
+        command_id: &str,
+        display: &str,
+        args: Vec<String>,
+    ) -> crate::domain::CommandSpec {
+        crate::domain::CommandSpec {
+            schema_version: crate::domain::CommandSpec::SCHEMA_VERSION.to_string(),
+            command_id: command_id.to_string(),
+            role: crate::domain::CommandRole::Verify,
+            execution_mode: crate::domain::CommandExecutionMode::Direct,
+            program: "ripr".to_string(),
+            args,
+            cwd: ".".to_string(),
+            env_set: Vec::new(),
+            env_passthrough: Vec::new(),
+            environment_policy: crate::domain::EnvironmentPolicy::Clean,
+            stdin: crate::domain::StdinPolicy::Null,
+            timeout_ms: 120_000,
+            cancellation: crate::domain::CancellationPolicy::Allowed,
+            network_policy: crate::domain::NetworkPolicy::Forbidden,
+            expected_result_parser: crate::domain::ExpectedResultParser::DeclaredJson,
+            expected_exit_codes: vec![0],
+            expected_writes: Vec::new(),
+            cost_class: crate::domain::CommandCostClass::Unknown,
+            platforms: vec![
+                crate::domain::CommandPlatform::Linux,
+                crate::domain::CommandPlatform::Macos,
+                crate::domain::CommandPlatform::Windows,
+            ],
+            display: display.to_string(),
+            authority_boundary: crate::domain::CommandAuthorityBoundary::VerificationRouteOnly,
+        }
+    }
+
+    #[test]
+    fn targeted_rerun_route_carries_typed_specs() -> Result<(), String> {
+        let verify_spec = verify_spec_fixture(
+            "ripr:agent:verify",
+            "ripr agent verify --json",
+            vec![
+                "agent".to_string(),
+                "verify".to_string(),
+                "--json".to_string(),
+            ],
+        );
+        let receipt_spec = crate::domain::CommandSpec {
+            schema_version: crate::domain::CommandSpec::SCHEMA_VERSION.to_string(),
+            command_id: "ripr:agent:receipt".to_string(),
+            role: crate::domain::CommandRole::Receipt,
+            authority_boundary: crate::domain::CommandAuthorityBoundary::ReceiptRouteOnly,
+            display: "ripr agent receipt --json".to_string(),
+            ..verify_spec.clone()
+        };
+        let records = resolve_gap_records(
+            vec![
+                gap_record_with_specs(
+                    "gap:typed",
+                    Some("src/lib.rs"),
+                    Some("crate::price"),
+                    &["cargo test price"],
+                    Some("ripr agent receipt --json"),
+                    Some(verify_spec.clone()),
+                    Some(receipt_spec.clone()),
+                ),
+                gap_record_with_specs(
+                    "gap:typed",
+                    Some("src/lib.rs"),
+                    Some("crate::price"),
+                    &["cargo test price"],
+                    Some("ripr agent receipt --json"),
+                    Some(verify_spec.clone()),
+                    Some(receipt_spec.clone()),
+                ),
+            ],
+            "gap:typed",
+        )
+        .map_err(|limitation| limitation.message)?;
+        let route = route_from_gap_records(&records);
+        if route.verify_command_specs.len() != 1
+            || route.verify_command_specs[0].command_id != "ripr:agent:verify"
+        {
+            return Err(format!(
+                "duplicate verify specs did not collapse to one typed route: {:?}",
+                route.verify_command_specs
+            ));
+        }
+        if route
+            .receipt_command_spec
+            .as_ref()
+            .map(|spec| spec.command_id.as_str())
+            != Some("ripr:agent:receipt")
+        {
+            return Err(format!(
+                "the unambiguous receipt spec did not carry: {:?}",
+                route
+                    .receipt_command_spec
+                    .map(|spec| spec.command_id.clone())
+            ));
+        }
+        // The legacy strings stay beside the typed routes.
+        if route.verify_commands != vec!["cargo test price".to_string()]
+            || route.receipt_command.as_deref() != Some("ripr agent receipt --json")
+        {
+            return Err(format!(
+                "legacy strings were dropped when typed specs carried: {:?}",
+                (route.verify_commands, route.receipt_command)
+            ));
+        }
+
+        let report = super::report(
+            "current_state_only",
+            TargetedRerunSelector {
+                kind: "canonical_gap",
+                changed_test: None,
+                canonical_gap_id: Some("gap:typed".to_string()),
+                gap_ledger: None,
+                matched_record_count: None,
+                recomputed_scope_count: None,
+                selected_test_count: 0,
+                direct_call_names: Vec::new(),
+            },
+            TargetedRerunCache {
+                schema_version: "ripr-targeted-rerun-cache-v1",
+                reuse_state: "full_reuse",
+                file_fact_status: String::new(),
+                hits: 0,
+                misses: 0,
+                corrupt_ignored: 0,
+                stores: 0,
+                store_errors: 0,
+                recomputation_reasons: Vec::new(),
+                invalidation_status: String::new(),
+                input_fingerprint: None,
+            },
+            Vec::new(),
+            Some(route),
+            None,
+            Vec::new(),
+        );
+        let rendered = super::render_human(&report);
+        for needle in [
+            "Verify (typed, direct): `ripr agent verify --json`",
+            "Receipt (typed, direct): `ripr agent receipt --json`",
+        ] {
+            if !rendered.contains(needle) {
+                return Err(format!("missing {needle:?} in:\n{rendered}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// FIX (round-1 review): dedupe is by full semantic digest, not command
+    /// id — producers reuse ids across argument sets, so two specs with the
+    /// same id but different args must both survive in order, while
+    /// byte-identical specs collapse to one.
+    #[test]
+    fn targeted_rerun_specs_dedupe_by_digest_not_command_id() -> Result<(), String> {
+        let verify_spec = verify_spec_fixture(
+            "ripr:agent:verify",
+            "ripr agent verify --json",
+            vec![
+                "agent".to_string(),
+                "verify".to_string(),
+                "--json".to_string(),
+            ],
+        );
+        let mut different_args = verify_spec.clone();
+        different_args.args = vec![
+            "agent".to_string(),
+            "verify".to_string(),
+            "--root".to_string(),
+            "target/other".to_string(),
+            "--json".to_string(),
+        ];
+        different_args.display = "ripr agent verify --root target/other --json".to_string();
+        let records = resolve_gap_records(
+            vec![
+                gap_record_with_specs(
+                    "gap:digest",
+                    Some("src/lib.rs"),
+                    Some("crate::price"),
+                    &["cargo test price"],
+                    None,
+                    Some(verify_spec.clone()),
+                    None,
+                ),
+                gap_record_with_specs(
+                    "gap:digest",
+                    Some("src/lib.rs"),
+                    Some("crate::price"),
+                    &["cargo test validate"],
+                    None,
+                    Some(different_args),
+                    None,
+                ),
+                gap_record_with_specs(
+                    "gap:digest",
+                    Some("src/lib.rs"),
+                    Some("crate::price"),
+                    &["cargo test price"],
+                    None,
+                    Some(verify_spec.clone()),
+                    None,
+                ),
+            ],
+            "gap:digest",
+        )
+        .map_err(|limitation| limitation.message)?;
+        let route = route_from_gap_records(&records);
+        let displays = route
+            .verify_command_specs
+            .iter()
+            .map(|spec| spec.display.as_str())
+            .collect::<Vec<_>>();
+        if displays
+            != [
+                "ripr agent verify --json",
+                "ripr agent verify --root target/other --json",
+            ]
+        {
+            return Err(format!(
+                "same-id different-arg specs collapsed or reordered: {displays:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// FIX (round-1 review): conflicting legacy receipt strings must drop
+    /// the typed receipt spec — a conflicting set must not keep a machine
+    /// route while the string side discloses the conflict.
+    #[test]
+    fn conflicted_legacy_receipts_drop_the_typed_receipt_spec() -> Result<(), String> {
+        let verify_spec = verify_spec_fixture(
+            "ripr:agent:verify",
+            "ripr agent verify --json",
+            vec![
+                "agent".to_string(),
+                "verify".to_string(),
+                "--json".to_string(),
+            ],
+        );
+        let receipt_spec = crate::domain::CommandSpec {
+            schema_version: crate::domain::CommandSpec::SCHEMA_VERSION.to_string(),
+            command_id: "ripr:agent:receipt".to_string(),
+            role: crate::domain::CommandRole::Receipt,
+            authority_boundary: crate::domain::CommandAuthorityBoundary::ReceiptRouteOnly,
+            display: "ripr agent receipt --json".to_string(),
+            ..verify_spec.clone()
+        };
+        let records = resolve_gap_records(
+            vec![
+                gap_record_with_specs(
+                    "gap:conflict",
+                    Some("src/lib.rs"),
+                    Some("crate::price"),
+                    &["cargo test price"],
+                    Some("ripr agent receipt --json"),
+                    Some(verify_spec.clone()),
+                    Some(receipt_spec.clone()),
+                ),
+                gap_record_with_specs(
+                    "gap:conflict",
+                    Some("src/lib.rs"),
+                    Some("crate::price"),
+                    &["cargo test price"],
+                    Some("ripr receipt write --gap gap:conflict"),
+                    Some(verify_spec),
+                    Some(receipt_spec),
+                ),
+            ],
+            "gap:conflict",
+        )
+        .map_err(|limitation| limitation.message)?;
+        let route = route_from_gap_records(&records);
+        if route.receipt_command.is_some() {
+            return Err("a conflicting receipt set must not select a legacy route".to_string());
+        }
+        if route.receipt_command_spec.is_some() {
+            return Err("a conflicting receipt set must drop the typed receipt spec".to_string());
+        }
+        let conflict = route
+            .receipt_command_conflict
+            .as_ref()
+            .ok_or("the receipt conflict was not disclosed")?;
+        if conflict.kind != "receipt_command_conflict" {
+            return Err(format!("unexpected conflict kind: {}", conflict.kind));
+        }
+        Ok(())
+    }
+
+    /// FIX (round-2 review): a typed spec whose argv/display differs from
+    /// the legacy strings is a legitimate producer divergence - both forms
+    /// are published (the typed form is the machine authority, the legacy
+    /// string the human display), and neither is rejected or rewritten.
+    #[test]
+    fn typed_spec_divergence_from_legacy_strings_is_published_as_is() -> Result<(), String> {
+        let verify_spec = crate::domain::CommandSpec {
+            schema_version: crate::domain::CommandSpec::SCHEMA_VERSION.to_string(),
+            command_id: "ripr:agent:verify".to_string(),
+            role: crate::domain::CommandRole::Verify,
+            execution_mode: crate::domain::CommandExecutionMode::Direct,
+            program: "ripr".to_string(),
+            args: vec![
+                "agent".to_string(),
+                "verify".to_string(),
+                "--json".to_string(),
+            ],
+            cwd: ".".to_string(),
+            env_set: Vec::new(),
+            env_passthrough: Vec::new(),
+            environment_policy: crate::domain::EnvironmentPolicy::Clean,
+            stdin: crate::domain::StdinPolicy::Null,
+            timeout_ms: 120_000,
+            cancellation: crate::domain::CancellationPolicy::Allowed,
+            network_policy: crate::domain::NetworkPolicy::Forbidden,
+            expected_result_parser: crate::domain::ExpectedResultParser::DeclaredJson,
+            expected_exit_codes: vec![0],
+            expected_writes: Vec::new(),
+            cost_class: crate::domain::CommandCostClass::Unknown,
+            platforms: vec![
+                crate::domain::CommandPlatform::Linux,
+                crate::domain::CommandPlatform::Macos,
+                crate::domain::CommandPlatform::Windows,
+            ],
+            display: "ripr agent verify --json --typed".to_string(),
+            authority_boundary: crate::domain::CommandAuthorityBoundary::VerificationRouteOnly,
+        };
+        let records = resolve_gap_records(
+            vec![gap_record_with_specs(
+                "gap:divergent",
+                Some("src/lib.rs"),
+                Some("crate::price"),
+                &["cargo test price -- --exact"],
+                Some("ripr agent receipt --json"),
+                Some(verify_spec),
+                None,
+            )],
+            "gap:divergent",
+        )
+        .map_err(|limitation| limitation.message)?;
+        let route = route_from_gap_records(&records);
+        if route.verify_commands != vec!["cargo test price -- --exact".to_string()]
+            || route.verify_command_specs.len() != 1
+            || route.verify_command_specs[0].display != "ripr agent verify --json --typed"
+            || route.verify_command_specs[0].args
+                != vec![
+                    "agent".to_string(),
+                    "verify".to_string(),
+                    "--json".to_string(),
+                ]
+        {
+            return Err(format!(
+                "divergent forms must both be published as-is: {:?}",
+                route.verify_command_specs
             ));
         }
         Ok(())
