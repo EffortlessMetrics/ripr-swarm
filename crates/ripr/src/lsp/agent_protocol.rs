@@ -1379,6 +1379,59 @@ mod tests {
         Ok(())
     }
 
+    /// FIX (round-3 review): COMMAND_SPEC_WIRE_FIELDS duplicates the
+    /// published repair-assurance schema's command_spec field set. This test
+    /// derives the serde field names from a fully-populated CommandSpec and
+    /// pins parity, so a future domain field becomes a test failure here
+    /// instead of a silent protocol-valid/schema-invalid drift.
+    #[test]
+    fn command_spec_wire_fields_match_the_serde_shape() -> Result<(), String> {
+        let fully_populated = crate::domain::CommandSpec {
+            schema_version: "1".to_string(),
+            command_id: "ripr:agent:verify".to_string(),
+            role: crate::domain::CommandRole::Verify,
+            execution_mode: crate::domain::CommandExecutionMode::Direct,
+            program: "ripr".to_string(),
+            args: vec!["verify".to_string()],
+            cwd: ".".to_string(),
+            env_set: Vec::new(),
+            env_passthrough: Vec::new(),
+            environment_policy: crate::domain::EnvironmentPolicy::Clean,
+            stdin: crate::domain::StdinPolicy::Null,
+            timeout_ms: 120_000,
+            cancellation: crate::domain::CancellationPolicy::Allowed,
+            network_policy: crate::domain::NetworkPolicy::Forbidden,
+            expected_result_parser: crate::domain::ExpectedResultParser::DeclaredJson,
+            expected_exit_codes: vec![0],
+            expected_writes: vec!["target/ripr/out.json".to_string()],
+            cost_class: crate::domain::CommandCostClass::Unknown,
+            platforms: vec![
+                crate::domain::CommandPlatform::Linux,
+                crate::domain::CommandPlatform::Macos,
+                crate::domain::CommandPlatform::Windows,
+            ],
+            display: "display".to_string(),
+            authority_boundary: crate::domain::CommandAuthorityBoundary::VerificationRouteOnly,
+        };
+        let serialized = serde_json::to_value(&fully_populated)
+            .map_err(|error| format!("serialize CommandSpec: {error}"))?;
+        let mut serde_fields = serialized
+            .as_object()
+            .ok_or("serialized CommandSpec is not an object")?
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        serde_fields.sort();
+        let mut wire_fields = super::COMMAND_SPEC_WIRE_FIELDS.to_vec();
+        wire_fields.sort_unstable();
+        if serde_fields != wire_fields {
+            return Err(format!(
+                "COMMAND_SPEC_WIRE_FIELDS drifted from the serde shape: serde {serde_fields:?} vs wire {wire_fields:?}"
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn capability_output_matches_the_published_schema() -> Result<(), String> {
         // The live producer bytes, exactly as initialize projects them.
