@@ -1,0 +1,293 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/error_variant_boxed_wrapper_downcast_witness/input
+
+Summary: 8 probe(s), 2 exposed, 6 weak, 0 unrevealed, 0 no path, 0 unknown
+
+Analysis outcome: complete_with_findings (analysis complete).
+  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 8 probe(s), 8 finding(s).
+
+WARNING fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:44
+
+Changed
+  before: try_parse_summary(raw).map_err(|error| error.to_string().into())
+  after:  try_parse_summary(raw).map_err(Into::into)
+
+Probe
+  family: error_path
+  delta:  value
+  owner:  src/lib.rs::parse_summary
+
+Static exposure
+  exposed (warning, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 44)
+  - related test tests/errors.rs:17 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(
+error.downcast_ref::<ParseSummaryError>(),
+Some(ParseSummaryError::MalformedSource)
+) {
+return Err("boxed variant must preserve ParseSummaryError::MalformedSource".into());
+}
+  - related test tests/errors.rs:17 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(
+        error.downcast_ref::<ParseSummaryError>(),
+        Some(ParseSummaryError::MalformedSource)
+    )
+  - related test tests/errors.rs:7 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
+return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
+}
+  - related test tests/errors.rs:7 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))
+  - observed enum variant value ParseSummaryError::MalformedSource at line 10
+  - observed enum variant value ParseSummaryError::MalformedSource at line 10
+  - observed function argument value raw = "@bad;" at line 19
+  - observed enum variant value ParseSummaryError::MalformedSource at line 22
+  - observed enum variant value ParseSummaryError::MalformedSource at line 22
+
+WARNING fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:44
+
+Changed
+  before: try_parse_summary(raw).map_err(|error| error.to_string().into())
+  after:  try_parse_summary(raw).map_err(Into::into)
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::parse_summary
+
+Static exposure
+  exposed (warning, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: try_parse_summary(raw).map_err(Into::into)
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: try_parse_summary(raw).map_err(Into::into) (line 44)
+  - related test tests/errors.rs:17 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(
+error.downcast_ref::<ParseSummaryError>(),
+Some(ParseSummaryError::MalformedSource)
+) {
+return Err("boxed variant must preserve ParseSummaryError::MalformedSource".into());
+}
+  - related test tests/errors.rs:17 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(
+        error.downcast_ref::<ParseSummaryError>(),
+        Some(ParseSummaryError::MalformedSource)
+    )
+  - related test tests/errors.rs:7 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
+return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
+}
+  - observed enum variant value ParseSummaryError::MalformedSource at line 10
+  - observed enum variant value ParseSummaryError::MalformedSource at line 10
+  - observed function argument value raw = "@bad;" at line 19
+  - observed enum variant value ParseSummaryError::MalformedSource at line 22
+  - observed enum variant value ParseSummaryError::MalformedSource at line 22
+
+WARNING fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:58
+
+Changed
+  before: try_length_summary(raw).map_err(|error| error.to_string().into())
+  after:  try_length_summary(raw).map_err(Into::into)
+
+Probe
+  family: error_path
+  delta:  value
+  owner:  src/lib.rs::length_summary
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach length_summary: length_summary_only_checks_is_err
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches error variant: try_length_summary(raw).map_err(Into::into)
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches error variant: try_length_summary(raw).map_err(Into::into) (line 58)
+  - related test tests/errors.rs:32 length_summary_only_checks_is_err uses weak broad error oracle: assert!(result.is_err());
+  - observed function argument value raw = "way-too-long-input-that-exceeds-the-forty-char-limit!!" at line 33
+
+Weakness
+  - No exact error variant discriminator was detected
+
+Next step
+  Assert the exact error variant or payload instead of only is_err().
+
+WARNING fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:58
+
+Changed
+  before: try_length_summary(raw).map_err(|error| error.to_string().into())
+  after:  try_length_summary(raw).map_err(Into::into)
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::length_summary
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach length_summary: length_summary_only_checks_is_err
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: try_length_summary(raw).map_err(Into::into)
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches returned value: try_length_summary(raw).map_err(Into::into) (line 58)
+  - related test tests/errors.rs:32 length_summary_only_checks_is_err uses weak broad error oracle: assert!(result.is_err());
+  - observed function argument value raw = "way-too-long-input-that-exceeds-the-forty-char-limit!!" at line 33
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Replace broad assertions with exact equality or a property that constrains the changed returned value.
+
+WARNING fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:72
+
+Changed
+  before: try_glyph_summary(raw).map_err(Into::into)
+  after:  try_glyph_summary(raw).map_err(|error| error.to_string().into())
+
+Probe
+  family: error_path
+  delta:  value
+  owner:  src/lib.rs::glyph_summary
+
+Static exposure
+  weakly_exposed (warning, confidence 0.66)
+
+Evidence
+  - reach yes: Related tests appear to reach glyph_summary: glyph_summary_downcast_witness_on_stringified_wrapper
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation weak: No complete owner-bound propagation witness found for error variant: try_glyph_summary(raw).map_err(|error| error.to_string().into())
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches error variant: try_glyph_summary(raw).map_err(|error| error.to_string().into()) (line 72)
+  - related test tests/errors.rs:38 glyph_summary_downcast_witness_on_stringified_wrapper uses strong exact value oracle: if !matches!(
+error.downcast_ref::<GlyphError>(),
+Some(GlyphError::MalformedGlyph)
+) {
+return Err("glyph variant witness requires the typed conversion".into());
+}
+  - related test tests/errors.rs:38 glyph_summary_downcast_witness_on_stringified_wrapper uses strong exact value oracle: matches!(
+        error.downcast_ref::<GlyphError>(),
+        Some(GlyphError::MalformedGlyph)
+    )
+  - observed function argument value raw = "#glyph" at line 40
+  - observed enum variant value GlyphError::MalformedGlyph at line 43
+  - observed enum variant value GlyphError::MalformedGlyph at line 43
+
+Next step
+  Assert the exact error variant or payload instead of only is_err().
+
+WARNING fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:72
+
+Changed
+  before: try_glyph_summary(raw).map_err(Into::into)
+  after:  try_glyph_summary(raw).map_err(|error| error.to_string().into())
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::glyph_summary
+
+Static exposure
+  weakly_exposed (warning, confidence 0.66)
+
+Evidence
+  - reach yes: Related tests appear to reach glyph_summary: glyph_summary_downcast_witness_on_stringified_wrapper
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation weak: No complete owner-bound propagation witness found for returned value: try_glyph_summary(raw).map_err(|error| error.to_string().into())
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: try_glyph_summary(raw).map_err(|error| error.to_string().into()) (line 72)
+  - related test tests/errors.rs:38 glyph_summary_downcast_witness_on_stringified_wrapper uses strong exact value oracle: if !matches!(
+error.downcast_ref::<GlyphError>(),
+Some(GlyphError::MalformedGlyph)
+) {
+return Err("glyph variant witness requires the typed conversion".into());
+}
+  - related test tests/errors.rs:38 glyph_summary_downcast_witness_on_stringified_wrapper uses strong exact value oracle: matches!(
+        error.downcast_ref::<GlyphError>(),
+        Some(GlyphError::MalformedGlyph)
+    )
+  - observed function argument value raw = "#glyph" at line 40
+  - observed enum variant value GlyphError::MalformedGlyph at line 43
+  - observed enum variant value GlyphError::MalformedGlyph at line 43
+
+Next step
+  Replace broad assertions with exact equality or a property that constrains the changed returned value.
+
+WARNING fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:86
+
+Changed
+  before: try_theme_summary(raw).map_err(|error| error.to_string().into())
+  after:  try_theme_summary(raw).map_err(Into::into)
+
+Probe
+  family: error_path
+  delta:  value
+  owner:  src/lib.rs::theme_summary
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach theme_summary: theme_summary_ignores_matches_result
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches error variant: try_theme_summary(raw).map_err(Into::into)
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches error variant: try_theme_summary(raw).map_err(Into::into) (line 86)
+  - related test tests/errors.rs:53 theme_summary_ignores_matches_result uses strong exact value oracle: matches!(
+        error.downcast_ref::<ThemeError>(),
+        Some(ThemeError::DuplicateTheme)
+    );
+  - observed function argument value raw = "&theme" at line 54
+  - observed enum variant value ThemeError::DuplicateTheme at line 57
+
+Weakness
+  - No exact error variant discriminator was detected
+
+Next step
+  Assert the exact error variant or payload instead of only is_err().
+
+WARNING fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:86
+
+Changed
+  before: try_theme_summary(raw).map_err(|error| error.to_string().into())
+  after:  try_theme_summary(raw).map_err(Into::into)
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::theme_summary
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach theme_summary: theme_summary_ignores_matches_result
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: try_theme_summary(raw).map_err(Into::into)
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches returned value: try_theme_summary(raw).map_err(Into::into) (line 86)
+  - related test tests/errors.rs:53 theme_summary_ignores_matches_result uses strong exact value oracle: matches!(
+        error.downcast_ref::<ThemeError>(),
+        Some(ThemeError::DuplicateTheme)
+    );
+  - observed function argument value raw = "&theme" at line 54
+  - observed enum variant value ThemeError::DuplicateTheme at line 57
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Replace broad assertions with exact equality or a property that constrains the changed returned value.

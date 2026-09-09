@@ -1,0 +1,32 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/error_variant_boxed_wrapper_downcast_witness/input
+
+Summary: 8 probe(s), 2 exposed, 6 weak, 0 unrevealed, 0 no path, 0 unknown
+
+Analysis outcome: complete_with_findings (analysis complete).
+  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 8 probe(s), 8 finding(s).
+
+Start here:
+  State: top_gap
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  File: fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:58
+  Static exposure: weakly_exposed (warning, confidence 0.92)
+  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Changed behavior: try_length_summary(raw).map_err(Into::into)
+  Missing discriminator: No exact error variant discriminator was detected
+  Related test: tests/errors.rs:32 length_summary_only_checks_is_err
+  Next step: Assert the exact error variant or payload instead of only is_err().
+  Evidence:
+    - reach yes: Related tests appear to reach length_summary: length_summary_only_checks_is_err
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 6 more evidence line(s) hidden
+
+Next: drill into the top finding:
+  ripr explain --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:error_path:e47d26a4
+  ripr context --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:error_path:e47d26a4
+
+Hidden:
+  7 lower-priority finding(s) omitted from default human output.
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

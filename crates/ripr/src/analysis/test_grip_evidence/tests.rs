@@ -1250,6 +1250,53 @@ fn given_opaque_error_variant_without_payload_evidence_then_discrimination_stays
 }
 
 #[test]
+fn given_boxed_wrapper_seam_when_seam_carries_no_variant_identity_then_variant_authority_stays_fail_closed()
+-> Result<(), String> {
+    // #3700: the diff-mode wrapper credit flows through the ErrorPath family
+    // fall-through, not through this repo-mode variant authority. The wrapper
+    // seam expression carries no parseable variant identity, so the authority
+    // must refuse to bind a downcast oracle — including the exact variant the
+    // wrapper really propagates. If this binding ever starts returning true
+    // for an unparseable wrapper identity, the fail-closed boundary has moved.
+    let seam = crate::analysis::seams::RepoSeam::new(
+        "src/lib.rs",
+        "parse_summary",
+        SeamKind::ErrorVariant,
+        0,
+        1,
+        "try_parse_summary(raw).map_err(Into::into)",
+        RequiredDiscriminator::ErrorVariant {
+            variant: "try_parse_summary(raw).map_err(Into::into)".to_string(),
+        },
+        ExpectedSink::ErrorChannel,
+    );
+    assert!(!super::error_variant_oracle_matches_seam_variant(
+        &seam,
+        "matches!(error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource))"
+    ));
+
+    // Positive control: the same downcast oracle binds once the seam carries
+    // the producer-resolved variant identity of the typed callee.
+    let typed_seam = crate::analysis::seams::RepoSeam::new(
+        "src/lib.rs",
+        "try_parse_summary",
+        SeamKind::ErrorVariant,
+        0,
+        1,
+        "return Err(ParseSummaryError::MalformedSource);",
+        RequiredDiscriminator::ErrorVariant {
+            variant: "ParseSummaryError::MalformedSource".to_string(),
+        },
+        ExpectedSink::ErrorChannel,
+    );
+    assert!(super::error_variant_oracle_matches_seam_variant(
+        &typed_seam,
+        "matches!(error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource))"
+    ));
+    Ok(())
+}
+
+#[test]
 fn given_error_constructor_payload_seam_when_test_asserts_exact_payload_then_discriminate_evidence_is_yes()
 -> Result<(), String> {
     let prod = PathBuf::from("src/entry_validation.rs");

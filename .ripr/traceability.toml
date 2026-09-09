@@ -6345,6 +6345,7 @@ tests = [
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
+  "fixtures/error_variant_boxed_wrapper_downcast_witness",
   "fixtures/unwrap_err_variant_positive",
   "fixtures/unwrap_err_variant_single_line",
   "fixtures/unwrap_err_sibling_variant",
@@ -6359,6 +6360,8 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0106-error-seam-unwrap-err-variant-binding.md",
+  "fixtures/error_variant_boxed_wrapper_downcast_witness/expected/check.json",
+  "fixtures/error_variant_boxed_wrapper_downcast_witness/expected/human.txt",
 ]
 metrics = [
   "unwrap_err_variant_grip_raise",

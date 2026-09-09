@@ -156,6 +156,33 @@ Implementation:
 - Test uses `assert!(authenticate("").is_err())` with no `unwrap_err()` binding
 - Expected: `error_path` remains `weakly_exposed` (no regression from this PR)
 
+### Fixture 5 — BOXED WRAPPER DOWNCAST WITNESS (error_variant_boxed_wrapper_downcast_witness, #3700)
+
+Producer regression fixture for the boxed-error wrapper shape reported on
+#3700 (`parse_perl_summary(code).map_err(Into::into)` over a typed
+`ParsePerlError`, observed through
+`matches!(error.downcast_ref::<ParsePerlError>(), Some(ParsePerlError::MalformedSource))`
+with a `return Err` on mismatch):
+
+- Changed seam: the wrapper conversion line
+  `try_parse_summary(raw).map_err(Into::into)` (and companion wrapper seams).
+- Witnesses: a typed sibling test whose name contains the wrapper owner and
+  whose fallible body pins `Err(ParseSummaryError::MalformedSource)` via
+  `matches!`, plus a boxed downcast witness extracting the error with
+  `.err().ok_or(...)?`.
+- Expected: the wrapper `error_path` seam → `exposed` with
+  `exact_error_variant` / `strong`; the downcast witness is credited as a
+  related discriminator.
+- Fail-closed companions in the same input stay `weakly_exposed`: a broad
+  `is_err()`-only observer, a stringified conversion
+  (`map_err(|error| error.to_string().into())`), and an ignored
+  `matches!` result.
+- Known gap recorded on #3700 (deliberately not blessed by this fixture): a
+  downcast witness pinning a sibling variant or an unrelated enum variant can
+  still classify `exposed` while the wrapper seam expression carries no
+  parseable variant token, because the Part B variant guard has no variant
+  identity to match on for wrapper seams.
+
 ## Unit Tests
 
 Tests in `crates/ripr/src/analysis/extract/oracles/` and

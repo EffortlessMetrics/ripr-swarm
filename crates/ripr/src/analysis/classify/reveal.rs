@@ -1006,6 +1006,105 @@ mod tests {
         );
     }
 
+    // #3700 producer-binding control (POSITIVE half), reduced from
+    // fixtures/error_variant_boxed_wrapper_downcast_witness: a wrapper
+    // `map_err(Into::into)` seam carries no parseable variant, so the strong
+    // credit flows through the ExactErrorVariant family match plus a
+    // probe-token confirmation (`into` from `Into::into` occurring in the
+    // witness's fallible `return Err(..)` body).
+    #[test]
+    fn boxed_wrapper_seam_credits_exact_variant_witness_through_fallible_err_body() {
+        let wrapper_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_parse_summary(raw).map_err(Into::into)",
+        );
+        let typed_witness = test_with_assertions(
+            "parse_summary_fails_closed_on_malformed_source",
+            vec![oracle(
+                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let (observe, discriminate, related) = reveal_evidence(
+            &wrapper_probe,
+            &[(&typed_witness, RelationReason::OwnerNamedTest)],
+        );
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "the exact-variant witness with a fallible Err body must keep the wrapper seam strong"
+        );
+        assert_eq!(related[0].oracle_kind, OracleKind::ExactErrorVariant);
+        assert_eq!(related[0].oracle_strength, OracleStrength::Strong);
+    }
+
+    // #3700 removal-fails control: disabling the exact-variant binding of the
+    // wrapper witness (the witness degrades to the broad `Err(_)` shape, which
+    // the oracle scanner classifies BroadError/Weak instead of
+    // ExactErrorVariant/Strong) must drop the wrapper seam's discriminator to
+    // weak. This is the layer that would regress the fixture back to the
+    // released-0.10.0 miss if the variant-binding producer is removed.
+    #[test]
+    fn boxed_wrapper_seam_loses_strong_credit_when_witness_lacks_variant_binding() {
+        let wrapper_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_parse_summary(raw).map_err(Into::into)",
+        );
+        let broad_witness = test_with_assertions(
+            "parse_summary_fails_closed_on_malformed_source",
+            vec![oracle(
+                "if !matches!(result, Err(_)) {\nreturn Err(\"malformed source should fail closed\".into());\n}",
+                OracleKind::BroadError,
+                OracleStrength::Weak,
+            )],
+        );
+        let (observe, discriminate, _) = reveal_evidence(
+            &wrapper_probe,
+            &[(&broad_witness, RelationReason::OwnerNamedTest)],
+        );
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "without the exact-variant binding the wrapper seam must not keep a strong discriminator"
+        );
+    }
+
+    // #3700 fail-closed control: a witness that computes `matches!` and
+    // discards the result has no observing failure path, so the assertion stays
+    // unconfirmed and the wrapper seam keeps a weak discriminator.
+    #[test]
+    fn boxed_wrapper_seam_ignores_witness_with_discarded_matches_result() {
+        let wrapper_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_theme_summary(raw).map_err(Into::into)",
+        );
+        let discarded_witness = test_with_assertions(
+            "theme_summary_ignores_matches_result",
+            vec![oracle(
+                "let _ = matches!(\nerror.downcast_ref::<ThemeError>(),\nSome(ThemeError::DuplicateTheme)\n);",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (observe, discriminate, _) = reveal_evidence(
+            &wrapper_probe,
+            &[(&discarded_witness, RelationReason::DirectOwnerCall)],
+        );
+        assert_eq!(
+            observe.state,
+            StageState::Yes,
+            "the single-assertion association rule keeps the discarded witness visible"
+        );
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a discarded matches! result must not confirm the wrapper witness"
+        );
+    }
+
     // RIPR-SPEC-0106 Part B extended to direct value families: a
     // `return_value` probe on an `Err(...)` construction must not let a
     // sibling-variant ExactErrorVariant oracle confirm observation through

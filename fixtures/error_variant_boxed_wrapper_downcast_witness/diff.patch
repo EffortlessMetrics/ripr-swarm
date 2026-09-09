@@ -1,0 +1,38 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..1111111 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -41,7 +41,7 @@ pub fn try_parse_summary(raw: &str) -> Result<ParseSummary, ParseSummaryError> {
+ }
+ 
+ pub fn parse_summary(raw: &str) -> Result<ParseSummary, Box<dyn Error>> {
+-    try_parse_summary(raw).map_err(|error| error.to_string().into())
++    try_parse_summary(raw).map_err(Into::into)
+ }
+ 
+ pub fn try_length_summary(raw: &str) -> Result<usize, LengthError> {
+@@ -55,7 +55,7 @@ pub fn try_length_summary(raw: &str) -> Result<usize, LengthError> {
+ }
+ 
+ pub fn length_summary(raw: &str) -> Result<usize, Box<dyn Error>> {
+-    try_length_summary(raw).map_err(|error| error.to_string().into())
++    try_length_summary(raw).map_err(Into::into)
+ }
+ 
+ pub fn try_glyph_summary(raw: &str) -> Result<char, GlyphError> {
+@@ -69,7 +69,7 @@ pub fn try_glyph_summary(raw: &str) -> Result<char, GlyphError> {
+ }
+ 
+ pub fn glyph_summary(raw: &str) -> Result<char, Box<dyn Error>> {
+-    try_glyph_summary(raw).map_err(Into::into)
++    try_glyph_summary(raw).map_err(|error| error.to_string().into())
+ }
+ 
+ pub fn try_theme_summary(raw: &str) -> Result<String, ThemeError> {
+@@ -83,5 +83,5 @@ pub fn try_theme_summary(raw: &str) -> Result<String, ThemeError> {
+ }
+ 
+ pub fn theme_summary(raw: &str) -> Result<String, Box<dyn Error>> {
+-    try_theme_summary(raw).map_err(|error| error.to_string().into())
++    try_theme_summary(raw).map_err(Into::into)
+ }
