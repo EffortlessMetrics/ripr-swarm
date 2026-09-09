@@ -43,10 +43,10 @@ return Err("checksum witness pinned the malformed-payload sibling".into());
   - observed enum variant value ChecksumError::MalformedPayload at line 8
 
 Weakness
-  - No exact error variant discriminator was detected
+  - Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type
 
 Next step
-  Assert the exact error variant or payload instead of only is_err().
+  #3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.
 
 WARNING fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs:29
 
@@ -84,10 +84,10 @@ return Err("checksum witness pinned the malformed-payload sibling".into());
   - observed enum variant value ChecksumError::MalformedPayload at line 8
 
 Weakness
-  - No strong discriminator was detected
+  - Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type
 
 Next step
-  Replace broad assertions with exact equality or a property that constrains the changed returned value.
+  #3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.
 
 WARNING fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs:43
 
@@ -125,10 +125,10 @@ return Err("render witness pinned the parse-summary variant instead".into());
   - observed enum variant value ParseSummaryError::MalformedSource at line 22
 
 Weakness
-  - No exact error variant discriminator was detected
+  - Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type
 
 Next step
-  Assert the exact error variant or payload instead of only is_err().
+  #3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.
 
 WARNING fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs:43
 
@@ -166,7 +166,7 @@ return Err("render witness pinned the parse-summary variant instead".into());
   - observed enum variant value ParseSummaryError::MalformedSource at line 22
 
 Weakness
-  - No strong discriminator was detected
+  - Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type
 
 Next step
-  Replace broad assertions with exact equality or a property that constrains the changed returned value.
+  #3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.

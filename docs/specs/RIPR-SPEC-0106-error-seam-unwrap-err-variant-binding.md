@@ -159,10 +159,12 @@ Implementation:
 ### Fixture 5 — BOXED WRAPPER DOWNCAST WITNESS (error_variant_boxed_wrapper_downcast_witness, #3700)
 
 Producer regression fixture for the boxed-error wrapper shape reported on
-#3700 (`parse_perl_summary(code).map_err(Into::into)` over a typed
-`ParsePerlError`, observed through
+#3700 (the consumer's `parse_perl_summary(code).map_err(Into::into)` over a
+typed `ParsePerlError`, observed through
 `matches!(error.downcast_ref::<ParsePerlError>(), Some(ParsePerlError::MalformedSource))`
-with a `return Err` on mismatch):
+with a `return Err` on mismatch; the fixture renames the consumer's
+`ParsePerlError` to `ParseSummaryError` and mirrors the witness contract
+exactly):
 
 - Changed seam: the wrapper conversion line
   `try_parse_summary(raw).map_err(Into::into)` (and companion wrapper seams).

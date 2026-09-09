@@ -229,10 +229,16 @@ fn analyze_related_assertions(
         )
         && wrapper_error_seam_expression(&[probe.expression.as_str(), analysis_expression])
     {
-        Some(wrapper_established_variants(
-            &probe.expression,
-            related_tests,
-        ))
+        // #3700 round-2 review (devin g2nVJ): the changed-line fragment may
+        // not carry the callee (parser-backed analysis reconstructs the full
+        // `callee(..).map_err(..)` expression), so establishment falls back
+        // to the same expression authority wrapper detection used. Same
+        // seam, same authority — never a different expression.
+        let mut established = wrapper_established_variants(&probe.expression, related_tests);
+        if established.is_empty() && analysis_expression != probe.expression {
+            established = wrapper_established_variants(analysis_expression, related_tests);
+        }
+        Some(established)
     } else {
         None
     };
@@ -451,7 +457,27 @@ fn assertion_matches_probe_detail_with_literals(
             .iter()
             .any(|v| contains_as_whole_word(&assertion.text, v))
     } else if wrapper_binding.is_some() {
+        // #3700 round-2 review (devin g2nUV, bounded): two wrappers-only
+        // confirmation bounds, both under-credit-biased:
+        // - a discarded `let _ = matches!(..)` statement observes nothing
+        //   and must not confirm the wrapper seam; and
+        // - only a strong confirming assertion may clear the unverified
+        //   flag — a weak broad assertion whose message names the variant
+        //   would otherwise confirm observation while the unconfirmed
+        //   callee-only binder supplies the strong score, so the wrapper
+        //   would read `exposed` without a strong wrapper discriminator.
+        // (A fuller observing-form gate was evaluated and reverted: the
+        // recorded consumer witness records its guard as a bare
+        // `matches!(..)` fact — brace on the next line — so an
+        // observing-form requirement regressed the verified consumer
+        // replay.)
+        let confirming_assertion_is_strong = matches!(
+            probe_relative_oracle_strength(family, assertion),
+            OracleStrength::Strong
+        );
         variant_binding_match
+            && confirming_assertion_is_strong
+            && !assertion.text.trim_start().starts_with("let ")
     } else {
         token_match || effect_literal_match
     };
@@ -501,10 +527,44 @@ fn assertion_matches_probe_detail(
 /// itself does not spell out (no `Err(..)` construction). This is the #3700
 /// boxed-wrapper shape — `try_parse_summary(raw).map_err(Into::into)` — where
 /// the propagated variant lives in the callee, not in the changed line.
-fn wrapper_error_seam_expression(expressions: &[&str]) -> bool {
+pub(in crate::analysis) fn wrapper_error_seam_expression(expressions: &[&str]) -> bool {
     expressions
         .iter()
-        .any(|expression| expression.contains(".map_err("))
+        .any(|expression| wrapper_map_err_position(expression).is_some())
+}
+
+/// The byte index of the `.` that opens the `.map_err(..)` conversion in
+/// `expression`, tolerating whitespace around the conversion
+/// (`try_x(raw) .map_err (..)` — #3700 round-2 review, devin g2Xtt: a spaced
+/// call used to bypass the wrapper gate and resume token matching).
+/// `None` when the expression carries no `map_err` conversion: the name is
+/// not preceded by a `.` (or expression start) and followed by a call opener,
+/// or the name is part of a longer identifier.
+fn wrapper_map_err_position(expression: &str) -> Option<usize> {
+    let bytes = expression.as_bytes();
+    let mut search = 0usize;
+    while let Some(offset) = expression[search..].find("map_err") {
+        let name_start = search + offset;
+        let name_end = name_start + "map_err".len();
+        let token_is_whole = bytes
+            .get(name_end)
+            .is_none_or(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'_'));
+        let prefix = expression[..name_start].trim_end();
+        let preceded_by_dot = prefix.ends_with('.') || prefix.is_empty();
+        let followed_by_call = bytes[name_end..]
+            .iter()
+            .find(|byte| !byte.is_ascii_whitespace())
+            .is_some_and(|byte| *byte == b'(');
+        if token_is_whole && preceded_by_dot && followed_by_call {
+            return if prefix.is_empty() {
+                Some(name_start)
+            } else {
+                Some(prefix.len() - 1)
+            };
+        }
+        search = name_end;
+    }
+    None
 }
 
 /// The callee name a wrapper seam converts: the method called immediately
@@ -525,7 +585,8 @@ fn wrapper_callee_name(expression: &str) -> Option<String> {
         .strip_prefix("return ")
         .unwrap_or(trimmed)
         .trim_start();
-    let lhs = trimmed.split(".map_err(").next()?;
+    let conversion = wrapper_map_err_position(trimmed)?;
+    let lhs = trimmed[..conversion].trim_end();
     // Last `.` at bracket depth 0 (string literals skipped): everything after
     // it is the final call segment; an unbalanced bracket aborts to `None`.
     let bytes = lhs.as_bytes();
@@ -1505,6 +1566,178 @@ mod tests {
     // top-level call segment before `.map_err(..)` — receiver qualification,
     // chaining, and turbofish must not misattribute it, and non-call shapes
     // fail closed to `None`.
+
+    // #3700 round-2 review (devin g2Xtt): whitespace around the conversion
+    // must not bypass the wrapper gate — the gate and the callee extraction
+    // share one whitespace-tolerant `map_err` locator.
+    #[test]
+    fn spaced_map_err_call_stays_a_wrapper_seam() {
+        assert!(wrapper_error_seam_expression(&[
+            "try_parse_summary(raw) .map_err (Into::into)",
+        ]));
+        assert_eq!(
+            wrapper_callee_name("return try_parse_summary(raw) .map_err (Into::into)").as_deref(),
+            Some("try_parse_summary")
+        );
+        // A `map_err` that is not a method conversion is not a wrapper seam.
+        assert!(!wrapper_error_seam_expression(&[
+            "let debug_map_err = 1; try_x(raw)",
+        ]));
+    }
+
+    // #3700 round-2 review (devin g2nUV): with a valid callee binder present,
+    // a wrapper-invoking test that DISCARDS the matches! result must not
+    // confirm the seam even though its text pins the established variant.
+    #[test]
+    fn wrapper_seam_stays_weak_when_wrapper_test_discards_matches_with_binder() {
+        let wrapper_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_theme_summary(raw).map_err(Into::into)",
+        );
+        let binder = test_with_body_assertions(
+            "try_theme_summary_pins_duplicate_theme",
+            "let result = try_theme_summary(\"&theme\");",
+            vec![oracle(
+                "if !matches!(result, Err(ThemeError::DuplicateTheme)) {
+return Err(\"callee pin\".into());
+}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let discarded_observer = test_with_body_assertions(
+            "theme_summary_ignores_matches_result",
+            "let error = theme_summary(\"&theme\")
+    .err()
+    .ok_or(\"theme wrapper must fail closed\")?;",
+            vec![oracle(
+                "let _ = matches!(
+error.downcast_ref::<ThemeError>(),
+Some(ThemeError::DuplicateTheme)
+);",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, discriminate, _) = reveal_evidence(
+            &wrapper_probe,
+            &[
+                (&binder, RelationReason::OwnerNamedTest),
+                (&discarded_observer, RelationReason::DirectOwnerCall),
+            ],
+        );
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a discarded matches! result must not confirm the wrapper seam"
+        );
+    }
+
+    // #3700 round-2 review (devin g2nUV): with a valid callee binder present,
+    // a wrapper-invoking test whose assertion is broad but whose MESSAGE names
+    // the variant must not lift the seam past weakly_exposed — a broad
+    // assertion is a weak discriminator even when its message names the
+    // established variant.
+    #[test]
+    fn wrapper_seam_stays_weak_when_broad_wrapper_message_names_variant() {
+        let wrapper_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_parse_summary(raw).map_err(Into::into)",
+        );
+        let binder = test_with_body_assertions(
+            "try_parse_summary_pins_malformed_source",
+            "let result = try_parse_summary(\"@bad;\");",
+            vec![oracle(
+                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
+return Err(\"callee pin\".into());
+}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let broad_observer = test_with_body_assertions(
+            "parse_summary_smoke_with_variant_message",
+            "let result = parse_summary(\"@bad;\");",
+            vec![oracle(
+                "assert!(result.is_err(), \"must be ParseSummaryError::MalformedSource\");",
+                OracleKind::BroadError,
+                OracleStrength::Weak,
+            )],
+        );
+        let (_, discriminate, _) = reveal_evidence(
+            &wrapper_probe,
+            &[
+                (&binder, RelationReason::OwnerNamedTest),
+                (&broad_observer, RelationReason::DirectOwnerCall),
+            ],
+        );
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a broad wrapper assertion whose message names the variant must not confirm the seam"
+        );
+    }
+
+    // #3700 round-2 review (devin g2nVJ): when the changed-line fragment does
+    // not carry the callee, establishment falls back to the parser-backed
+    // analysis expression that reconstructs `callee(..).map_err(..)`.
+    #[test]
+    fn wrapper_establishment_falls_back_to_parser_analysis_expression() {
+        let wrapper_probe = probe(ProbeFamily::ErrorPath, ".map_err(Into::into)");
+        let binder = test_with_body_assertions(
+            "try_parse_summary_pins_malformed_source",
+            "let result = try_parse_summary(\"@bad;\");",
+            vec![oracle(
+                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
+return Err(\"callee pin\".into());
+}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let observer = test_with_body_assertions(
+            "parse_summary_boxed_variant_propagates_malformed_source",
+            "let error = parse_summary(\"@bad;\").err().ok_or(\"expected error\")?;",
+            vec![oracle(
+                "if !matches!(error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource)) {
+return Err(\"boxed identity should survive\".into());
+}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        // Without the fallback the fragment finds no callee and the witness
+        // stays unconfirmed.
+        let (_, discriminate_fragment, _) = reveal_evidence(
+            &wrapper_probe,
+            &[
+                (&binder, RelationReason::OwnerNamedTest),
+                (&observer, RelationReason::DirectOwnerCall),
+            ],
+        );
+        assert_eq!(
+            discriminate_fragment.state,
+            StageState::Weak,
+            "the fragment alone must not confirm"
+        );
+        // The parser-backed analysis expression reconstructs the wrapper, so
+        // the same witness set confirms through the established binding.
+        let (observe, discriminate, _) = reveal_evidence_with_expression(
+            &wrapper_probe,
+            "try_parse_summary(raw).map_err(Into::into)",
+            &[
+                (&binder, RelationReason::OwnerNamedTest),
+                (&observer, RelationReason::DirectOwnerCall),
+            ],
+        );
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "the parser-backed wrapper expression must establish the binding"
+        );
+    }
+
     #[test]
     fn wrapper_callee_name_resolves_final_call_segment() {
         let cases = [

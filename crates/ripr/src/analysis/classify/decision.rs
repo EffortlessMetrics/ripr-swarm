@@ -1,4 +1,5 @@
 use super::super::rust_index::{FunctionSummary, TestSummary};
+use super::reveal::wrapper_error_seam_expression;
 use crate::domain::*;
 
 pub(in crate::analysis) fn ensure_unknown_stop_reason(
@@ -136,7 +137,21 @@ pub(in crate::analysis) fn missing_evidence(
         missing.push("No relevant oracle was detected".to_string());
     }
     if discriminate.state != StageState::Yes {
-        if matches!(probe.family, ProbeFamily::ErrorPath) {
+        if matches!(
+            probe.family,
+            ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+        ) && wrapper_error_seam_expression(&[probe.expression.as_str()])
+        {
+            // #3700 round-2 review (coderabbit g262-): for a wrapper error
+            // seam the missing discriminator is the wrapper-to-variant
+            // binding, not an exact-variant assertion — the witnesses may
+            // already downcast-and-pin the variant without binding the
+            // wrapper result to the converted callee's error type.
+            missing.push(
+                "Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"
+                    .to_string(),
+            );
+        } else if matches!(probe.family, ProbeFamily::ErrorPath) {
             missing.push("No exact error variant discriminator was detected".to_string());
         } else {
             missing.push("No strong discriminator was detected".to_string());
@@ -212,7 +227,15 @@ pub(in crate::analysis) fn recommended_next_step(
     match class {
         ExposureClass::Exposed => None,
         ExposureClass::WeaklyExposed => Some(
-            if matches!(probe.family, ProbeFamily::ReturnValue)
+            if matches!(probe.family, ProbeFamily::ErrorPath | ProbeFamily::ReturnValue)
+                && wrapper_error_seam_expression(&[probe.expression.as_str()])
+            {
+                // #3700 round-2 review (coderabbit g262-): the witnesses may
+                // already downcast-and-pin; what is missing is the
+                // wrapper-to-variant binding, so the guidance names the
+                // binding witness rather than a first exact-variant assert.
+                "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper."
+            } else if matches!(probe.family, ProbeFamily::ReturnValue)
                 && super::exact_error_variant(&probe.expression).is_some()
             {
                 // A changed `Err(...)` construction is not a "broad assertion"
