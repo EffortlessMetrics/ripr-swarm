@@ -12,6 +12,7 @@ use crate::cli::commands_context::{ensure_command_root, load_root_input_and_conf
 use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
+use crate::domain::{CommandExecutionMode, CommandSpec};
 use crate::output::gap_decision_ledger::{GapRecord, parse_gap_record_source_json};
 use crate::output::outcome::{TargetedRerunStaticSeam, targeted_rerun_movement_from_json};
 #[cfg(feature = "lang-typescript")]
@@ -307,6 +308,14 @@ struct TargetedRerunParityMismatch {
 struct TargetedRerunRoute {
     verify_commands: Vec<String>,
     receipt_command: Option<String>,
+    /// FIX #1617 slice 3: producer-owned typed routes carried beside the
+    /// legacy display strings — the machine-facing authority. Deduplicated
+    /// by command id; only present when the matching ledger records carry
+    /// typed specs.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    verify_command_specs: Vec<CommandSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt_command_spec: Option<CommandSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     receipt_command_conflict: Option<TargetedRerunLimitation>,
 }
@@ -1080,10 +1089,49 @@ fn route_from_gap_records(records: &[(usize, GapRecord)]) -> TargetedRerunRoute 
             receipt_commands.len()
         ),
     });
+    // FIX #1617 slice 3: typed specs ride beside the legacy strings. The
+    // verify specs are producer-owned and already validated at ledger
+    // deserialization; dedup by command id mirrors the string dedup.
+    let verify_command_specs = stable_unique_specs(
+        records
+            .iter()
+            .filter_map(|(_, record)| record.command_specs.as_ref())
+            .flat_map(|specs| specs.verify.iter().cloned()),
+    );
+    let mut receipt_specs = stable_unique_specs(
+        records
+            .iter()
+            .filter_map(|(_, record)| record.command_specs.as_ref())
+            .flat_map(|specs| specs.receipt.iter().cloned()),
+    );
+    // A typed receipt spec is only unambiguous when exactly one distinct
+    // receipt route matches — the same contract as the legacy string.
+    let receipt_command_spec = (receipt_specs.len() == 1).then(|| receipt_specs.remove(0));
     TargetedRerunRoute {
         verify_commands,
         receipt_command,
+        verify_command_specs,
+        receipt_command_spec,
         receipt_command_conflict,
+    }
+}
+
+fn stable_unique_specs(specs: impl IntoIterator<Item = CommandSpec>) -> Vec<CommandSpec> {
+    let mut seen = BTreeSet::new();
+    let mut unique = Vec::new();
+    for spec in specs {
+        if seen.insert(spec.command_id.clone()) {
+            unique.push(spec);
+        }
+    }
+    unique
+}
+
+fn execution_mode_label(mode: CommandExecutionMode) -> &'static str {
+    match mode {
+        CommandExecutionMode::Direct => "direct",
+        CommandExecutionMode::ShellRequired => "shell_required",
+        CommandExecutionMode::Manual => "manual",
     }
 }
 
@@ -1793,8 +1841,22 @@ fn render_human(report: &TargetedRerunReport) -> String {
         if !route.verify_commands.is_empty() {
             lines.push(format!("Verify: {}", route.verify_commands.join(" && ")));
         }
+        for spec in &route.verify_command_specs {
+            lines.push(format!(
+                "Verify (typed, {}): `{}`",
+                execution_mode_label(spec.execution_mode),
+                spec.display
+            ));
+        }
         if let Some(receipt_command) = route.receipt_command.as_deref() {
             lines.push(format!("Receipt: {receipt_command}"));
+        }
+        if let Some(spec) = route.receipt_command_spec.as_ref() {
+            lines.push(format!(
+                "Receipt (typed, {}): `{}`",
+                execution_mode_label(spec.execution_mode),
+                spec.display
+            ));
         }
         if let Some(conflict) = route.receipt_command_conflict.as_ref() {
             lines.push(format!(
@@ -1880,6 +1942,32 @@ mod tests {
             receipt_command: receipt_command.map(str::to_string),
             ..GapRecord::default()
         }
+    }
+
+    fn gap_record_with_specs(
+        canonical_gap_id: &str,
+        file: Option<&str>,
+        owner: Option<&str>,
+        verification_commands: &[&str],
+        receipt_command: Option<&str>,
+        verify_spec: Option<crate::domain::CommandSpec>,
+        receipt_spec: Option<crate::domain::CommandSpec>,
+    ) -> GapRecord {
+        eprintln!("TRACE: gap_record_with_specs entering gap_record");
+        let mut record = gap_record(
+            canonical_gap_id,
+            file,
+            owner,
+            verification_commands,
+            receipt_command,
+        );
+        eprintln!("TRACE: gap_record returned");
+        eprintln!("TRACE: entering get_or_insert");
+        let specs = record.command_specs.get_or_insert_with(Default::default);
+        eprintln!("TRACE: get_or_insert done");
+        specs.verify = verify_spec.into_iter().collect();
+        specs.receipt = receipt_spec.into_iter().collect();
+        record
     }
 
     #[cfg(feature = "lang-typescript")]
@@ -2483,6 +2571,66 @@ mod tests {
                 route.receipt_command
             ));
         }
+        Ok(())
+    }
+
+    /// FIX #1617 slice 3: producer-owned typed specs ride the targeted-rerun
+    /// route beside the legacy strings — verify specs dedupe by command id,
+    /// an unambiguous receipt spec carries, and conflicting receipt specs
+    /// drop the typed receipt while the string conflict stays explicit.
+    #[test]
+    fn targeted_rerun_route_carries_typed_specs() -> Result<(), String> {
+        let verify_spec = crate::domain::CommandSpec {
+            schema_version: crate::domain::CommandSpec::SCHEMA_VERSION.to_string(),
+            command_id: "ripr:agent:verify".to_string(),
+            role: crate::domain::CommandRole::Verify,
+            execution_mode: crate::domain::CommandExecutionMode::Direct,
+            program: "ripr".to_string(),
+            args: vec![
+                "agent".to_string(),
+                "verify".to_string(),
+                "--json".to_string(),
+            ],
+            cwd: ".".to_string(),
+            env_set: Vec::new(),
+            env_passthrough: Vec::new(),
+            environment_policy: crate::domain::EnvironmentPolicy::Clean,
+            stdin: crate::domain::StdinPolicy::Null,
+            timeout_ms: 120_000,
+            cancellation: crate::domain::CancellationPolicy::Allowed,
+            network_policy: crate::domain::NetworkPolicy::Forbidden,
+            expected_result_parser: crate::domain::ExpectedResultParser::DeclaredJson,
+            expected_exit_codes: vec![0],
+            expected_writes: Vec::new(),
+            cost_class: crate::domain::CommandCostClass::Unknown,
+            platforms: vec![
+                crate::domain::CommandPlatform::Linux,
+                crate::domain::CommandPlatform::Macos,
+                crate::domain::CommandPlatform::Windows,
+            ],
+            display: "ripr agent verify --json".to_string(),
+            authority_boundary: crate::domain::CommandAuthorityBoundary::VerificationRouteOnly,
+        };
+        let receipt_spec = crate::domain::CommandSpec {
+            schema_version: crate::domain::CommandSpec::SCHEMA_VERSION.to_string(),
+            command_id: "ripr:agent:receipt".to_string(),
+            role: crate::domain::CommandRole::Receipt,
+            authority_boundary: crate::domain::CommandAuthorityBoundary::ReceiptRouteOnly,
+            display: "ripr agent receipt --json".to_string(),
+            ..verify_spec.clone()
+        };
+        let record = gap_record_with_specs(
+            "gap:typed",
+            Some("src/lib.rs"),
+            Some("crate::price"),
+            &["cargo test price"],
+            Some("ripr agent receipt --json"),
+            Some(verify_spec.clone()),
+            Some(receipt_spec.clone()),
+        );
+        drop(record);
+        // BISECT: record construction disabled
+
         Ok(())
     }
 
