@@ -15021,13 +15021,21 @@ routes only:
 
 - `ripr check --root R --mode M --format repo-exposure-json > OUT` - recovered
   as `shell_required` (the redirect is shell semantics) with `OUT` as the
-  expected write and argv stopping before the redirect.
-- `ripr reports gap-ledger --repo-exposure E --out O --out-md M` and
-  `ripr reports gap-ledger --check-output C --root R --out O --out-md M` -
-  recovered as `direct` with `O` and `M` as expected writes.
+  expected write and argv stopping before the redirect; `M` must come from the
+  CLI mode vocabulary (`instant`, `draft`, `fast`, `deep`, `ready`).
+- `ripr reports gap-ledger --repo-exposure E --out O --out-md M`,
+  `ripr reports gap-ledger --check-output C --root R --out O --out-md M`, and
+  the shorter single-output forms ending at `--out O` - recovered as `direct`
+  with `O` and its Markdown twin (`with_extension(O, "md")`) as the expected
+  writes; forms without any output flag fail closed.
 - `ripr pr-review front-panel ...` and `ripr reports index ...` - loop-template
   routes: their closed flag set in any order, no repeats, and the route's
-  mandatory flags present.
+  mandatory flags present; front-panel additionally requires at least one
+  explicit artifact input (`--pr-guidance`, `--first-action`,
+  `--assistant-proof`, `--assistant-health`, `--ledger`, `--baseline-delta`,
+  `--zero-status`, `--gate-decision`, `--recommendation-calibration`,
+  `--mutation-calibration`, `--coverage-frontier`, or `--receipt`), matching
+  the CLI.
 
 Legacy string-only `regeneration_commands` for these routes gain their typed
 specs at read time on every parse path (ledger build and persisted-ledger
