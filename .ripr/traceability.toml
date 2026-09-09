@@ -6348,13 +6348,21 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_seam_stays_weak_when_witness_pins_variant_without_callee_binding",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_seam_stays_weak_when_only_callee_test_pins_variant",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_seam_stays_weak_when_variant_pin_targets_another_call",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_callee_name_resolves_final_call_segment",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_callee_name_rejects_non_call_shapes",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_callee_extraction_binds_last_chain_callee_and_rejects_values",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_binding_does_not_resurrect_refuted_callee_binding_from_body_text",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_seam_stays_weak_when_owner_call_is_receiver_qualified",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_seam_stays_weak_when_captured_owner_call_has_receiver",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_established_variants_ignores_receiver_qualified_callee_call",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/error_variant_boxed_wrapper_downcast_witness",
   "fixtures/error_variant_boxed_wrapper_fail_closed",
+  "fixtures/error_variant_wrapper_callee_only_pin",
+  "fixtures/error_variant_wrapper_foreign_pin",
+  "fixtures/error_variant_wrapper_wrong_receiver_pin",
   "fixtures/unwrap_err_variant_positive",
   "fixtures/unwrap_err_variant_single_line",
   "fixtures/unwrap_err_sibling_variant",
@@ -6375,11 +6383,20 @@ outputs = [
   "fixtures/error_variant_boxed_wrapper_downcast_witness/expected/human-full.txt",
   "fixtures/error_variant_boxed_wrapper_fail_closed/expected/check.json",
   "fixtures/error_variant_boxed_wrapper_fail_closed/expected/human.txt",
+  "fixtures/error_variant_wrapper_callee_only_pin/expected/check.json",
+  "fixtures/error_variant_wrapper_callee_only_pin/expected/human.txt",
+  "fixtures/error_variant_wrapper_foreign_pin/expected/check.json",
+  "fixtures/error_variant_wrapper_foreign_pin/expected/human.txt",
+  "fixtures/error_variant_wrapper_wrong_receiver_pin/expected/check.json",
+  "fixtures/error_variant_wrapper_wrong_receiver_pin/expected/human.txt",
 ]
 # Corpus pins for the #3700 wrapper gate (RIPR-SPEC-0108 meta-gate):
 # rust_boxed_wrapper_wrong_sibling_no_credit,
 # rust_boxed_wrapper_unrelated_enum_no_credit,
-# rust_boxed_wrapper_downcast_positive_control.
+# rust_boxed_wrapper_downcast_positive_control,
+# rust_wrapper_callee_only_pin_non_promotion,
+# rust_wrapper_wrong_receiver_pin_non_promotion,
+# rust_wrapper_foreign_pin_non_promotion.
 metrics = [
   "unwrap_err_variant_grip_raise",
   "sibling_variant_no_credit",

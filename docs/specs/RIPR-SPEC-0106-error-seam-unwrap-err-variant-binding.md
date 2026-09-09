@@ -191,6 +191,17 @@ with a `return Err` on mismatch):
   (`rust_boxed_wrapper_wrong_sibling_no_credit`,
   `rust_boxed_wrapper_unrelated_enum_no_credit`,
   `rust_boxed_wrapper_downcast_positive_control`).
+- Fail-closed companions in other inputs stay `weakly_exposed`: a callee-only
+  exact-variant pin (`fixtures/error_variant_wrapper_callee_only_pin`), a
+  foreign-call exact-variant pin
+  (`fixtures/error_variant_wrapper_foreign_pin`), and a same-named method pin
+  on another receiver (`fixtures/error_variant_wrapper_wrong_receiver_pin`).
+  Receiver-qualified and path-qualified call spellings never confirm the
+  wrapper seam and never seed its binding — only a direct, receiver-free
+  spelling of the owner/callee does (corpus:
+  `rust_wrapper_callee_only_pin_non_promotion`,
+  `rust_wrapper_foreign_pin_non_promotion`,
+  `rust_wrapper_wrong_receiver_pin_non_promotion`).
 
 ## Unit Tests
 
