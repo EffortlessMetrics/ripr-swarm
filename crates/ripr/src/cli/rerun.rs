@@ -310,8 +310,9 @@ struct TargetedRerunRoute {
     receipt_command: Option<String>,
     /// FIX #1617 slice 3: producer-owned typed routes carried beside the
     /// legacy display strings — the machine-facing authority. Deduplicated
-    /// by command id; only present when the matching ledger records carry
-    /// typed specs.
+    /// by semantic digest (same-id specs with different arguments both
+    /// survive); only present when the matching ledger records carry typed
+    /// specs.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     verify_command_specs: Vec<CommandSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2588,22 +2589,24 @@ mod tests {
     }
 
     /// FIX #1617 slice 3: producer-owned typed specs ride the targeted-rerun
-    /// route beside the legacy strings — verify specs dedupe by command id,
-    /// an unambiguous receipt spec carries, and conflicting receipt specs
-    /// drop the typed receipt while the string conflict stays explicit.
-    #[test]
-    fn targeted_rerun_route_carries_typed_specs() -> Result<(), String> {
-        let verify_spec = crate::domain::CommandSpec {
+    /// route beside the legacy strings — specs dedupe by semantic digest
+    /// (same-id different-args invocations both survive), an unambiguous
+    /// receipt spec carries, and conflicting receipt specs drop the typed
+    /// receipt while the string conflict stays explicit.
+    /// Builds one verify CommandSpec with overridable id/display/args — the
+    /// shared fixture for the typed-route tests.
+    fn verify_spec_fixture(
+        command_id: &str,
+        display: &str,
+        args: Vec<String>,
+    ) -> crate::domain::CommandSpec {
+        crate::domain::CommandSpec {
             schema_version: crate::domain::CommandSpec::SCHEMA_VERSION.to_string(),
-            command_id: "ripr:agent:verify".to_string(),
+            command_id: command_id.to_string(),
             role: crate::domain::CommandRole::Verify,
             execution_mode: crate::domain::CommandExecutionMode::Direct,
             program: "ripr".to_string(),
-            args: vec![
-                "agent".to_string(),
-                "verify".to_string(),
-                "--json".to_string(),
-            ],
+            args,
             cwd: ".".to_string(),
             env_set: Vec::new(),
             env_passthrough: Vec::new(),
@@ -2621,9 +2624,22 @@ mod tests {
                 crate::domain::CommandPlatform::Macos,
                 crate::domain::CommandPlatform::Windows,
             ],
-            display: "ripr agent verify --json".to_string(),
+            display: display.to_string(),
             authority_boundary: crate::domain::CommandAuthorityBoundary::VerificationRouteOnly,
-        };
+        }
+    }
+
+    #[test]
+    fn targeted_rerun_route_carries_typed_specs() -> Result<(), String> {
+        let verify_spec = verify_spec_fixture(
+            "ripr:agent:verify",
+            "ripr agent verify --json",
+            vec![
+                "agent".to_string(),
+                "verify".to_string(),
+                "--json".to_string(),
+            ],
+        );
         let receipt_spec = crate::domain::CommandSpec {
             schema_version: crate::domain::CommandSpec::SCHEMA_VERSION.to_string(),
             command_id: "ripr:agent:receipt".to_string(),
@@ -2736,37 +2752,15 @@ mod tests {
     /// byte-identical specs collapse to one.
     #[test]
     fn targeted_rerun_specs_dedupe_by_digest_not_command_id() -> Result<(), String> {
-        let verify_spec = crate::domain::CommandSpec {
-            schema_version: crate::domain::CommandSpec::SCHEMA_VERSION.to_string(),
-            command_id: "ripr:agent:verify".to_string(),
-            role: crate::domain::CommandRole::Verify,
-            execution_mode: crate::domain::CommandExecutionMode::Direct,
-            program: "ripr".to_string(),
-            args: vec![
+        let verify_spec = verify_spec_fixture(
+            "ripr:agent:verify",
+            "ripr agent verify --json",
+            vec![
                 "agent".to_string(),
                 "verify".to_string(),
                 "--json".to_string(),
             ],
-            cwd: ".".to_string(),
-            env_set: Vec::new(),
-            env_passthrough: Vec::new(),
-            environment_policy: crate::domain::EnvironmentPolicy::Clean,
-            stdin: crate::domain::StdinPolicy::Null,
-            timeout_ms: 120_000,
-            cancellation: crate::domain::CancellationPolicy::Allowed,
-            network_policy: crate::domain::NetworkPolicy::Forbidden,
-            expected_result_parser: crate::domain::ExpectedResultParser::DeclaredJson,
-            expected_exit_codes: vec![0],
-            expected_writes: Vec::new(),
-            cost_class: crate::domain::CommandCostClass::Unknown,
-            platforms: vec![
-                crate::domain::CommandPlatform::Linux,
-                crate::domain::CommandPlatform::Macos,
-                crate::domain::CommandPlatform::Windows,
-            ],
-            display: "ripr agent verify --json".to_string(),
-            authority_boundary: crate::domain::CommandAuthorityBoundary::VerificationRouteOnly,
-        };
+        );
         let mut different_args = verify_spec.clone();
         different_args.args = vec![
             "agent".to_string(),
@@ -2833,37 +2827,15 @@ mod tests {
     /// route while the string side discloses the conflict.
     #[test]
     fn conflicted_legacy_receipts_drop_the_typed_receipt_spec() -> Result<(), String> {
-        let verify_spec = crate::domain::CommandSpec {
-            schema_version: crate::domain::CommandSpec::SCHEMA_VERSION.to_string(),
-            command_id: "ripr:agent:verify".to_string(),
-            role: crate::domain::CommandRole::Verify,
-            execution_mode: crate::domain::CommandExecutionMode::Direct,
-            program: "ripr".to_string(),
-            args: vec![
+        let verify_spec = verify_spec_fixture(
+            "ripr:agent:verify",
+            "ripr agent verify --json",
+            vec![
                 "agent".to_string(),
                 "verify".to_string(),
                 "--json".to_string(),
             ],
-            cwd: ".".to_string(),
-            env_set: Vec::new(),
-            env_passthrough: Vec::new(),
-            environment_policy: crate::domain::EnvironmentPolicy::Clean,
-            stdin: crate::domain::StdinPolicy::Null,
-            timeout_ms: 120_000,
-            cancellation: crate::domain::CancellationPolicy::Allowed,
-            network_policy: crate::domain::NetworkPolicy::Forbidden,
-            expected_result_parser: crate::domain::ExpectedResultParser::DeclaredJson,
-            expected_exit_codes: vec![0],
-            expected_writes: Vec::new(),
-            cost_class: crate::domain::CommandCostClass::Unknown,
-            platforms: vec![
-                crate::domain::CommandPlatform::Linux,
-                crate::domain::CommandPlatform::Macos,
-                crate::domain::CommandPlatform::Windows,
-            ],
-            display: "ripr agent verify --json".to_string(),
-            authority_boundary: crate::domain::CommandAuthorityBoundary::VerificationRouteOnly,
-        };
+        );
         let receipt_spec = crate::domain::CommandSpec {
             schema_version: crate::domain::CommandSpec::SCHEMA_VERSION.to_string(),
             command_id: "ripr:agent:receipt".to_string(),
@@ -2967,6 +2939,13 @@ mod tests {
         if route.verify_commands != vec!["cargo test price -- --exact".to_string()]
             || route.verify_command_specs.len() != 1
             || route.verify_command_specs[0].display != "ripr agent verify --json --typed"
+            || route.verify_command_specs[0].args
+                != vec![
+                    "agent".to_string(),
+                    "verify".to_string(),
+                    "--json".to_string(),
+                    "--typed".to_string(),
+                ]
         {
             return Err(format!(
                 "divergent forms must both be published as-is: {:?}",
