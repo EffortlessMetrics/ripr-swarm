@@ -296,6 +296,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust diff analysis now treats ownerless field declarations in resolved
+  test-required module children as evidence-only, including literal-path and
+  transitive module children. Production, mixed, missing, and unresolved
+  contexts retain production eligibility
+  ([#3695](https://github.com/EffortlessMetrics/ripr-swarm/issues/3695)).
+
 - Diff-path textual identities now escape literal percent signs consistently on
   every platform. Unix invalid bytes retain their native `%XX` encoding, while
   a valid filename that literally contains `%FF` remains distinct
