@@ -138,6 +138,18 @@ are terminal non-repair states, while unresolved producer facts remain
 Verify and receipt
 commands remain the explicit route supplied by the selected gap ledger; the
 rerun does not manufacture commands from a seam's file or line.
+When matching ledger records carry producer-owned typed command
+specifications (`command_specs.verify` / `command_specs.receipt`, validated
+at ledger deserialization), the targeted-rerun route additionally carries
+`verify_command_specs` and `receipt_command_spec` beside the legacy display
+strings: typed specs are deduplicated by their semantic digest (first
+occurrence order; same-id specs with different arguments both survive), a
+typed receipt is carried only when the legacy receipt route is itself
+unambiguous (a conflicting legacy set discloses the conflict limitation and
+drops the machine route), and records without typed specs keep the route
+legacy-string-only. The typed form is the authority for machine execution
+when present; the legacy strings remain the human display. The rerun never
+manufactures commands from a seam's file or line.
 
 ### Cache correctness and disclosure
 

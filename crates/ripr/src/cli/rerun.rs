@@ -2913,6 +2913,69 @@ mod tests {
         Ok(())
     }
 
+    /// FIX (round-2 review): a typed spec whose argv/display differs from
+    /// the legacy strings is a legitimate producer divergence - both forms
+    /// are published (the typed form is the machine authority, the legacy
+    /// string the human display), and neither is rejected or rewritten.
+    #[test]
+    fn typed_spec_divergence_from_legacy_strings_is_published_as_is() -> Result<(), String> {
+        let verify_spec = crate::domain::CommandSpec {
+            schema_version: crate::domain::CommandSpec::SCHEMA_VERSION.to_string(),
+            command_id: "ripr:agent:verify".to_string(),
+            role: crate::domain::CommandRole::Verify,
+            execution_mode: crate::domain::CommandExecutionMode::Direct,
+            program: "ripr".to_string(),
+            args: vec![
+                "agent".to_string(),
+                "verify".to_string(),
+                "--json".to_string(),
+            ],
+            cwd: ".".to_string(),
+            env_set: Vec::new(),
+            env_passthrough: Vec::new(),
+            environment_policy: crate::domain::EnvironmentPolicy::Clean,
+            stdin: crate::domain::StdinPolicy::Null,
+            timeout_ms: 120_000,
+            cancellation: crate::domain::CancellationPolicy::Allowed,
+            network_policy: crate::domain::NetworkPolicy::Forbidden,
+            expected_result_parser: crate::domain::ExpectedResultParser::DeclaredJson,
+            expected_exit_codes: vec![0],
+            expected_writes: Vec::new(),
+            cost_class: crate::domain::CommandCostClass::Unknown,
+            platforms: vec![
+                crate::domain::CommandPlatform::Linux,
+                crate::domain::CommandPlatform::Macos,
+                crate::domain::CommandPlatform::Windows,
+            ],
+            display: "ripr agent verify --json --typed".to_string(),
+            authority_boundary: crate::domain::CommandAuthorityBoundary::VerificationRouteOnly,
+        };
+        let records = resolve_gap_records(
+            vec![gap_record_with_specs(
+                "gap:divergent",
+                Some("src/lib.rs"),
+                Some("crate::price"),
+                &["cargo test price -- --exact"],
+                Some("ripr agent receipt --json"),
+                Some(verify_spec),
+                None,
+            )],
+            "gap:divergent",
+        )
+        .map_err(|limitation| limitation.message)?;
+        let route = route_from_gap_records(&records);
+        if route.verify_commands != vec!["cargo test price -- --exact".to_string()]
+            || route.verify_command_specs.len() != 1
+            || route.verify_command_specs[0].display != "ripr agent verify --json --typed"
+        {
+            return Err(format!(
+                "divergent forms must both be published as-is: {:?}",
+                route.verify_command_specs
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn failed_root_canonicalizations_do_not_compare_equal() -> Result<(), String> {
         let missing = Path::new("target/ripr/missing-rerun-root");
