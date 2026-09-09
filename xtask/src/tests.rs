@@ -11920,7 +11920,153 @@ fn asserted_variant() {
 }
 
 #[test]
-fn test_oracle_rejected_inputs_agree_across_json_and_markdown() {
+fn test_oracle_same_line_discarded_matches_earns_nothing() {
+    let source = r#"
+#[test]
+fn same_line_discard() {
+    let _ = matches!(actual, Some(1)); assert!(true);
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].class, TestOracleClass::Weak);
+    assert!(
+        tests[0]
+            .observations
+            .iter()
+            .all(|observation| observation.pattern != "matches!"),
+        "a discarded matches! sharing a line with an unrelated assert must not credit Strong"
+    );
+}
+
+#[test]
+fn test_oracle_matches_mention_in_assert_message_earns_nothing() {
+    let source = r#"
+#[test]
+fn message_mention() {
+    assert!(ready, "matches!(actual, Some(1))");
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].class, TestOracleClass::Weak);
+    assert!(
+        tests[0]
+            .observations
+            .iter()
+            .all(|observation| observation.pattern != "matches!"),
+        "a matches! spelling confined to an assertion message must not credit Strong"
+    );
+}
+
+#[test]
+fn test_oracle_multiline_asserted_matches_keeps_its_evidence() {
+    let source = r#"
+#[test]
+fn multiline_asserted_variant() {
+    assert!(
+        matches!(actual, Some(1))
+    );
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].class, TestOracleClass::Strong);
+    assert!(
+        tests[0]
+            .observations
+            .iter()
+            .any(|observation| observation.pattern == "matches!"),
+        "a split assert!(matches!(..)) form must keep exactly one Strong observation"
+    );
+    assert_eq!(
+        tests[0]
+            .observations
+            .iter()
+            .filter(|observation| observation.pattern == "matches!")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn test_oracle_brace_inside_string_does_not_truncate_the_body() {
+    let source = r#"
+#[test]
+fn brace_string_before_real_end() {
+    let template = "value: } assert_eq!(a, b);";
+    let _ = template.len();
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].class, TestOracleClass::Smoke);
+    assert!(
+        tests[0]
+            .observations
+            .iter()
+            .all(|observation| observation.pattern == "no assertion"),
+        "a brace inside a string must not truncate the body into the unfiltered fallback"
+    );
+}
+
+#[test]
+fn test_oracle_brace_inside_block_comment_does_not_truncate_the_body() {
+    let source = r#"
+#[test]
+fn brace_comment_before_real_end() {
+    /* } assert_eq!(a, b); */
+    let _ = 1;
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].class, TestOracleClass::Smoke);
+}
+
+#[test]
+fn test_oracle_real_assert_after_brace_string_survives() {
+    let source = r#"
+#[test]
+fn real_assert_after_brace_string() {
+    let template = "value: }";
+    assert_eq!(compute(template), 1);
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].class, TestOracleClass::Strong);
+}
+
+#[test]
+fn test_oracle_macro_nested_test_is_selected() {
+    let source = "proptest! {\n    #[test]\n    fn generated_case(seed: u32) {\n        assert_eq!(seed % 2, 0);\n    }\n}\n";
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].name, "generated_case");
+    assert_eq!(tests[0].class, TestOracleClass::Strong);
+}
+
+#[test]
+fn test_oracle_macro_nested_test_inside_fn_body_stays_invisible() {
+    let source = "fn outer() {\n    harness! {\n        #[test]\n        fn inner() {\n            assert_eq!(1, 1);\n        }\n    }\n}\n";
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert!(tests.is_empty());
+}
+
+#[test]
+fn test_oracle_unparseable_file_keeps_legacy_selection() {
+    // Missing closing brace: the syntax path declines and the legacy scan
+    // still selects the test with prior classification behavior.
+    let source = "#[test]\nfn truncated_body() {\n    assert_eq!(actual, expected);\n";
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].name, "truncated_body");
+    assert_eq!(tests[0].class, TestOracleClass::Strong);
+}
+
+#[test]
+fn test_oracle_rejected_inputs_agree_across_json_and_markdown() -> Result<(), String> {
     let source = r#"
 #[test]
 fn unused_matches() {
@@ -11944,10 +12090,19 @@ fn assertion_in_string() {
                 .any(|line| line.contains("`strong`")),
             "markdown must not credit {name} as strong"
         );
-        assert!(
-            !json.contains(&format!(
-                "\"name\": \"{name}\",\n      \"class\": \"strong\""
-            )),
+        let report: Value =
+            serde_json::from_str(&json).map_err(|err| format!("oracle json must parse: {err}"))?;
+        let tests_array = report
+            .get("tests")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "oracle json must carry tests".to_string())?;
+        let entry = tests_array
+            .iter()
+            .find(|test| test.get("name").and_then(Value::as_str) == Some(name))
+            .ok_or_else(|| format!("rejected test {name} must appear in json"))?;
+        assert_eq!(
+            entry.get("class").and_then(Value::as_str),
+            Some("smoke"),
             "json must not credit {name} as strong"
         );
     }
@@ -11960,6 +12115,7 @@ fn assertion_in_string() {
             "the efficiency consumer must not retain strong-oracle credit"
         );
     }
+    Ok(())
 }
 
 #[test]
