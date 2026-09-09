@@ -7759,6 +7759,8 @@ tests = [
   "crates/ripr/src/lsp/agent_protocol.rs::tests::legacy_route_strings_stay_legacy_string_only",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::null_route_carries_null_readiness_and_null_spec",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::schema_0_1_payload_without_route_fields_still_decodes",
+  "crates/ripr/src/lsp/agent_protocol.rs::tests::schema_0_2_payload_omitting_route_field_is_rejected",
+  "crates/ripr/src/lsp/agent_protocol.rs::tests::capability_output_matches_the_published_schema",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::readiness_must_agree_with_route_and_spec",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::command_spec_wire_shape_matches_the_domain_type",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::request_envelope_keeps_mode_and_profile_typed",

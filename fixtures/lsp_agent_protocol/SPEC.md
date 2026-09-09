@@ -5,12 +5,16 @@ Spec: RIPR-SPEC-0131
 ## Purpose
 
 This fixture corpus pins the versioned wire contract for generic headless
-clients. It tests vocabulary and envelope shape without pretending that any
-reserved request handler exists.
+clients. It tests vocabulary and envelope shape against the live capability
+advertisement: `ripr/listActionableItems` is the one implemented request, the
+`actionable` profile is the one supported profile, cancellation and the
+interim generation identity are advertised, and every other request, profile,
+progress, and continuation surface stays fail-closed.
 
 ## Given
 
-- `capability.json` is the initialize capability projection.
+- `capability.json` mirrors the live `server_capability()` projection
+  (implemented state, `ripr/listActionableItems`, cancellation available).
 - `requests/` contains one valid envelope for every reserved request.
 - `errors/` contains one valid envelope for every reserved error kind.
 - `success-envelope.json` keeps snapshot, input, profile, and budget identities
@@ -29,8 +33,9 @@ A generic client validates the examples against the repository-owned schemas in
 
 The valid examples are deterministic and closed over the schema-0.2 vocabulary
 (major 0 unchanged, additive route fields included). The negative examples are
-rejected visibly. No example advertises a supported request, source edit,
-continuation, progress, cancellation, or autonomous repair.
+rejected visibly. No example advertises a request, profile, source edit,
+continuation, progress, cancellation, or autonomous-repair surface beyond the
+implemented `ripr/listActionableItems` slice.
 
 ## Must Not
 

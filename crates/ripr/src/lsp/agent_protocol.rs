@@ -231,6 +231,17 @@ fn readiness_from_execution_mode(mode: CommandExecutionMode) -> RiprAgentRouteRe
     }
 }
 
+/// What the payload declares for one readiness field.
+///
+/// Omission (`Absent`) is distinct from an explicit `null`
+/// (`ExplicitNull`): omission is tolerated only for schema-0.1 payloads,
+/// while an explicit `null` is a committed claim that the route is `null`.
+enum DeclaredReadiness {
+    Absent,
+    ExplicitNull,
+    Value(RiprAgentRouteReadiness),
+}
+
 /// Resolve one route slot's readiness from what the envelope actually carries
 /// (#1617 slice 4, RIPR-SPEC-0131 schema 0.2).
 ///
@@ -241,15 +252,16 @@ fn readiness_from_execution_mode(mode: CommandExecutionMode) -> RiprAgentRouteRe
 ///   [`CommandSpec::validate`], and its readiness is derived from its
 ///   execution mode — a declared readiness that disagrees is rejected;
 /// - a route string without a command spec is `legacy_string_only`;
-/// - an absent (or explicit-null) declared readiness means the sender did not
-///   commit to the 0.2 field set, so the value is derived truthfully from the
-///   route and spec that are present.
+/// - an absent declared readiness is tolerated only for schema-0.1 payloads
+///   (gated by the caller) and means the value is derived truthfully from the
+///   route and spec that are present; an explicit `null` readiness is a
+///   committed claim and must pair with a `null` route.
 ///
 /// A spec is only credited when the producer owns it; this resolver never
 /// synthesizes one from the legacy display string.
 fn resolve_route_readiness(
     route: &RiprAgentRequiredNullable<String>,
-    declared: Option<RiprAgentRouteReadiness>,
+    declared: DeclaredReadiness,
     command_spec: Option<&CommandSpec>,
     slot_role: CommandRole,
     slot: &'static str,
@@ -259,34 +271,39 @@ fn resolve_route_readiness(
         (RiprAgentRequiredNullable::Null, Some(_)) => {
             return Err(format!("{slot}: a command spec requires a non-null route"));
         }
-        (RiprAgentRequiredNullable::Value(_), command_spec) => {
-            RiprAgentRequiredNullable::Value(match command_spec {
-                Some(command_spec) => {
-                    if command_spec.role != slot_role {
-                        return Err(format!(
-                            "{slot}: command spec role does not match the slot role"
-                        ));
-                    }
-                    command_spec
-                        .validate()
-                        .map_err(|error| format!("{slot}: {error}"))?;
-                    readiness_from_execution_mode(command_spec.execution_mode)
-                }
-                None => RiprAgentRouteReadiness::LegacyStringOnly,
-            })
+        (RiprAgentRequiredNullable::Value(_), None) => {
+            RiprAgentRequiredNullable::Value(RiprAgentRouteReadiness::LegacyStringOnly)
+        }
+        (RiprAgentRequiredNullable::Value(_), Some(command_spec)) => {
+            if command_spec.role != slot_role {
+                return Err(format!(
+                    "{slot}: command spec role does not match the slot role"
+                ));
+            }
+            command_spec
+                .validate()
+                .map_err(|error| format!("{slot}: {error}"))?;
+            RiprAgentRequiredNullable::Value(readiness_from_execution_mode(
+                command_spec.execution_mode,
+            ))
         }
     };
-    let declared_matches = match (&derived, declared) {
-        (RiprAgentRequiredNullable::Value(derived_value), Some(declared_value)) => {
-            *derived_value == declared_value
-        }
-        // An absent (or explicit-null) declared readiness derives from what
-        // the payload actually carries.
-        (RiprAgentRequiredNullable::Value(_), None) => true,
-        (RiprAgentRequiredNullable::Null, None) => true,
+    let declared_matches = match (&derived, &declared) {
+        // Absent and explicit-null both agree with a null route.
+        (RiprAgentRequiredNullable::Null, DeclaredReadiness::Absent)
+        | (RiprAgentRequiredNullable::Null, DeclaredReadiness::ExplicitNull) => true,
         // A declared readiness next to a null route claims readiness for a
         // route that does not exist.
-        (RiprAgentRequiredNullable::Null, Some(_)) => false,
+        (RiprAgentRequiredNullable::Null, DeclaredReadiness::Value(_)) => false,
+        // Omission derives from what the payload carries.
+        (RiprAgentRequiredNullable::Value(_), DeclaredReadiness::Absent) => true,
+        // An explicit null beside a non-null route claims that a live route
+        // carries no readiness — a contract violation, not a derivation hint.
+        (RiprAgentRequiredNullable::Value(_), DeclaredReadiness::ExplicitNull) => false,
+        (
+            RiprAgentRequiredNullable::Value(derived_value),
+            DeclaredReadiness::Value(declared_value),
+        ) => derived_value == declared_value,
     };
     if !declared_matches {
         return Err(format!(
@@ -693,15 +710,109 @@ struct RiprAgentSuccessEnvelopeWire {
     must_not_change: Vec<RiprAgentMustNotChange>,
     verify_route: serde_json::Value,
     receipt_route: serde_json::Value,
-    // #1617 slice 4: the 0.2 readiness/spec fields are absent-tolerant so a
-    // 0.1-shaped payload (without them) still decodes; the TryFrom impl then
-    // derives the readiness truthfully from what the payload carries.
-    verify_route_readiness: Option<RiprAgentRouteReadiness>,
-    receipt_route_readiness: Option<RiprAgentRouteReadiness>,
-    verify_command_spec: Option<CommandSpec>,
-    receipt_command_spec: Option<CommandSpec>,
+    // #1617 slice 4 (round-1 review): `PresenceTracked` keeps omission
+    // distinct from an explicit `null`. A payload that declares schema 0.2
+    // or later must carry all four keys explicitly; omission is tolerated
+    // only for schema-0.1 payloads, whose readiness is then derived
+    // truthfully from the route and spec the payload carries.
+    #[serde(default)]
+    verify_route_readiness: PresenceTracked,
+    #[serde(default)]
+    receipt_route_readiness: PresenceTracked,
+    #[serde(default)]
+    verify_command_spec: PresenceTracked,
+    #[serde(default)]
+    receipt_command_spec: PresenceTracked,
     limitations: Vec<String>,
     non_claims: Vec<String>,
+}
+
+/// A wire field tracked for presence: `None` means the key was omitted,
+/// `Some(Value::Null)` an explicit `null`, `Some(value)` a present value.
+///
+/// A plain `Option<serde_json::Value>` cannot make this distinction: serde
+/// routes Option fields through `deserialize_option`, which collapses an
+/// explicit `null` into `None` exactly like an omitted key. Deserializing the
+/// whole `serde_json::Value` instead keeps `null` observable.
+#[derive(Debug, Default)]
+struct PresenceTracked(Option<serde_json::Value>);
+
+impl PresenceTracked {
+    fn is_present(&self) -> bool {
+        self.0.is_some()
+    }
+
+    fn into_inner(self) -> Option<serde_json::Value> {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for PresenceTracked {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        serde_json::Value::deserialize(deserializer).map(|value| PresenceTracked(Some(value)))
+    }
+}
+
+/// True when a payload declaring this schema version must carry the route
+/// readiness and command-spec fields explicitly. Schema 0.1 predates the
+/// fields (#1617 slice 4), so only it may omit them.
+fn schema_version_requires_route_fields(version: &str) -> bool {
+    match version.split_once('.') {
+        Some(("0", minor)) => minor
+            .parse::<u16>()
+            .map(|minor| minor >= 2)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// Reject a schema-0.2+ payload that omits one of the additive route fields.
+fn require_route_field_presence(
+    wire: &PresenceTracked,
+    schema_version: &RiprAgentSchemaVersion,
+    field: &'static str,
+) -> Result<(), String> {
+    if !wire.is_present() && schema_version_requires_route_fields(&schema_version.0) {
+        return Err(format!(
+            "schema {} response omits {field}",
+            schema_version.0
+        ));
+    }
+    Ok(())
+}
+
+/// Decode a readiness wire field into its declared state: omission is
+/// `Absent`, an explicit `null` is `ExplicitNull`, and any other value must
+/// decode as the closed readiness vocabulary.
+fn decode_declared_readiness(
+    wire: PresenceTracked,
+    field: &'static str,
+) -> Result<DeclaredReadiness, String> {
+    match wire.into_inner() {
+        None => Ok(DeclaredReadiness::Absent),
+        Some(serde_json::Value::Null) => Ok(DeclaredReadiness::ExplicitNull),
+        Some(value) => serde_json::from_value(value)
+            .map(DeclaredReadiness::Value)
+            .map_err(|error| format!("{field}: {error}")),
+    }
+}
+
+/// Decode a command-spec wire field: omission and explicit `null` both mean
+/// "no producer-owned spec", any other value must decode as a
+/// [`CommandSpec`].
+fn decode_command_spec(
+    wire: PresenceTracked,
+    field: &'static str,
+) -> Result<Option<CommandSpec>, String> {
+    match wire.into_inner() {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value)
+            .map(Some)
+            .map_err(|error| format!("{field}: {error}")),
+    }
 }
 
 impl TryFrom<RiprAgentSuccessEnvelopeWire> for RiprAgentSuccessEnvelope {
@@ -710,6 +821,34 @@ impl TryFrom<RiprAgentSuccessEnvelopeWire> for RiprAgentSuccessEnvelope {
     fn try_from(value: RiprAgentSuccessEnvelopeWire) -> Result<Self, Self::Error> {
         let verify_route = require_nullable_nonempty_string(value.verify_route, "verify_route")?;
         let receipt_route = require_nullable_nonempty_string(value.receipt_route, "receipt_route")?;
+        require_route_field_presence(
+            &value.verify_route_readiness,
+            &value.versions.schema_version,
+            "verify_route_readiness",
+        )?;
+        require_route_field_presence(
+            &value.receipt_route_readiness,
+            &value.versions.schema_version,
+            "receipt_route_readiness",
+        )?;
+        require_route_field_presence(
+            &value.verify_command_spec,
+            &value.versions.schema_version,
+            "verify_command_spec",
+        )?;
+        require_route_field_presence(
+            &value.receipt_command_spec,
+            &value.versions.schema_version,
+            "receipt_command_spec",
+        )?;
+        let declared_verify_readiness =
+            decode_declared_readiness(value.verify_route_readiness, "verify_route_readiness")?;
+        let declared_receipt_readiness =
+            decode_declared_readiness(value.receipt_route_readiness, "receipt_route_readiness")?;
+        let verify_command_spec =
+            decode_command_spec(value.verify_command_spec, "verify_command_spec")?;
+        let receipt_command_spec =
+            decode_command_spec(value.receipt_command_spec, "receipt_command_spec")?;
         Ok(Self {
             versions: value.versions,
             request: value.request,
@@ -748,23 +887,23 @@ impl TryFrom<RiprAgentSuccessEnvelopeWire> for RiprAgentSuccessEnvelope {
             must_not_change: value.must_not_change,
             verify_route_readiness: resolve_route_readiness(
                 &verify_route,
-                value.verify_route_readiness,
-                value.verify_command_spec.as_ref(),
+                declared_verify_readiness,
+                verify_command_spec.as_ref(),
                 CommandRole::Verify,
                 "verify_route",
             )?,
             receipt_route_readiness: resolve_route_readiness(
                 &receipt_route,
-                value.receipt_route_readiness,
-                value.receipt_command_spec.as_ref(),
+                declared_receipt_readiness,
+                receipt_command_spec.as_ref(),
                 CommandRole::Receipt,
                 "receipt_route",
             )?,
-            verify_command_spec: match value.verify_command_spec {
+            verify_command_spec: match verify_command_spec {
                 Some(spec) => RiprAgentRequiredNullable::Value(spec),
                 None => RiprAgentRequiredNullable::Null,
             },
-            receipt_command_spec: match value.receipt_command_spec {
+            receipt_command_spec: match receipt_command_spec {
                 Some(spec) => RiprAgentRequiredNullable::Value(spec),
                 None => RiprAgentRequiredNullable::Null,
             },
@@ -853,6 +992,7 @@ mod tests {
         EnvironmentPolicy, ExpectedResultParser, NetworkPolicy, StdinPolicy,
     };
     use std::collections::BTreeSet;
+    use std::path::Path;
 
     fn require_unique<T>(values: &[T], label: &str) -> Result<(), String>
     where
@@ -918,9 +1058,9 @@ mod tests {
         "#
     }
 
-    /// The same payload as [`success_fixture`], shaped as a 0.1 producer
-    /// would have emitted it: without the route-readiness and command-spec
-    /// fields introduced by #1617 slice 4.
+    /// A payload as a schema-0.1 producer emitted it before #1617 slice 4:
+    /// `schema_version: "0.1"` and none of the route-readiness or
+    /// command-spec fields. This is the only shape allowed to omit them.
     fn schema_0_1_success_fixture() -> Result<String, String> {
         let absent_fields = [
             "          \"verify_route_readiness\": \"legacy_string_only\",\n",
@@ -929,6 +1069,10 @@ mod tests {
             "          \"receipt_command_spec\": null,\n",
         ];
         let mut payload = success_fixture().to_string();
+        if !payload.contains("\"schema_version\": \"0.2\"") {
+            return Err("test fixture did not declare schema version 0.2".to_string());
+        }
+        payload = payload.replace("\"schema_version\": \"0.2\"", "\"schema_version\": \"0.1\"");
         for absent in absent_fields {
             if !payload.contains(absent) {
                 return Err(format!(
@@ -937,7 +1081,22 @@ mod tests {
             }
             payload = payload.replace(absent, "");
         }
+        if payload.contains("schema_version\": \"0.2\"") || payload.contains("_readiness") {
+            return Err("test fixture still carries 0.2 route fields".to_string());
+        }
         Ok(payload)
+    }
+
+    /// A malformed payload: declares schema 0.2 but omits the named field
+    /// line, the exact shape a 0.2 producer must never emit.
+    fn schema_0_2_success_fixture_omitting(field_line: &str) -> Result<String, String> {
+        let payload = success_fixture().to_string();
+        if !payload.contains(field_line) {
+            return Err(format!(
+                "test fixture did not contain the removable field line: {field_line}"
+            ));
+        }
+        Ok(payload.replace(field_line, ""))
     }
 
     fn verify_command_spec_fixture() -> CommandSpec {
@@ -1045,6 +1204,163 @@ mod tests {
           "must_not_change": ["source_edits", "workspace_edit", "autonomous_repair"]
         }
         "#
+    }
+
+    /// Structurally validate one capability value against the published
+    /// capability schema.
+    ///
+    /// No JSON-Schema validator crate is available in this crate's
+    /// dependencies, so this pins the producer↔schema contract with
+    /// structural assertions instead: object shape, `additionalProperties`,
+    /// the required key set, and per-property `const`, `enum`, array-item
+    /// `enum` (including sibling-file `$ref` resolution), `uniqueItems`, and
+    /// scalar `type` constraints. Anything the structural pass cannot judge
+    /// is a test failure, not a silent pass.
+    fn assert_capability_matches_schema(value: &serde_json::Value) -> Result<(), String> {
+        let schema_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/ripr/ripr-agent-capability.schema.json");
+        let schema_text = std::fs::read_to_string(&schema_path)
+            .map_err(|error| format!("read {}: {error}", schema_path.display()))?;
+        let schema: serde_json::Value = serde_json::from_str(&schema_text)
+            .map_err(|error| format!("decode capability schema: {error}"))?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| "capability must be an object".to_string())?;
+        if schema["type"] != serde_json::Value::String("object".to_string()) {
+            return Err("capability schema must declare an object type".to_string());
+        }
+        if schema["additionalProperties"] != serde_json::Value::Bool(false) {
+            return Err(
+                "capability schema must stay closed (additionalProperties false)".to_string(),
+            );
+        }
+        let properties = schema["properties"]
+            .as_object()
+            .ok_or_else(|| "capability schema must declare properties".to_string())?;
+        let required = schema["required"]
+            .as_array()
+            .ok_or_else(|| "capability schema must declare required keys".to_string())?;
+        for key in required {
+            let name = key
+                .as_str()
+                .ok_or_else(|| "capability schema required entry must be a string".to_string())?;
+            if !object.contains_key(name) {
+                return Err(format!("capability output omits required key `{name}`"));
+            }
+        }
+        for key in object.keys() {
+            if !properties.contains_key(key) {
+                return Err(format!("capability schema has no property `{key}`"));
+            }
+        }
+        // Resolve `"<sibling>.schema.json#/$defs/<name>"` refs against the
+        // schema directory so array-item enums stay checked.
+        let resolve_ref = |reference: &str| -> Result<serde_json::Value, String> {
+            let (file, pointer) = reference
+                .split_once('#')
+                .ok_or_else(|| format!("unsupported schema reference `{reference}`"))?;
+            let referenced_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../schemas/ripr")
+                .join(file);
+            let text = std::fs::read_to_string(&referenced_path)
+                .map_err(|error| format!("read {}: {error}", referenced_path.display()))?;
+            let mut node: serde_json::Value =
+                serde_json::from_str(&text).map_err(|error| format!("decode {file}: {error}"))?;
+            for segment in pointer.split('/').skip(1) {
+                node = node
+                    .get(segment)
+                    .ok_or_else(|| format!("schema reference `{reference}` does not resolve"))?
+                    .clone();
+            }
+            Ok(node)
+        };
+        for (key, constraint) in properties {
+            let actual = &object[key];
+            if let Some(expected) = constraint.get("const")
+                && actual != expected
+            {
+                return Err(format!("capability `{key}` drifted from the schema const"));
+            }
+            if let Some(expected) = constraint.get("enum").and_then(|value| value.as_array())
+                && !expected.contains(actual)
+            {
+                return Err(format!("capability `{key}` is outside the schema enum"));
+            }
+            if let Some(expected_type) = constraint.get("type").and_then(|value| value.as_str()) {
+                let type_matches = match expected_type {
+                    "boolean" => actual.is_boolean(),
+                    "string" => actual.is_string(),
+                    "array" => actual.is_array(),
+                    other => return Err(format!("unhandled schema type `{other}` for `{key}`")),
+                };
+                if !type_matches {
+                    return Err(format!("capability `{key}` is not a `{expected_type}`"));
+                }
+            }
+            if let Some(items) = constraint.get("items") {
+                let members = actual
+                    .as_array()
+                    .ok_or_else(|| format!("capability `{key}` must be an array"))?;
+                if constraint["uniqueItems"] == serde_json::Value::Bool(true) {
+                    let repeats = members
+                        .iter()
+                        .enumerate()
+                        .any(|(index, member)| members[index + 1..].contains(member));
+                    if repeats {
+                        return Err(format!("capability `{key}` must not repeat members"));
+                    }
+                }
+                if let Some(allowed) = items.get("enum").and_then(|value| value.as_array()) {
+                    for member in members {
+                        if !allowed.contains(member) {
+                            return Err(format!(
+                                "capability `{key}` carries a member outside the schema enum"
+                            ));
+                        }
+                    }
+                }
+                if let Some(reference) = items.get("$ref").and_then(|value| value.as_str()) {
+                    let allowed = resolve_ref(reference)?;
+                    for member in members {
+                        if !allowed["enum"]
+                            .as_array()
+                            .is_some_and(|allowed| allowed.contains(member))
+                        {
+                            return Err(format!(
+                                "capability `{key}` carries a member outside the referenced enum"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn capability_output_matches_the_published_schema() -> Result<(), String> {
+        // The live producer bytes, exactly as initialize projects them.
+        let capability = server_capability();
+        let agent = capability
+            .get("riprAgent")
+            .cloned()
+            .ok_or_else(|| "expected riprAgent capability fixture".to_string())?;
+        assert_capability_matches_schema(&agent)?;
+        // The committed example must describe the same shape.
+        let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/lsp_agent_protocol/capability.json");
+        let fixture_text = std::fs::read_to_string(&fixture_path)
+            .map_err(|error| format!("read {}: {error}", fixture_path.display()))?;
+        let fixture: serde_json::Value = serde_json::from_str(&fixture_text)
+            .map_err(|error| format!("decode capability fixture: {error}"))?;
+        assert_capability_matches_schema(&fixture)?;
+        if fixture != agent {
+            return Err(
+                "the capability fixture drifted from the live server_capability() output"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 
     #[test]
@@ -1251,13 +1567,27 @@ mod tests {
                 return Err(format!("readiness variant lost its wire name `{wire}`"));
             }
         }
-        if serde_json::from_str::<RiprAgentRouteReadiness>(r#""unknown""#).is_ok() {
-            return Err("the readiness vocabulary accepted an unknown value".to_string());
+        match serde_json::from_str::<RiprAgentRouteReadiness>(r#""unknown""#) {
+            Ok(_) => return Err("the readiness vocabulary accepted an unknown value".to_string()),
+            Err(error) => {
+                let message = error.to_string();
+                if !message.contains("unknown variant `unknown`") {
+                    return Err(format!("unexpected readiness error message: {message}"));
+                }
+            }
         }
         let unknown_readiness =
             success_fixture().replace("legacy_string_only", "unknown_readiness");
-        if serde_json::from_str::<RiprAgentSuccessEnvelope>(&unknown_readiness).is_ok() {
-            return Err("a success envelope accepted an unknown readiness value".to_string());
+        match serde_json::from_str::<RiprAgentSuccessEnvelope>(&unknown_readiness) {
+            Ok(_) => {
+                return Err("a success envelope accepted an unknown readiness value".to_string());
+            }
+            Err(error) => {
+                let message = error.to_string();
+                if !message.contains("unknown variant `unknown_readiness`") {
+                    return Err(format!("unexpected envelope error message: {message}"));
+                }
+            }
         }
         Ok(())
     }
@@ -1376,6 +1706,11 @@ mod tests {
     #[test]
     fn schema_0_1_payload_without_route_fields_still_decodes() -> Result<(), String> {
         let legacy_payload = schema_0_1_success_fixture()?;
+        // The tolerance path is only for a true 0.1 payload: it declares
+        // schema 0.1 and carries none of the 0.2 route fields.
+        if !legacy_payload.contains("\"schema_version\": \"0.1\"") {
+            return Err("compat fixture must declare schema version 0.1".to_string());
+        }
         let decoded: RiprAgentSuccessEnvelope = serde_json::from_str(&legacy_payload)
             .map_err(|error| format!("decode 0.1-shaped payload: {error}"))?;
         for field in ["verify_route", "receipt_route"] {
@@ -1411,6 +1746,62 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn schema_0_2_payload_omitting_route_field_is_rejected() -> Result<(), String> {
+        // A payload that declares schema 0.2 must carry every additive route
+        // field explicitly; omission decodes nowhere.
+        for field_line in [
+            "          \"verify_route_readiness\": \"legacy_string_only\",\n",
+            "          \"receipt_route_readiness\": \"legacy_string_only\",\n",
+            "          \"verify_command_spec\": null,\n",
+            "          \"receipt_command_spec\": null,\n",
+        ] {
+            let malformed = schema_0_2_success_fixture_omitting(field_line)?;
+            let field_name = field_line
+                .trim()
+                .split('"')
+                .nth(1)
+                .ok_or_else(|| format!("could not read field name from {field_line}"))?;
+            match serde_json::from_str::<RiprAgentSuccessEnvelope>(&malformed) {
+                Ok(_) => {
+                    return Err(format!(
+                        "schema 0.2 response omitted `{field_name}` and still decoded"
+                    ));
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    if !(message.contains("omits") && message.contains(field_name)) {
+                        return Err(format!(
+                            "omission of `{field_name}` produced an unexpected error: {message}"
+                        ));
+                    }
+                }
+            }
+        }
+        // Explicit nulls stay distinct from omission: null readiness next to
+        // a non-null route is a contract violation even on a fully-present
+        // 0.2 payload.
+        let null_readiness = success_fixture().replace(
+            "          \"verify_route_readiness\": \"legacy_string_only\",\n",
+            "          \"verify_route_readiness\": null,\n",
+        );
+        if null_readiness == success_fixture() {
+            return Err("test fixture did not null the verify readiness".to_string());
+        }
+        match serde_json::from_str::<RiprAgentSuccessEnvelope>(&null_readiness) {
+            Ok(_) => return Err("a null readiness beside a route decoded".to_string()),
+            Err(error) => {
+                let message = error.to_string();
+                if !message.contains(
+                    "verify_route: declared readiness does not match the route and command spec",
+                ) {
+                    return Err(format!("unexpected null-readiness error: {message}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn decoded_route_field<'a>(
         envelope: &'a RiprAgentSuccessEnvelope,
         field: &str,
@@ -1441,14 +1832,33 @@ mod tests {
         }
     }
 
+    /// Assert one malformed envelope fails with the named slot error.
+    fn assert_decode_rejected(payload: &str, expected_substring: &str) -> Result<(), String> {
+        match serde_json::from_str::<RiprAgentSuccessEnvelope>(payload) {
+            Ok(_) => Err(format!(
+                "malformed envelope decoded although it should have failed with `{expected_substring}`"
+            )),
+            Err(error) => {
+                let message = error.to_string();
+                if !message.contains(expected_substring) {
+                    return Err(format!(
+                        "unexpected error message: {message} (expected `{expected_substring}`)"
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+
     #[test]
     fn readiness_must_agree_with_route_and_spec() -> Result<(), String> {
         // A typed readiness without a spec claims a producer-owned route the
         // envelope does not carry.
         let typed_without_spec = success_fixture().replace("legacy_string_only", "typed_direct");
-        if serde_json::from_str::<RiprAgentSuccessEnvelope>(&typed_without_spec).is_ok() {
-            return Err("typed readiness was accepted without a command spec".to_string());
-        }
+        assert_decode_rejected(
+            &typed_without_spec,
+            "verify_route: declared readiness does not match the route and command spec",
+        )?;
         // A spec under a legacy-string-only readiness contradicts itself.
         let spec = serde_json::to_string(&verify_command_spec_fixture())
             .map_err(|error| error.to_string())?;
@@ -1459,11 +1869,10 @@ mod tests {
         if legacy_with_spec == success_fixture() {
             return Err("test fixture did not inject the command spec".to_string());
         }
-        if serde_json::from_str::<RiprAgentSuccessEnvelope>(&legacy_with_spec).is_ok() {
-            return Err(
-                "legacy_string_only readiness was accepted with a command spec".to_string(),
-            );
-        }
+        assert_decode_rejected(
+            &legacy_with_spec,
+            "verify_route: declared readiness does not match the route and command spec",
+        )?;
         // Readiness follows the nullable route: a declared readiness next to
         // a null route is rejected.
         let readiness_with_null_route = success_fixture().replace(
@@ -1473,9 +1882,20 @@ mod tests {
         if readiness_with_null_route == success_fixture() {
             return Err("test fixture did not null the verify route".to_string());
         }
-        if serde_json::from_str::<RiprAgentSuccessEnvelope>(&readiness_with_null_route).is_ok() {
-            return Err("a readiness was accepted next to a null route".to_string());
-        }
+        assert_decode_rejected(
+            &readiness_with_null_route,
+            "verify_route: declared readiness does not match the route and command spec",
+        )?;
+        // An explicit null readiness beside a non-null route is a committed
+        // claim that contradicts the route.
+        let null_readiness_with_route = success_fixture().replace(
+            "          \"verify_route_readiness\": \"legacy_string_only\",\n",
+            "          \"verify_route_readiness\": null,\n",
+        );
+        assert_decode_rejected(
+            &null_readiness_with_route,
+            "verify_route: declared readiness does not match the route and command spec",
+        )?;
         // A spec whose role does not match the slot is rejected.
         let mismatched_role = success_fixture().replace(
             "          \"verify_command_spec\": null,\n",
@@ -1485,9 +1905,22 @@ mod tests {
                     .map_err(|error| error.to_string())?
             ),
         );
-        if serde_json::from_str::<RiprAgentSuccessEnvelope>(&mismatched_role).is_ok() {
-            return Err("a receipt-role spec was accepted in the verify slot".to_string());
+        assert_decode_rejected(
+            &mismatched_role,
+            "verify_route: command spec role does not match the slot role",
+        )?;
+        // A command spec next to a null route is rejected.
+        let spec_with_null_route = legacy_with_spec.replace(
+            "\"verify_route\": \"ripr/verify\"",
+            "\"verify_route\": null",
+        );
+        if spec_with_null_route == legacy_with_spec {
+            return Err("test fixture did not null the verify route".to_string());
         }
+        assert_decode_rejected(
+            &spec_with_null_route,
+            "verify_route: a command spec requires a non-null route",
+        )?;
         Ok(())
     }
 

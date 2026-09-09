@@ -143,6 +143,12 @@ Successful responses carry producer-owned identity and honesty fields:
 These fields describe a contract and do not fabricate evidence. A capability-only
 server does not emit a success response for a reserved request yet.
 
+The success envelope documented here is the contract target for implemented
+requests. The currently live `ripr/listActionableItems` handler still returns
+its first-slice abbreviated object (no version identity and no route fields);
+migrating that handler onto the full envelope is a tracked follow-up under
+#1617 and must not be read as already conforming to this section.
+
 ### Route readiness vocabulary (#1617 slice 4)
 
 `verify_route_readiness` and `receipt_route_readiness` use one closed
@@ -154,9 +160,12 @@ typed_direct          a producer-owned typed CommandSpec with
                       command-spec field
 typed_shell_required  a producer-owned typed CommandSpec with
                       execution_mode `shell_required` is present
-manual                the route can be described but no executable form is
-                      producer-owned; declared to keep the vocabulary closed
-                      (no producer emits it today)
+manual                the route is described by a validated producer-owned
+                      CommandSpec with execution_mode `manual`: the route is
+                      not automatically executable, but consumers should keep
+                      the spec as route context instead of discarding it
+                      (declared to keep the vocabulary closed; no producer
+                      emits it today)
 legacy_string_only    only the legacy display string exists; the paired
                       command-spec field is null
 ```
@@ -170,12 +179,15 @@ Rules:
 - A command spec present in `verify_command_spec` must carry role `verify`
   and satisfy the CommandSpec validation contract; `receipt_command_spec`
   must carry role `receipt`. The readiness value must equal the value derived
-  from the spec's `execution_mode`.
-- A receiver that did not commit to the 0.2 field set may omit the four new
-  fields; a `0.1`-shaped payload derives `legacy_string_only` for present
-  route strings and `null` for null routes. Declaring a readiness that
-  contradicts the route and spec the envelope carries is a contract violation,
-  not a tolerance.
+  from the spec's `execution_mode`. Slot↔spec role matching is beyond
+  cross-field JSON Schema and is enforced by the Rust resolver in
+  `crates/ripr/src/lsp/agent_protocol.rs`.
+- A payload that declares schema 0.2 or later must carry all four new fields
+  explicitly; omission is a decoding failure. Only a true schema-0.1 payload
+  may omit them, and its readiness is then derived truthfully (`legacy_string_only`
+  for present route strings, `null` for null routes). Declaring a readiness
+  that contradicts the route and spec the envelope carries is a contract
+  violation, not a tolerance.
 
 ### Error envelope
 
@@ -297,13 +309,22 @@ build artifacts; a stale cross-worktree binary is not proof of this slice.
   `legacy_route_strings_stay_legacy_string_only` (legacy display strings stay
   `legacy_string_only` with null specs), `null_route_carries_null_readiness_and_null_spec`
   (readiness is null exactly when the route is null),
-  `schema_0_1_payload_without_route_fields_still_decodes` (0.1-shaped payload
-  tolerance derives readiness truthfully),
+  `schema_0_1_payload_without_route_fields_still_decodes` (a true
+  `schema_version: "0.1"` payload without the new fields derives readiness
+  truthfully), `schema_0_2_payload_omitting_route_field_is_rejected` (a 0.2
+  payload omitting any of the four fields, or carrying an explicit null
+  readiness beside a route, fails with a named error),
   `readiness_must_agree_with_route_and_spec` (contradictory readiness, spec
-  without a route, and role-mismatched specs fail closed), and
+  without a route, and role-mismatched specs fail closed with pinned error
+  messages), and
   `command_spec_wire_shape_matches_the_domain_type` (the published
   CommandSpec schema shape pins the serde wire names, including the
   `working_directory`/`environment`/`network`/`human_display` renames).
+- `capability_output_matches_the_published_schema` validates the live
+  `server_capability()` bytes and the committed capability fixture against
+  `schemas/ripr/ripr-agent-capability.schema.json` (structural const/enum/
+  required-key assertions; no JSON-Schema validator crate is in this crate's
+  dependency set).
 - JSON examples and negative controls live in
   `fixtures/lsp_agent_protocol/`.
 
