@@ -1,5 +1,7 @@
+use crate::agent::command_specs::report_regeneration_command_spec_from_display;
 use crate::agent::loop_commands::{check_repo_exposure_command, display_path, shell_arg};
 use crate::config::detect_python_project;
+use crate::domain::CommandSpec;
 use crate::output::gap_decision_ledger::projection_eligible_from_value;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
 use crate::output::receipt_write::receipt_write_command;
@@ -602,6 +604,9 @@ enum Selection {
         label: String,
         path: String,
         regeneration_command: String,
+        // Boxed to keep the variant small: CommandSpec is a wide struct
+        // and `Selection` is matched by value on the render paths.
+        command_spec: Option<Box<CommandSpec>>,
     },
     Blocked {
         state: String,
@@ -616,12 +621,19 @@ enum Selection {
 }
 
 impl Selection {
-    fn missing_artifact(id: &str, label: &str, path: &str, regeneration_command: String) -> Self {
+    fn missing_artifact(
+        id: &str,
+        label: &str,
+        path: &str,
+        regeneration_command: String,
+        command_spec: Option<CommandSpec>,
+    ) -> Self {
         Self::MissingArtifact {
             id: id.to_string(),
             label: label.to_string(),
             path: path.to_string(),
             regeneration_command,
+            command_spec: command_spec.map(Box::new),
         }
     }
 
@@ -714,17 +726,28 @@ impl Selection {
                 label,
                 path,
                 regeneration_command,
-            } => json!({
-                "state": "missing_artifact",
-                "output_state": normalize_start_here_output_state("missing_artifact"),
-                "artifact": {
-                    "id": id,
-                    "label": label,
-                    "path": path
-                },
-                "next_action": "regenerate_missing_artifact",
-                "regeneration_command": regeneration_command
-            }),
+                command_spec,
+            } => {
+                // FIX #1617 slice 2: the typed spec is additive beside the
+                // legacy string; the `commands` map stays string-only.
+                let mut value = json!({
+                    "state": "missing_artifact",
+                    "output_state": normalize_start_here_output_state("missing_artifact"),
+                    "artifact": {
+                        "id": id,
+                        "label": label,
+                        "path": path
+                    },
+                    "next_action": "regenerate_missing_artifact",
+                    "regeneration_command": regeneration_command
+                });
+                if let Some(spec) = command_spec
+                    && let Ok(spec_value) = serde_json::to_value(spec)
+                {
+                    value["regeneration_command_spec"] = spec_value;
+                }
+                value
+            }
             Self::Blocked {
                 state,
                 message,
@@ -894,11 +917,12 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
 
 fn missing_gap_ledger_selection(root: &Path, options: &FirstPrOptions) -> Selection {
     if uses_check_output_gap_ledger(root) {
-        return Selection::missing_artifact(
+        return missing_gap_ledger_artifact(
             "gap_ledger",
             "Gap decision ledger",
             &options.gap_ledger,
-            regenerate_gap_ledger_command(root, options),
+            root,
+            options,
         );
     }
 
@@ -906,12 +930,28 @@ fn missing_gap_ledger_selection(root: &Path, options: &FirstPrOptions) -> Select
     if !repo_exposure.exists() {
         return missing_repo_exposure_selection(root, options);
     }
-    Selection::missing_artifact(
+    missing_gap_ledger_artifact(
         "gap_ledger",
         "Gap decision ledger",
         &options.gap_ledger,
-        regenerate_gap_ledger_command(root, options),
+        root,
+        options,
     )
+}
+
+/// FIX #1617 slice 2: attach the typed spec recovered from the display. The
+/// compound `&&` form fails the exact-shape recovery and stays
+/// legacy-string-only.
+fn missing_gap_ledger_artifact(
+    id: &str,
+    label: &str,
+    path: &str,
+    root: &Path,
+    options: &FirstPrOptions,
+) -> Selection {
+    let regeneration_command = regenerate_gap_ledger_command(root, options);
+    let command_spec = report_regeneration_command_spec_from_display(&regeneration_command);
+    Selection::missing_artifact(id, label, path, regeneration_command, command_spec)
 }
 
 fn missing_repo_exposure_selection(root: &Path, options: &FirstPrOptions) -> Selection {
@@ -931,11 +971,14 @@ fn missing_repo_exposure_selection(root: &Path, options: &FirstPrOptions) -> Sel
             Some(repo_exposure_latency_report_command(&options.root)),
         );
     }
+    let regeneration_command = regenerate_repo_exposure_command(&options.root);
+    let command_spec = report_regeneration_command_spec_from_display(&regeneration_command);
     Selection::missing_artifact(
         "repo_exposure",
         "Repo exposure report",
         DEFAULT_REPO_EXPOSURE,
-        regenerate_repo_exposure_command(&options.root),
+        regeneration_command,
+        command_spec,
     )
 }
 
@@ -2321,6 +2364,69 @@ mod tests {
         assert_eq!(packet["commands"]["regenerate_gap_ledger"], command);
         assert_eq!(packet["artifacts"][0]["regeneration_command"], command);
         check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    /// FIX #1617 slice 2: a missing-artifact selection carries the typed
+    /// regeneration spec beside the legacy string only when the display is
+    /// a simple canonical route; the compound `&&` route stays
+    /// legacy-string-only, and the `commands` map stays string-only.
+    #[test]
+    fn missing_gap_ledger_selection_carries_typed_spec_only_for_simple_routes() -> Result<(), String>
+    {
+        let repo = temp_python_repo("first-pr-python-ledger-spec-recovery")?;
+
+        let simple_options = FirstPrOptions {
+            check_output: Some(DEFAULT_CHECK_OUTPUT.to_string()),
+            ..FirstPrOptions::default()
+        };
+        let simple = missing_gap_ledger_selection(&repo, &simple_options);
+        let simple_json = simple.to_json();
+        let command = simple_json["regeneration_command"]
+            .as_str()
+            .ok_or("missing-artifact selection must keep the legacy regeneration command")?;
+        assert!(
+            command.starts_with("ripr reports gap-ledger --check-output"),
+            "unexpected simple bridge command: {command}"
+        );
+        let spec = simple_json
+            .get("regeneration_command_spec")
+            .ok_or("a simple route display must carry a typed regeneration spec")?;
+        assert_eq!(spec["command_id"], "ripr:reports:gap-ledger");
+        assert_eq!(spec["role"], "regeneration");
+        assert_eq!(spec["execution_mode"], "direct");
+        assert_eq!(spec["expected_writes"][0], DEFAULT_GAP_LEDGER);
+        let commands = simple.commands_json(&repo, &simple_options);
+        assert!(
+            commands["next"].is_string(),
+            "the commands map must stay legacy-string-only"
+        );
+
+        let compound = missing_gap_ledger_selection(&repo, &FirstPrOptions::default());
+        let compound_json = compound.to_json();
+        assert!(
+            compound_json.get("regeneration_command_spec").is_none(),
+            "a compound && route must stay legacy-string-only"
+        );
+        assert!(
+            compound_json["regeneration_command"]
+                .as_str()
+                .is_some_and(|command| command.contains(" && ")),
+            "expected the compound default bridge command"
+        );
+
+        let repo_exposure = missing_repo_exposure_selection(&repo, &FirstPrOptions::default());
+        let repo_exposure_json = repo_exposure.to_json();
+        let spec = repo_exposure_json
+            .get("regeneration_command_spec")
+            .ok_or("the repo-exposure route display must carry a typed spec")?;
+        assert_eq!(spec["command_id"], "ripr:check:repo-exposure");
+        assert_eq!(spec["execution_mode"], "shell_required");
+        assert_eq!(
+            spec["expected_writes"][0],
+            "target/ripr/reports/repo-exposure.json"
+        );
+
         cleanup(&repo)
     }
 

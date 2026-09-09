@@ -1853,6 +1853,20 @@ fn gap_record_diagnostic_data_with_causal(
         "evidence_ids": record.evidence_ids,
         "verification_commands": record.verification_commands,
         "regeneration_commands": record.regeneration_commands,
+        "regeneration_command_specs": record
+            .command_specs
+            .as_ref()
+            .map(|specs| {
+                specs
+                    .regeneration
+                    .iter()
+                    .map(serde_json::to_value)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
         "receipt_command": record.receipt_command,
         "receipt": record.receipt,
         "authority_boundary": record.authority_boundary,

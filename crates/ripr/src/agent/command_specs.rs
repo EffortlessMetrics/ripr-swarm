@@ -195,6 +195,212 @@ pub(crate) fn agent_inspection_command_spec(
     )
 }
 
+/// The report-regeneration routes whose displays the ledger carries:
+/// strict per-route flag templates owned here, so recovery is producer
+/// knowledge rather than token guessing (FIX #1617 slice 2).
+const REPORT_REGENERATION_ROUTES: [(&str, &[&str]); 2] = [
+    (
+        "front-panel",
+        &["--root", "--pr-guidance", "--out", "--out-md"],
+    ),
+    (
+        "index",
+        &[
+            "--root",
+            "--reports-dir",
+            "--review-dir",
+            "--receipts-dir",
+            "--workflow-dir",
+            "--agent-dir",
+            "--pilot-dir",
+            "--ci-dir",
+            "--out",
+            "--out-md",
+        ],
+    ),
+];
+
+/// Required flags per report-regeneration route (matched by route word).
+fn report_route_required_flags(command_word: &str) -> &'static [&'static str] {
+    match command_word {
+        "front-panel" => &["--root"],
+        "index" => &["--root", "--reports-dir"],
+        _ => &[],
+    }
+}
+
+fn report_route_command_id(command_word: &str) -> Option<&'static str> {
+    match command_word {
+        "front-panel" => Some("ripr:pr-review:front-panel"),
+        "index" => Some("ripr:reports:index"),
+        _ => None,
+    }
+}
+
+/// FIX #1617 slice 2: recover a typed regeneration spec for the canonical
+/// report-regeneration routes (`ripr pr-review front-panel`, `ripr reports
+/// index`, `ripr reports gap-ledger`, and the `ripr check …
+/// --format repo-exposure-json` redirect). Loop-template routes accept
+/// their closed flag set in any order without repeats and require the
+/// route's mandatory flags; the gap-ledger and check routes match their
+/// exact token shape. Values are taken positionally exactly as the CLI
+/// parses them. The report routes write their `--out`/`--out-md` outputs
+/// themselves (`Direct`); the check route writes through a shell redirect
+/// (`ShellRequired`, redirect target as the expected write).
+pub(crate) fn report_regeneration_command_spec_from_display(command: &str) -> Option<CommandSpec> {
+    let words = shell_words(command)?;
+    if words.first().map(String::as_str) != Some("ripr") {
+        return None;
+    }
+    match words.get(1).map(String::as_str) {
+        // Route word at index 1: the repo-exposure check route.
+        Some("check") => recover_check_repo_exposure_spec(&words, command),
+        Some("reports") => match words.get(2).map(String::as_str) {
+            Some("gap-ledger") => recover_gap_ledger_spec(&words, command),
+            Some("index") => recover_loop_template_spec(
+                &words,
+                command,
+                "index",
+                REPORT_REGENERATION_ROUTES[1].1,
+            ),
+            _ => None,
+        },
+        Some("pr-review") if words.get(2).map(String::as_str) == Some("front-panel") => {
+            recover_loop_template_spec(
+                &words,
+                command,
+                "front-panel",
+                REPORT_REGENERATION_ROUTES[0].1,
+            )
+        }
+        _ => None,
+    }
+}
+
+/// Loop-template recovery: flags must belong to the route's closed
+/// template, may appear in any order, must not repeat, and required flags
+/// must be present. Values are taken positionally exactly as the CLI
+/// parses them; a flag-shaped token where a value belongs means the value
+/// is missing, so recovery fails closed.
+fn recover_loop_template_spec(
+    words: &[String],
+    command: &str,
+    command_word: &str,
+    allowed: &[&str],
+) -> Option<CommandSpec> {
+    let command_id = report_route_command_id(command_word)?;
+    let mut args = vec![words[1].to_string(), words[2].to_string()];
+    let mut expected_writes = Vec::new();
+    let mut seen = Vec::new();
+    let mut index = 3;
+    while index < words.len() {
+        let token = words.get(index)?;
+        if !allowed.contains(&token.as_str()) {
+            return None;
+        }
+        if seen.contains(&token.as_str()) {
+            return None;
+        }
+        seen.push(token.as_str());
+        args.push(token.clone());
+        let value = words.get(index + 1)?;
+        if value.starts_with("--") && allowed.contains(&value.as_str()) {
+            return None;
+        }
+        args.push(value.clone());
+        if token == "--out" || token == "--out-md" {
+            expected_writes.push(value.clone());
+        }
+        index += 2;
+    }
+    for required in report_route_required_flags(command_word) {
+        if !seen.contains(required) {
+            return None;
+        }
+    }
+    Some(command_spec(
+        command_id,
+        CommandRole::Regeneration,
+        CommandExecutionMode::Direct,
+        args,
+        expected_writes,
+        command.to_string(),
+    ))
+}
+
+/// Exact-shape recovery for `ripr check --root R --mode M --format
+/// repo-exposure-json > OUT` (10 tokens). The redirect is shell semantics,
+/// so the recovered spec is `ShellRequired` and names the redirect target
+/// as its expected write; argv stops before the redirect.
+fn recover_check_repo_exposure_spec(words: &[String], command: &str) -> Option<CommandSpec> {
+    if words.len() != 10
+        || words[2] != "--root"
+        || words[4] != "--mode"
+        || words[6] != "--format"
+        || words[7] != "repo-exposure-json"
+        || words[8] != ">"
+    {
+        return None;
+    }
+    // A flag-shaped mode token means the mode value itself is missing;
+    // fail closed instead of guessing.
+    if words[5].starts_with("--") {
+        return None;
+    }
+    let spec = command_spec(
+        "ripr:check:repo-exposure",
+        CommandRole::Regeneration,
+        CommandExecutionMode::ShellRequired,
+        words[1..8].to_vec(),
+        vec![words[9].clone()],
+        command.to_string(),
+    );
+    // A traversing or absolute redirect target fails validation, so the
+    // route stays legacy-string-only (same fail-closed rule as the agent
+    // artifact routes).
+    if spec.validate().is_err() {
+        return None;
+    }
+    Some(spec)
+}
+
+/// The two exact `ripr reports gap-ledger` shapes the first-pr recovery
+/// surfaces emit. Both write their own `--out`/`--out-md` documents, so the
+/// recovered spec is `Direct` and names those paths as expected writes.
+fn recover_gap_ledger_spec(words: &[String], command: &str) -> Option<CommandSpec> {
+    let spec = match words.len() {
+        9 if words[3] == "--repo-exposure" && words[5] == "--out" && words[7] == "--out-md" => {
+            command_spec(
+                "ripr:reports:gap-ledger",
+                CommandRole::Regeneration,
+                CommandExecutionMode::Direct,
+                words[1..9].to_vec(),
+                vec![words[6].clone(), words[8].clone()],
+                command.to_string(),
+            )
+        }
+        11 if words[3] == "--check-output"
+            && words[5] == "--root"
+            && words[7] == "--out"
+            && words[9] == "--out-md" =>
+        {
+            command_spec(
+                "ripr:reports:gap-ledger",
+                CommandRole::Regeneration,
+                CommandExecutionMode::Direct,
+                words[1..11].to_vec(),
+                vec![words[8].clone(), words[10].clone()],
+                command.to_string(),
+            )
+        }
+        _ => return None,
+    };
+    if spec.validate().is_err() {
+        return None;
+    }
+    Some(spec)
+}
+
 /// Recover a typed spec only for canonical agent routes. Arbitrary
 /// user-supplied test commands remain legacy advisory text until a producer
 /// supplies their executable and argument boundary.
@@ -815,6 +1021,188 @@ mod tests {
         .is_some()
         {
             return Err("a traversing expected write must stay legacy-string-only".to_string());
+        }
+        Ok(())
+    }
+
+    /// FIX #1617 slice 2: the three first_pr recovery surfaces recover
+    /// typed specs only at their exact token shapes; any deviation — wrong
+    /// flag order, unknown or missing flags, extra tokens, a compound `&&`
+    /// command — stays legacy-string-only.
+    #[test]
+    fn first_pr_report_routes_recover_exact_shapes_and_reject_deviations() -> Result<(), String> {
+        // Route 1: the repo-exposure check redirect (route word at index 1),
+        // built by the same renderer first_pr emits for byte parity.
+        let check_display = crate::agent::loop_commands::check_repo_exposure_command(
+            ".",
+            "instant",
+            "target/ripr/reports/repo-exposure.json",
+        );
+        let check = super::report_regeneration_command_spec_from_display(&check_display)
+            .ok_or("the repo-exposure check route was not recoverable")?;
+        ensure_role(
+            &check,
+            CommandRole::Regeneration,
+            CommandAuthorityBoundary::RegenerationRouteOnly,
+        )?;
+        if check.command_id != "ripr:check:repo-exposure" {
+            return Err(format!("unexpected check command id: {}", check.command_id));
+        }
+        if check.execution_mode != CommandExecutionMode::ShellRequired {
+            return Err("the redirect check route must be ShellRequired".to_string());
+        }
+        if check.expected_writes != ["target/ripr/reports/repo-exposure.json"] {
+            return Err(format!(
+                "check expected writes must name the redirect target: {:?}",
+                check.expected_writes
+            ));
+        }
+        if check.args
+            != [
+                "check".to_string(),
+                "--root".to_string(),
+                ".".to_string(),
+                "--mode".to_string(),
+                "instant".to_string(),
+                "--format".to_string(),
+                "repo-exposure-json".to_string(),
+            ]
+        {
+            return Err(format!(
+                "check argv must stop before the redirect: {:?}",
+                check.args
+            ));
+        }
+        check.validate().map_err(|err| err.to_string())?;
+
+        // Route 2: the repo-exposure gap-ledger bridge.
+        let repo_exposure_display = "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md";
+        let repo_exposure =
+            super::report_regeneration_command_spec_from_display(repo_exposure_display)
+                .ok_or("the repo-exposure gap-ledger route was not recoverable")?;
+        ensure_role(
+            &repo_exposure,
+            CommandRole::Regeneration,
+            CommandAuthorityBoundary::RegenerationRouteOnly,
+        )?;
+        if repo_exposure.command_id != "ripr:reports:gap-ledger" {
+            return Err(format!(
+                "unexpected gap-ledger command id: {}",
+                repo_exposure.command_id
+            ));
+        }
+        if repo_exposure.execution_mode != CommandExecutionMode::Direct {
+            return Err(
+                "the gap-ledger routes write their own outputs, so must be Direct".to_string(),
+            );
+        }
+        if repo_exposure.expected_writes
+            != [
+                "target/ripr/reports/gap-decision-ledger.json".to_string(),
+                "target/ripr/reports/gap-decision-ledger.md".to_string(),
+            ]
+        {
+            return Err(format!(
+                "gap-ledger expected writes must name --out then --out-md: {:?}",
+                repo_exposure.expected_writes
+            ));
+        }
+        repo_exposure.validate().map_err(|err| err.to_string())?;
+
+        // Route 3: the check-output gap-ledger bridge.
+        let check_output = super::report_regeneration_command_spec_from_display(
+            "ripr reports gap-ledger --check-output target/ripr/reports/check.json --root . --out ledger.json --out-md ledger.md",
+        )
+        .ok_or("the check-output gap-ledger route was not recoverable")?;
+        if check_output.command_id != "ripr:reports:gap-ledger"
+            || check_output.execution_mode != CommandExecutionMode::Direct
+            || check_output.expected_writes != ["ledger.json".to_string(), "ledger.md".to_string()]
+        {
+            return Err("check-output gap-ledger recovery lost the typed facts".to_string());
+        }
+        check_output.validate().map_err(|err| err.to_string())?;
+
+        // Values are matched by position: dash-prefixed values keep typed
+        // recovery exactly as the CLI would parse them.
+        if super::report_regeneration_command_spec_from_display(
+            "ripr reports gap-ledger --repo-exposure -repo.json --out -ledger.json --out-md -ledger.md",
+        )
+        .is_none()
+        {
+            return Err("dash-prefixed positional values must keep typed recovery".to_string());
+        }
+
+        // Deviations fail closed. Wrong flag order:
+        if super::report_regeneration_command_spec_from_display(
+            "ripr reports gap-ledger --out ledger.json --repo-exposure repo.json --out-md ledger.md",
+        )
+        .is_some()
+        {
+            return Err("a reordered gap-ledger route must stay legacy-string-only".to_string());
+        }
+        // Unknown flag:
+        if super::report_regeneration_command_spec_from_display(
+            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md --format repo-exposure-json",
+        )
+        .is_some()
+        {
+            return Err("an unknown flag must stay legacy-string-only".to_string());
+        }
+        // Missing required flag:
+        if super::report_regeneration_command_spec_from_display(
+            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json",
+        )
+        .is_some()
+        {
+            return Err(
+                "a gap-ledger route missing --out-md must stay legacy-string-only".to_string(),
+            );
+        }
+        // Wrong --format value:
+        if super::report_regeneration_command_spec_from_display(
+            "ripr check --root . --mode instant --format agent-seam-packets-json > out.json",
+        )
+        .is_some()
+        {
+            return Err(
+                "a non repo-exposure-json check route must stay legacy-string-only".to_string(),
+            );
+        }
+        // Extra token after the redirect:
+        if super::report_regeneration_command_spec_from_display(
+            "ripr check --root . --mode instant --format repo-exposure-json > out.json extra",
+        )
+        .is_some()
+        {
+            return Err("an extra trailing token must stay legacy-string-only".to_string());
+        }
+        // The compound `&&` command first_pr renders for the default python
+        // bridge is two routes in one shell line — neither half alone.
+        if super::report_regeneration_command_spec_from_display(
+            "ripr check --root . --base origin/main --json > target/ripr/reports/check.json && ripr reports gap-ledger --check-output target/ripr/reports/check.json --root . --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md",
+        )
+        .is_some()
+        {
+            return Err("a compound && command must stay legacy-string-only".to_string());
+        }
+
+        // The pre-existing loop-template routes keep working unchanged.
+        let front_panel = super::report_regeneration_command_spec_from_display(
+            "ripr pr-review front-panel --root . --out panel.json --out-md panel.md",
+        )
+        .ok_or("the front-panel loop route must keep recovering")?;
+        if front_panel.command_id != "ripr:pr-review:front-panel" {
+            return Err(format!(
+                "unexpected front-panel id: {}",
+                front_panel.command_id
+            ));
+        }
+        let index = super::report_regeneration_command_spec_from_display(
+            "ripr reports index --root . --reports-dir target/ripr/reports --out index.json --out-md index.md",
+        )
+        .ok_or("the reports index loop route must keep recovering")?;
+        if index.command_id != "ripr:reports:index" {
+            return Err(format!("unexpected reports index id: {}", index.command_id));
         }
         Ok(())
     }

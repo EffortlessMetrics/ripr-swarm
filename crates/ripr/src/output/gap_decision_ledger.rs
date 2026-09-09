@@ -165,6 +165,63 @@ pub(crate) struct GapRecordCommandSpecs {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub(crate) receipt: Vec<CommandSpec>,
+    /// FIX #1617 slice 2: typed regeneration specs — either carried by the
+    /// upstream producer or recovered at read time from the canonical
+    /// report-regeneration displays.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_regeneration_command_spec_collection",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub(crate) regeneration: Vec<CommandSpec>,
+}
+
+fn deserialize_regeneration_command_spec_collection<'de, D>(
+    deserializer: D,
+) -> Result<Vec<CommandSpec>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let specs = <Vec<CommandSpec> as serde::Deserialize>::deserialize(deserializer)?;
+    for spec in &specs {
+        if spec.role != crate::domain::CommandRole::Regeneration {
+            return Err(serde::de::Error::custom(format!(
+                "command spec `{}` carries role `{}`; regeneration collections require the regeneration role",
+                spec.command_id, "non-regeneration"
+            )));
+        }
+        spec.validate().map_err(serde::de::Error::custom)?;
+    }
+    Ok(specs)
+}
+
+/// FIX #1617 slice 2: legacy regeneration strings for the canonical
+/// report-regeneration routes gain their typed specs at read time — a pure
+/// enrichment; records whose routes are not canonical keep empty typed
+/// collections and stay legacy-string-only.
+fn recover_regeneration_command_specs(record: &mut GapRecord) {
+    let already_typed = record
+        .command_specs
+        .as_ref()
+        .is_some_and(|specs| !specs.regeneration.is_empty());
+    if already_typed {
+        return;
+    }
+    let mut recovered = Vec::new();
+    for display in &record.regeneration_commands {
+        if let Some(spec) =
+            crate::agent::command_specs::report_regeneration_command_spec_from_display(display)
+        {
+            recovered.push(spec);
+        }
+    }
+    if recovered.is_empty() {
+        return;
+    }
+    record
+        .command_specs
+        .get_or_insert_with(GapRecordCommandSpecs::default)
+        .regeneration = recovered;
 }
 
 fn deserialize_verify_command_spec_collection<'de, D>(
@@ -380,6 +437,14 @@ pub(crate) fn build_gap_decision_ledger_report(
 
     if input.source_kind == GapDecisionLedgerSourceKind::CheckOutput {
         attach_check_output_preview_receipt_routes(&mut records, &input.root);
+    }
+
+    // FIX #1617 slice 2: legacy regeneration strings for the canonical
+    // report-regeneration routes gain their typed specs at read time, so
+    // every downstream surface (LSP projections, first-pr, review packets)
+    // sees the typed form without any upstream emitter change.
+    for record in &mut records {
+        recover_regeneration_command_specs(record);
     }
 
     for record in &records {
@@ -787,7 +852,11 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
         .map(ToString::to_string);
     let command_specs = match command_specs_from_value(Some(canonical_item)) {
         Ok((verify, receipt)) if !verify.is_empty() || !receipt.is_empty() => {
-            Some(GapRecordCommandSpecs { verify, receipt })
+            Some(GapRecordCommandSpecs {
+                verify,
+                receipt,
+                regeneration: Vec::new(),
+            })
         }
         Ok(_) => None,
         Err(_) => return None,
