@@ -179,15 +179,16 @@ pub fn find_owner_function<'a>(
     file: &Path,
     line: usize,
 ) -> Option<&'a FunctionSummary> {
-    let owner_in = |summary: &'a FileFacts| {
-        summary
-            .functions
-            .iter()
-            .filter(|f| f.start_line <= line && line <= f.end_line)
-            .max_by_key(|f| f.start_line)
-    };
+    find_file_facts(index, file)?
+        .functions
+        .iter()
+        .filter(|f| f.start_line <= line && line <= f.end_line)
+        .max_by_key(|f| f.start_line)
+}
+
+pub(crate) fn find_file_facts<'a>(index: &'a RustIndex, file: &Path) -> Option<&'a FileFacts> {
     if let Some(summary) = index.files.get(file) {
-        return owner_in(summary);
+        return Some(summary);
     }
     // Repo seams normalize their file identity to `/` separators
     // (#3469 family) while index keys keep the producing host's
@@ -200,14 +201,10 @@ pub fn find_owner_function<'a>(
     // one form and attribute the wrong owner, so neither side of the
     // comparison may pass through lossy conversion.
     let target = file.to_str()?.replace('\\', "/");
-    index
-        .files
-        .iter()
-        .find_map(|(key, summary)| {
-            let key_text = key.to_str()?;
-            (key_text.replace('\\', "/") == target).then_some(summary)
-        })
-        .and_then(owner_in)
+    index.files.iter().find_map(|(key, summary)| {
+        let key_text = key.to_str()?;
+        (key_text.replace('\\', "/") == target).then_some(summary)
+    })
 }
 
 /// `/`-separated display form of a path, independent of the host's

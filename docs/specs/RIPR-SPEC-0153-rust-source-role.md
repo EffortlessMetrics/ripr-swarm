@@ -93,6 +93,16 @@ registration; registers executable tests).
 Attribute-driven membership is authoritative; filenames, imports,
 and macro suffixes never classify.
 
+Diff lines without a function owner consume the composer's existing
+`SourceRoleProvenance` (#3695). They are evidence-only when the provenance
+has no unresolved edge and contains a test-required edge, and the child
+has parser-backed facts. Empty, missing, production, or unresolved
+provenance and lexical-fallback children retain production eligibility;
+function-owned lines retain their `FunctionSourceRole` decision. This
+includes field declarations in regular, literal-path, and transitive
+test-required module children. It does not register executable tests or
+change the contextual-role producer.
+
 A `custom_harness` registration grants its file-wide evidence role
 (and the registry's helper demotion and trial-subject derivation)
 only after its target validates against the workspace's Cargo
