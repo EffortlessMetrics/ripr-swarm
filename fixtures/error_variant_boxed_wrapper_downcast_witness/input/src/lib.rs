@@ -7,9 +7,21 @@ pub enum ParseSummaryError {
 }
 
 #[derive(Debug)]
+pub enum ChecksumError {
+    BadChecksum,
+    MalformedPayload,
+}
+
+#[derive(Debug)]
 pub enum LengthError {
     TooLong,
     EmptyPayload,
+}
+
+#[derive(Debug)]
+pub enum RenderError {
+    BadHex,
+    MissingTheme,
 }
 
 #[derive(Debug)]
@@ -42,6 +54,31 @@ pub fn try_parse_summary(raw: &str) -> Result<ParseSummary, ParseSummaryError> {
 
 pub fn parse_summary(raw: &str) -> Result<ParseSummary, Box<dyn Error>> {
     try_parse_summary(raw).map_err(Into::into)
+}
+
+pub fn try_checksum_summary(payload: &str) -> Result<usize, ChecksumError> {
+    if payload.ends_with('?') {
+        return Err(ChecksumError::BadChecksum);
+    }
+    Ok(payload.len())
+}
+
+pub fn checksum_summary(payload: &str) -> Result<usize, Box<dyn Error>> {
+    try_checksum_summary(payload).map_err(Into::into)
+}
+
+pub fn try_render_summary(raw: &str) -> Result<String, RenderError> {
+    if raw.starts_with('z') {
+        return Err(RenderError::BadHex);
+    }
+    if raw.contains('%') {
+        return Err(RenderError::MissingTheme);
+    }
+    Ok(raw.to_ascii_uppercase())
+}
+
+pub fn render_summary(raw: &str) -> Result<String, Box<dyn Error>> {
+    try_render_summary(raw).map_err(Into::into)
 }
 
 pub fn try_length_summary(raw: &str) -> Result<usize, LengthError> {

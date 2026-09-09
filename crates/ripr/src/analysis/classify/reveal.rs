@@ -1,6 +1,7 @@
 use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
 };
+use super::related_tests::body_contains_owner_call;
 use super::rust_string_literals;
 use crate::domain::*;
 
@@ -212,6 +213,37 @@ fn analyze_related_assertions(
     } else {
         None
     };
+    // #3700: a wrapper error seam (`callee(..).map_err(..)`) whose changed
+    // expression carries no parseable variant has no seam-side variant
+    // identity. For such a seam, observation is confirmed only through the
+    // established wrapper-to-variant binding — never through bare identifier
+    // overlap between the seam expression and witness message text (the
+    // token-coincidence over-credit family: a witness message that happens to
+    // name the seam's parameter or `Into::into` used to upgrade the seam to
+    // `exposed` even when the witness pins a sibling variant or an unrelated
+    // enum).
+    let wrapper_binding: Option<Vec<String>> = if error_construction_variant.is_none()
+        && matches!(
+            probe.family,
+            ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+        )
+        && wrapper_error_seam_expression(&[probe.expression.as_str(), analysis_expression])
+    {
+        Some(wrapper_established_variants(
+            &probe.expression,
+            related_tests,
+        ))
+    } else {
+        None
+    };
+    let match_context = RevealMatchContext {
+        probe_tokens: &probe_tokens,
+        effect_literals: &effect_literals,
+        match_arm_variants: &match_arm_variants,
+        error_construction_variant: error_construction_variant.as_deref(),
+        family: &probe.family,
+        wrapper_binding: wrapper_binding.as_deref(),
+    };
     let confirm_required = needs_token_confirmation(&probe.family);
     let mut related = Vec::new();
     let mut strongest = OracleStrength::None;
@@ -239,11 +271,7 @@ fn analyze_related_assertions(
         }
         for assertion in &test.assertions {
             let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
-                &probe_tokens,
-                &effect_literals,
-                &match_arm_variants,
-                error_construction_variant.as_deref(),
-                &probe.family,
+                &match_context,
                 assertion,
                 test.assertions.len(),
             );
@@ -325,6 +353,21 @@ fn error_path_variant_token(expression: &str) -> Option<String> {
     }
 }
 
+/// Probe-side matching inputs shared by every assertion of one probe
+/// (grouped so the per-assertion matcher stays under the argument limit).
+struct RevealMatchContext<'a> {
+    probe_tokens: &'a [String],
+    effect_literals: &'a [String],
+    match_arm_variants: &'a [String],
+    error_construction_variant: Option<&'a str>,
+    family: &'a ProbeFamily,
+    /// `Some` only for #3700 wrapper error seams: the established
+    /// wrapper-to-variant bindings. An empty slice means the wrapper seam has
+    /// no established variant identity, so nothing may confirm observation
+    /// through bare token overlap.
+    wrapper_binding: Option<&'a [String]>,
+}
+
 /// Returns `(matched, has_token_match)`.
 ///
 /// `matched` is true when the assertion should be associated with this probe
@@ -357,16 +400,22 @@ fn error_path_variant_token(expression: &str) -> Option<String> {
 ///   unverified instead of crediting discrimination for an unrelated seam.
 ///
 /// Without `error_construction_variant` (probe has no parseable variant),
-/// falls back to the standard `token_match` behavior.
+/// falls back to the standard `token_match` behavior — except for #3700
+/// wrapper error seams (`context.wrapper_binding` is `Some`), where only a
+/// variant-bound pin confirms observation.
 fn assertion_matches_probe_detail_with_literals(
-    probe_tokens: &[String],
-    effect_literals: &[String],
-    match_arm_variants: &[String],
-    error_construction_variant: Option<&str>,
-    family: &ProbeFamily,
+    context: &RevealMatchContext,
     assertion: &OracleFact,
     assertion_count: usize,
 ) -> (bool, bool) {
+    let RevealMatchContext {
+        probe_tokens,
+        effect_literals,
+        match_arm_variants,
+        error_construction_variant,
+        family,
+        wrapper_binding,
+    } = *context;
     let token_match = probe_tokens
         .iter()
         .any(|token| contains_as_whole_word(&assertion.text, token));
@@ -374,6 +423,18 @@ fn assertion_matches_probe_detail_with_literals(
         && rust_string_literals(&assertion.text)
             .iter()
             .any(|literal| effect_literals.contains(literal));
+    // #3700: a wrapper error seam (`callee(..).map_err(..)`) whose changed
+    // expression carries no parseable variant has no seam-side variant
+    // identity, so bare identifier overlap between the seam expression and the
+    // witness's message text is token coincidence, not identity. Such a seam
+    // is confirmed only through the established wrapper-to-variant binding
+    // (see `wrapper_established_variants`); `None` keeps the legacy signals
+    // for seams whose variant identity is established by other means.
+    let variant_binding_match = wrapper_binding.is_some_and(|established| {
+        established
+            .iter()
+            .any(|variant| contains_as_whole_word(&assertion.text, variant))
+    });
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
@@ -381,6 +442,8 @@ fn assertion_matches_probe_detail_with_literals(
         match_arm_variants
             .iter()
             .any(|v| contains_as_whole_word(&assertion.text, v))
+    } else if wrapper_binding.is_some() {
+        variant_binding_match
     } else {
         token_match || effect_literal_match
     };
@@ -411,14 +474,93 @@ fn assertion_matches_probe_detail(
     assertion_count: usize,
 ) -> (bool, bool) {
     assertion_matches_probe_detail_with_literals(
-        probe_tokens,
-        &[],
-        match_arm_variants,
-        error_construction_variant,
-        family,
+        &RevealMatchContext {
+            probe_tokens,
+            effect_literals: &[],
+            match_arm_variants,
+            error_construction_variant,
+            family,
+            wrapper_binding: None,
+        },
         assertion,
         assertion_count,
     )
+}
+
+/// Whether the changed expression is a wrapper error seam: a `map_err`
+/// conversion over a callee result whose error identity the seam expression
+/// itself does not spell out (no `Err(..)` construction). This is the #3700
+/// boxed-wrapper shape — `try_parse_summary(raw).map_err(Into::into)` — where
+/// the propagated variant lives in the callee, not in the changed line.
+fn wrapper_error_seam_expression(expressions: &[&str]) -> bool {
+    expressions
+        .iter()
+        .any(|expression| expression.contains(".map_err("))
+}
+
+/// The callee name a wrapper seam converts: the identifier (last `::` path
+/// segment) immediately before the expression's first `(`. For
+/// `try_parse_summary(raw).map_err(Into::into)` this is `try_parse_summary`.
+/// Returns `None` when the expression does not open with a name-like callee
+/// call, in which case no wrapper-to-variant binding can be established.
+fn wrapper_callee_name(expression: &str) -> Option<String> {
+    let open = expression.find('(')?;
+    let prefix = expression[..open].trim_end();
+    let name = prefix
+        .rsplit(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == ':'))
+        .next()
+        .unwrap_or("");
+    let name = name.rsplit("::").next().unwrap_or("");
+    if name.is_empty()
+        || !name
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+    {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+/// Establish the wrapper-to-variant binding for a wrapper error seam.
+///
+/// The seam's changed expression carries no parseable variant, so the
+/// propagated variant identity must come from a witness that binds it
+/// compile-checked: a related test that calls the seam's callee (so its
+/// assertion types against the callee's own `Result`) and pins an exact
+/// variant against that result (`matches!(result, Err(V))` — recognized as
+/// `ExactErrorVariant`). `V` must then be a variant of the callee's error
+/// type for the test to compile, which makes it a producer-owned identity for
+/// the seam rather than token coincidence. A witness that only calls the
+/// wrapper (or only names a variant in its message text) establishes nothing:
+/// statically nothing ties its pin to the callee's error type, so sibling and
+/// unrelated-enum pins stay unconfirmed (#3700).
+fn wrapper_established_variants(
+    expression: &str,
+    related_tests: &[(&TestSummary, RelationReason)],
+) -> Vec<String> {
+    let Some(callee) = wrapper_callee_name(expression) else {
+        return Vec::new();
+    };
+    let mut established: Vec<String> = Vec::new();
+    for (test, _) in related_tests {
+        let binds_callee = test.calls.iter().any(|call| call.name == callee)
+            || body_contains_owner_call(&test.body, &callee);
+        if !binds_callee {
+            continue;
+        }
+        for assertion in &test.assertions {
+            if assertion.kind != OracleKind::ExactErrorVariant {
+                continue;
+            }
+            if let Some(variant) = error_path_variant_token(&assertion.text) {
+                established.push(variant);
+            }
+        }
+    }
+    established.sort();
+    established.dedup();
+    established
 }
 
 /// Check whether `text` contains `token` as a whole word — delimited by
@@ -1008,18 +1150,20 @@ mod tests {
 
     // #3700 producer-binding control (POSITIVE half), reduced from
     // fixtures/error_variant_boxed_wrapper_downcast_witness: a wrapper
-    // `map_err(Into::into)` seam carries no parseable variant, so the strong
-    // credit flows through the ExactErrorVariant family match plus a
-    // probe-token confirmation (`into` from `Into::into` occurring in the
-    // witness's fallible `return Err(..)` body).
+    // `map_err(Into::into)` seam has no parseable variant of its own, so the
+    // strong credit flows through the established wrapper-to-variant binding —
+    // the witness calls the seam's callee and pins the exact variant against
+    // it (`matches!(result, Err(ParseSummaryError::MalformedSource))`, a pin
+    // the compiler type-checks against the callee's error type).
     #[test]
-    fn boxed_wrapper_seam_credits_exact_variant_witness_through_fallible_err_body() {
+    fn boxed_wrapper_seam_credits_exact_variant_witness_through_callee_binding() {
         let wrapper_probe = probe(
             ProbeFamily::ErrorPath,
             "try_parse_summary(raw).map_err(Into::into)",
         );
-        let typed_witness = test_with_assertions(
+        let typed_witness = test_with_body_assertions(
             "parse_summary_fails_closed_on_malformed_source",
+            "let result = try_parse_summary(\"@bad;\");",
             vec![oracle(
                 "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
                 OracleKind::ExactErrorVariant,
@@ -1034,26 +1178,28 @@ mod tests {
         assert_eq!(
             discriminate.state,
             StageState::Yes,
-            "the exact-variant witness with a fallible Err body must keep the wrapper seam strong"
+            "the callee-bound exact-variant witness must keep the wrapper seam strong"
         );
         assert_eq!(related[0].oracle_kind, OracleKind::ExactErrorVariant);
         assert_eq!(related[0].oracle_strength, OracleStrength::Strong);
     }
 
-    // #3700 removal-fails control: disabling the exact-variant binding of the
-    // wrapper witness (the witness degrades to the broad `Err(_)` shape, which
-    // the oracle scanner classifies BroadError/Weak instead of
-    // ExactErrorVariant/Strong) must drop the wrapper seam's discriminator to
-    // weak. This is the layer that would regress the fixture back to the
-    // released-0.10.0 miss if the variant-binding producer is removed.
+    // #3700 removal-fails control: removing the wrapper-to-variant binding
+    // from the witness (the witness degrades to the broad `Err(_)` shape,
+    // which the oracle scanner classifies BroadError/Weak instead of
+    // ExactErrorVariant/Strong, so it no longer establishes any variant
+    // identity) must drop the wrapper seam's discriminator to weak. This is
+    // the layer that would regress the fixture back to the released-0.10.0
+    // miss if the variant-binding producer is removed.
     #[test]
     fn boxed_wrapper_seam_loses_strong_credit_when_witness_lacks_variant_binding() {
         let wrapper_probe = probe(
             ProbeFamily::ErrorPath,
             "try_parse_summary(raw).map_err(Into::into)",
         );
-        let broad_witness = test_with_assertions(
+        let broad_witness = test_with_body_assertions(
             "parse_summary_fails_closed_on_malformed_source",
+            "let result = try_parse_summary(\"@bad;\");",
             vec![oracle(
                 "if !matches!(result, Err(_)) {\nreturn Err(\"malformed source should fail closed\".into());\n}",
                 OracleKind::BroadError,
@@ -1102,6 +1248,61 @@ mod tests {
             discriminate.state,
             StageState::Weak,
             "a discarded matches! result must not confirm the wrapper witness"
+        );
+    }
+
+    // #3700 regression guards for the two over-credit shapes this fix closes:
+    // a witness that calls only the WRAPPER and pins a variant can no longer
+    // upgrade the seam — neither when the pin is a sibling of what the callee
+    // produces, nor when it belongs to an unrelated enum. Statically nothing
+    // binds either pin to the callee's error type, so the seam stays weak
+    // instead of crediting token overlap from the witness message text.
+    #[test]
+    fn wrapper_seam_stays_weak_when_witness_pins_variant_without_callee_binding() {
+        let sibling_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_checksum_summary(payload).map_err(Into::into)",
+        );
+        let sibling_witness = test_with_body_assertions(
+            "checksum_summary_pins_wrong_sibling_variant",
+            "let error = checksum_summary(\"payload?\").err().ok_or(\"checksum wrapper must fail closed\")?;",
+            vec![oracle(
+                "if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, sibling_discriminate, _) = reveal_evidence(
+            &sibling_probe,
+            &[(&sibling_witness, RelationReason::DirectOwnerCall)],
+        );
+        assert_eq!(
+            sibling_discriminate.state,
+            StageState::Weak,
+            "a wrapper-only witness pinning a sibling variant must not confirm the seam"
+        );
+
+        let unrelated_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_render_summary(raw).map_err(Into::into)",
+        );
+        let unrelated_witness = test_with_body_assertions(
+            "render_summary_observes_other_enum_variant",
+            "let error = render_summary(\"zhex\").err().ok_or(\"render wrapper must fail closed\")?;",
+            vec![oracle(
+                "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, unrelated_discriminate, _) = reveal_evidence(
+            &unrelated_probe,
+            &[(&unrelated_witness, RelationReason::DirectOwnerCall)],
+        );
+        assert_eq!(
+            unrelated_discriminate.state,
+            StageState::Weak,
+            "a wrapper-only witness pinning an unrelated enum's variant must not confirm the seam"
         );
     }
 
@@ -1659,6 +1860,20 @@ mod tests {
             assertions,
             literals: Vec::new(),
             attrs: Vec::new(),
+        }
+    }
+
+    /// #3700: a witness whose body binds the seam's callee (the shape the
+    /// wrapper-establishment rule keys on), with no captured call facts — the
+    /// lexical fallback in `body_contains_owner_call` must carry the binding.
+    fn test_with_body_assertions(
+        name: &str,
+        body: &str,
+        assertions: Vec<OracleFact>,
+    ) -> TestSummary {
+        TestSummary {
+            body: body.to_string(),
+            ..test_with_assertions(name, assertions)
         }
     }
 

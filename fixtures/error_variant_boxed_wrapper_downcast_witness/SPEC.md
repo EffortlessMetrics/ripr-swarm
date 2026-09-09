@@ -14,15 +14,23 @@ returns `ParseSummaryError::MalformedSource`. Two existing tests observe the
 exact variant:
 
 - a typed sibling test whose name contains the wrapper owner
-  (`parse_summary_fails_closed_on_malformed_source`) and whose fallible body
-  returns `Err` unless `matches!(result, Err(ParseSummaryError::MalformedSource))`;
-- a boxed downcast witness (`parse_summary_boxed_variant_propagates_malformed_source`)
-  that extracts the error with `.err().ok_or(...)?` and returns `Err` unless
+  (`parse_summary_fails_closed_on_malformed_source`), calls the callee, and
+  whose fallible body returns `Err` unless
+  `matches!(result, Err(ParseSummaryError::MalformedSource))`;
+- a boxed downcast witness
+  (`parse_summary_boxed_variant_propagates_malformed_source`) that extracts
+  the error with `.err().ok_or(...)?` and returns `Err` unless
   `matches!(error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource))`.
 
-Three companion wrappers pin the fail-closed side, each with its own
-observing test:
+Five companion wrappers pin the fail-closed side, each with its own observing
+test:
 
+- `checksum_summary` observed by a downcast witness that pins
+  `ChecksumError::MalformedPayload` — a sibling the callee never produces
+  (wrong sibling variant, no callee binding);
+- `render_summary` observed by a downcast witness that pins
+  `ParseSummaryError::MalformedSource` — a variant of an unrelated enum
+  (unrelated owner, no callee binding);
 - `length_summary` observed only through `assert!(result.is_err())`
   (broad oracle, no variant pin);
 - `glyph_summary` whose changed seam destroys typed identity with
@@ -56,12 +64,21 @@ The `map_err(Into::into)` wrapper seam classifies `exposed` with
 `exact_error_variant` / `strong`, crediting the boxed downcast witness as a
 related discriminator (`direct_owner_call`, `exact_value` / `strong`) and the
 typed sibling test (`owner_named_test`, `exact_error_variant` / `strong`).
-This is the reduced producer shape of #3700: released 0.10.0 reported an
-actionable error-variant gap for this seam despite the existing downcast
-witness.
+The credit is variant-bound: the typed witness calls the seam's callee and
+pins `Err(ParseSummaryError::MalformedSource)` against it — a pin the compiler
+type-checks against the callee's error type — which establishes the
+wrapper-to-variant binding. Released 0.10.0 reported an actionable
+error-variant gap for this seam despite the existing downcast witness.
 
-The fail-closed companions stay `weakly_exposed`:
+Every fail-closed companion stays `weakly_exposed`:
 
+- the wrong-sibling downcast witness (pins `ChecksumError::MalformedPayload`
+  without calling the callee) no longer confirms the seam — before the #3700
+  wrapper gate this shape classified `exposed` through token overlap between
+  the seam expression and the witness message text;
+- the unrelated-enum downcast witness (pins
+  `ParseSummaryError::MalformedSource` against the `render_summary` wrapper)
+  no longer confirms the seam — same pre-fix over-credit;
 - the broad `is_err()`-only observer reports `broad_error` / `weak` with the
   exact error variant discriminator still missing;
 - the stringified-conversion seam loses the complete propagation witness, so
@@ -74,14 +91,13 @@ The fail-closed companions stay `weakly_exposed`:
 
 - Report the `map_err(Into::into)` wrapper seam as an actionable error-variant
   gap while the downcast witness and the typed sibling test exist.
+- Upgrade a wrapper seam whose expression carries no parseable variant to
+  `exposed` on token overlap alone: without an established variant identity,
+  witness text that happens to name the seam's parameters, its callee, or
+  `Into::into` is token coincidence, not discrimination.
+- Credit a downcast witness that pins a DIFFERENT variant of the wrapper's
+  inner error, or a variant of an unrelated enum, because neither pin is
+  bound to the callee's error type.
 - Credit the broad `is_err()`-only observer, the stringified conversion, or
   the ignored `matches!` result as an exact error variant discriminator.
 - Use mutation-runtime outcome vocabulary reserved for real mutation execution.
-- Credit a downcast witness whose `matches!` pins a DIFFERENT variant of the
-  wrapper's inner error, or a variant of an unrelated enum: as of the current
-  producer these shapes can still classify `exposed` through probe-token
-  overlap in the witness message text (the wrapper seam expression carries no
-  parseable variant, so the RIPR-SPEC-0106 Part B variant guard cannot gate
-  them). That gap is recorded on #3700; this fixture deliberately does not
-  bless it with goldens until the producer gates variant identity for wrapper
-  seams.

@@ -166,22 +166,26 @@ with a `return Err` on mismatch):
 
 - Changed seam: the wrapper conversion line
   `try_parse_summary(raw).map_err(Into::into)` (and companion wrapper seams).
-- Witnesses: a typed sibling test whose name contains the wrapper owner and
-  whose fallible body pins `Err(ParseSummaryError::MalformedSource)` via
+- Witnesses: a typed sibling test whose name contains the wrapper owner, calls
+  the callee, and pins `Err(ParseSummaryError::MalformedSource)` via
   `matches!`, plus a boxed downcast witness extracting the error with
   `.err().ok_or(...)?`.
 - Expected: the wrapper `error_path` seam → `exposed` with
   `exact_error_variant` / `strong`; the downcast witness is credited as a
-  related discriminator.
-- Fail-closed companions in the same input stay `weakly_exposed`: a broad
-  `is_err()`-only observer, a stringified conversion
-  (`map_err(|error| error.to_string().into())`), and an ignored
-  `matches!` result.
-- Known gap recorded on #3700 (deliberately not blessed by this fixture): a
-  downcast witness pinning a sibling variant or an unrelated enum variant can
-  still classify `exposed` while the wrapper seam expression carries no
-  parseable variant token, because the Part B variant guard has no variant
-  identity to match on for wrapper seams.
+  related discriminator. The credit is variant-bound: wrapper seams whose
+  changed expression carries no parseable variant are confirmed only through
+  the established wrapper-to-variant binding (a witness that calls the seam's
+  callee and pins an exact variant against it — compile-checked against the
+  callee's error type). Bare identifier overlap between the seam expression
+  and witness message text is token coincidence and never confirms (#3700
+  wrapper gate in `classify/reveal.rs`).
+- Fail-closed companions in the same input stay `weakly_exposed`: a
+  wrong-sibling downcast witness (pins a variant the callee never produces),
+  an unrelated-enum downcast witness, a broad `is_err()`-only observer, a
+  stringified conversion (`map_err(|error| error.to_string().into())`), and
+  an ignored `matches!` result. The wrong-sibling and unrelated-enum shapes
+  classified `exposed` through token overlap before the #3700 wrapper gate;
+  the fixture now pins them as corrected.
 
 ## Unit Tests
 
