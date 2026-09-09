@@ -70,6 +70,12 @@ type-checks against the callee's error type — which establishes the
 wrapper-to-variant binding. Released 0.10.0 reported an actionable
 error-variant gap for this seam despite the existing downcast witness.
 
+Binding authority (acknowledged approximation, fail-closed direction): the
+establishment reads captured parser call facts where the witness has them;
+the lexical body fallback applies only to witnesses without captured call
+facts, and both paths additionally require the exact-variant pin, so the
+rule can only under-credit, never over-credit.
+
 Every fail-closed companion stays `weakly_exposed`:
 
 - the wrong-sibling downcast witness (pins `ChecksumError::MalformedPayload`

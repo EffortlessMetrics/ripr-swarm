@@ -498,25 +498,92 @@ fn wrapper_error_seam_expression(expressions: &[&str]) -> bool {
         .any(|expression| expression.contains(".map_err("))
 }
 
-/// The callee name a wrapper seam converts: the identifier (last `::` path
-/// segment) immediately before the expression's first `(`. For
-/// `try_parse_summary(raw).map_err(Into::into)` this is `try_parse_summary`.
-/// Returns `None` when the expression does not open with a name-like callee
-/// call, in which case no wrapper-to-variant binding can be established.
+/// The callee name a wrapper seam converts: the name-like identifier
+/// (`[A-Za-z_][A-Za-z0-9_]*`) whose call group produces the value that the
+/// `map_err` conversion consumes — the LAST callee in the chain.
+///
+/// - A leading `return ` is stripped first, so
+///   `return try_parse_summary(raw).map_err(Into::into)` binds
+///   `try_parse_summary`.
+/// - For a receiver chain (`self.client().try_parse_summary(raw)`) the
+///   outermost call of the chain is the converted callee, so the scan keeps
+///   the identifier that opens a call group at paren depth zero closest to
+///   the `.map_err(` suffix — `try_parse_summary`, not the `client` hop.
+/// - A generic argument list between the name and the paren
+///   (`try_parse_summary::<T>(..)`) is skipped.
+/// - Value expressions without a call group before `.map_err(` —
+///   `value.map_err(..)`, `42.map_err(..)` — establish no callee.
+///
+/// Returns `None` when no name-like callee can be extracted, in which case no
+/// wrapper-to-variant binding can be established.
 fn wrapper_callee_name(expression: &str) -> Option<String> {
-    let open = expression.find('(')?;
-    let prefix = expression[..open].trim_end();
+    let trimmed = expression.trim();
+    let trimmed = trimmed
+        .strip_prefix("return ")
+        .unwrap_or(trimmed)
+        .trim_start();
+    let map_position = trimmed.find(".map_err(")?;
+    let chain = trimmed[..map_position].trim_end();
+    if chain.is_empty() {
+        return None;
+    }
+    let bytes = chain.as_bytes();
+    let mut depth = 0usize;
+    let mut candidate: Option<String> = None;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' => {
+                if depth == 0 {
+                    candidate = wrapper_callee_identifier(chain, index);
+                }
+                depth += 1;
+            }
+            b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    candidate
+}
+
+/// The name-like identifier immediately before the call opener at `open`,
+/// skipping a balanced generic argument list (`::<T, U>` / `<T>`) that sits
+/// between the name and the paren. Rejects non-identifier receivers such as
+/// `42` or closing delimiters.
+fn wrapper_callee_identifier(chain: &str, open: usize) -> Option<String> {
+    let mut end = open;
+    if end > 0 && chain.as_bytes()[end - 1] == b'>' {
+        let mut angle_depth = 0usize;
+        let mut scan = end;
+        loop {
+            scan = scan.checked_sub(1)?;
+            match chain.as_bytes()[scan] {
+                b'>' => angle_depth += 1,
+                b'<' => {
+                    angle_depth = angle_depth.checked_sub(1)?;
+                    if angle_depth == 0 {
+                        end = scan;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    // A turbofish (`name::<T>(..)`) leaves a `::` separator between the name
+    // and the generic opener; read the identifier run from the prefix that
+    // ends before it.
+    let prefix = chain[..end].strip_suffix("::").unwrap_or(&chain[..end]);
     let name = prefix
-        .rsplit(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == ':'))
-        .next()
-        .unwrap_or("");
-    let name = name.rsplit("::").next().unwrap_or("");
-    if name.is_empty()
-        || !name
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
-    {
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| ch.is_ascii_alphanumeric() || *ch == '_')
+        .map(|(position, _)| position)
+        .last()
+        .map(|start| &prefix[start..])?;
+    let first = name.chars().next()?;
+    if !first.is_ascii_alphabetic() && first != '_' {
         return None;
     }
     Some(name.to_string())
@@ -535,6 +602,15 @@ fn wrapper_callee_name(expression: &str) -> Option<String> {
 /// wrapper (or only names a variant in its message text) establishes nothing:
 /// statically nothing ties its pin to the callee's error type, so sibling and
 /// unrelated-enum pins stay unconfirmed (#3700).
+///
+/// Binding authority: captured `calls` facts are the authority. A witness
+/// with captured calls that never name the callee does not bind it — the
+/// lexical fallback must not resurrect a refuted binding. The fallback
+/// (`body_contains_owner_call`, name-only) applies only when the witness has
+/// no captured call facts at all; it is the acknowledged weaker signal and is
+/// compensated fail-closed because an established variant must still be an
+/// exact `Err(..)` pin, which a witness calling a different type's same-named
+/// method could not compile against its own pin.
 fn wrapper_established_variants(
     expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
@@ -544,8 +620,17 @@ fn wrapper_established_variants(
     };
     let mut established: Vec<String> = Vec::new();
     for (test, _) in related_tests {
-        let binds_callee = test.calls.iter().any(|call| call.name == callee)
-            || body_contains_owner_call(&test.body, &callee);
+        // Residual risk, documented: `CallFact` carries {line, name, text}
+        // with no structured receiver or module field, so the captured-facts
+        // authority matches on the terminal name. A same-named method on an
+        // unrelated receiver could still bind; the binding stays
+        // under-credit-biased because the established variant must also be
+        // an exact-variant pin (below).
+        let binds_callee = if test.calls.is_empty() {
+            body_contains_owner_call(&test.body, &callee)
+        } else {
+            test.calls.iter().any(|call| call.name == callee)
+        };
         if !binds_callee {
             continue;
         }
@@ -1306,6 +1391,86 @@ mod tests {
         );
     }
 
+    // #3700 round-1 review: callee extraction must bind the LAST callee of
+    // the chain (the one whose result the map_err conversion consumes), strip
+    // a `return ` prefix, skip a generic argument list, and refuse value
+    // receivers that name no callee at all.
+    #[test]
+    fn wrapper_callee_extraction_binds_last_chain_callee_and_rejects_values() {
+        let extraction = |expression: &str| {
+            wrapper_callee_name(expression)
+                .as_deref()
+                .map(str::to_string)
+        };
+        assert_eq!(
+            extraction("try_parse_summary(raw).map_err(Into::into)"),
+            Some("try_parse_summary".to_string())
+        );
+        assert_eq!(
+            extraction("return try_parse_summary(raw).map_err(Into::into)"),
+            Some("try_parse_summary".to_string()),
+            "a `return ` prefix must be stripped before callee extraction"
+        );
+        assert_eq!(
+            extraction("self.client().try_parse_summary(raw).map_err(Into::into)"),
+            Some("try_parse_summary".to_string()),
+            "a receiver chain must bind the last callee, not the receiver hop"
+        );
+        assert_eq!(
+            extraction("ParseSummary::try_parse_summary(raw).map_err(Into::into)"),
+            Some("try_parse_summary".to_string()),
+            "a module-qualified callee binds by its terminal segment"
+        );
+        assert_eq!(
+            extraction("try_parse_summary::<T>(raw).map_err(Into::into)"),
+            Some("try_parse_summary".to_string()),
+            "a generic argument list between name and paren must be skipped"
+        );
+        assert_eq!(
+            extraction("value.map_err(Into::into)"),
+            None,
+            "a value receiver with no call group establishes no callee"
+        );
+        assert_eq!(
+            extraction("42.map_err(Into::into)"),
+            None,
+            "a numeric receiver establishes no callee"
+        );
+    }
+
+    // #3700 round-1 review: a witness whose captured call facts are present
+    // and never name the callee must not bind it through the lexical
+    // fallback — the fallback exists only for witnesses without captured
+    // call facts.
+    #[test]
+    fn wrapper_binding_does_not_resurrect_refuted_callee_binding_from_body_text() {
+        let wrapper_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_parse_summary(raw).map_err(Into::into)",
+        );
+        let mut refuted_witness = test_with_body_assertions(
+            "parse_summary_fails_closed_on_malformed_source",
+            "let result = try_parse_summary(\"@bad;\");",
+            vec![oracle(
+                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        // Captured facts exist and name only the wrapper: the callee is
+        // refuted even though the body text still mentions it.
+        refuted_witness.calls = vec![call_fact("parse_summary", "parse_summary(\"@bad;\")")];
+        let (_, discriminate, _) = reveal_evidence(
+            &wrapper_probe,
+            &[(&refuted_witness, RelationReason::OwnerNamedTest)],
+        );
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "captured calls naming only the wrapper must refute the callee binding"
+        );
+    }
+
     // RIPR-SPEC-0106 Part B extended to direct value families: a
     // `return_value` probe on an `Err(...)` construction must not let a
     // sibling-variant ExactErrorVariant oracle confirm observation through
@@ -1874,6 +2039,14 @@ mod tests {
         TestSummary {
             body: body.to_string(),
             ..test_with_assertions(name, assertions)
+        }
+    }
+
+    fn call_fact(name: &str, text: &str) -> crate::analysis::rust_index::CallFact {
+        crate::analysis::rust_index::CallFact {
+            line: 1,
+            name: name.to_string(),
+            text: text.to_string(),
         }
     }
 

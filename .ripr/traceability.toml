@@ -6342,10 +6342,17 @@ tests = [
   "crates/ripr/src/analysis/extract/oracles/scan.rs::spec_0106_scan_tests::multiple_bindings_separated_by_braces_all_collected",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::sibling_variant_assertion_does_not_match_too_large_probe",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::exact_variant_assertion_matches_matching_probe",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::boxed_wrapper_seam_credits_exact_variant_witness_through_callee_binding",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::boxed_wrapper_seam_loses_strong_credit_when_witness_lacks_variant_binding",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::boxed_wrapper_seam_ignores_witness_with_discarded_matches_result",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_seam_stays_weak_when_witness_pins_variant_without_callee_binding",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_callee_extraction_binds_last_chain_callee_and_rejects_values",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_binding_does_not_resurrect_refuted_callee_binding_from_body_text",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/error_variant_boxed_wrapper_downcast_witness",
+  "fixtures/error_variant_boxed_wrapper_fail_closed",
   "fixtures/unwrap_err_variant_positive",
   "fixtures/unwrap_err_variant_single_line",
   "fixtures/unwrap_err_sibling_variant",
@@ -6360,9 +6367,16 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0106-error-seam-unwrap-err-variant-binding.md",
+  "fixtures/evidence-promotion-honesty-corpus/corpus.json",
   "fixtures/error_variant_boxed_wrapper_downcast_witness/expected/check.json",
   "fixtures/error_variant_boxed_wrapper_downcast_witness/expected/human.txt",
+  "fixtures/error_variant_boxed_wrapper_fail_closed/expected/check.json",
+  "fixtures/error_variant_boxed_wrapper_fail_closed/expected/human.txt",
 ]
+# Corpus pins for the #3700 wrapper gate (RIPR-SPEC-0108 meta-gate):
+# rust_boxed_wrapper_wrong_sibling_no_credit,
+# rust_boxed_wrapper_unrelated_enum_no_credit,
+# rust_boxed_wrapper_downcast_positive_control.
 metrics = [
   "unwrap_err_variant_grip_raise",
   "sibling_variant_no_credit",

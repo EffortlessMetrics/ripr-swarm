@@ -185,7 +185,12 @@ with a `return Err` on mismatch):
   stringified conversion (`map_err(|error| error.to_string().into())`), and
   an ignored `matches!` result. The wrong-sibling and unrelated-enum shapes
   classified `exposed` through token overlap before the #3700 wrapper gate;
-  the fixture now pins them as corrected.
+  the fixture now pins them as corrected, and
+  `fixtures/error_variant_boxed_wrapper_fail_closed` is the all-weak corpus
+  source pinning both shapes under RIPR-SPEC-0108
+  (`rust_boxed_wrapper_wrong_sibling_no_credit`,
+  `rust_boxed_wrapper_unrelated_enum_no_credit`,
+  `rust_boxed_wrapper_downcast_positive_control`).
 
 ## Unit Tests
 

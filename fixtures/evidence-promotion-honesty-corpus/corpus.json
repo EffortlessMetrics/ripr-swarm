@@ -1199,6 +1199,42 @@
         { "type": "maximum_class", "class": "no_static_path" },
         { "type": "must_not_promote" }
       ]
+    },
+    {
+      "id": "rust_boxed_wrapper_wrong_sibling_no_credit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_variant_boxed_wrapper_fail_closed",
+      "vector": "boxed_wrapper_witness_pins_sibling_variant_without_callee_binding",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_boxed_wrapper_unrelated_enum_no_credit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_variant_boxed_wrapper_fail_closed",
+      "vector": "boxed_wrapper_witness_pins_unrelated_enum_variant",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_boxed_wrapper_downcast_positive_control",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_variant_boxed_wrapper_downcast_witness",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "must_promote" }
+      ]
     }
   ]
 }
