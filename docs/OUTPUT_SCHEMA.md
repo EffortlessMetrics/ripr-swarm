@@ -11988,6 +11988,12 @@ run mutation testing, refresh LSP state, or configure CI blocking.
 The generated command list also captures the diff-scoped producer outcome at
 `target/ripr/workflow/analysis-outcome.json`; this is a required input to the
 review-summary projection and is distinct from repo-exposure snapshots.
+When a step has a producer-owned typed route, its command object also carries
+a `command_spec` — the versioned, direct-execution-safe form (#1617) whose
+`command_id`, role, argv, policies, and expected writes bind machine
+execution; the `command` string remains the human display. Steps without a
+typed route are legacy-string-only: copyable, but never advertised as
+direct-executable.
 
 JSON shape:
 
@@ -12033,6 +12039,33 @@ JSON shape:
       "artifact": "target/ripr/workflow/before.repo-exposure.json",
       "purpose": "Capture static seam evidence before editing tests.",
       "command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json"
+    },
+    {
+      "step": "agent_packet",
+      "artifact": "target/ripr/workflow/agent-packet.json",
+      "purpose": "Expand the selected seam into a bounded agent packet.",
+      "command": "ripr agent packet --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-packet.json",
+      "command_spec": {
+        "schema_version": "1",
+        "command_id": "ripr:agent:packet",
+        "role": "regeneration",
+        "execution_mode": "shell_required",
+        "program": "ripr",
+        "args": ["agent", "packet", "--root", ".", "--seam-id", "67fc764ba37d77bd", "--json"],
+        "working_directory": ".",
+        "environment": "clean",
+        "stdin": "null",
+        "timeout_ms": 120000,
+        "cancellation": "allowed",
+        "network": "forbidden",
+        "expected_result_parser": "declared_json",
+        "expected_exit_codes": [0],
+        "expected_writes": ["target/ripr/workflow/agent-packet.json"],
+        "cost_class": "unknown",
+        "platforms": ["linux", "macos", "windows"],
+        "human_display": "ripr agent packet --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-packet.json",
+        "authority_boundary": "regeneration_route_only"
+      }
     }
   ],
   "missing_inputs": [
