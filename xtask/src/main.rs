@@ -6,6 +6,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use ra_ap_syntax::ast::{self, HasAttrs, HasName};
+use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxKind};
 use serde_json::Value;
 
 use ripr::output::receipt_lifecycle::{
@@ -6883,6 +6885,272 @@ pub(crate) fn collect_test_oracle_tests_from_roots(
 }
 
 fn test_oracle_tests_in_text(path: &Path, text: &str) -> Vec<TestOracleTest> {
+    if let Some(tests) = test_oracle_tests_via_syntax(path, text) {
+        return tests;
+    }
+    test_oracle_tests_in_text_legacy(path, text)
+}
+
+/// Test selection from the real syntax tree: every non-nested `fn` carrying a
+/// test attribute gets its exact node range, so braces inside strings or
+/// comments can neither truncate a body nor swallow following tests (#3687).
+/// Returns `None` when the file does not parse cleanly; the caller then keeps
+/// the legacy line scan, preserving today's behavior on malformed input.
+fn test_oracle_tests_via_syntax(path: &Path, text: &str) -> Option<Vec<TestOracleTest>> {
+    let parse = SourceFile::parse(text, Edition::CURRENT);
+    if !parse.errors().is_empty() {
+        return None;
+    }
+    let lines = text.lines().collect::<Vec<_>>();
+    let line_starts = test_oracle_line_starts(text);
+    // 1-based line number for a byte offset (matches the legacy `line` fields).
+    let line_no = |offset: usize| line_starts.partition_point(|start| *start <= offset);
+    let mut tests = Vec::new();
+    for node in parse.tree().syntax().descendants() {
+        let Some(func) = ast::Fn::cast(node) else {
+            continue;
+        };
+        // The legacy scan jumps over test bodies, so a `#[test]` fn nested
+        // inside another fn body was never selected; keep that reach.
+        if func
+            .syntax()
+            .ancestors()
+            .any(|ancestor| ancestor.kind() == SyntaxKind::FN && ancestor != *func.syntax())
+        {
+            continue;
+        }
+        let Some(attr) = func
+            .attrs()
+            .find(|attr| is_test_attribute(&attr.syntax().text().to_string().replace(' ', "")))
+        else {
+            continue;
+        };
+        let Some(name) = func.name().map(|name| name.text().to_string()) else {
+            continue;
+        };
+        let attr_line = line_no(usize::from(attr.syntax().text_range().start()));
+        let fn_line = func
+            .fn_token()
+            .map(|token| line_no(usize::from(token.text_range().start())))
+            .unwrap_or_else(|| line_no(usize::from(func.syntax().text_range().start())));
+        let end_line = line_no(usize::from(func.syntax().text_range().end()).saturating_sub(1));
+        if fn_line == 0 || end_line > lines.len() || fn_line > end_line {
+            continue;
+        }
+        let body = lines[fn_line - 1..=end_line - 1].join("\n");
+        tests.push(test_oracle_test_for_range(
+            path, name, attr_line, fn_line, &body,
+        ));
+    }
+    // Real tests generated inside macro invocations (`proptest!`,
+    // `test_case!`, ...) never surface as syntax-tree `fn` items: their
+    // bodies live inside opaque token trees. The legacy line scan saw them,
+    // so recover them with a token-level scan that keeps the string/comment
+    // blindness (fixture-embedded `#[test]` spellings stay invisible).
+    let mut seen: Vec<usize> = tests.iter().map(|test| test.line).collect();
+    for node in parse.tree().syntax().descendants() {
+        let Some(macro_call) = ast::MacroCall::cast(node) else {
+            continue;
+        };
+        for recovered in test_oracle_tests_in_macro_tree(text, &line_starts, &macro_call) {
+            if !seen.contains(&recovered.line) {
+                seen.push(recovered.line);
+                tests.push(test_oracle_test_for_range(
+                    path,
+                    recovered.name,
+                    recovered.line,
+                    recovered.body_line,
+                    &recovered.body,
+                ));
+            }
+        }
+    }
+    tests.sort_by(|left, right| left.line.cmp(&right.line).then(left.name.cmp(&right.name)));
+    Some(tests)
+}
+
+/// A test recovered from inside a macro token tree, with 1-based lines.
+struct MacroNestedTest {
+    name: String,
+    line: usize,
+    body_line: usize,
+    body: String,
+}
+
+/// `#[test] fn` items declared inside one macro invocation's token tree.
+/// Token-level matching keeps fixture-embedded spellings (string tokens)
+/// invisible. Trees nested in another macro tree or in a fn body are skipped
+/// to preserve the legacy selection reach.
+fn test_oracle_tests_in_macro_tree(
+    text: &str,
+    line_starts: &[usize],
+    macro_call: &ast::MacroCall,
+) -> Vec<MacroNestedTest> {
+    // Skip trees nested in another macro tree or in a fn body (legacy reach).
+    if macro_call
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .any(|ancestor| matches!(ancestor.kind(), SyntaxKind::TOKEN_TREE | SyntaxKind::FN))
+    {
+        return Vec::new();
+    }
+    let Some(tree) = macro_call.token_tree() else {
+        return Vec::new();
+    };
+    let lines = text.lines().collect::<Vec<_>>();
+    let line_no = |offset: usize| line_starts.partition_point(|start| *start <= offset);
+    let tokens = tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| {
+            !matches!(
+                token.kind(),
+                SyntaxKind::WHITESPACE
+                    | SyntaxKind::COMMENT
+                    | SyntaxKind::STRING
+                    | SyntaxKind::BYTE_STRING
+                    | SyntaxKind::C_STRING
+                    | SyntaxKind::CHAR
+                    | SyntaxKind::BYTE
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut found = Vec::new();
+    let mut index = 0usize;
+    while index < tokens.len() {
+        // Look for `#` `[` ... `]` with a test-attribute spelling.
+        if tokens[index].text() != "#"
+            || tokens.get(index + 1).is_none_or(|next| next.text() != "[")
+        {
+            index += 1;
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut close = None;
+        for (offset, token) in tokens[index..].iter().enumerate() {
+            if token.text() == "[" {
+                depth += 1;
+            } else if token.text() == "]" {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(index + offset);
+                    break;
+                }
+            }
+        }
+        let Some(close) = close else {
+            index += 1;
+            continue;
+        };
+        let spelling = tokens[index..=close]
+            .iter()
+            .map(|token| token.text().to_string())
+            .collect::<String>()
+            .replace(' ', "");
+        let mut cursor = close + 1;
+        if !is_test_attribute(&spelling) {
+            index = cursor;
+            continue;
+        }
+        // Expect `fn` NAME, then a braced body.
+        if cursor >= tokens.len() || tokens[cursor].text() != "fn" {
+            index = cursor;
+            continue;
+        }
+        cursor += 1;
+        if cursor >= tokens.len() {
+            break;
+        }
+        let name = tokens[cursor].text().to_string();
+        cursor += 1;
+        // Skip the parameter list.
+        if cursor < tokens.len() && tokens[cursor].text() == "(" {
+            let mut parens = 0usize;
+            while cursor < tokens.len() {
+                if tokens[cursor].text() == "(" {
+                    parens += 1;
+                } else if tokens[cursor].text() == ")" {
+                    parens -= 1;
+                    if parens == 0 {
+                        cursor += 1;
+                        break;
+                    }
+                }
+                cursor += 1;
+            }
+        }
+        if cursor >= tokens.len() || tokens[cursor].text() != "{" {
+            index = cursor;
+            continue;
+        }
+        let mut braces = 0usize;
+        let mut end_cursor = None;
+        while cursor < tokens.len() {
+            if tokens[cursor].text() == "{" {
+                braces += 1;
+            } else if tokens[cursor].text() == "}" {
+                braces -= 1;
+                if braces == 0 {
+                    end_cursor = Some(cursor);
+                    break;
+                }
+            }
+            cursor += 1;
+        }
+        let Some(end_cursor) = end_cursor else {
+            index = cursor;
+            continue;
+        };
+        let attr_line = line_no(usize::from(tokens[index].text_range().start()));
+        let fn_line = line_no(usize::from(tokens[close + 1].text_range().start()));
+        let end_line = line_no(usize::from(tokens[end_cursor].text_range().start()));
+        if fn_line == 0 || end_line > lines.len() || fn_line > end_line {
+            index = end_cursor + 1;
+            continue;
+        }
+        found.push(MacroNestedTest {
+            name,
+            line: attr_line,
+            body_line: fn_line,
+            body: lines[fn_line - 1..=end_line - 1].join("\n"),
+        });
+        index = end_cursor + 1;
+    }
+    found
+}
+
+/// Classify one detected test body and build its record. Shared by the syntax
+/// and legacy selection paths so both observe identical evidence semantics.
+fn test_oracle_test_for_range(
+    path: &Path,
+    name: String,
+    attr_line: usize,
+    fn_line: usize,
+    body: &str,
+) -> TestOracleTest {
+    let (code_lines, _) = test_oracle_code_lines(body);
+    let asserted_matches = test_oracle_asserted_matches_ranges(body);
+    let code_refs = code_lines.iter().map(String::as_str).collect::<Vec<_>>();
+    let observations = test_oracle_observations(&code_refs, fn_line, &asserted_matches);
+    let class = observations
+        .iter()
+        .map(|observation| observation.class)
+        .max_by_key(|class| class.rank())
+        .unwrap_or(TestOracleClass::Smoke);
+    TestOracleTest {
+        path: path.to_path_buf(),
+        name,
+        line: attr_line,
+        body_line: fn_line,
+        body: body.to_string(),
+        class,
+        observations,
+    }
+}
+
+fn test_oracle_tests_in_text_legacy(path: &Path, text: &str) -> Vec<TestOracleTest> {
     let lines = text.lines().collect::<Vec<_>>();
     let mut tests = Vec::new();
     let mut pending_test_attr_line = None;
@@ -6903,22 +7171,27 @@ fn test_oracle_tests_in_text(path: &Path, text: &str) -> Vec<TestOracleTest> {
             }
 
             if let Some(name) = test_fn_name(trimmed) {
-                let end = test_function_end(&lines, index);
-                let observations = test_oracle_observations(&lines[index..=end], index + 1);
-                let class = observations
-                    .iter()
-                    .map(|observation| observation.class)
-                    .max_by_key(|class| class.rank())
-                    .unwrap_or(TestOracleClass::Smoke);
-                tests.push(TestOracleTest {
-                    path: path.to_path_buf(),
+                let mut end = test_function_end(&lines, index);
+                // A brace inside a string or comment can truncate the
+                // brace-counted boundary, leaving a body that does not parse.
+                // Extend forward until the slice parses so a valid test never
+                // reaches the unfiltered fallback through truncation. Stop at
+                // the next test attribute or EOF: crossing into the next test
+                // would misattribute its observations.
+                while end + 1 < lines.len()
+                    && !is_test_attribute(lines[end + 1].trim())
+                    && !test_oracle_body_parses(&lines[index..=end].join("\n"))
+                {
+                    end += 1;
+                }
+                let body = lines[index..=end].join("\n");
+                tests.push(test_oracle_test_for_range(
+                    path,
                     name,
-                    line: attr_line,
-                    body_line: index + 1,
-                    body: lines[index..=end].join("\n"),
-                    class,
-                    observations,
-                });
+                    attr_line,
+                    index + 1,
+                    &body,
+                ));
                 pending_test_attr_line = None;
                 index = end + 1;
                 continue;
@@ -6979,9 +7252,160 @@ fn test_function_end(lines: &[&str], start: usize) -> usize {
     lines.len().saturating_sub(1)
 }
 
-fn test_oracle_observations(lines: &[&str], first_line: usize) -> Vec<TestOracleObservation> {
+/// Byte offset where each body line starts; the entry count always equals the
+/// line count, so it doubles as the line denominator.
+fn test_oracle_line_starts(body: &str) -> Vec<usize> {
+    let mut line_starts = vec![0usize];
+    for (offset, _) in body.match_indices('\n') {
+        line_starts.push(offset + 1);
+    }
+    line_starts
+}
+
+fn test_oracle_body_parses(body: &str) -> bool {
+    SourceFile::parse(body, Edition::CURRENT)
+        .errors()
+        .is_empty()
+}
+
+/// Code text of each test-body line with strings, character/byte literals, and
+/// comments removed through the real lexer (`ra_ap_syntax`), so
+/// assertion-shaped inert text can never establish oracle evidence (#3687).
+///
+/// The returned vector has exactly one entry per input line, preserving line
+/// identity for observation reporting, alongside whether the body parsed. An
+/// unparseable body falls back to the verbatim lines (today's behavior): for
+/// this advisory report, keeping the prior over-credit on malformed input is
+/// safer than silently dropping every observation to Smoke. The caller extends
+/// brace-truncated boundaries before this runs, so the fallback should only
+/// trigger on genuinely malformed input.
+fn test_oracle_code_lines(body: &str) -> (Vec<String>, bool) {
+    let parse = SourceFile::parse(body, Edition::CURRENT);
+    if !parse.errors().is_empty() {
+        return (body.lines().map(str::to_string).collect(), false);
+    }
+    let line_starts = test_oracle_line_starts(body);
+    let mut code_lines = vec![String::new(); line_starts.len()];
+    let line_of = |offset: usize| line_starts.partition_point(|start| *start <= offset) - 1;
+    for token in parse
+        .tree()
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+    {
+        match token.kind() {
+            SyntaxKind::COMMENT
+            | SyntaxKind::STRING
+            | SyntaxKind::BYTE_STRING
+            | SyntaxKind::C_STRING
+            | SyntaxKind::CHAR
+            | SyntaxKind::BYTE => continue,
+            _ => {}
+        }
+        let start_line = line_of(usize::from(token.text_range().start()));
+        for (offset, part) in token.text().split('\n').enumerate() {
+            if start_line + offset < code_lines.len() {
+                code_lines[start_line + offset].push_str(part);
+            }
+        }
+    }
+    (code_lines, true)
+}
+
+/// Body-relative 0-based line ranges of `assert!(...)` invocations whose
+/// condition evaluates a `matches!(...)` macro call (#3687).
+///
+/// Association is token-range based, not line co-occurrence: a discarded
+/// `matches!` sharing a line with an unrelated `assert!` earns nothing, a
+/// `matches!` mentioned only in an assertion message is invisible (message
+/// strings are filtered tokens), and multi-line `assert!(matches!(..))` forms
+/// credit the macro's first line. A `matches!` nested deeper inside the
+/// asserted expression (e.g. behind a block that discards it) still credits:
+/// token ranges cannot see statement position, so this errs toward credit
+/// only for text the asserted condition actually contains.
+fn test_oracle_asserted_matches_ranges(body: &str) -> Vec<(usize, usize)> {
+    let parse = SourceFile::parse(body, Edition::CURRENT);
+    if !parse.errors().is_empty() {
+        return Vec::new();
+    }
+    let line_starts = test_oracle_line_starts(body);
+    let line_of = |offset: usize| line_starts.partition_point(|start| *start <= offset) - 1;
+    let mut ranges = Vec::new();
+    for macro_call in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+    {
+        let is_assert = macro_call
+            .path()
+            .is_some_and(|path| path.syntax().text() == "assert");
+        let Some(token_tree) = macro_call.token_tree() else {
+            continue;
+        };
+        if !is_assert || !token_tree_contains_asserted_matches(&token_tree) {
+            continue;
+        }
+        let range = token_tree.syntax().text_range();
+        let start = line_of(usize::from(range.start()));
+        let end = line_of(usize::from(range.end()).saturating_sub(1));
+        ranges.push((start, end));
+    }
+    ranges
+}
+
+/// True when the `assert!(...)` token tree evaluates a `matches!(...)` macro
+/// invocation: an adjacent `matches` `!` `(` token triple outside literals,
+/// comments, and whitespace. Assertion-message mentions are string tokens,
+/// so they never qualify.
+fn token_tree_contains_asserted_matches(token_tree: &ast::TokenTree) -> bool {
+    let significant = token_tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| {
+            !matches!(
+                token.kind(),
+                SyntaxKind::WHITESPACE
+                    | SyntaxKind::COMMENT
+                    | SyntaxKind::STRING
+                    | SyntaxKind::BYTE_STRING
+                    | SyntaxKind::C_STRING
+                    | SyntaxKind::CHAR
+                    | SyntaxKind::BYTE
+            )
+        })
+        .map(|token| token.text().to_string())
+        .collect::<Vec<_>>();
+    significant
+        .windows(3)
+        .any(|window| window == ["matches", "!", "("])
+}
+
+fn test_oracle_observations(
+    lines: &[&str],
+    first_line: usize,
+    asserted_matches: &[(usize, usize)],
+) -> Vec<TestOracleObservation> {
     let mut observations = Vec::new();
     for (offset, line) in lines.iter().enumerate() {
+        if let Some(range) = asserted_matches
+            .iter()
+            .find(|range| offset >= range.0 && offset <= range.1)
+        {
+            // One Strong observation at the macro's first line; continuation
+            // lines contribute nothing so a split `matches!(` is neither
+            // double-counted nor demoted to a generic assert.
+            if offset == range.0 {
+                observations.push(test_oracle_observation_for(
+                    first_line + offset,
+                    TestOracleClass::Strong,
+                    "matches!",
+                    "pattern assertion can discriminate an exact variant or shape",
+                ));
+            }
+            continue;
+        }
         let trimmed = line.trim();
         if trimmed.starts_with("//") {
             continue;
@@ -7016,14 +7440,11 @@ fn test_oracle_observation(trimmed: &str, line: usize) -> Option<TestOracleObser
             "exact equality, inequality, or variant assertion",
         ));
     }
-    if trimmed.contains("matches!(") {
-        return Some(test_oracle_observation_for(
-            line,
-            TestOracleClass::Strong,
-            "matches!",
-            "pattern assertion can discriminate an exact variant or shape",
-        ));
-    }
+    // A bare `matches!` never reaches Strong here: asserted forms are credited
+    // through the syntax-derived ranges in `test_oracle_observations`, which
+    // require the invocation to sit inside an `assert!(...)` condition. On
+    // unparseable bodies those ranges are empty and an asserted `matches!`
+    // falls through to the generic-assert arm (fail-closed Weak).
     if trimmed.contains("status.success()") {
         return Some(test_oracle_observation_for(
             line,
