@@ -26,7 +26,7 @@
   ],
   "properties": {
     "protocol_version": { "const": "0.1" },
-    "schema_version": { "const": "0.1" },
+    "schema_version": { "const": "0.2" },
     "implementation_state": { "const": "capability_only" },
     "supported_requests": {
       "type": "array",

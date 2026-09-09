@@ -1,6 +1,6 @@
 {
   "protocol_version": "0.1",
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "implementation_state": "capability_only",
   "supported_requests": [],
   "reserved_requests": [

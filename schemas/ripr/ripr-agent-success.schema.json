@@ -29,12 +29,16 @@
     "must_not_change",
     "verify_route",
     "receipt_route",
+    "verify_route_readiness",
+    "receipt_route_readiness",
+    "verify_command_spec",
+    "receipt_command_spec",
     "limitations",
     "non_claims"
   ],
   "properties": {
     "protocol_version": { "const": "0.1" },
-    "schema_version": { "const": "0.1" },
+    "schema_version": { "const": "0.2" },
     "request": { "$ref": "ripr-agent-request.schema.json#/properties/request" },
     "kind": {
       "enum": [
@@ -70,6 +74,34 @@
     },
     "verify_route": { "type": ["string", "null"], "minLength": 1 },
     "receipt_route": { "type": ["string", "null"], "minLength": 1 },
+    "verify_route_readiness": {
+      "description": "Closed readiness vocabulary for the verify_route slot (#1617 slice 4). Null exactly when verify_route is null. typed_direct/typed_shell_required require a producer-owned verify_command_spec; legacy_string_only means only the display string exists; manual is reserved for describable routes without an executable producer-owned form.",
+      "enum": [
+        "typed_direct",
+        "typed_shell_required",
+        "manual",
+        "legacy_string_only",
+        null
+      ]
+    },
+    "receipt_route_readiness": {
+      "description": "Closed readiness vocabulary for the receipt_route slot (#1617 slice 4). Null exactly when receipt_route is null.",
+      "enum": [
+        "typed_direct",
+        "typed_shell_required",
+        "manual",
+        "legacy_string_only",
+        null
+      ]
+    },
+    "verify_command_spec": {
+      "description": "Producer-owned typed verify route carried in full, or null. The definition is reused from the published repair-assurance CommandSpec contract; the role must be `verify` and the readiness must match execution_mode.",
+      "oneOf": [{ "type": "null" }, { "$ref": "repair-assurance.schema.json#/$defs/command_spec" }]
+    },
+    "receipt_command_spec": {
+      "description": "Producer-owned typed receipt route carried in full, or null. The role must be `receipt` and the readiness must match execution_mode.",
+      "oneOf": [{ "type": "null" }, { "$ref": "repair-assurance.schema.json#/$defs/command_spec" }]
+    },
     "limitations": { "type": "array", "items": { "type": "string", "minLength": 1 } },
     "non_claims": { "type": "array", "items": { "type": "string", "minLength": 1 } }
   }
