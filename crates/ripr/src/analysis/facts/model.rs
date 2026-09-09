@@ -1,6 +1,6 @@
 use crate::domain::{OracleKind, OracleStrength, SymbolId};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -246,6 +246,12 @@ pub struct RustIndex {
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     #[serde(default)]
     pub include_limitations: Vec<RustIncludeLimitation>,
+    /// Physical file-level include targets discovered before contextual
+    /// ownership is reduced to one parent. This remains populated for
+    /// ambiguous/conflicting include requirements so module resolution keeps
+    /// the fragment's physical directory anchor without granting a role.
+    #[serde(skip)]
+    pub(crate) include_targets: BTreeSet<PathBuf>,
     /// Subjects established by registered harness adapters (#3532).
     /// Empty without registrations; every entry carries its registration
     /// provenance, harness kind, adapter generation, subject identity,

@@ -202,6 +202,7 @@ fn resolved_module_edges(
         })
         .filter(|file| index.files.contains_key(file))
         .chain(index.include_parents.keys().cloned())
+        .chain(index.include_targets.iter().cloned())
         .collect();
     let resolver = DeclarationResolver {
         index,
@@ -1371,6 +1372,111 @@ mod tests {
             role_of(&index, "src/fragment.rs", "contested_fragment_helper")?,
             FunctionSourceRole::Production,
             "the contested fragment keeps its standalone roles"
+        );
+        Ok(())
+    }
+
+    /// A conflicted include still has a physical source location for default
+    /// module lookup. The conflict must suppress contextual grants, while
+    /// `mod child;` in the fragment resolves beside the fragment (`src`), not
+    /// under the fragment's stem directory (`src/fragment`).
+    #[test]
+    fn conflicted_include_preserves_physical_anchor_without_role_grant() -> Result<(), String> {
+        let root = temp_dir("conflicting-include-anchor")?;
+        write_manifest(&root)?;
+        let mut files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "include!(\"fragment.rs\");\n\n#[cfg(test)]\ninclude!(\"fragment.rs\");\n",
+            )?,
+            write(
+                &root,
+                "src/fragment.rs",
+                "#[cfg(test)]\nmod child;\npub fn fragment_helper() -> i32 { 3 }\n",
+            )?,
+            write(
+                &root,
+                "src/child.rs",
+                "pub fn physically_anchored_child() -> i32 { 1 }\n",
+            )?,
+            write(
+                &root,
+                "src/fragment/child.rs",
+                "pub fn misleading_stem_child() -> i32 { 2 }\n",
+            )?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert!(
+            index.include_parents.is_empty(),
+            "conflicting cfg requirements must retain fail-closed contextual ownership"
+        );
+        assert!(
+            index.include_targets.contains(Path::new("src/fragment.rs")),
+            "physical include discovery must survive contextual conflict"
+        );
+        assert_eq!(
+            role_of(&index, "src/fragment.rs", "fragment_helper")?,
+            FunctionSourceRole::Production,
+            "physical discovery must not resolve the fragment's contextual role conflict"
+        );
+        assert!(
+            index
+                .files
+                .get(Path::new("src/child.rs"))
+                .ok_or("physical child facts missing")?
+                .role_provenance
+                .edges
+                .iter()
+                .any(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Module
+                    && edge.parent == Path::new("src/fragment.rs")),
+            "default module must resolve beside the physically included fragment"
+        );
+        assert!(
+            index
+                .files
+                .get(Path::new("src/fragment/child.rs"))
+                .ok_or("stem child facts missing")?
+                .role_provenance
+                .edges
+                .is_empty(),
+            "the fragment stem directory must not be selected as the anchor"
+        );
+        assert_eq!(
+            role_of(&index, "src/child.rs", "physically_anchored_child")?,
+            FunctionSourceRole::CfgTestModule,
+            "the module's own cfg(test) edge grants its child without resolving the conflicting include"
+        );
+        assert_eq!(
+            role_of(&index, "src/fragment/child.rs", "misleading_stem_child")?,
+            FunctionSourceRole::Production,
+            "the misleading stem child must not gain an evidence role"
+        );
+
+        // Rust does not fall back to the stem layout when the physical child
+        // is absent. Keep the misleading candidate in the full source index.
+        let physical_child = root.join("src/child.rs");
+        fs::remove_file(&physical_child).map_err(|error| error.to_string())?;
+        files.retain(|file| file != Path::new("src/child.rs"));
+        let missing = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            role_of(&missing, "src/fragment/child.rs", "misleading_stem_child")?,
+            FunctionSourceRole::Production,
+            "a missing physical child must not grant the stem candidate a role"
+        );
+        assert!(
+            missing
+                .files
+                .get(Path::new("src/fragment/child.rs"))
+                .ok_or("stem child facts missing after physical child removal")?
+                .role_provenance
+                .edges
+                .is_empty(),
+            "a missing physical child must not create a stem-directory edge"
         );
         Ok(())
     }

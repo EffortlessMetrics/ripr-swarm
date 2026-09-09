@@ -66,6 +66,12 @@ file occurrence under a closed rule set:
   remains an identity and role parent; it does not replace the fragment's
   physical file-search directory. Compiler controls with both the correct
   child and a misleading sibling pin this distinction.
+- **Include conflicts preserve physical anchors.** After complete include
+  enumeration, resolved targets remain physical search anchors even when their
+  contextual parent requirements conflict. This does not resolve the role conflict or grant the
+  fragment a role. A missing physical child cannot fall back to the fragment's
+  stem directory. Physical targets are regenerated with the index, not persisted
+  as an additional serialized fact contract.
 - **Mixed directory anchors.** One physical file may occur both as an ordinary
   module and through a literal path, include, or crate-root context. Retain
   both physical search directories and propagate them through default child
