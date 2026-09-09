@@ -15025,9 +15025,11 @@ routes only:
   CLI mode vocabulary (`instant`, `draft`, `fast`, `deep`, `ready`).
 - `ripr reports gap-ledger --repo-exposure E --out O --out-md M`,
   `ripr reports gap-ledger --check-output C --root R --out O --out-md M`, and
-  the shorter single-output forms ending at `--out O` - recovered as `direct`
-  with `O` and its Markdown twin (`with_extension(O, "md")`) as the expected
-  writes; forms without any output flag fail closed.
+  the shorter single-output forms ending at `--out O` - recovered as
+  `direct` with `O` and the CLI default Markdown output
+  (`target/ripr/reports/gap-decision-ledger.md`, applied independently of
+  `--out`) as the expected writes; forms without any output flag fail
+  closed.
 - `ripr pr-review front-panel ...` and `ripr reports index ...` - loop-template
   routes: their closed flag set in any order, no repeats, and the route's
   mandatory flags present; front-panel additionally requires at least one

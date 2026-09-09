@@ -432,10 +432,11 @@ fn recover_check_repo_exposure_spec(words: &[String], command: &str) -> Option<C
 
 /// The exact `ripr reports gap-ledger` shapes the first-pr recovery
 /// surfaces emit. The route writes its own `--out` JSON document plus the
-/// Markdown twin, so the recovered spec is `Direct` and names both actual
-/// writes. FIX (round-2 review): when the display carries only `--out`,
-/// the `.md` twin is derived exactly as the producers do
-/// (`with_extension(out, "md")`) and named in the expected writes.
+/// Markdown output, so the recovered spec is `Direct` and names both actual
+/// writes. FIX (round-3 review): when the display carries only `--out`, the
+/// CLI defaults `--out-md` independently to
+/// DEFAULT_GAP_DECISION_LEDGER_MD_OUT — not a with_extension derivation of
+/// `--out` — so the default constant is what the expected writes name.
 fn recover_gap_ledger_spec(words: &[String], command: &str) -> Option<CommandSpec> {
     // (argv, --out value, explicit --out-md value when present)
     let (args, out, out_md) = match words.len() {
@@ -467,10 +468,7 @@ fn recover_gap_ledger_spec(words: &[String], command: &str) -> Option<CommandSpe
         _ => return None,
     };
     let markdown_out = out_md.map(ToOwned::to_owned).unwrap_or_else(|| {
-        std::path::PathBuf::from(out)
-            .with_extension("md")
-            .to_string_lossy()
-            .into_owned()
+        crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_MD_OUT.to_string()
     });
     let spec = command_spec(
         "ripr:reports:gap-ledger",
@@ -1214,9 +1212,14 @@ mod tests {
             "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json",
         )
         .ok_or("the single-output gap-ledger route was not recoverable")?;
-        if derived.expected_writes != ["ledger.json".to_string(), "ledger.md".to_string()] {
+        if derived.expected_writes
+            != [
+                "ledger.json".to_string(),
+                "target/ripr/reports/gap-decision-ledger.md".to_string(),
+            ]
+        {
             return Err(format!(
-                "derived Markdown twin missing from expected writes: {:?}",
+                "default Markdown output missing from expected writes: {:?}",
                 derived.expected_writes
             ));
         }
@@ -1227,9 +1230,14 @@ mod tests {
             "ripr reports gap-ledger --check-output check.json --root . --out day.one.json",
         )
         .ok_or("the single-output check-output bridge was not recoverable")?;
-        if derived.expected_writes != ["day.one.json".to_string(), "day.one.md".to_string()] {
+        if derived.expected_writes
+            != [
+                "day.one.json".to_string(),
+                "target/ripr/reports/gap-decision-ledger.md".to_string(),
+            ]
+        {
             return Err(format!(
-                "check-output derived twin must replace the extension: {:?}",
+                "check-output single-override writes must name the CLI default Markdown: {:?}",
                 derived.expected_writes
             ));
         }
