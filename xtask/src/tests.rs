@@ -11838,6 +11838,131 @@ fn weak_contains() {
 }
 
 #[test]
+fn test_oracle_discarded_matches_is_not_an_observing_oracle() {
+    let source = r#"
+#[test]
+fn unused_matches() {
+    let _ = matches!(actual, Some(42));
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].name, "unused_matches");
+    assert_eq!(tests[0].class, TestOracleClass::Smoke);
+    assert!(
+        tests[0]
+            .observations
+            .iter()
+            .all(|observation| observation.pattern == "no assertion"),
+        "a discarded predicate must not contribute observing-oracle evidence"
+    );
+}
+
+#[test]
+fn test_oracle_assertion_spelling_in_string_is_not_an_observing_oracle() {
+    let source = r##"
+#[test]
+fn assertion_in_string() {
+    let example = "assert_eq!(actual, expected);";
+}
+
+#[test]
+fn assertion_in_raw_string() {
+    let example = r#"assert_eq!(actual, expected);"#;
+}
+"##;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 2);
+    assert_eq!(tests[0].name, "assertion_in_string");
+    assert_eq!(tests[1].name, "assertion_in_raw_string");
+    for test in &tests {
+        assert_eq!(test.class, TestOracleClass::Smoke);
+        assert!(
+            test.observations
+                .iter()
+                .all(|observation| observation.pattern == "no assertion"),
+            "inert string text must not contribute observing-oracle evidence"
+        );
+    }
+}
+
+#[test]
+fn test_oracle_assertion_spelling_in_block_comment_is_not_an_observing_oracle() {
+    let source = r#"
+#[test]
+fn assertion_in_block_comment() {
+    /* assert_eq!(actual, expected); */
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].class, TestOracleClass::Smoke);
+    assert!(
+        tests[0]
+            .observations
+            .iter()
+            .all(|observation| observation.pattern == "no assertion"),
+        "block-comment text must not contribute observing-oracle evidence"
+    );
+}
+
+#[test]
+fn test_oracle_asserted_matches_keeps_its_evidence() {
+    let source = r#"
+#[test]
+fn asserted_variant() {
+    assert!(matches!(actual, Some(42)));
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].class, TestOracleClass::Strong);
+}
+
+#[test]
+fn test_oracle_rejected_inputs_agree_across_json_and_markdown() {
+    let source = r#"
+#[test]
+fn unused_matches() {
+    let _ = matches!(actual, Some(42));
+}
+
+#[test]
+fn assertion_in_string() {
+    let example = "assert_eq!(actual, expected);";
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    assert_eq!(tests.len(), 2);
+    let markdown = test_oracle_report_markdown(&tests);
+    let json = test_oracle_report_json(&tests);
+    for name in ["unused_matches", "assertion_in_string"] {
+        assert!(
+            !markdown
+                .lines()
+                .filter(|line| line.contains(name))
+                .any(|line| line.contains("`strong`")),
+            "markdown must not credit {name} as strong"
+        );
+        assert!(
+            !json.contains(&format!(
+                "\"name\": \"{name}\",\n      \"class\": \"strong\""
+            )),
+            "json must not credit {name} as strong"
+        );
+    }
+    assert!(markdown.contains("Status: warn"));
+    assert!(json.contains("\"status\": \"warn\""));
+    for test in &tests {
+        let entry = test_efficiency_entry(test);
+        assert_eq!(
+            entry.oracle_strength, "smoke",
+            "the efficiency consumer must not retain strong-oracle credit"
+        );
+    }
+}
+
+#[test]
 fn test_oracle_command_reports_empty_selection_as_not_run() -> Result<(), String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxKind};
 use serde_json::Value;
 
 use ripr::output::receipt_lifecycle::{
@@ -6904,7 +6905,10 @@ fn test_oracle_tests_in_text(path: &Path, text: &str) -> Vec<TestOracleTest> {
 
             if let Some(name) = test_fn_name(trimmed) {
                 let end = test_function_end(&lines, index);
-                let observations = test_oracle_observations(&lines[index..=end], index + 1);
+                let body = lines[index..=end].join("\n");
+                let code_lines = test_oracle_code_lines(&body);
+                let code_refs = code_lines.iter().map(String::as_str).collect::<Vec<_>>();
+                let observations = test_oracle_observations(&code_refs, index + 1);
                 let class = observations
                     .iter()
                     .map(|observation| observation.class)
@@ -6915,7 +6919,7 @@ fn test_oracle_tests_in_text(path: &Path, text: &str) -> Vec<TestOracleTest> {
                     name,
                     line: attr_line,
                     body_line: index + 1,
-                    body: lines[index..=end].join("\n"),
+                    body,
                     class,
                     observations,
                 });
@@ -6979,6 +6983,51 @@ fn test_function_end(lines: &[&str], start: usize) -> usize {
     lines.len().saturating_sub(1)
 }
 
+/// Code text of each test-body line with strings, character/byte literals, and
+/// comments removed through the real lexer (`ra_ap_syntax`), so
+/// assertion-shaped inert text can never establish oracle evidence (#3687).
+///
+/// The returned vector has exactly one entry per input line, preserving line
+/// identity for observation reporting. An unparseable body falls back to the
+/// verbatim lines (today's behavior): for this advisory report, keeping the
+/// prior over-credit on malformed input is safer than silently dropping every
+/// observation to Smoke.
+fn test_oracle_code_lines(body: &str) -> Vec<String> {
+    let parse = SourceFile::parse(body, Edition::CURRENT);
+    if !parse.errors().is_empty() {
+        return body.lines().map(str::to_string).collect();
+    }
+    let mut code_lines = vec![String::new(); body.lines().count().max(1)];
+    let mut line_starts = vec![0usize];
+    for (offset, _) in body.match_indices('\n') {
+        line_starts.push(offset + 1);
+    }
+    let line_of = |offset: usize| line_starts.partition_point(|start| *start <= offset) - 1;
+    for token in parse
+        .tree()
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+    {
+        match token.kind() {
+            SyntaxKind::COMMENT
+            | SyntaxKind::STRING
+            | SyntaxKind::BYTE_STRING
+            | SyntaxKind::C_STRING
+            | SyntaxKind::CHAR
+            | SyntaxKind::BYTE => continue,
+            _ => {}
+        }
+        let start_line = line_of(usize::from(token.text_range().start()));
+        for (offset, part) in token.text().split('\n').enumerate() {
+            if start_line + offset < code_lines.len() {
+                code_lines[start_line + offset].push_str(part);
+            }
+        }
+    }
+    code_lines
+}
+
 fn test_oracle_observations(lines: &[&str], first_line: usize) -> Vec<TestOracleObservation> {
     let mut observations = Vec::new();
     for (offset, line) in lines.iter().enumerate() {
@@ -7016,7 +7065,11 @@ fn test_oracle_observation(trimmed: &str, line: usize) -> Option<TestOracleObser
             "exact equality, inequality, or variant assertion",
         ));
     }
-    if trimmed.contains("matches!(") {
+    // A bare `matches!` result observes nothing: only an asserted form (reached
+    // here on lexer-filtered code text, so strings and comments cannot qualify)
+    // keeps Strong evidence. The canonical `assert!(matches!(..))` spelling
+    // contains `assert!(`; exotic spacing stays Smoke rather than risk credit.
+    if trimmed.contains("matches!(") && trimmed.contains("assert!(") {
         return Some(test_oracle_observation_for(
             line,
             TestOracleClass::Strong,
