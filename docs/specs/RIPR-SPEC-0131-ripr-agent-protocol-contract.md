@@ -319,7 +319,10 @@ build artifacts; a stale cross-worktree binary is not proof of this slice.
   messages), and
   `command_spec_wire_shape_matches_the_domain_type` (the published
   CommandSpec schema shape pins the serde wire names, including the
-  `working_directory`/`environment`/`network`/`human_display` renames).
+  `working_directory`/`environment`/`network`/`human_display` renames), and
+  `command_spec_decoding_is_closed_to_the_published_shape` (spec decoding
+  rejects serde legacy aliases and unknown fields the published schema does
+  not declare).
 - `capability_output_matches_the_published_schema` validates the live
   `server_capability()` bytes and the committed capability fixture against
   `schemas/ripr/ripr-agent-capability.schema.json` (structural const/enum/

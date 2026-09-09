@@ -7763,6 +7763,7 @@ tests = [
   "crates/ripr/src/lsp/agent_protocol.rs::tests::capability_output_matches_the_published_schema",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::readiness_must_agree_with_route_and_spec",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::command_spec_wire_shape_matches_the_domain_type",
+  "crates/ripr/src/lsp/agent_protocol.rs::tests::command_spec_decoding_is_closed_to_the_published_shape",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::request_envelope_keeps_mode_and_profile_typed",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::success_and_error_envelopes_are_typed_and_bounded",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::source_edit_boundary_is_explicitly_read_only",

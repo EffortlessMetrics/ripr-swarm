@@ -168,6 +168,7 @@
       "if": {
         "properties": {
           "verify_command_spec": {
+            "type": "object",
             "properties": { "execution_mode": { "const": "direct" } },
             "required": ["execution_mode"]
           }
@@ -183,6 +184,7 @@
       "if": {
         "properties": {
           "verify_command_spec": {
+            "type": "object",
             "properties": { "execution_mode": { "const": "shell_required" } },
             "required": ["execution_mode"]
           }
@@ -198,6 +200,7 @@
       "if": {
         "properties": {
           "verify_command_spec": {
+            "type": "object",
             "properties": { "execution_mode": { "const": "manual" } },
             "required": ["execution_mode"]
           }
@@ -213,6 +216,7 @@
       "if": {
         "properties": {
           "receipt_command_spec": {
+            "type": "object",
             "properties": { "execution_mode": { "const": "direct" } },
             "required": ["execution_mode"]
           }
@@ -228,6 +232,7 @@
       "if": {
         "properties": {
           "receipt_command_spec": {
+            "type": "object",
             "properties": { "execution_mode": { "const": "shell_required" } },
             "required": ["execution_mode"]
           }
@@ -243,6 +248,7 @@
       "if": {
         "properties": {
           "receipt_command_spec": {
+            "type": "object",
             "properties": { "execution_mode": { "const": "manual" } },
             "required": ["execution_mode"]
           }

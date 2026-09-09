@@ -800,18 +800,60 @@ fn decode_declared_readiness(
     }
 }
 
+/// The published CommandSpec property set
+/// (`schemas/ripr/repair-assurance.schema.json` `$defs.command_spec`). The
+/// riprAgent envelope accepts exactly these keys: unknown fields and the
+/// serde legacy aliases (`cwd`, `environment_policy`, `network_policy`,
+/// `display`) never enter the protocol, so the Rust decode cannot accept a
+/// shape the published schema rejects.
+const COMMAND_SPEC_WIRE_FIELDS: &[&str] = &[
+    "schema_version",
+    "command_id",
+    "role",
+    "execution_mode",
+    "program",
+    "args",
+    "working_directory",
+    "env_set",
+    "env_passthrough",
+    "environment",
+    "stdin",
+    "timeout_ms",
+    "cancellation",
+    "network",
+    "expected_result_parser",
+    "expected_exit_codes",
+    "expected_writes",
+    "cost_class",
+    "platforms",
+    "human_display",
+    "authority_boundary",
+];
+
 /// Decode a command-spec wire field: omission and explicit `null` both mean
-/// "no producer-owned spec", any other value must decode as a
-/// [`CommandSpec`].
+/// "no producer-owned spec", any other value must be an object whose keys are
+/// exactly the published field set, and must decode as a [`CommandSpec`].
 fn decode_command_spec(
     wire: PresenceTracked,
     field: &'static str,
 ) -> Result<Option<CommandSpec>, String> {
     match wire.into_inner() {
         None | Some(serde_json::Value::Null) => Ok(None),
-        Some(value) => serde_json::from_value(value)
-            .map(Some)
-            .map_err(|error| format!("{field}: {error}")),
+        Some(value) => {
+            let object = value
+                .as_object()
+                .ok_or_else(|| format!("{field}: command spec must be an object"))?;
+            for key in object.keys() {
+                if !COMMAND_SPEC_WIRE_FIELDS.contains(&key.as_str()) {
+                    return Err(format!(
+                        "{field}: command spec field `{key}` is not part of the published schema"
+                    ));
+                }
+            }
+            serde_json::from_value(value)
+                .map(Some)
+                .map_err(|error| format!("{field}: {error}"))
+        }
     }
 }
 
@@ -1966,6 +2008,47 @@ mod tests {
         {
             return Err("command spec lost its expected exit codes".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn command_spec_decoding_is_closed_to_the_published_shape() -> Result<(), String> {
+        // The serde legacy alias must not enter the protocol envelope: the
+        // published schema has no `cwd` property, so the Rust decode rejects
+        // it instead of silently accepting a shape the schema rejects.
+        let mut alias_spec = serde_json::to_value(verify_command_spec_fixture())
+            .map_err(|error| error.to_string())?;
+        let alias_object = alias_spec
+            .as_object_mut()
+            .ok_or_else(|| "spec fixture must be an object".to_string())?;
+        alias_object.remove("working_directory");
+        alias_object.insert(
+            "cwd".to_string(),
+            serde_json::Value::String(".".to_string()),
+        );
+        let alias_payload = success_fixture().replace(
+            "          \"verify_command_spec\": null,\n",
+            &format!("          \"verify_command_spec\": {alias_spec},\n"),
+        );
+        assert_decode_rejected(
+            &alias_payload,
+            "verify_command_spec: command spec field `cwd` is not part of the published schema",
+        )?;
+        // Unknown fields are equally rejected.
+        let mut unknown_spec = serde_json::to_value(verify_command_spec_fixture())
+            .map_err(|error| error.to_string())?;
+        unknown_spec
+            .as_object_mut()
+            .ok_or_else(|| "spec fixture must be an object".to_string())?
+            .insert("extra".to_string(), serde_json::Value::Bool(true));
+        let unknown_payload = success_fixture().replace(
+            "          \"verify_command_spec\": null,\n",
+            &format!("          \"verify_command_spec\": {unknown_spec},\n"),
+        );
+        assert_decode_rejected(
+            &unknown_payload,
+            "verify_command_spec: command spec field `extra` is not part of the published schema",
+        )?;
         Ok(())
     }
 
