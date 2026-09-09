@@ -37,3 +37,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (4)
+
+Reason:
+RIPR-SPEC-0106: re-hash after stripping trailing whitespace from diff.patch blank context lines for git diff --check; parser treats blank and space-only context identically, classifications unchanged (2 exposed, 10 weak)
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (5)
+
+Reason:
+RIPR-SPEC-0106: re-hash after adding Display and Error impls so the fixture input compiles standalone like its siblings; impls sit outside all diff hunks, classifications unchanged (2 exposed, 10 weak)
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

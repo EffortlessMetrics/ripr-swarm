@@ -274,6 +274,7 @@ fn analyze_related_assertions(
                 &match_context,
                 assertion,
                 test.assertions.len(),
+                *reason == RelationReason::DirectOwnerCall,
             );
             if matched {
                 if confirm_required {
@@ -407,6 +408,7 @@ fn assertion_matches_probe_detail_with_literals(
     context: &RevealMatchContext,
     assertion: &OracleFact,
     assertion_count: usize,
+    test_invokes_wrapper_owner: bool,
 ) -> (bool, bool) {
     let RevealMatchContext {
         probe_tokens,
@@ -428,13 +430,19 @@ fn assertion_matches_probe_detail_with_literals(
     // identity, so bare identifier overlap between the seam expression and the
     // witness's message text is token coincidence, not identity. Such a seam
     // is confirmed only through the established wrapper-to-variant binding
-    // (see `wrapper_established_variants`); `None` keeps the legacy signals
-    // for seams whose variant identity is established by other means.
+    // (see `wrapper_established_variants`) **by a test that invokes the
+    // wrapper owner itself**: a callee-only pin supplies variant identity but
+    // observes nothing about the wrapper, so it must not confirm. The caller
+    // passes the relation verdict (`DirectOwnerCall` holds exactly when the
+    // test calls the changed owner by captured call or call-shaped body
+    // text — see `related_tests`), never a name-only or file-only match.
+    // `None` bindings keep the legacy signals for seams whose variant
+    // identity is established by other means.
     let variant_binding_match = wrapper_binding.is_some_and(|established| {
         established
             .iter()
             .any(|variant| contains_as_whole_word(&assertion.text, variant))
-    });
+    }) && test_invokes_wrapper_owner;
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
@@ -484,6 +492,7 @@ fn assertion_matches_probe_detail(
         },
         assertion,
         assertion_count,
+        false,
     )
 }
 
@@ -498,92 +507,93 @@ fn wrapper_error_seam_expression(expressions: &[&str]) -> bool {
         .any(|expression| expression.contains(".map_err("))
 }
 
-/// The callee name a wrapper seam converts: the name-like identifier
-/// (`[A-Za-z_][A-Za-z0-9_]*`) whose call group produces the value that the
-/// `map_err` conversion consumes — the LAST callee in the chain.
-///
-/// - A leading `return ` is stripped first, so
-///   `return try_parse_summary(raw).map_err(Into::into)` binds
-///   `try_parse_summary`.
-/// - For a receiver chain (`self.client().try_parse_summary(raw)`) the
-///   outermost call of the chain is the converted callee, so the scan keeps
-///   the identifier that opens a call group at paren depth zero closest to
-///   the `.map_err(` suffix — `try_parse_summary`, not the `client` hop.
-/// - A generic argument list between the name and the paren
-///   (`try_parse_summary::<T>(..)`) is skipped.
-/// - Value expressions without a call group before `.map_err(` —
-///   `value.map_err(..)`, `42.map_err(..)` — establish no callee.
-///
-/// Returns `None` when no name-like callee can be extracted, in which case no
-/// wrapper-to-variant binding can be established.
+/// The callee name a wrapper seam converts: the method called immediately
+/// before `.map_err(..)` — the last top-level `.segment` of the converted
+/// expression. For `try_parse_summary(raw).map_err(Into::into)` this is
+/// `try_parse_summary`; receiver-qualified (`parser.try_parse_summary(..)`)
+/// and chained (`self.client().try_parse_summary(..)`) forms resolve to the
+/// same final segment, and turbofish arguments (`::<Mode>`) are stripped.
+/// A leading `return ` is stripped first, so
+/// `return try_parse_summary(raw).map_err(Into::into)` binds
+/// `try_parse_summary` (#3700 round-1 review, gemini g0Fgu).
+/// Returns `None` when the final segment is not a name-like call, in which
+/// case no wrapper-to-variant binding can be established (fail-closed: an
+/// unrecognized callee can only under-credit, never over-credit).
 fn wrapper_callee_name(expression: &str) -> Option<String> {
     let trimmed = expression.trim();
     let trimmed = trimmed
         .strip_prefix("return ")
         .unwrap_or(trimmed)
         .trim_start();
-    let map_position = trimmed.find(".map_err(")?;
-    let chain = trimmed[..map_position].trim_end();
-    if chain.is_empty() {
-        return None;
-    }
-    let bytes = chain.as_bytes();
-    let mut depth = 0usize;
-    let mut candidate: Option<String> = None;
-    let mut index = 0usize;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'(' => {
-                if depth == 0 {
-                    candidate = wrapper_callee_identifier(chain, index);
-                }
-                depth += 1;
+    let lhs = trimmed.split(".map_err(").next()?;
+    // Last `.` at bracket depth 0 (string literals skipped): everything after
+    // it is the final call segment; an unbalanced bracket aborts to `None`.
+    let bytes = lhs.as_bytes();
+    let mut depth = 0isize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut last_dot = None;
+    for (index, byte) in bytes.iter().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if *byte == b'\\' {
+                escaped = true;
+            } else if *byte == b'"' {
+                in_string = false;
             }
-            b')' => depth = depth.saturating_sub(1),
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return None;
+                }
+            }
+            b'.' if depth == 0 => last_dot = Some(index),
             _ => {}
         }
-        index += 1;
     }
-    candidate
-}
-
-/// The name-like identifier immediately before the call opener at `open`,
-/// skipping a balanced generic argument list (`::<T, U>` / `<T>`) that sits
-/// between the name and the paren. Rejects non-identifier receivers such as
-/// `42` or closing delimiters.
-fn wrapper_callee_identifier(chain: &str, open: usize) -> Option<String> {
-    let mut end = open;
-    if end > 0 && chain.as_bytes()[end - 1] == b'>' {
-        let mut angle_depth = 0usize;
-        let mut scan = end;
-        loop {
-            scan = scan.checked_sub(1)?;
-            match chain.as_bytes()[scan] {
-                b'>' => angle_depth += 1,
-                b'<' => {
-                    angle_depth = angle_depth.checked_sub(1)?;
-                    if angle_depth == 0 {
-                        end = scan;
-                        break;
-                    }
-                }
-                _ => {}
-            }
+    // Unbalanced brackets mean the shape cannot be trusted: fail closed.
+    if depth != 0 {
+        return None;
+    }
+    let segment = match last_dot {
+        Some(index) => lhs[index + 1..].trim(),
+        None => lhs.trim(),
+    };
+    // A name-like head: identifier/`::` segments only, terminated by `<`
+    // (turbofish), `(` (arguments), or the segment end.
+    let mut head_end = segment.len();
+    for (index, ch) in segment.char_indices() {
+        if !(ch.is_alphanumeric() || ch == '_' || ch == ':') {
+            head_end = index;
+            break;
         }
     }
-    // A turbofish (`name::<T>(..)`) leaves a `::` separator between the name
-    // and the generic opener; read the identifier run from the prefix that
-    // ends before it.
-    let prefix = chain[..end].strip_suffix("::").unwrap_or(&chain[..end]);
-    let name = prefix
-        .char_indices()
-        .rev()
-        .take_while(|(_, ch)| ch.is_ascii_alphanumeric() || *ch == '_')
-        .map(|(position, _)| position)
-        .last()
-        .map(|start| &prefix[start..])?;
-    let first = name.chars().next()?;
-    if !first.is_ascii_alphabetic() && first != '_' {
+    // The head must open arguments or turbofish arguments: a bare identifier
+    // (`value.map_err(..)` converts a value, not a callee call) establishes
+    // nothing.
+    let rest = segment[head_end..].trim_start();
+    if !(rest.starts_with('<') || rest.starts_with('(')) {
+        return None;
+    }
+    // A trailing `::` is the turbofish opener (`name::<T>`), not an empty
+    // final path segment.
+    let name = segment[..head_end]
+        .trim_end_matches(':')
+        .rsplit("::")
+        .next()
+        .unwrap_or("");
+    if name.is_empty()
+        || !name
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+    {
         return None;
     }
     Some(name.to_string())
@@ -592,16 +602,14 @@ fn wrapper_callee_identifier(chain: &str, open: usize) -> Option<String> {
 /// Establish the wrapper-to-variant binding for a wrapper error seam.
 ///
 /// The seam's changed expression carries no parseable variant, so the
-/// propagated variant identity must come from a witness that binds it
-/// compile-checked: a related test that calls the seam's callee (so its
-/// assertion types against the callee's own `Result`) and pins an exact
-/// variant against that result (`matches!(result, Err(V))` — recognized as
-/// `ExactErrorVariant`). `V` must then be a variant of the callee's error
-/// type for the test to compile, which makes it a producer-owned identity for
-/// the seam rather than token coincidence. A witness that only calls the
-/// wrapper (or only names a variant in its message text) establishes nothing:
-/// statically nothing ties its pin to the callee's error type, so sibling and
-/// unrelated-enum pins stay unconfirmed (#3700).
+/// propagated variant identity must come from a witness whose exact-variant
+/// pin demonstrably constrains the callee's own result: a related test that
+/// calls the seam's callee, where the `matches!` scrutinee either calls the
+/// callee directly or names a variable bound from a callee call in the test
+/// body. The stored identity is the qualified `Enum::Variant` path, so equal
+/// terminal variant names from different enums cannot align. A witness that
+/// only calls the wrapper, only names a variant in message text, or pins a
+/// variant against another call establishes nothing (#3700).
 ///
 /// Binding authority: captured `calls` facts are the authority. A witness
 /// with captured calls that never name the callee does not bind it — the
@@ -609,8 +617,8 @@ fn wrapper_callee_identifier(chain: &str, open: usize) -> Option<String> {
 /// (`body_contains_owner_call`, name-only) applies only when the witness has
 /// no captured call facts at all; it is the acknowledged weaker signal and is
 /// compensated fail-closed because an established variant must still be an
-/// exact `Err(..)` pin, which a witness calling a different type's same-named
-/// method could not compile against its own pin.
+/// exact `Err(..)` pin against the callee's own result, which a witness
+/// calling a different type's same-named method could not compile against.
 fn wrapper_established_variants(
     expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
@@ -638,14 +646,215 @@ fn wrapper_established_variants(
             if assertion.kind != OracleKind::ExactErrorVariant {
                 continue;
             }
-            if let Some(variant) = error_path_variant_token(&assertion.text) {
-                established.push(variant);
+            let Some(qualified) = exact_error_variant_path(&assertion.text) else {
+                continue;
+            };
+            if !matches_scrutinee_bound_to_callee(&assertion.text, &test.body, &callee) {
+                continue;
             }
+            established.push(qualified);
         }
     }
     established.sort();
     established.dedup();
     established
+}
+
+/// The qualified `Enum::Variant` path an assertion pins, without reducing to
+/// the terminal variant token (which collides across enums).
+fn exact_error_variant_path(text: &str) -> Option<String> {
+    use super::text::exact_error_variant;
+    exact_error_variant(text)
+}
+
+/// True when the `matches!(scrutinee, ...)` pin in `assertion_text`
+/// constrains a value produced by `callee`: the scrutinee calls the callee
+/// directly, or names a variable bound from a callee call in `body`.
+/// Anything else (a pin against another call, a message-text mention) leaves
+/// the binding unestablished — fail-closed.
+fn matches_scrutinee_bound_to_callee(assertion_text: &str, body: &str, callee: &str) -> bool {
+    let Some(scrutinee) = matches_macro_scrutinee(assertion_text) else {
+        return false;
+    };
+    if body_contains_owner_call(&scrutinee, callee) {
+        return true;
+    }
+    let scrutinee = scrutinee.trim();
+    if !is_bare_identifier(scrutinee) {
+        return false;
+    }
+    body_let_binding_calls_callee(body, scrutinee, callee)
+}
+
+/// The scrutinee of the first `matches!(...)` invocation in `text`: the
+/// top-level comma-separated head of its argument list. Returns `None` when
+/// no `matches!` invocation parses out (string-aware scan).
+fn matches_macro_scrutinee(text: &str) -> Option<String> {
+    let macro_at = text.find("matches!")?;
+    let open = text[macro_at..].find('(')? + macro_at;
+    let mut depth = 0isize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut raw_hashes = 0usize;
+    let mut in_raw_string = false;
+    let mut in_char = false;
+    let bytes = text.as_bytes();
+    let mut index = open;
+    let mut scrutinee_end = None;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_raw_string {
+            if byte == b'"'
+                && text[index + 1..]
+                    .chars()
+                    .take_while(|ch| *ch == '#')
+                    .count()
+                    >= raw_hashes
+                && text[index + 1..]
+                    .chars()
+                    .take(raw_hashes)
+                    .all(|ch| ch == '#')
+            {
+                in_raw_string = false;
+                index += 1 + raw_hashes;
+                continue;
+            }
+            index += 1;
+            continue;
+        }
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if in_char {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'\'' {
+                in_char = false;
+            }
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'r' if text[index + 1..].starts_with('#') || text[index + 1..].starts_with('"') => {
+                // Possible raw-string opener: r" or r#*" — confirm the quote.
+                let mut hashes = 0usize;
+                while text[index + 1 + hashes..].starts_with('#') {
+                    hashes += 1;
+                }
+                if text[index + 1 + hashes..].starts_with('"') {
+                    raw_hashes = hashes;
+                    in_raw_string = true;
+                    index += 1 + hashes + 1;
+                    continue;
+                }
+                index += 1;
+            }
+            b'"' => {
+                in_string = true;
+                index += 1;
+            }
+            b'\'' if is_char_literal_start(text, index) => {
+                in_char = true;
+                index += 1;
+            }
+            b'(' => {
+                depth += 1;
+                index += 1;
+            }
+            b')' => {
+                depth -= 1;
+                if depth <= 0 {
+                    break;
+                }
+                index += 1;
+            }
+            b',' if depth == 1 => {
+                scrutinee_end = Some(index);
+                break;
+            }
+            _ => index += 1,
+        }
+    }
+    let end = scrutinee_end?;
+    Some(text[open + 1..end].trim().to_string())
+}
+
+/// True when a `'` at `index` opens a character literal rather than a
+/// lifetime: the next quote lands within two characters (`'x'`, `'\n'`).
+fn is_char_literal_start(text: &str, index: usize) -> bool {
+    let tail = &text.as_bytes()[index + 1..];
+    tail.first() == Some(&b'\\') && tail.get(2) == Some(&b'\'') || tail.get(1) == Some(&b'\'')
+}
+
+fn is_bare_identifier(text: &str) -> bool {
+    !text.is_empty()
+        && text.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        && text
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+}
+
+/// True when `body` binds `ident` from a callee call: a `let` statement
+/// naming it whose right-hand side (to its depth-0 `;`) calls the callee.
+/// Statement scanning is string-aware; anything unrecognized fails closed.
+fn body_let_binding_calls_callee(body: &str, ident: &str, callee: &str) -> bool {
+    let mut search = 0usize;
+    while let Some(found) = body[search..].find("let ") {
+        let statement_start = search + found;
+        let after_let = body[statement_start + "let ".len()..].trim_start();
+        let rest = after_let.strip_prefix("mut ").unwrap_or(after_let);
+        if rest == ident
+            || rest.starts_with(&format!("{ident} "))
+            || rest.starts_with(&format!("{ident}:"))
+            || rest.starts_with(&format!("{ident}="))
+        {
+            // Right-hand side runs to the statement's depth-0 `;`.
+            let mut depth = 0isize;
+            let mut in_string = false;
+            let mut escaped = false;
+            let mut end = None;
+            for (offset, byte) in body[statement_start..].bytes().enumerate() {
+                if in_string {
+                    if escaped {
+                        escaped = false;
+                    } else if byte == b'\\' {
+                        escaped = true;
+                    } else if byte == b'"' {
+                        in_string = false;
+                    }
+                    continue;
+                }
+                match byte {
+                    b'"' => in_string = true,
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b';' if depth == 0 => {
+                        end = Some(statement_start + offset);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(end) = end
+                && body_contains_owner_call(&body[statement_start..end], callee)
+            {
+                return true;
+            }
+        }
+        search = statement_start + "let ".len();
+    }
+    false
 }
 
 /// Check whether `text` contains `token` as a whole word — delimited by
@@ -1246,27 +1455,100 @@ mod tests {
             ProbeFamily::ErrorPath,
             "try_parse_summary(raw).map_err(Into::into)",
         );
-        let typed_witness = test_with_body_assertions(
-            "parse_summary_fails_closed_on_malformed_source",
+        // The binder supplies variant identity: it calls the callee and pins
+        // the exact variant against the callee's own result — but it never
+        // invokes the wrapper, so on its own it cannot confirm observation.
+        let binder = test_with_body_assertions(
+            "try_parse_summary_pins_malformed_source",
             "let result = try_parse_summary(\"@bad;\");",
             vec![oracle(
-                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
+                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"callee pin\".into());\n}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        // The observer invokes the wrapper owner and pins the qualified
+        // variant against the wrapper's boxed error: this is the test that
+        // would fail if the wrapper destroyed variant identity.
+        let observer = test_with_body_assertions(
+            "parse_summary_boxed_variant_propagates_malformed_source",
+            "let error = parse_summary(\"@bad;\").err().ok_or(\"expected error\")?;",
+            vec![oracle(
+                "if !matches!(error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource)) {\nreturn Err(\"boxed identity should survive\".into());\n}",
                 OracleKind::ExactErrorVariant,
                 OracleStrength::Strong,
             )],
         );
         let (observe, discriminate, related) = reveal_evidence(
             &wrapper_probe,
-            &[(&typed_witness, RelationReason::OwnerNamedTest)],
+            &[
+                (&binder, RelationReason::OwnerNamedTest),
+                (&observer, RelationReason::DirectOwnerCall),
+            ],
         );
         assert_eq!(observe.state, StageState::Yes);
         assert_eq!(
             discriminate.state,
             StageState::Yes,
-            "the callee-bound exact-variant witness must keep the wrapper seam strong"
+            "the callee-bound identity plus the wrapper-invoking downcast witness must keep the wrapper seam strong"
         );
-        assert_eq!(related[0].oracle_kind, OracleKind::ExactErrorVariant);
-        assert_eq!(related[0].oracle_strength, OracleStrength::Strong);
+        assert!(
+            related.iter().any(|test| test.name
+                == "parse_summary_boxed_variant_propagates_malformed_source"
+                && test.oracle_kind == OracleKind::ExactErrorVariant
+                && test.oracle_strength == OracleStrength::Strong),
+            "the wrapper-invoking observer must be retained with strong exact-variant credit"
+        );
+    }
+
+    // #3700 callee-extraction pins: the converted callee is the final
+    // top-level call segment before `.map_err(..)` — receiver qualification,
+    // chaining, and turbofish must not misattribute it, and non-call shapes
+    // fail closed to `None`.
+    #[test]
+    fn wrapper_callee_name_resolves_final_call_segment() {
+        let cases = [
+            (
+                "try_parse_summary(raw).map_err(Into::into)",
+                Some("try_parse_summary"),
+            ),
+            (
+                "parser.try_parse_summary(raw).map_err(Into::into)",
+                Some("try_parse_summary"),
+            ),
+            (
+                "self.client().try_parse_summary(raw).map_err(Into::into)",
+                Some("try_parse_summary"),
+            ),
+            (
+                "try_parse_summary::<Mode>(raw).map_err(Into::into)",
+                Some("try_parse_summary"),
+            ),
+            ("foo(bar(x)).map_err(Into::into)", Some("foo")),
+        ];
+        for (expression, expected) in cases {
+            assert_eq!(
+                wrapper_callee_name(expression).as_deref(),
+                expected,
+                "callee of {expression}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrapper_callee_name_rejects_non_call_shapes() {
+        for expression in [
+            "value.map_err(Into::into)",
+            "operation_failed.map_err(Into::into)",
+            "42.map_err(Into::into)",
+            "foo(bar(x)",
+        ] {
+            assert_eq!(
+                wrapper_callee_name(expression),
+                None,
+                "non-call shape must not establish a binding: {expression}"
+            );
+        }
     }
 
     // #3700 removal-fails control: removing the wrapper-to-variant binding
@@ -1438,6 +1720,35 @@ mod tests {
         );
     }
 
+    // #3700 BUG-1 reproduction (devin review): a test that calls ONLY the
+    // callee and pins the exact variant must not itself confirm the wrapper
+    // seam — no test invokes the wrapper owner, so observation is unverified.
+    #[test]
+    fn wrapper_seam_stays_weak_when_only_callee_test_pins_variant() {
+        let wrapper_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_parse_summary(raw).map_err(Into::into)",
+        );
+        let callee_only = test_with_body_assertions(
+            "try_parse_summary_pins_malformed_source",
+            "let result = try_parse_summary(\"@bad;\");",
+            vec![oracle(
+                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"callee-only pin\".into());\n}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, discriminate, _) = reveal_evidence(
+            &wrapper_probe,
+            &[(&callee_only, RelationReason::OwnerNamedTest)],
+        );
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a callee-only pin establishes variant identity but cannot confirm wrapper observation"
+        );
+    }
+
     // #3700 round-1 review: a witness whose captured call facts are present
     // and never name the callee must not bind it through the lexical
     // fallback — the fallback exists only for witnesses without captured
@@ -1468,6 +1779,36 @@ mod tests {
             discriminate.state,
             StageState::Weak,
             "captured calls naming only the wrapper must refute the callee binding"
+        );
+    }
+
+    // #3700 BUG-2 reproduction (devin review): a test that calls the callee
+    // but pins an exact variant against ANOTHER function's result (same
+    // terminal variant name, different enum) must neither establish nor
+    // confirm the wrapper seam.
+    #[test]
+    fn wrapper_seam_stays_weak_when_variant_pin_targets_another_call() {
+        let wrapper_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_parse_summary(raw).map_err(Into::into)",
+        );
+        let mixed_witness = test_with_body_assertions(
+            "mixed_callee_call_with_foreign_pin",
+            "let result = try_parse_summary(\"@bad;\");\nlet other = unrelated_check();",
+            vec![oracle(
+                "if !matches!(other, Err(OtherError::MalformedSource)) {\nreturn Err(\"foreign pin\".into());\n}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, discriminate, _) = reveal_evidence(
+            &wrapper_probe,
+            &[(&mixed_witness, RelationReason::OwnerNamedTest)],
+        );
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "an exact-variant pin against another call must not establish the wrapper binding"
         );
     }
 

@@ -122,3 +122,22 @@ pub fn try_theme_summary(raw: &str) -> Result<String, ThemeError> {
 pub fn theme_summary(raw: &str) -> Result<String, Box<dyn Error>> {
     try_theme_summary(raw).map_err(Into::into)
 }
+
+macro_rules! fixture_error {
+    ($name:ident) => {
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{self:?}")
+            }
+        }
+
+        impl Error for $name {}
+    };
+}
+
+fixture_error!(ParseSummaryError);
+fixture_error!(ChecksumError);
+fixture_error!(LengthError);
+fixture_error!(RenderError);
+fixture_error!(GlyphError);
+fixture_error!(ThemeError);

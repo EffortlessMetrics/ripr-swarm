@@ -6346,6 +6346,8 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::boxed_wrapper_seam_loses_strong_credit_when_witness_lacks_variant_binding",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::boxed_wrapper_seam_ignores_witness_with_discarded_matches_result",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_seam_stays_weak_when_witness_pins_variant_without_callee_binding",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_seam_stays_weak_when_only_callee_test_pins_variant",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_seam_stays_weak_when_variant_pin_targets_another_call",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_callee_extraction_binds_last_chain_callee_and_rejects_values",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::wrapper_binding_does_not_resurrect_refuted_callee_binding_from_body_text",
 ]
@@ -6370,6 +6372,7 @@ outputs = [
   "fixtures/evidence-promotion-honesty-corpus/corpus.json",
   "fixtures/error_variant_boxed_wrapper_downcast_witness/expected/check.json",
   "fixtures/error_variant_boxed_wrapper_downcast_witness/expected/human.txt",
+  "fixtures/error_variant_boxed_wrapper_downcast_witness/expected/human-full.txt",
   "fixtures/error_variant_boxed_wrapper_fail_closed/expected/check.json",
   "fixtures/error_variant_boxed_wrapper_fail_closed/expected/human.txt",
 ]
