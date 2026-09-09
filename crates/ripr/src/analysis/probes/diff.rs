@@ -283,7 +283,8 @@ fn changed_line_is_test_evidence(index: &RustIndex, path: &Path, line: usize) ->
     // authority (#3695), without guessing from filenames or parsing cfg again.
     // Missing or unresolved provenance cannot remove production eligibility.
     find_file_facts(index, path).is_some_and(|facts| {
-        facts.role_provenance.earliest_unresolved_reason.is_none()
+        !facts.used_lexical_fallback
+            && facts.role_provenance.earliest_unresolved_reason.is_none()
             && facts
                 .role_provenance
                 .edges

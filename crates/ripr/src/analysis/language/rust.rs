@@ -2517,6 +2517,13 @@ mod tests {
             ),
             ("missing-parent", "", "src/support.rs", false, None),
             (
+                "lexical-fallback",
+                "#[cfg(test)] mod support;\n",
+                "src/support.rs",
+                false,
+                None,
+            ),
+            (
                 "unresolved-ancestor",
                 "mod outer;\n#[path = \"outer.rs\"] mod other;\n",
                 "src/outer/support.rs",
@@ -2538,10 +2545,23 @@ mod tests {
             }
             let mut diff_text = String::new();
             for path in [child_path, "src/production.rs"] {
-                write(
-                    &root.join(path),
-                    "struct Counter {\n    allowed: usize,\n}\n",
-                )?;
+                let source = if name == "lexical-fallback" && path == child_path {
+                    "struct Counter {\n    allowed: usize,\n}\nfn incomplete(\n"
+                } else {
+                    "struct Counter {\n    allowed: usize,\n}\n"
+                };
+                if name == "lexical-fallback"
+                    && path == child_path
+                    && crate::analysis::rust_index::RustSyntaxAdapter::summarize_file(
+                        &crate::analysis::rust_index::RaRustSyntaxAdapter,
+                        &root.join(path),
+                        source,
+                    )
+                    .is_ok()
+                {
+                    return Err("fallback fixture unexpectedly parsed".to_string());
+                }
+                write(&root.join(path), source)?;
                 diff_text.push_str(&format!(
                     "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,2 +1,3 @@\n struct Counter {{\n+    allowed: usize,\n }}\n"
                 ));

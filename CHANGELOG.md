@@ -299,7 +299,7 @@ are scoped or reviewed.
 - Rust diff analysis now treats ownerless field declarations in resolved
   test-required module children as evidence-only, including literal-path and
   transitive module children. Production, mixed, missing, and unresolved
-  contexts retain production eligibility
+  contexts and lexical-fallback children retain production eligibility
   ([#3695](https://github.com/EffortlessMetrics/ripr-swarm/issues/3695)).
 
 - Diff-path textual identities now escape literal percent signs consistently on

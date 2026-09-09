@@ -95,8 +95,9 @@ and macro suffixes never classify.
 
 Diff lines without a function owner consume the composer's existing
 `SourceRoleProvenance` (#3695). They are evidence-only when the provenance
-has no unresolved edge and contains a test-required edge. Empty, missing,
-production, or unresolved provenance retains production eligibility;
+has no unresolved edge and contains a test-required edge, and the child
+has parser-backed facts. Empty, missing, production, or unresolved
+provenance and lexical-fallback children retain production eligibility;
 function-owned lines retain their `FunctionSourceRole` decision. This
 includes field declarations in regular, literal-path, and transitive
 test-required module children. It does not register executable tests or
