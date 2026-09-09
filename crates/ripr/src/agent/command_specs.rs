@@ -220,21 +220,28 @@ const REPORT_REGENERATION_ROUTES: [(&str, &[&str]); 2] = [
     ),
 ];
 
-/// Required flags per report-regeneration route (matched by route word).
-fn report_route_required_flags(command_word: &str) -> &'static [&'static str] {
-    match command_word {
-        "front-panel" => &["--root"],
-        "index" => &["--root", "--reports-dir"],
-        _ => &[],
-    }
-}
-
-fn report_route_command_id(command_word: &str) -> Option<&'static str> {
-    match command_word {
-        "front-panel" => Some("ripr:pr-review:front-panel"),
-        "index" => Some("ripr:reports:index"),
-        _ => None,
-    }
+/// The loop-template facts for one report-regeneration route, looked up by
+/// route word: `(command_id, allowed flags, required flags)`. FIX (round-1
+/// review): the lookup is by route word — never by table position — so
+/// reordering `REPORT_REGENERATION_ROUTES` cannot silently swap a route's
+/// template.
+fn report_route_template(
+    command_word: &str,
+) -> Option<(
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+)> {
+    let allowed = REPORT_REGENERATION_ROUTES
+        .iter()
+        .find(|(route, _)| *route == command_word)
+        .map(|(_, allowed)| *allowed)?;
+    let (command_id, required) = match command_word {
+        "front-panel" => ("ripr:pr-review:front-panel", &["--root"][..]),
+        "index" => ("ripr:reports:index", &["--root", "--reports-dir"][..]),
+        _ => return None,
+    };
+    Some((command_id, allowed, required))
 }
 
 /// FIX #1617 slice 2: recover a typed regeneration spec for the canonical
@@ -257,21 +264,11 @@ pub(crate) fn report_regeneration_command_spec_from_display(command: &str) -> Op
         Some("check") => recover_check_repo_exposure_spec(&words, command),
         Some("reports") => match words.get(2).map(String::as_str) {
             Some("gap-ledger") => recover_gap_ledger_spec(&words, command),
-            Some("index") => recover_loop_template_spec(
-                &words,
-                command,
-                "index",
-                REPORT_REGENERATION_ROUTES[1].1,
-            ),
+            Some("index") => recover_loop_template_spec(&words, command, "index"),
             _ => None,
         },
         Some("pr-review") if words.get(2).map(String::as_str) == Some("front-panel") => {
-            recover_loop_template_spec(
-                &words,
-                command,
-                "front-panel",
-                REPORT_REGENERATION_ROUTES[0].1,
-            )
+            recover_loop_template_spec(&words, command, "front-panel")
         }
         _ => None,
     }
@@ -281,14 +278,15 @@ pub(crate) fn report_regeneration_command_spec_from_display(command: &str) -> Op
 /// template, may appear in any order, must not repeat, and required flags
 /// must be present. Values are taken positionally exactly as the CLI
 /// parses them; a flag-shaped token where a value belongs means the value
-/// is missing, so recovery fails closed.
+/// is missing, so recovery fails closed. FIX (round-1 review): the
+/// recovered spec passes the same validation a producer spec must, so a
+/// traversing or absolute output path stays legacy-string-only.
 fn recover_loop_template_spec(
     words: &[String],
     command: &str,
     command_word: &str,
-    allowed: &[&str],
 ) -> Option<CommandSpec> {
-    let command_id = report_route_command_id(command_word)?;
+    let (command_id, allowed, required) = report_route_template(command_word)?;
     let mut args = vec![words[1].to_string(), words[2].to_string()];
     let mut expected_writes = Vec::new();
     let mut seen = Vec::new();
@@ -313,19 +311,23 @@ fn recover_loop_template_spec(
         }
         index += 2;
     }
-    for required in report_route_required_flags(command_word) {
+    for required in required {
         if !seen.contains(required) {
             return None;
         }
     }
-    Some(command_spec(
+    let spec = command_spec(
         command_id,
         CommandRole::Regeneration,
         CommandExecutionMode::Direct,
         args,
         expected_writes,
         command.to_string(),
-    ))
+    );
+    if spec.validate().is_err() {
+        return None;
+    }
+    Some(spec)
 }
 
 /// Exact-shape recovery for `ripr check --root R --mode M --format
@@ -1176,7 +1178,7 @@ mod tests {
         {
             return Err("an extra trailing token must stay legacy-string-only".to_string());
         }
-        // The compound `&&` command first_pr renders for the default python
+        // A compound && command first_pr renders for the default python
         // bridge is two routes in one shell line — neither half alone.
         if super::report_regeneration_command_spec_from_display(
             "ripr check --root . --base origin/main --json > target/ripr/reports/check.json && ripr reports gap-ledger --check-output target/ripr/reports/check.json --root . --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md",
@@ -1184,6 +1186,33 @@ mod tests {
         .is_some()
         {
             return Err("a compound && command must stay legacy-string-only".to_string());
+        }
+        // FIX (round-1 review): the loop-template routes pass the same
+        // validation — a traversing output path stays legacy-string-only.
+        if super::report_regeneration_command_spec_from_display(
+            "ripr pr-review front-panel --root . --out ../outside.json",
+        )
+        .is_some()
+        {
+            return Err(
+                "a loop route with a traversing write must stay legacy-string-only".to_string(),
+            );
+        }
+        // Template lookup is by route word: front-panel must not accept an
+        // index-only flag, and index requires its own mandatory flags.
+        if super::report_regeneration_command_spec_from_display(
+            "ripr pr-review front-panel --root . --reports-dir target/ripr/reports --out panel.json --out-md panel.md",
+        )
+        .is_some()
+        {
+            return Err("front-panel accepted an index-only flag".to_string());
+        }
+        if super::report_regeneration_command_spec_from_display(
+            "ripr reports index --root . --out index.json --out-md index.md",
+        )
+        .is_some()
+        {
+            return Err("index accepted a display missing --reports-dir".to_string());
         }
 
         // The pre-existing loop-template routes keep working unchanged.

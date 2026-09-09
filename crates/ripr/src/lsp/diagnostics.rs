@@ -3034,6 +3034,79 @@ mod seam_diagnostic_tests {
         result
     }
 
+    /// FIX (round-1 review): a persisted legacy ledger (string-only
+    /// regeneration commands) gains typed regeneration specs at parse time,
+    /// and the LSP diagnostic payload carries them as
+    /// `regeneration_command_specs`.
+    #[test]
+    fn persisted_legacy_ledger_parse_enriches_diagnostic_payload_specs() -> Result<(), String> {
+        let legacy_ledger = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "kind": "gap_decision_ledger",
+            "status": "advisory",
+            "root": ".",
+            "records": [{
+                "gap_id": "gap:legacy-regen",
+                "canonical_gap_id": "gap:legacy-regen",
+                "kind": "MissingValueAssertion",
+                "language": "rust",
+                "language_status": "stable",
+                "scope": "pr_local",
+                "evidence_class": "already_observed",
+                "gap_state": "actionable",
+                "policy_state": "new",
+                "repairability": "repairable",
+                "authority_boundary": "advisory",
+                "regeneration_commands": [
+                    "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md"
+                ]
+            }]
+        });
+        let records =
+            crate::output::gap_decision_ledger::parse_gap_records_json(&legacy_ledger.to_string())?;
+        let record = records
+            .first()
+            .ok_or("legacy ledger parse returned no records")?;
+        let specs = record
+            .command_specs
+            .as_ref()
+            .ok_or("parsed legacy record did not gain typed command specs")?;
+        if specs.regeneration.len() != 1
+            || specs.regeneration[0].command_id != "ripr:reports:gap-ledger"
+        {
+            return Err(format!(
+                "parsed legacy record carried unexpected regeneration specs: {:?}",
+                specs.regeneration
+            ));
+        }
+
+        let root = temp_gap_root()?;
+        let data = gap_record_diagnostic_data_with_causal(
+            &root,
+            Path::new("target/ripr/reports/gap-decision-ledger.json"),
+            record,
+            None,
+        );
+        fs::remove_dir_all(&root)
+            .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
+        let payload_specs = data
+            .get("regeneration_command_specs")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("diagnostic payload omitted regeneration_command_specs")?;
+        if payload_specs.len() != 1
+            || payload_specs[0]
+                .get("command_id")
+                .and_then(serde_json::Value::as_str)
+                != Some("ripr:reports:gap-ledger")
+        {
+            return Err(format!(
+                "diagnostic payload carried unexpected regeneration specs: {data}"
+            ));
+        }
+        Ok(())
+    }
+
     fn temp_gap_root() -> Result<PathBuf, String> {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

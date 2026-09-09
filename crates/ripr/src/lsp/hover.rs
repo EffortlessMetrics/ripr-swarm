@@ -1421,6 +1421,53 @@ mod seam_hover_tests {
         Ok(())
     }
 
+    /// FIX (round-1 review): the marker contract must hold for a real
+    /// serialized `CommandSpec`, not only hand-built JSON — the hover reads
+    /// the serde field names (`human_display`, `execution_mode`) exactly as
+    /// the domain type serializes them.
+    #[test]
+    fn gap_diagnostic_hover_recognizes_serialized_command_spec() -> Result<(), String> {
+        let spec = crate::agent::command_specs::report_regeneration_command_spec_from_display(
+            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md",
+        )
+        .ok_or("canonical gap-ledger route was not recoverable")?;
+        let serialized = serde_json::to_value(&spec)
+            .map_err(|error| format!("serialize command spec failed: {error}"))?;
+        if serialized.get("human_display").and_then(string_value) != Some(spec.display.as_str()) {
+            return Err(format!(
+                "serialized spec must expose the display as `human_display`: {serialized}"
+            ));
+        }
+        if serialized.get("execution_mode").and_then(string_value) != Some("direct") {
+            return Err(format!(
+                "serialized spec must expose `execution_mode` as a string: {serialized}"
+            ));
+        }
+
+        let mut diagnostic = sample_gap_diagnostic();
+        let data = diagnostic
+            .data
+            .as_mut()
+            .ok_or("gap diagnostic must carry data")?;
+        let object = data
+            .as_object_mut()
+            .ok_or("gap diagnostic data must be an object")?;
+        object.insert(
+            "regeneration_command_specs".to_string(),
+            serde_json::json!([serialized]),
+        );
+
+        let hover = diagnostic_hover_response(&diagnostic);
+        let md = extract_markup(&hover)?;
+        let marker = format!("- regenerate (direct): `{}`", spec.display);
+        if !md.contains(&marker) {
+            return Err(format!(
+                "missing serialized-spec marker {marker:?} in:\n{md}"
+            ));
+        }
+        Ok(())
+    }
+
     fn unique_hover_root(label: &str) -> Result<PathBuf, String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
