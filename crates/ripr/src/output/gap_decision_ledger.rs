@@ -165,6 +165,56 @@ pub(crate) struct GapRecordCommandSpecs {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub(crate) receipt: Vec<CommandSpec>,
+    /// FIX #1617 slice 2: typed regeneration specs — either carried by the
+    /// upstream producer or recovered at read time from the canonical
+    /// report-regeneration displays.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_regeneration_command_spec_collection",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub(crate) regeneration: Vec<CommandSpec>,
+}
+
+/// FIX (round-1 review): the regeneration collection shares the
+/// object-or-array parsing contract and role validation with the
+/// verify/receipt collections — no forked parser.
+fn deserialize_regeneration_command_spec_collection<'de, D>(
+    deserializer: D,
+) -> Result<Vec<CommandSpec>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_command_spec_collection(deserializer, CommandRole::Regeneration)
+}
+
+/// FIX #1617 slice 2: legacy regeneration strings for the canonical
+/// report-regeneration routes gain their typed specs at read time — a pure
+/// enrichment; records whose routes are not canonical keep empty typed
+/// collections and stay legacy-string-only.
+fn recover_regeneration_command_specs(record: &mut GapRecord) {
+    let already_typed = record
+        .command_specs
+        .as_ref()
+        .is_some_and(|specs| !specs.regeneration.is_empty());
+    if already_typed {
+        return;
+    }
+    let mut recovered = Vec::new();
+    for display in &record.regeneration_commands {
+        if let Some(spec) =
+            crate::agent::command_specs::report_regeneration_command_spec_from_display(display)
+        {
+            recovered.push(spec);
+        }
+    }
+    if recovered.is_empty() {
+        return;
+    }
+    record
+        .command_specs
+        .get_or_insert_with(GapRecordCommandSpecs::default)
+        .regeneration = recovered;
 }
 
 fn deserialize_verify_command_spec_collection<'de, D>(
@@ -382,6 +432,14 @@ pub(crate) fn build_gap_decision_ledger_report(
         attach_check_output_preview_receipt_routes(&mut records, &input.root);
     }
 
+    // FIX #1617 slice 2: legacy regeneration strings for the canonical
+    // report-regeneration routes gain their typed specs at read time, so
+    // every downstream surface (LSP projections, first-pr, review packets)
+    // sees the typed form without any upstream emitter change.
+    for record in &mut records {
+        recover_regeneration_command_specs(record);
+    }
+
     for record in &records {
         validate_record(record, &mut warnings);
     }
@@ -462,11 +520,19 @@ fn gap_record_json_value(record: &GapRecord) -> Result<Value, String> {
     serde_json::to_value(record).map_err(|err| format!("serialize gap record JSON failed: {err}"))
 }
 
-fn command_specs_from_value(
-    value: Option<&Value>,
-) -> Result<(Vec<CommandSpec>, Vec<CommandSpec>), String> {
+/// Producer-supplied typed command specs parsed from one canonical item.
+/// FIX (round-1 review): carries the regeneration collection beside
+/// verify/receipt instead of discarding it.
+#[derive(Debug, Default)]
+struct ParsedCommandSpecCollections {
+    verify: Vec<CommandSpec>,
+    receipt: Vec<CommandSpec>,
+    regeneration: Vec<CommandSpec>,
+}
+
+fn command_specs_from_value(value: Option<&Value>) -> Result<ParsedCommandSpecCollections, String> {
     let Some(command_specs) = value.and_then(|value| value.get("command_specs")) else {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok(ParsedCommandSpecCollections::default());
     };
     let object = command_specs
         .as_object()
@@ -499,10 +565,11 @@ fn command_specs_from_value(
             })
             .collect()
     };
-    Ok((
-        parse("verify", CommandRole::Verify)?,
-        parse("receipt", CommandRole::Receipt)?,
-    ))
+    Ok(ParsedCommandSpecCollections {
+        verify: parse("verify", CommandRole::Verify)?,
+        receipt: parse("receipt", CommandRole::Receipt)?,
+        regeneration: parse("regeneration", CommandRole::Regeneration)?,
+    })
 }
 
 pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerReport) -> String {
@@ -598,7 +665,15 @@ pub(crate) fn parse_gap_record_source_json(
         .and_then(|object| object.get("generated_at"))
         .and_then(Value::as_str)
         .map(ToString::to_string);
-    let records = gap_records_from_value(&value)?;
+    let mut records = gap_records_from_value(&value)?;
+    // FIX (round-1 review): every persisted-ledger parse path enriches
+    // legacy string-only records with the typed regeneration specs, so the
+    // LSP loaders (diagnostics/backend) see the typed form too. The
+    // enrichment is idempotent: a record already carrying typed
+    // regeneration specs is left untouched.
+    for record in &mut records {
+        recover_regeneration_command_specs(record);
+    }
     Ok(ParsedGapRecordSource {
         root,
         generated_at,
@@ -786,8 +861,18 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
         .filter(|command| command_display_is_nonblank(command))
         .map(ToString::to_string);
     let command_specs = match command_specs_from_value(Some(canonical_item)) {
-        Ok((verify, receipt)) if !verify.is_empty() || !receipt.is_empty() => {
-            Some(GapRecordCommandSpecs { verify, receipt })
+        // FIX (round-1 review): producer-supplied regeneration specs are
+        // preserved beside verify/receipt instead of being discarded.
+        Ok(parsed)
+            if !parsed.verify.is_empty()
+                || !parsed.receipt.is_empty()
+                || !parsed.regeneration.is_empty() =>
+        {
+            Some(GapRecordCommandSpecs {
+                verify: parsed.verify,
+                receipt: parsed.receipt,
+                regeneration: parsed.regeneration,
+            })
         }
         Ok(_) => None,
         Err(_) => return None,
@@ -5908,6 +5993,244 @@ mod tests {
                 "unexpected cross-role error for {field}: {error}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn regeneration_collection_shares_object_or_array_contract() -> Result<(), String> {
+        let spec = crate::agent::command_specs::report_regeneration_command_spec_from_display(
+            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md",
+        )
+        .ok_or("canonical gap-ledger route was not recoverable")?;
+        // Null collection deserializes to empty.
+        let null_value = serde_json::json!([{
+            "gap_id": "gap:regen-null",
+            "command_specs": {"regeneration": null}
+        }]);
+        let records = parse_gap_records_json(&null_value.to_string())
+            .map_err(|error| format!("null regeneration collection was rejected: {error}"))?;
+        let specs = records[0]
+            .command_specs
+            .as_ref()
+            .ok_or("null regeneration collection dropped command_specs")?;
+        assert!(
+            specs.regeneration.is_empty(),
+            "null regeneration collection must deserialize to empty: {:?}",
+            specs.regeneration
+        );
+        // A single object is accepted beside an array.
+        for shape in [
+            serde_json::json!([{
+                "gap_id": "gap:regen-object",
+                "command_specs": {"regeneration": serde_json::to_value(&spec)
+                    .map_err(|error| format!("serialize spec failed: {error}"))?}
+            }]),
+            serde_json::json!([{
+                "gap_id": "gap:regen-array",
+                "command_specs": {"regeneration": [serde_json::to_value(&spec)
+                    .map_err(|error| format!("serialize spec failed: {error}"))?]}
+            }]),
+        ] {
+            let records = parse_gap_records_json(&shape.to_string())
+                .map_err(|error| format!("regeneration collection shape was rejected: {error}"))?;
+            let specs = records[0]
+                .command_specs
+                .as_ref()
+                .ok_or("regeneration collection dropped command_specs")?;
+            if specs.regeneration.len() != 1 || specs.regeneration[0] != spec {
+                return Err(format!(
+                    "regeneration collection did not round-trip the spec: {:?}",
+                    specs.regeneration
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn regeneration_collection_rejects_malformed_and_role_mismatched_specs() -> Result<(), String> {
+        // Malformed (neither object nor array):
+        let malformed = serde_json::json!([{
+            "gap_id": "gap:regen-malformed",
+            "command_specs": {"regeneration": "not-a-spec"}
+        }]);
+        let error = parse_gap_records_json(&malformed.to_string())
+            .err()
+            .ok_or("malformed regeneration collection was accepted")?;
+        assert!(
+            error.contains("object or array"),
+            "unexpected malformed-collection error: {error}"
+        );
+        // Role mismatch names the actual roles via command_role_label:
+        let receipt = crate::agent::command_specs::agent_receipt_command_spec(
+            ".",
+            "verify.json",
+            "gap:regen-role",
+            Some("receipt.json"),
+        );
+        let mismatched = serde_json::json!([{
+            "gap_id": "gap:regen-role-mismatch",
+            "command_specs": {"regeneration": receipt}
+        }]);
+        let error = parse_gap_records_json(&mismatched.to_string())
+            .err()
+            .ok_or("role-mismatched regeneration spec was accepted")?;
+        assert!(
+            error.contains("receipt") && error.contains("regeneration"),
+            "role mismatch error must name the actual and expected roles: {error}"
+        );
+        Ok(())
+    }
+
+    /// FIX (round-1 review): every persisted-ledger parse path enriches
+    /// legacy string-only records with typed regeneration specs, and the
+    /// enrichment is idempotent — producer-carried collections are never
+    /// double-appended from the legacy strings.
+    #[test]
+    fn parse_gap_records_json_enriches_legacy_regeneration_strings_idempotently()
+    -> Result<(), String> {
+        let legacy = serde_json::json!([{
+            "gap_id": "gap:legacy-regen",
+            "kind": "MissingValueAssertion",
+            "regeneration_commands": [
+                "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md"
+            ]
+        }]);
+        let records = parse_gap_records_json(&legacy.to_string())?;
+        let specs = records[0]
+            .command_specs
+            .as_ref()
+            .ok_or("legacy regeneration strings did not gain typed specs")?;
+        if specs.regeneration.len() != 1
+            || specs.regeneration[0].command_id != "ripr:reports:gap-ledger"
+        {
+            return Err(format!(
+                "legacy record enrichment produced unexpected specs: {:?}",
+                specs.regeneration
+            ));
+        }
+        // Idempotence: reparsing the enriched record keeps exactly one spec.
+        let reenriched = serde_json::json!([{
+            "gap_id": "gap:legacy-regen",
+            "kind": "MissingValueAssertion",
+            "regeneration_commands": [
+                "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md"
+            ],
+            "command_specs": serde_json::to_value(records[0].command_specs.clone())
+                .map_err(|error| format!("serialize enriched specs failed: {error}"))?
+        }]);
+        let records = parse_gap_records_json(&reenriched.to_string())?;
+        let specs = records[0]
+            .command_specs
+            .as_ref()
+            .ok_or("re-enriched record lost command_specs")?;
+        if specs.regeneration.len() != 1 {
+            return Err(format!(
+                "re-enrichment double-appended regeneration specs: {:?}",
+                specs.regeneration
+            ));
+        }
+        // A producer-carried collection wins over the legacy strings.
+        let receipt = crate::agent::command_specs::agent_receipt_command_spec(
+            ".",
+            "verify.json",
+            "gap:producer",
+            None,
+        );
+        let mut producer_spec =
+            crate::agent::command_specs::report_regeneration_command_spec_from_display(
+                "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md",
+            )
+            .ok_or("canonical gap-ledger route was not recoverable")?;
+        producer_spec.command_id = "ripr:producer:gap-ledger".to_string();
+        let producer = serde_json::json!([{
+            "gap_id": "gap:producer-regen",
+            "kind": "MissingValueAssertion",
+            "regeneration_commands": [
+                "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md"
+            ],
+            "command_specs": {
+                "receipt": serde_json::to_value(&receipt)
+                    .map_err(|error| format!("serialize receipt failed: {error}"))?,
+                "regeneration": serde_json::to_value(producer_spec)
+                    .map_err(|error| format!("serialize producer spec failed: {error}"))?
+            }
+        }]);
+        let records = parse_gap_records_json(&producer.to_string())?;
+        let specs = records[0]
+            .command_specs
+            .as_ref()
+            .ok_or("producer-carried specs were dropped")?;
+        if specs.regeneration.len() != 1
+            || specs.regeneration[0].command_id != "ripr:producer:gap-ledger"
+        {
+            return Err(format!(
+                "producer-carried regeneration specs were replaced or duplicated: {:?}",
+                specs.regeneration
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repo_exposure_preserves_producer_regeneration_specs_and_rejects_invalid_ones()
+    -> Result<(), String> {
+        let spec = crate::agent::command_specs::report_regeneration_command_spec_from_display(
+            "ripr check --root . --mode instant --format repo-exposure-json > repo.json",
+        )
+        .ok_or("canonical repo-exposure route was not recoverable")?;
+        let base = serde_json::json!({
+            "seams": [{
+                "evidence_record": {
+                    "seam_id": "seam:regen-specs",
+                    "canonical_item": {
+                        "gap_state": "actionable",
+                        "actionability": "add_focused_test",
+                        "command_specs": {"regeneration": serde_json::to_value(&spec)
+                            .map_err(|error| format!("serialize spec failed: {error}"))?}
+                    }
+                }
+            }]
+        });
+        let records = gap_records_from_repo_exposure_json(&base.to_string())?;
+        let specs = records[0]
+            .command_specs
+            .as_ref()
+            .ok_or("producer regeneration specs were discarded in the repo-exposure path")?;
+        if specs.regeneration.len() != 1
+            || specs.regeneration[0].command_id != "ripr:check:repo-exposure"
+        {
+            return Err(format!(
+                "repo-exposure record lost the producer regeneration specs: {:?}",
+                specs.regeneration
+            ));
+        }
+        // Role mismatch is rejected by the preliminary seam validation.
+        let verify = crate::agent::command_specs::agent_verify_command_spec(
+            ".",
+            "before.json",
+            "after.json",
+            None,
+        );
+        let mismatched = serde_json::json!({
+            "seams": [{
+                "evidence_record": {
+                    "seam_id": "seam:regen-role-mismatch",
+                    "canonical_item": {
+                        "gap_state": "actionable",
+                        "actionability": "add_focused_test",
+                        "command_specs": {"regeneration": verify}
+                    }
+                }
+            }]
+        });
+        let error = gap_records_from_repo_exposure_json(&mismatched.to_string())
+            .err()
+            .ok_or("role-mismatched regeneration spec was accepted in the repo-exposure path")?;
+        assert!(
+            error.contains("invalid typed command specs") && error.contains("regeneration"),
+            "unexpected repo-exposure role-mismatch error: {error}"
+        );
         Ok(())
     }
 

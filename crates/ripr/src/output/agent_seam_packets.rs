@@ -3151,6 +3151,7 @@ mod tests {
         record.command_specs = Some(crate::output::gap_decision_ledger::GapRecordCommandSpecs {
             verify: vec![verify],
             receipt: vec![receipt],
+            regeneration: Vec::new(),
         });
         Ok(record)
     }

@@ -15010,6 +15010,43 @@ Gap-ledger PR review cards likewise project only `GapRecord.seam_id`; a row
 without it is suppressed with `missing_seam_identity` rather than using
 `gap_id` as a seam substitute.
 
+Typed command specifications (additive `command_specs`): records may carry
+`command_specs.verify`, `command_specs.receipt`, and
+`command_specs.regeneration` `CommandSpec` collections. Every collection
+accepts a single object or an array (`null` reads as empty); each spec must
+pass `CommandSpec` validation and carry the collection's role, so a `verify`
+spec inside `command_specs.regeneration` is a named input error, not a silent
+re-slot. Regeneration collections cover the canonical report-regeneration
+routes only:
+
+- `ripr check --root R --mode M --format repo-exposure-json > OUT` - recovered
+  as `shell_required` (the redirect is shell semantics) with `OUT` as the
+  expected write and argv stopping before the redirect; `M` must come from the
+  CLI mode vocabulary (`instant`, `draft`, `fast`, `deep`, `ready`).
+- `ripr reports gap-ledger --repo-exposure E --out O --out-md M`,
+  `ripr reports gap-ledger --check-output C --root R --out O --out-md M`, and
+  the shorter single-output forms ending at `--out O` - recovered as
+  `direct` with `O` and the CLI default Markdown output
+  (`target/ripr/reports/gap-decision-ledger.md`, applied independently of
+  `--out`) as the expected writes; forms without any output flag fail
+  closed.
+- `ripr pr-review front-panel ...` and `ripr reports index ...` - loop-template
+  routes: their closed flag set in any order, no repeats, and the route's
+  mandatory flags present; front-panel additionally requires at least one
+  explicit artifact input (`--pr-guidance`, `--first-action`,
+  `--assistant-proof`, `--assistant-health`, `--ledger`, `--baseline-delta`,
+  `--zero-status`, `--gate-decision`, `--recommendation-calibration`,
+  `--mutation-calibration`, `--coverage-frontier`, or `--receipt`), matching
+  the CLI.
+
+Legacy string-only `regeneration_commands` for these routes gain their typed
+specs at read time on every parse path (ledger build and persisted-ledger
+loaders, LSP included); records already carrying typed regeneration specs are
+never double-appended. Displays that deviate from a route's exact shape -
+reordered flags, unknown or missing flags, extra tokens, compound `&&` shell
+lines, or traversing/absolute output paths - stay legacy strings and gain no
+typed spec.
+
 JSON shape:
 
 ```jsonc

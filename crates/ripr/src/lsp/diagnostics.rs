@@ -1812,6 +1812,26 @@ fn gap_record_diagnostic_message(record: &GapRecord) -> String {
     message
 }
 
+/// FIX (round-2 review): a serialization failure must not collapse into an
+/// empty collection — that would be indistinguishable from "no typed
+/// routes". The payload carries the serialized specs plus an optional
+/// named error string; success keeps the error absent.
+fn regeneration_specs_payload<S: serde::Serialize>(
+    specs: &[S],
+) -> (serde_json::Value, Option<String>) {
+    match specs
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(values) => (serde_json::Value::Array(values), None),
+        Err(error) => (
+            serde_json::Value::Array(Vec::new()),
+            Some(error.to_string()),
+        ),
+    }
+}
+
 fn gap_record_diagnostic_data_with_causal(
     root: &Path,
     ledger_path: &Path,
@@ -1830,6 +1850,13 @@ fn gap_record_diagnostic_data_with_causal(
             ],
         )
     };
+    let (regeneration_command_specs, regeneration_command_specs_error) = regeneration_specs_payload(
+        record
+            .command_specs
+            .as_ref()
+            .map(|specs| specs.regeneration.as_slice())
+            .unwrap_or(&[]),
+    );
     let mut data = serde_json::json!({
         "schema_version": "0.1",
         "source": "gap_decision_ledger",
@@ -1853,10 +1880,19 @@ fn gap_record_diagnostic_data_with_causal(
         "evidence_ids": record.evidence_ids,
         "verification_commands": record.verification_commands,
         "regeneration_commands": record.regeneration_commands,
+        "regeneration_command_specs": regeneration_command_specs,
         "receipt_command": record.receipt_command,
         "receipt": record.receipt,
         "authority_boundary": record.authority_boundary,
     });
+    if let Some(error) = regeneration_command_specs_error
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert(
+            "regeneration_command_specs_error".to_string(),
+            serde_json::Value::String(error),
+        );
+    }
     if let Some(missing_discriminator) = record
         .repair_route
         .as_ref()
@@ -3018,6 +3054,128 @@ mod seam_diagnostic_tests {
         fs::remove_dir_all(&root)
             .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
         result
+    }
+
+    /// FIX (round-1 review): a persisted legacy ledger (string-only
+    /// regeneration commands) gains typed regeneration specs at parse time,
+    /// and the LSP diagnostic payload carries them as
+    /// `regeneration_command_specs`.
+    #[test]
+    fn persisted_legacy_ledger_parse_enriches_diagnostic_payload_specs() -> Result<(), String> {
+        let legacy_ledger = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "kind": "gap_decision_ledger",
+            "status": "advisory",
+            "root": ".",
+            "records": [{
+                "gap_id": "gap:legacy-regen",
+                "canonical_gap_id": "gap:legacy-regen",
+                "kind": "MissingValueAssertion",
+                "language": "rust",
+                "language_status": "stable",
+                "scope": "pr_local",
+                "evidence_class": "already_observed",
+                "gap_state": "actionable",
+                "policy_state": "new",
+                "repairability": "repairable",
+                "authority_boundary": "advisory",
+                "regeneration_commands": [
+                    "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md"
+                ]
+            }]
+        });
+        let records =
+            crate::output::gap_decision_ledger::parse_gap_records_json(&legacy_ledger.to_string())?;
+        let record = records
+            .first()
+            .ok_or("legacy ledger parse returned no records")?;
+        let specs = record
+            .command_specs
+            .as_ref()
+            .ok_or("parsed legacy record did not gain typed command specs")?;
+        if specs.regeneration.len() != 1
+            || specs.regeneration[0].command_id != "ripr:reports:gap-ledger"
+        {
+            return Err(format!(
+                "parsed legacy record carried unexpected regeneration specs: {:?}",
+                specs.regeneration
+            ));
+        }
+
+        let root = temp_gap_root()?;
+        let data = gap_record_diagnostic_data_with_causal(
+            &root,
+            Path::new("target/ripr/reports/gap-decision-ledger.json"),
+            record,
+            None,
+        );
+        fs::remove_dir_all(&root)
+            .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
+        let payload_specs = data
+            .get("regeneration_command_specs")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("diagnostic payload omitted regeneration_command_specs")?;
+        if payload_specs.len() != 1
+            || payload_specs[0]
+                .get("command_id")
+                .and_then(serde_json::Value::as_str)
+                != Some("ripr:reports:gap-ledger")
+        {
+            return Err(format!(
+                "diagnostic payload carried unexpected regeneration specs: {data}"
+            ));
+        }
+        if data.get("regeneration_command_specs_error").is_some() {
+            return Err(format!(
+                "a successful serialization must not carry an error entry: {data}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// FIX (round-2 review): a serialization failure must surface as the
+    /// named `regeneration_command_specs_error` entry instead of collapsing
+    /// into an empty collection that reads as "no typed routes". Real
+    /// `CommandSpec` values cannot force `serde_json::to_value` to fail
+    /// (all fields are strings, sequences, and integers), so the failure
+    /// branch is pinned through the shared payload helper with a poison
+    /// serializer input.
+    #[test]
+    fn regeneration_specs_payload_surfaces_serialization_failures() -> Result<(), String> {
+        struct Poison;
+        impl serde::Serialize for Poison {
+            fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("poisoned spec"))
+            }
+        }
+        let (value, error) = regeneration_specs_payload(&[Poison]);
+        if !value.as_array().is_some_and(|entries| entries.is_empty()) {
+            return Err(format!(
+                "a failed serialization must render no specs: {value}"
+            ));
+        }
+        let error = error.ok_or("a serialization failure was not disclosed")?;
+        if !error.contains("poisoned spec") {
+            return Err(format!("the error entry lost the failure detail: {error}"));
+        }
+
+        let spec = crate::agent::command_specs::report_regeneration_command_spec_from_display(
+            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md",
+        )
+        .ok_or("canonical gap-ledger route was not recoverable")?;
+        let (value, error) = regeneration_specs_payload(std::slice::from_ref(&spec));
+        if error.is_some() {
+            return Err("a serializable spec must not produce an error entry".to_string());
+        }
+        if value[0]
+            .get("command_id")
+            .and_then(serde_json::Value::as_str)
+            != Some("ripr:reports:gap-ledger")
+        {
+            return Err(format!("the payload lost the spec: {value}"));
+        }
+        Ok(())
     }
 
     fn temp_gap_root() -> Result<PathBuf, String> {
