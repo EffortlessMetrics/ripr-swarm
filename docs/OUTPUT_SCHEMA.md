@@ -15749,6 +15749,20 @@ distinct non-empty command exists; otherwise that field is explicit JSON
 `route.receipt_command_conflict` rather than choosing one arbitrarily. Neither
 command is manufactured.
 
+When the matching ledger records carry producer-owned typed `command_specs`,
+the route also carries `verify_command_specs` (a JSON array of full
+`CommandSpec` objects) beside the legacy `verify_commands` strings, and
+`receipt_command_spec` (a single `CommandSpec` object) beside
+`receipt_command`. The typed specs are deduplicated by their semantic digest
+(sha256 over the serialized spec), so distinct invocations that reuse one
+command id all survive in first-occurrence order. `receipt_command_spec` is
+present only when the legacy string side also agrees on exactly one receipt
+route: records without `command_specs` keep the route legacy-string-only, and
+a conflicting legacy receipt set emits `receipt_command_conflict` and omits
+the typed receipt instead of keeping a machine route across the conflict.
+The rendered Markdown names each typed route with its execution mode, for
+example `Verify (typed, direct): ...`.
+
 Anchorless or no-longer-current records appear in `scope_limitations` with their
 matching-record index and do not hide other current scopes. The overall result
 is `limited` only when no current scope resolves. Missing, root-mismatched, or
