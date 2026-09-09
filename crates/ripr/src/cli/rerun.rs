@@ -2944,7 +2944,6 @@ mod tests {
                     "agent".to_string(),
                     "verify".to_string(),
                     "--json".to_string(),
-                    "--typed".to_string(),
                 ]
         {
             return Err(format!(
