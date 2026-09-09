@@ -1,6 +1,6 @@
 use super::super::diff::{ChangedFile, ChangedLine};
 use super::super::rust_index::{
-    RustIndex, SyntaxNodeFact, changed_nodes_for_lines, extract_identifier_tokens,
+    RustIndex, SyntaxNodeFact, changed_nodes_for_lines, extract_identifier_tokens, find_file_facts,
     find_owner_function,
 };
 use super::binding_predicate::{
@@ -60,7 +60,7 @@ pub(crate) fn probes_for_file_with_relations(
         if should_ignore_changed_line(text) {
             continue;
         }
-        if changed_line_owned_by_test(index, &changed.path, added.new_side_line) {
+        if changed_line_is_test_evidence(index, &changed.path, added.new_side_line) {
             continue;
         }
         let parser_shapes =
@@ -156,7 +156,7 @@ pub(crate) fn probes_for_file_with_relations(
         // Use new_side_line so the owner lookup queries the new-file index at the
         // correct position (RANK-1 fix: `removed.line` is an old-side coordinate
         // and diverges from the new file when an earlier hunk shifted lines).
-        if changed_line_owned_by_test(index, &changed.path, removed.new_side_line) {
+        if changed_line_is_test_evidence(index, &changed.path, removed.new_side_line) {
             continue;
         }
         for family in classify_changed_line(text) {
@@ -275,9 +275,21 @@ fn dedup_probe_ids(probes: &mut [ProbeWithRelation]) {
 /// Tests are the instrument, not the surface under test: a probe on a line
 /// inside a `#[test]` function (e.g. the error path of a `?` in the test body)
 /// is unactionable, because the test failing *is* the discrimination (#1055).
-fn changed_line_owned_by_test(index: &RustIndex, path: &Path, line: usize) -> bool {
-    find_owner_function(index, path, line)
-        .is_some_and(|function| function.source_role.is_evidence_role())
+fn changed_line_is_test_evidence(index: &RustIndex, path: &Path, line: usize) -> bool {
+    if let Some(function) = find_owner_function(index, path, line) {
+        return function.source_role.is_evidence_role();
+    }
+    // Declarations outside functions consume the composer's existing evidence
+    // authority (#3695), without guessing from filenames or parsing cfg again.
+    // Missing or unresolved provenance cannot remove production eligibility.
+    find_file_facts(index, path).is_some_and(|facts| {
+        facts.role_provenance.earliest_unresolved_reason.is_none()
+            && facts
+                .role_provenance
+                .edges
+                .iter()
+                .any(|edge| edge.requires_test)
+    })
 }
 
 struct ProbeBuildContext<'a> {
@@ -474,7 +486,10 @@ mod tests {
         RustIndex,
     };
     use super::*;
-    use crate::analysis::facts::FunctionSourceRole;
+    use crate::analysis::facts::{
+        FunctionSourceRole, SourceRoleProvenance, SourceRoleProvenanceEdge,
+        SourceRoleProvenanceEdgeKind,
+    };
     use crate::domain::SymbolId;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -763,6 +778,105 @@ mod tests {
             in_test.is_empty(),
             "a line owned by a test function must not generate probes, got {in_test:?}"
         );
+    }
+
+    #[test]
+    fn ownerless_fields_consume_only_resolved_test_context() -> Result<(), String> {
+        let test_path = PathBuf::from("src/support.rs");
+        let production_path = PathBuf::from("src/model.rs");
+        let changed = |path: PathBuf| ChangedFile {
+            path,
+            added_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "    allowed: usize,".to_string(),
+            }],
+            removed_lines: vec![],
+        };
+        let test_provenance = SourceRoleProvenance {
+            edges: vec![SourceRoleProvenanceEdge {
+                kind: SourceRoleProvenanceEdgeKind::Module,
+                parent: PathBuf::from("src/lib.rs"),
+                child: test_path.clone(),
+                declaration: "mod support;".to_string(),
+                line: 2,
+                requires_test: true,
+            }],
+            earliest_unresolved_reason: None,
+        };
+        let index = RustIndex {
+            files: BTreeMap::from([
+                (
+                    test_path.clone(),
+                    FileFacts {
+                        path: test_path.clone(),
+                        role_provenance: test_provenance,
+                        ..FileFacts::default()
+                    },
+                ),
+                (production_path.clone(), FileFacts::default()),
+            ]),
+            ..RustIndex::default()
+        };
+
+        let test_probes = probes_for_file(Path::new("workspace"), &changed(test_path), &index);
+        if !test_probes.is_empty() {
+            return Err(format!("resolved test field emitted {test_probes:?}"));
+        }
+        let production_probes =
+            probes_for_file(Path::new("workspace"), &changed(production_path), &index);
+        if production_probes.len() != 1
+            || production_probes.first().map(|probe| &probe.family)
+                != Some(&ProbeFamily::FieldConstruction)
+        {
+            return Err(format!(
+                "production field was hidden: {production_probes:?}"
+            ));
+        }
+
+        for provenance in [
+            SourceRoleProvenance::default(),
+            SourceRoleProvenance {
+                edges: vec![SourceRoleProvenanceEdge {
+                    kind: SourceRoleProvenanceEdgeKind::Module,
+                    parent: PathBuf::from("src/lib.rs"),
+                    child: PathBuf::from("src/support.rs"),
+                    declaration: "mod support;".to_string(),
+                    line: 2,
+                    requires_test: true,
+                }],
+                earliest_unresolved_reason: Some("rust_module_context_conflict".to_string()),
+            },
+            SourceRoleProvenance {
+                edges: vec![SourceRoleProvenanceEdge {
+                    kind: SourceRoleProvenanceEdgeKind::Module,
+                    parent: PathBuf::from("src/lib.rs"),
+                    child: PathBuf::from("src/support.rs"),
+                    declaration: "mod support;".to_string(),
+                    line: 2,
+                    requires_test: false,
+                }],
+                earliest_unresolved_reason: None,
+            },
+        ] {
+            let mut conservative_index = index.clone();
+            let facts = conservative_index
+                .files
+                .get_mut(Path::new("src/support.rs"))
+                .ok_or("fixture support file is missing")?;
+            facts.role_provenance = provenance;
+            let probes = probes_for_file(
+                Path::new("workspace"),
+                &changed(PathBuf::from("src/support.rs")),
+                &conservative_index,
+            );
+            if probes.len() != 1 {
+                return Err(format!(
+                    "conservative context was incorrectly hidden: {probes:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[test]

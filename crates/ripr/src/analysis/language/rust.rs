@@ -2475,6 +2475,129 @@ mod tests {
         Ok(())
     }
 
+    // RIPR-SPEC-0153 / #3695: exercise the composer and the production diff
+    // adapter together, with an eligible field in every input diff.
+    #[test]
+    fn diff_analysis_ownerless_fields_follow_resolved_context() -> Result<(), String> {
+        for (name, declarations, child_path, test_only, extra_source) in [
+            (
+                "module",
+                "#[cfg(test)] mod support;\n",
+                "src/support.rs",
+                true,
+                None,
+            ),
+            (
+                "literal-path",
+                "#[cfg(test)] #[path = \"support/shared.rs\"] mod support;\n",
+                "src/support/shared.rs",
+                true,
+                None,
+            ),
+            (
+                "transitive",
+                "#[cfg(test)] mod outer;\n",
+                "src/outer/support.rs",
+                true,
+                Some(("src/outer.rs", "mod support;\n")),
+            ),
+            (
+                "production",
+                "mod support;\n",
+                "src/support.rs",
+                false,
+                None,
+            ),
+            (
+                "mixed",
+                "#[cfg(test)] mod support;\ninclude!(\"support.rs\");\n",
+                "src/support.rs",
+                false,
+                None,
+            ),
+            ("missing-parent", "", "src/support.rs", false, None),
+            (
+                "unresolved-ancestor",
+                "mod outer;\n#[path = \"outer.rs\"] mod other;\n",
+                "src/outer/support.rs",
+                false,
+                Some(("src/outer.rs", "#[cfg(test)] mod support;\n")),
+            ),
+        ] {
+            let root = temp_root(&format!("ownerless-fields-{name}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname='ownerless-fields'\nversion='0.1.0'\nedition='2024'\n",
+            )?;
+            write(
+                &root.join("src/lib.rs"),
+                &format!("{declarations}mod production;\n"),
+            )?;
+            if let Some((path, source)) = extra_source {
+                write(&root.join(path), source)?;
+            }
+            let mut diff_text = String::new();
+            for path in [child_path, "src/production.rs"] {
+                write(
+                    &root.join(path),
+                    "struct Counter {\n    allowed: usize,\n}\n",
+                )?;
+                diff_text.push_str(&format!(
+                    "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,2 +1,3 @@\n struct Counter {{\n+    allowed: usize,\n }}\n"
+                ));
+            }
+            let changed_files = diff::parse_unified_diff(&diff_text);
+            if changed_files.len() != 2
+                || changed_files.iter().any(|file| file.added_lines.len() != 1)
+            {
+                return Err(format!("{name}: expected two changed field inputs"));
+            }
+            let result = RustAdapter.analyze_diff(
+                &AnalysisOptions {
+                    root: root.clone(),
+                    base: None,
+                    diff_file: None,
+                    mode: AnalysisMode::Ready,
+                    resolved_subject_identity: None,
+                    include_unchanged_tests: true,
+                    resolve_tsconfig_paths: false,
+                    perl_facts_path: None,
+                    git_timeout: None,
+                    git_candidate: None,
+                    production_like_targets: Default::default(),
+                    test_harnesses: Vec::new(),
+                },
+                &OraclePolicy::default(),
+                &changed_files,
+            )?;
+            let field_count = |path: &str| {
+                let expected_path = root.join(path);
+                result
+                    .findings
+                    .iter()
+                    .filter(|finding| {
+                        finding.probe.location.file == expected_path
+                            && finding.probe.family == ProbeFamily::FieldConstruction
+                    })
+                    .count()
+            };
+            if field_count("src/production.rs") != 1 {
+                return Err(format!(
+                    "{name}: production field missing: {:?}",
+                    result.findings
+                ));
+            }
+            let expected_child_fields = usize::from(!test_only);
+            if field_count(child_path) != expected_child_fields {
+                return Err(format!(
+                    "{name}: expected {expected_child_fields} child field findings: {:?}",
+                    result.findings
+                ));
+            }
+        }
+        Ok(())
+    }
+
     // Shared end-to-end shape for the #3271/#3294 binding-value family:
     // a small crate whose changed `let` initializer feeds an equality
     // predicate in the same function, with exact-value tests touching
