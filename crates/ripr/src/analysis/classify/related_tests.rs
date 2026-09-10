@@ -854,6 +854,52 @@ pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str
     })
 }
 
+/// Whether `test` invokes `owner_name` through a call site that spells the
+/// owner itself — a bare `owner(..)` call, never a receiver-qualified
+/// `other.owner(..)` or path-qualified `Type::owner(..)` spelling.
+///
+/// #3713 review: `CallFact` keeps only the bare trailing identifier and
+/// `body_contains_owner_call` deliberately accepts a receiver, so a
+/// same-named method on another receiver is indistinguishable from the owner
+/// by name alone. The #3700 wrapper-to-variant confirmation must not ride on
+/// that ambiguity: a test that never invokes the wrapper owner cannot confirm
+/// observation of the wrapper seam, so confirmation requires a direct,
+/// receiver-free spelling and fails closed otherwise.
+pub(in crate::analysis) fn test_directly_calls_owner(test: &TestSummary, owner_name: &str) -> bool {
+    if owner_name.is_empty() {
+        return false;
+    }
+    if test.calls.iter().any(|call| {
+        call.name == owner_name
+            && super::helper_transfer::is_direct_call_site(&call.text, owner_name)
+    }) {
+        return true;
+    }
+    body_contains_direct_owner_call(&test.body, owner_name)
+}
+
+/// Strict twin of `body_contains_owner_call`: the owner name must open a call
+/// without a receiver (`.`) or path (`::`) qualifier. A preceding `.` may be
+/// another receiver's method; a preceding `:` may be another type's associated
+/// function — neither identifies the changed owner.
+pub(in crate::analysis) fn body_contains_direct_owner_call(body: &str, owner_name: &str) -> bool {
+    if owner_name.is_empty() {
+        return false;
+    }
+    body.match_indices(owner_name).any(|(start, _)| {
+        let end = start.saturating_add(owner_name.len());
+        let before_ok = start == 0
+            || !body.as_bytes().get(start - 1).is_some_and(|byte| {
+                byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'.' || *byte == b':'
+            });
+        let after_call = body
+            .get(end..)
+            .map(|tail| tail.trim_start().starts_with('('))
+            .unwrap_or(false);
+        before_ok && after_call
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2275,6 +2321,61 @@ fn crate_c_score_test() {
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #3713: the wrapper-confirmation verdict needs the call site that
+    /// spells the owner itself. A bare call qualifies; receiver- and
+    /// path-qualified spellings do not, even though `find_related_tests`
+    /// still relates them as `DirectOwnerCall` by terminal name (method
+    /// owners stay reachable there — only confirmation goes strict).
+    #[test]
+    fn given_bare_owner_call_when_checking_direct_invocation_then_true() {
+        let bare = test_with_call(
+            "tests/parse.rs",
+            "parse_summary_direct",
+            "let result = parse_summary(\"@bad;\");",
+            "parse_summary",
+        );
+        assert!(test_directly_calls_owner(&bare, "parse_summary"));
+    }
+
+    #[test]
+    fn given_receiver_qualified_owner_call_when_checking_direct_invocation_then_false() {
+        let receiver = test_with_call(
+            "tests/parse.rs",
+            "parse_summary_receiver",
+            "let result = parser.parse_summary(\"@bad;\");",
+            "parse_summary",
+        );
+        assert!(!test_directly_calls_owner(&receiver, "parse_summary"));
+    }
+
+    #[test]
+    fn given_path_qualified_owner_call_when_checking_direct_invocation_then_false() {
+        let path = test_with_call(
+            "tests/parse.rs",
+            "parse_summary_path",
+            "let result = Parser::parse_summary(\"@bad;\");",
+            "parse_summary",
+        );
+        assert!(!test_directly_calls_owner(&path, "parse_summary"));
+    }
+
+    #[test]
+    fn given_body_only_receiver_call_when_checking_direct_invocation_then_false() {
+        // No captured call facts: the lexical fallback must fail closed too.
+        let body_only = TestSummary {
+            name: "parse_summary_body_only".to_string(),
+            file: PathBuf::from("tests/parse.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: "let result = parser.parse_summary(\"@bad;\");".to_string(),
+            calls: Vec::new(),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+        };
+        assert!(!test_directly_calls_owner(&body_only, "parse_summary"));
     }
 
     #[test]

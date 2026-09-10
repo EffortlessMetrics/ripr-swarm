@@ -1235,6 +1235,54 @@
       "assertions": [
         { "type": "must_promote" }
       ]
+    },
+    {
+      "id": "rust_wrapper_callee_only_pin_non_promotion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_variant_wrapper_callee_only_pin",
+      "vector": "callee_only_exact_variant_pin_does_not_observe_wrapper",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "expected_finding_count", "count": 2 },
+        { "type": "maximum_class", "class": "weakly_exposed" },
+        { "type": "must_not_promote" }
+      ]
+    },
+    {
+      "id": "rust_wrapper_wrong_receiver_pin_non_promotion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_variant_wrapper_wrong_receiver_pin",
+      "vector": "receiver_qualified_same_name_call_does_not_invoke_wrapper_owner",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "expected_finding_count", "count": 2 },
+        { "type": "maximum_class", "class": "weakly_exposed" },
+        { "type": "must_not_promote" }
+      ]
+    },
+    {
+      "id": "rust_wrapper_foreign_pin_non_promotion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_variant_wrapper_foreign_pin",
+      "vector": "foreign_call_exact_variant_pin_does_not_bind_wrapper",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "expected_finding_count", "count": 2 },
+        { "type": "maximum_class", "class": "weakly_exposed" },
+        { "type": "must_not_promote" }
+      ]
     }
   ]
 }

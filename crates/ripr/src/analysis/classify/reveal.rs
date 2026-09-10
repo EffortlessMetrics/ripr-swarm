@@ -1,7 +1,9 @@
 use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
 };
-use super::related_tests::body_contains_owner_call;
+use super::related_tests::{
+    body_contains_direct_owner_call, body_contains_owner_call, test_directly_calls_owner,
+};
 use super::rust_string_literals;
 use crate::domain::*;
 
@@ -10,13 +12,14 @@ fn reveal_evidence(
     probe: &Probe,
     related_tests: &[(&TestSummary, RelationReason)],
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
-    reveal_evidence_with_expression(probe, &probe.expression, related_tests)
+    reveal_evidence_with_expression(probe, &probe.expression, related_tests, None)
 }
 
 pub(in crate::analysis) fn reveal_evidence_with_expression(
     probe: &Probe,
     analysis_expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
+    owner_name: Option<&str>,
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
     if related_tests.is_empty() {
         return (
@@ -34,7 +37,8 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
         );
     }
 
-    let analysis = analyze_related_assertions(probe, analysis_expression, related_tests);
+    let analysis =
+        analyze_related_assertions(probe, analysis_expression, related_tests, owner_name);
     let related = finalize_related_tests(analysis.related);
     let observe = build_observe_evidence(analysis.matched_any);
     let discriminate = build_discriminate_evidence(
@@ -174,6 +178,7 @@ fn analyze_related_assertions(
     probe: &Probe,
     analysis_expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
+    owner_name: Option<&str>,
 ) -> RevealAssertionAnalysis {
     let probe_tokens = if is_effect_family(&probe.family) {
         effect_target_tokens(analysis_expression)
@@ -275,12 +280,21 @@ fn analyze_related_assertions(
             });
             continue;
         }
+        // #3713 review: the wrapper-owner invocation verdict is
+        // receiver-aware. `DirectOwnerCall` fires on the bare terminal name,
+        // so a same-named method on another receiver would otherwise confirm
+        // observation of a wrapper seam no test invokes. Confirmation
+        // requires a direct, receiver-free spelling of the owner call and
+        // fails closed when the owner is unknown or the spelling is
+        // qualified.
+        let test_invokes_wrapper_owner = *reason == RelationReason::DirectOwnerCall
+            && owner_name.is_some_and(|name| test_directly_calls_owner(test, name));
         for assertion in &test.assertions {
             let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
                 &match_context,
                 assertion,
                 test.assertions.len(),
-                *reason == RelationReason::DirectOwnerCall,
+                test_invokes_wrapper_owner,
             );
             if matched {
                 if confirm_required {
@@ -442,6 +456,11 @@ fn assertion_matches_probe_detail_with_literals(
     // passes the relation verdict (`DirectOwnerCall` holds exactly when the
     // test calls the changed owner by captured call or call-shaped body
     // text — see `related_tests`), never a name-only or file-only match.
+    // #3713: the invocation verdict is additionally receiver-aware (see
+    // `test_directly_calls_owner`): `DirectOwnerCall` fires on the bare
+    // terminal name, so a same-named method on another receiver relates but
+    // never confirms. Only a direct, receiver-free spelling of the owner call
+    // confirms; relation breadth for method owners is unchanged.
     // `None` bindings keep the legacy signals for seams whose variant
     // identity is established by other means.
     let variant_binding_match = wrapper_binding.is_some_and(|established| {
@@ -675,11 +694,14 @@ fn wrapper_callee_name(expression: &str) -> Option<String> {
 /// Binding authority: captured `calls` facts are the authority. A witness
 /// with captured calls that never name the callee does not bind it — the
 /// lexical fallback must not resurrect a refuted binding. The fallback
-/// (`body_contains_owner_call`, name-only) applies only when the witness has
-/// no captured call facts at all; it is the acknowledged weaker signal and is
-/// compensated fail-closed because an established variant must still be an
-/// exact `Err(..)` pin against the callee's own result, which a witness
-/// calling a different type's same-named method could not compile against.
+/// applies only when the witness has no captured call facts at all.
+/// Both paths require a direct, receiver-free spelling of the callee
+/// (`test_directly_calls_owner`): `CallFact` keeps only the bare trailing
+/// identifier, so a receiver-qualified same-named method
+/// (`helper.try_parse(..)`) would otherwise bind another function. A
+/// wrong-type downcast pin compiles (downcasting to an uninhabited target
+/// yields `None` at runtime but parses statically), so "it would not compile"
+/// is not a defense — only the call-site spelling is.
 fn wrapper_established_variants(
     expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
@@ -689,16 +711,20 @@ fn wrapper_established_variants(
     };
     let mut established: Vec<String> = Vec::new();
     for (test, _) in related_tests {
-        // Residual risk, documented: `CallFact` carries {line, name, text}
-        // with no structured receiver or module field, so the captured-facts
-        // authority matches on the terminal name. A same-named method on an
-        // unrelated receiver could still bind; the binding stays
-        // under-credit-biased because the established variant must also be
-        // an exact-variant pin (below).
+        // The producer call must spell the callee itself. Captured `calls`
+        // facts are the authority: when they exist but never name the callee,
+        // the lexical fallback must not resurrect a refuted binding. Both
+        // paths additionally require a direct, receiver-free spelling — a
+        // receiver-qualified same-named method (`helper.try_parse(..)`) binds
+        // another function, so it establishes nothing. Fail closed, symmetric
+        // with the receiver-aware wrapper-invocation verdict below.
         let binds_callee = if test.calls.is_empty() {
-            body_contains_owner_call(&test.body, &callee)
+            body_contains_direct_owner_call(&test.body, &callee)
         } else {
-            test.calls.iter().any(|call| call.name == callee)
+            test.calls.iter().any(|call| {
+                call.name == callee
+                    && super::helper_transfer::is_direct_call_site(&call.text, &callee)
+            })
         };
         if !binds_callee {
             continue;
@@ -1540,12 +1566,17 @@ mod tests {
                 OracleStrength::Strong,
             )],
         );
-        let (observe, discriminate, related) = reveal_evidence(
+        // #3713 review: the observer invokes the wrapper owner through a
+        // direct, receiver-free spelling, so it confirms under the
+        // receiver-aware invocation verdict.
+        let (observe, discriminate, related) = reveal_evidence_with_expression(
             &wrapper_probe,
+            &wrapper_probe.expression,
             &[
                 (&binder, RelationReason::OwnerNamedTest),
                 (&observer, RelationReason::DirectOwnerCall),
             ],
+            Some("parse_summary"),
         );
         assert_eq!(observe.state, StageState::Yes);
         assert_eq!(
@@ -1729,6 +1760,7 @@ return Err(\"boxed identity should survive\".into());
                 (&binder, RelationReason::OwnerNamedTest),
                 (&observer, RelationReason::DirectOwnerCall),
             ],
+            Some("parse_summary"),
         );
         assert_eq!(observe.state, StageState::Yes);
         assert_eq!(
@@ -2042,6 +2074,127 @@ return Err(\"boxed identity should survive\".into());
             discriminate.state,
             StageState::Weak,
             "an exact-variant pin against another call must not establish the wrapper binding"
+        );
+    }
+
+    // #3713 review (devin BUG): a same-named method call on another receiver
+    // relates as `DirectOwnerCall` by bare terminal name, but it never invokes
+    // the wrapper owner — so it must not confirm the wrapper seam even when it
+    // pins the established qualified variant.
+    #[test]
+    fn wrapper_seam_stays_weak_when_owner_call_is_receiver_qualified() {
+        let wrapper_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_parse_summary(raw).map_err(Into::into)",
+        );
+        let binder = test_with_body_assertions(
+            "try_parse_summary_pins_malformed_source",
+            "let result = try_parse_summary(\"@bad;\");",
+            vec![oracle(
+                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"callee pin\".into());\n}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        // Same bare terminal name, another receiver: production relates this
+        // as DirectOwnerCall, but the receiver-free verdict must refuse it.
+        let other_receiver = test_with_body_assertions(
+            "parse_summary_other_receiver_pins_same_variant",
+            "let parser = ParserB;\nlet result = parser.parse_summary(\"@bad;\");",
+            vec![oracle(
+                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"other receiver pin\".into());\n}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, discriminate, _) = reveal_evidence_with_expression(
+            &wrapper_probe,
+            &wrapper_probe.expression,
+            &[
+                (&binder, RelationReason::OwnerNamedTest),
+                (&other_receiver, RelationReason::DirectOwnerCall),
+            ],
+            Some("parse_summary"),
+        );
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a receiver-qualified owner-name call never invokes the wrapper owner and must not confirm the seam"
+        );
+    }
+
+    // Binding half of the receiver verdict: a receiver-qualified same-named
+    // method call (`helper.try_parse_summary(..)`) binds another function, so
+    // it establishes no wrapper-to-variant binding even when it pins an exact
+    // variant against its own result.
+    #[test]
+    fn wrapper_established_variants_ignores_receiver_qualified_callee_call() {
+        let foreign_witness = test_with_body_assertions(
+            "try_parse_summary_helper_method_pins_foreign_variant",
+            "let helper = Helper;\nlet result = helper.try_parse_summary(\"@bad;\");",
+            vec![oracle(
+                "if !matches!(result, Err(OtherError::MalformedSource)) {\nreturn Err(\"foreign pin\".into());\n}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let established = wrapper_established_variants(
+            "try_parse_summary(raw).map_err(Into::into)",
+            &[(&foreign_witness, RelationReason::OwnerNamedTest)],
+        );
+        assert!(
+            established.is_empty(),
+            "a receiver-qualified same-named call must not seed the wrapper binding: {established:?}"
+        );
+    }
+
+    // Captured-call half of the receiver verdict: a `CallFact` spelling the
+    // owner through a receiver (`parser.parse_summary(..)`) is not a direct
+    // invocation even when the bare name matches.
+    #[test]
+    fn wrapper_seam_stays_weak_when_captured_owner_call_has_receiver() {
+        use crate::analysis::rust_index::CallFact;
+
+        let wrapper_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_parse_summary(raw).map_err(Into::into)",
+        );
+        let binder = test_with_body_assertions(
+            "try_parse_summary_pins_malformed_source",
+            "let result = try_parse_summary(\"@bad;\");",
+            vec![oracle(
+                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"callee pin\".into());\n}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let mut receiver_call = test_with_body_assertions(
+            "parse_summary_other_receiver_pins_same_variant",
+            "let parser = ParserB;",
+            vec![oracle(
+                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"other receiver pin\".into());\n}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        receiver_call.calls = vec![CallFact {
+            line: 3,
+            name: "parse_summary".to_string(),
+            text: "parser.parse_summary(\"@bad;\")".to_string(),
+        }];
+        let (_, discriminate, _) = reveal_evidence_with_expression(
+            &wrapper_probe,
+            &wrapper_probe.expression,
+            &[
+                (&binder, RelationReason::OwnerNamedTest),
+                (&receiver_call, RelationReason::DirectOwnerCall),
+            ],
+            Some("parse_summary"),
+        );
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a captured receiver-qualified owner call must not confirm the seam"
         );
     }
 
@@ -3205,6 +3358,7 @@ return Err(\"boxed identity should survive\".into());
             &probe,
             "Err(ParseError::SiblingVariant)",
             &[(&test, RelationReason::DirectOwnerCall)],
+            None,
         );
 
         assert_eq!(
