@@ -12,6 +12,8 @@ use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
 use super::ids::{diff_probe_id, normalize_expression};
 use super::lexical::classify_changed_line;
+use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::facts::cfg_predicates::{attributes_require_test, split_leading_attribute};
 use crate::analysis::language::changed_let_binding;
 use crate::domain::{Probe, ProbeFamily, SourceLocation};
 use std::path::Path;
@@ -279,18 +281,142 @@ fn changed_line_is_test_evidence(index: &RustIndex, path: &Path, line: usize) ->
     if let Some(function) = find_owner_function(index, path, line) {
         return function.source_role.is_evidence_role();
     }
+    let Some(facts) = find_file_facts(index, path) else {
+        return false;
+    };
+    // Lines outside functions but inside an inline `#[cfg(test)]` module
+    // (fixture constants, raw-string data) are test evidence even when the
+    // file itself is production (#3718). Unknown module structure fails
+    // closed to production-eligible below.
+    if line_in_cfg_test_module(&facts.source, line) {
+        return true;
+    }
     // Declarations outside functions consume the composer's existing evidence
     // authority (#3695), without guessing from filenames or parsing cfg again.
     // Missing or unresolved provenance cannot remove production eligibility.
-    find_file_facts(index, path).is_some_and(|facts| {
-        !facts.used_lexical_fallback
-            && facts.role_provenance.earliest_unresolved_reason.is_none()
-            && facts
-                .role_provenance
-                .edges
-                .iter()
-                .any(|edge| edge.requires_test)
-    })
+    !facts.used_lexical_fallback
+        && facts.role_provenance.earliest_unresolved_reason.is_none()
+        && facts
+            .role_provenance
+            .edges
+            .iter()
+            .any(|edge| edge.requires_test)
+}
+
+/// Whether `line` (1-based) sits inside an inline `mod` block whose own
+/// attributes — or any enclosing inline `mod`'s — require a test build
+/// (#3718). Detection runs on masked text so string/comment contents can
+/// never forge module structure, attributes reuse the shared
+/// `cfg_predicates` conjunction (a bare `mod tests` without `cfg(test)`
+/// grants nothing), and any unrecognized shape returns false so the
+/// caller keeps production eligibility.
+fn line_in_cfg_test_module(source: &str, line: usize) -> bool {
+    let masked = mask_comments_and_strings(source);
+    let lines: Vec<&str> = masked.lines().collect();
+    if line == 0 || line > lines.len() {
+        return false;
+    }
+    // Open inline modules as (depth after the opening line, requires_test).
+    let mut stack: Vec<(usize, bool)> = Vec::new();
+    let mut depth = 0usize;
+    for (index, text) in lines.iter().enumerate().take(line.saturating_sub(1)) {
+        if let Some((requires_test, braced)) = parse_inline_module(&lines, index) {
+            if braced {
+                let opens = text.bytes().filter(|byte| *byte == b'{').count();
+                let closes = text.bytes().filter(|byte| *byte == b'}').count();
+                depth = depth.saturating_add(opens).saturating_sub(closes);
+                stack.push((depth, requires_test));
+            }
+            // Out-of-line `mod name;` contributes no scope here; the
+            // composer owns cross-file roles.
+        } else {
+            let opens = text.bytes().filter(|byte| *byte == b'{').count();
+            let closes = text.bytes().filter(|byte| *byte == b'}').count();
+            depth = depth.saturating_add(opens).saturating_sub(closes);
+        }
+        stack.retain(|(open_depth, _)| *open_depth <= depth);
+    }
+    stack.iter().any(|(_, requires_test)| *requires_test)
+}
+
+/// Parse an inline or out-of-line module item starting at `lines[index]`.
+/// Returns (requires_test, braced) using the item's same-line attributes
+/// plus directly attached attribute lines above. `None` when the line
+/// holds no module item.
+fn parse_inline_module(lines: &[&str], index: usize) -> Option<(bool, bool)> {
+    let mut attributes: Vec<String> = Vec::new();
+    let mut rest = lines[index].trim();
+    while let Some((attribute, remainder)) = split_leading_attribute(rest) {
+        attributes.push(attribute.to_string());
+        rest = remainder.trim();
+    }
+    rest = strip_visibility(rest);
+    let after_mod = rest.strip_prefix("mod")?;
+    if after_mod
+        .chars()
+        .next()
+        .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
+    {
+        return None;
+    }
+    let mut name = after_mod.trim_start();
+    // Module name: one identifier; anything else is not an item we scope.
+    let end = name
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(name.len());
+    if end == 0 {
+        return None;
+    }
+    name = name[end..].trim_start();
+    let braced = if name.starts_with('{') {
+        true
+    } else if name.starts_with(';') {
+        false
+    } else {
+        return None;
+    };
+    // Attached attribute lines directly above (masked comments read as
+    // blank lines and are skipped); anything else stops the walk.
+    let mut cursor = index;
+    let mut skipped = 0usize;
+    while cursor > 0 && skipped < 32 {
+        cursor -= 1;
+        skipped += 1;
+        let above = lines[cursor].trim();
+        if above.is_empty() {
+            continue;
+        }
+        let mut pending = above;
+        let mut found = false;
+        while let Some((attribute, remainder)) = split_leading_attribute(pending) {
+            attributes.push(attribute.to_string());
+            pending = remainder.trim();
+            found = true;
+        }
+        if !(found && pending.is_empty()) {
+            break;
+        }
+    }
+    Some((attributes_require_test(&attributes), braced))
+}
+
+/// Strip a leading `pub`, `pub(...)`, or `pub(crate)` visibility qualifier.
+/// Text without a qualifier passes through unchanged; unrecognized shapes
+/// fall through so the module parse fails closed below.
+fn strip_visibility(text: &str) -> &str {
+    let Some(after_pub) = text.strip_prefix("pub") else {
+        return text;
+    };
+    match after_pub.chars().next() {
+        // `pub` followed by an identifier character is another token
+        // (`publish`); there is no visibility qualifier here.
+        Some(next) if next.is_ascii_alphanumeric() || next == '_' => text,
+        Some('(') => match after_pub.find(')') {
+            Some(close) => after_pub[close + 1..].trim_start(),
+            None => text,
+        },
+        _ => after_pub.trim_start(),
+    }
 }
 
 struct ProbeBuildContext<'a> {
@@ -1502,5 +1628,51 @@ mod source_currentness_tests {
             resolve_probe_source_currentness(&changed, &bare),
             SourceCurrentness::UnresolvedSubject
         );
+    }
+
+    /// #3718: lines inside an inline `#[cfg(test)]` module are test
+    /// evidence even when no function owns them; anything else fails
+    /// closed to production-eligible (false).
+    #[test]
+    fn cfg_test_module_scope_grants_evidence_without_function_owner() {
+        let source = "pub fn triage(input: &str) -> bool {\n\
+             \x20   !input.is_empty()\n\
+             }\n\
+             \n\
+             #[cfg(test)]\n\
+             mod tests {\n\
+             \x20   const FIXTURE_JSON: &str = r#\"{\n\
+             \x20       \"producer_id\": \"abc\",\n\
+             \x20   }\"#;\n\
+             }\n";
+        // The raw-string data line inside the cfg(test) module.
+        assert!(line_in_cfg_test_module(source, 8));
+        // The module opener and production lines are not evidence.
+        assert!(!line_in_cfg_test_module(source, 6));
+        assert!(!line_in_cfg_test_module(source, 2));
+        // A bare `mod tests` without cfg(test) grants nothing.
+        let bare = source.replace("#[cfg(test)]\n", "");
+        assert!(!line_in_cfg_test_module(&bare, 7));
+        // Out-of-line declarations contribute no scope here.
+        assert!(!line_in_cfg_test_module("mod tests;\n", 1));
+        // Degenerate inputs fail closed.
+        assert!(!line_in_cfg_test_module(source, 0));
+        assert!(!line_in_cfg_test_module(source, 99));
+    }
+
+    /// #3718: comments between `pub` and `const`-style items and nested
+    /// modules resolve through the same masked scan.
+    #[test]
+    fn cfg_test_module_scope_handles_comments_and_nesting() {
+        let source = "#[cfg(test)]\n\
+             mod outer {\n\
+             \x20   // a comment with { brace\n\
+             \x20   mod inner {\n\
+             \x20       const DEEP: u32 = 1;\n\
+             \x20   }\n\
+             }\n\
+             pub fn live() {}\n";
+        assert!(line_in_cfg_test_module(source, 5));
+        assert!(!line_in_cfg_test_module(source, 8));
     }
 }
