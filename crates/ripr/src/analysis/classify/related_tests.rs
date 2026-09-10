@@ -656,6 +656,8 @@ fn strip_comments_and_strings(source: &str) -> String {
                 escaped = true;
             } else if ch == '"' {
                 in_string = false;
+                out.push('"');
+                continue;
             }
             if ch == '\n' {
                 out.push('\n');
@@ -2832,5 +2834,29 @@ fn crate_c_score_test() {
             ));
         }
         Ok(())
+    }
+
+    /// #3717: string masking must preserve balanced quotes so string-aware
+    /// downstream scanners over masked source do not treat trailing code
+    /// as an unclosed string.
+    #[test]
+    fn given_source_with_string_literals_when_stripped_then_quotes_remain_balanced() {
+        let source = "let x = \"hello world\";\nlet y = \"escaped \\\" quote\";\nuse crate::bar;";
+        let stripped = strip_comments_and_strings(source);
+        let quote_count = stripped.chars().filter(|&c| c == '"').count();
+        assert_eq!(
+            quote_count % 2,
+            0,
+            "quotes in stripped output must be balanced, got {quote_count}: {stripped:?}"
+        );
+        assert!(
+            stripped.contains("use crate::bar;"),
+            "post-string statement must remain visible outside quotes: {stripped:?}"
+        );
+        // Delimiters preserved, content blanked
+        assert!(
+            stripped.starts_with("let x = \"           \";"),
+            "string contents replaced with spaces: {stripped:?}"
+        );
     }
 }
