@@ -14,9 +14,9 @@ Start here:
   Static exposure: weakly_exposed (warning, confidence 0.92)
   Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
   Changed behavior: try_parse_summary(raw).map_err(Into::into)
-  Missing discriminator: Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type
+  Missing discriminator: Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
   Related test: tests/errors.rs:4 try_parse_summary_pins_malformed_source
-  Next step: #3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted call…
+  Next step: Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing e…
   Evidence:
     - reach yes: Related tests appear to reach parse_summary: try_parse_summary_pins_malformed_source
     - infection yes: Reachable tests can plausibly activate this changed behavior

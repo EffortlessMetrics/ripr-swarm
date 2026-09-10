@@ -106,8 +106,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"try_parse_summary(raw).map_err(Into::into)","line":26}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse_summary: try_parse_summary_pins_malformed_source"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse_summary: try_parse_summary_pins_malformed_source", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "6": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"callee pin should observe ParseSummaryError::MalformedSource\".into());\n}"
       },
@@ -169,9 +169,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     }
   ]

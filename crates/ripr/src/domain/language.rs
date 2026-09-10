@@ -173,6 +173,15 @@ pub enum StaticLimitKind {
     /// classification stays `no_static_path`; this is a named limitation,
     /// not a subprocess reach or receipt claim.
     RustSubprocessBinaryReachUnresolved,
+    /// A wrapper error conversion (`callee(..).map_err(..)`) whose
+    /// error-variant identity lives in the converted callee, not in the
+    /// changed line. Whether the wrapper faithfully carries the callee's
+    /// error variant through the boxed conversion (`Into`/`From` through
+    /// `Box<dyn Error>`) is not statically established, so the seam stays
+    /// below `exposed` even when witnesses pin exact variants via downcast.
+    /// This label names the unresolved conversion binding, not a coverage
+    /// claim. See #3700.
+    WrapperErrorBindingUnresolved,
 }
 
 impl StaticLimitKind {
@@ -207,6 +216,7 @@ impl StaticLimitKind {
             StaticLimitKind::RustSubprocessBinaryReachUnresolved => {
                 "rust_subprocess_binary_reach_unresolved"
             }
+            StaticLimitKind::WrapperErrorBindingUnresolved => "wrapper_error_binding_unresolved",
         }
     }
 
@@ -292,6 +302,9 @@ impl StaticLimitKind {
                 "An integration test invokes a Cargo-built binary, but ripr cannot yet map that \
                  executable back to the changed owner. This is a named subprocess boundary \
                  limitation, not a reach, receipt, or coverage claim."
+            }
+            StaticLimitKind::WrapperErrorBindingUnresolved => {
+                "The changed line converts a callee's error through a boxed wrapper                  (`map_err(Into::into)`), so whether the wrapper faithfully carries the                  callee's error variant is not statically established; ripr cannot credit                  a downcast witness to this conversion."
             }
         }
     }

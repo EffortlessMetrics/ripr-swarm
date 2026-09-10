@@ -34,8 +34,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"try_checksum_summary(payload).map_err(Into::into)","line":29}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_checksum_summary(payload).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_checksum_summary(payload).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "5": "let error = checksum_summary(\"payload?\")",
         "8": "if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}"
@@ -108,9 +108,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -137,8 +145,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"try_checksum_summary(payload).map_err(Into::into)","line":29}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_checksum_summary(payload).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_checksum_summary(payload).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "5": "let error = checksum_summary(\"payload?\")",
         "8": "if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}"
@@ -211,9 +219,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -240,8 +256,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"try_render_summary(raw).map_err(Into::into)","line":43}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_render_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach render_summary: render_summary_observes_other_enum_variant"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_render_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach render_summary: render_summary_observes_other_enum_variant", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "19": "let error = render_summary(\"zhex\")",
         "22": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}"
@@ -314,9 +330,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -343,8 +367,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"try_render_summary(raw).map_err(Into::into)","line":43}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_render_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach render_summary: render_summary_observes_other_enum_variant"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_render_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach render_summary: render_summary_observes_other_enum_variant", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "19": "let error = render_summary(\"zhex\")",
         "22": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}"
@@ -417,9 +441,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     }
   ]

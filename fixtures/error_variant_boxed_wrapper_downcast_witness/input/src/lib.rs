@@ -45,7 +45,7 @@ pub fn try_parse_summary(raw: &str) -> Result<ParseSummary, ParseSummaryError> {
         return Err(ParseSummaryError::MalformedSource);
     }
     if raw.is_empty() {
-        return Err(ParseSummaryError::ParserInit);
+        return Err(ParseSummaryError::MalformedSource);
     }
     Ok(ParseSummary {
         node_count: raw.lines().count(),

@@ -4,17 +4,429 @@
   "mode": "fast",
   "root": "fixtures/error_variant_boxed_wrapper_downcast_witness/input",
   "base": "origin/main",
-  "summary": {"changed_rust_files":1,"probes":12,"findings":12,"exposed":2,"weakly_exposed":10,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":16,"findings":16,"exposed":4,"weakly_exposed":12,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:3397afc1796a03c8bf4161b23eae7d6012ffc8e807e30b4698339c2084aebb33","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":12,"candidate_line_count":6,"probe_count":12,"finding_count":12},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:7467b4f20dd2fd89f07b3dd146b284b5d51b4a74a3cf61a4fe15abd77d49844a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":16,"candidate_line_count":8,"probe_count":16,"finding_count":16},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
-      "id": "probe:src_lib.rs:error_path:edac60ec",
+      "id": "probe:src_lib.rs:error_path:5c979117",
       "classification": "exposed",
       "severity": "warning",
       "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:error_path:5c979117",
+        "family": "error_path",
+        "delta": "value",
+        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "line": 45,
+        "expression": "return Err(ParseSummaryError::MalformedSource)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 45)", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed function argument value raw = \"@bad;\" at line 10", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(ParseSummaryError::MalformedSource)","line":45}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact error variant assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "10": "let result = try_parse_summary(\"@bad;\");",
+        "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "raw = \"@bad;\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 11,
+            "value": "ParseSummaryError::MalformedSource",
+            "context": "enum_variant"
+          },
+          {
+            "line": 11,
+            "value": "ParseSummaryError::MalformedSource",
+            "context": "enum_variant",
+            "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "raw = \"@bad;\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 11,
+          "value": "ParseSummaryError::MalformedSource",
+          "context": "enum_variant"
+        },
+        {
+          "line": 11,
+          "value": "ParseSummaryError::MalformedSource",
+          "context": "enum_variant",
+          "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "file": "tests/errors.rs",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "file": "tests/errors.rs",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "matches!(result, Err(ParseSummaryError::MalformedSource))",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_error_variant",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:f573bd5d",
+      "classification": "exposed",
+      "severity": "warning",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:f573bd5d",
+        "family": "return_value",
+        "delta": "value",
+        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "line": 45,
+        "expression": "return Err(ParseSummaryError::MalformedSource)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 45)", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed function argument value raw = \"@bad;\" at line 10", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(ParseSummaryError::MalformedSource)","line":45}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact error variant assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "10": "let result = try_parse_summary(\"@bad;\");",
+        "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "raw = \"@bad;\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 11,
+            "value": "ParseSummaryError::MalformedSource",
+            "context": "enum_variant"
+          },
+          {
+            "line": 11,
+            "value": "ParseSummaryError::MalformedSource",
+            "context": "enum_variant",
+            "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "raw = \"@bad;\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 11,
+          "value": "ParseSummaryError::MalformedSource",
+          "context": "enum_variant"
+        },
+        {
+          "line": 11,
+          "value": "ParseSummaryError::MalformedSource",
+          "context": "enum_variant",
+          "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "file": "tests/errors.rs",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "file": "tests/errors.rs",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "matches!(result, Err(ParseSummaryError::MalformedSource))",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_error_variant",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:error_path:5c979117.2",
+      "classification": "exposed",
+      "severity": "warning",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:error_path:5c979117.2",
+        "family": "error_path",
+        "delta": "value",
+        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "line": 48,
+        "expression": "return Err(ParseSummaryError::MalformedSource)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 48)", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed function argument value raw = \"@bad;\" at line 10", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(ParseSummaryError::MalformedSource)","line":48}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact error variant assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "10": "let result = try_parse_summary(\"@bad;\");",
+        "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "raw = \"@bad;\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 11,
+            "value": "ParseSummaryError::MalformedSource",
+            "context": "enum_variant"
+          },
+          {
+            "line": 11,
+            "value": "ParseSummaryError::MalformedSource",
+            "context": "enum_variant",
+            "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "raw = \"@bad;\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 11,
+          "value": "ParseSummaryError::MalformedSource",
+          "context": "enum_variant"
+        },
+        {
+          "line": 11,
+          "value": "ParseSummaryError::MalformedSource",
+          "context": "enum_variant",
+          "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "file": "tests/errors.rs",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "file": "tests/errors.rs",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "matches!(result, Err(ParseSummaryError::MalformedSource))",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_error_variant",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:f573bd5d.2",
+      "classification": "exposed",
+      "severity": "warning",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:f573bd5d.2",
+        "family": "return_value",
+        "delta": "value",
+        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "line": 48,
+        "expression": "return Err(ParseSummaryError::MalformedSource)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 48)", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed function argument value raw = \"@bad;\" at line 10", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(ParseSummaryError::MalformedSource)","line":48}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact error variant assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "10": "let result = try_parse_summary(\"@bad;\");",
+        "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "raw = \"@bad;\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 11,
+            "value": "ParseSummaryError::MalformedSource",
+            "context": "enum_variant"
+          },
+          {
+            "line": 11,
+            "value": "ParseSummaryError::MalformedSource",
+            "context": "enum_variant",
+            "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "raw = \"@bad;\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 11,
+          "value": "ParseSummaryError::MalformedSource",
+          "context": "enum_variant"
+        },
+        {
+          "line": 11,
+          "value": "ParseSummaryError::MalformedSource",
+          "context": "enum_variant",
+          "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "file": "tests/errors.rs",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "file": "tests/errors.rs",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "matches!(result, Err(ParseSummaryError::MalformedSource))",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_error_variant",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:error_path:edac60ec",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
       "probe": {
         "id": "probe:src_lib.rs:error_path:edac60ec",
         "family": "error_path",
@@ -28,14 +440,14 @@
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 56)", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed function argument value raw = \"@bad;\" at line 20", "observed enum variant value ParseSummaryError::MalformedSource at line 23", "observed enum variant value ParseSummaryError::MalformedSource at line 23"],
+      "evidence_path": ["reach yes: Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 56)", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed function argument value raw = \"@bad;\" at line 20", "observed enum variant value ParseSummaryError::MalformedSource at line 23", "observed enum variant value ParseSummaryError::MalformedSource at line 23"],
       "flow_sinks": [
         {"kind":"error_variant","text":"try_parse_summary(raw).map_err(Into::into)","line":56}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact value or pattern assertion"],
-      "missing": [],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
         "20": "let error = parse_summary(\"@bad;\")",
@@ -151,16 +563,24 @@
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "",
-      "suggested_next_action": "",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_lib.rs:return_value:b87fa5c0",
-      "classification": "exposed",
+      "classification": "weakly_exposed",
       "severity": "warning",
-      "confidence": 1.00,
+      "confidence": 0.92,
       "probe": {
         "id": "probe:src_lib.rs:return_value:b87fa5c0",
         "family": "return_value",
@@ -174,14 +594,14 @@
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: try_parse_summary(raw).map_err(Into::into)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_parse_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: try_parse_summary(raw).map_err(Into::into) (line 56)", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed function argument value raw = \"@bad;\" at line 20", "observed enum variant value ParseSummaryError::MalformedSource at line 23", "observed enum variant value ParseSummaryError::MalformedSource at line 23"],
+      "evidence_path": ["reach yes: Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_parse_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: try_parse_summary(raw).map_err(Into::into) (line 56)", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed function argument value raw = \"@bad;\" at line 20", "observed enum variant value ParseSummaryError::MalformedSource at line 23", "observed enum variant value ParseSummaryError::MalformedSource at line 23"],
       "flow_sinks": [
         {"kind":"return_value","text":"try_parse_summary(raw).map_err(Into::into)","line":56}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_parse_summary(raw).map_err(Into::into)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact value or pattern assertion"],
-      "missing": [],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_parse_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
         "20": "let error = parse_summary(\"@bad;\")",
@@ -287,9 +707,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "",
-      "suggested_next_action": "",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -316,8 +744,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"try_checksum_summary(payload).map_err(Into::into)","line":67}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_checksum_summary(payload).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_checksum_summary(payload).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "34": "let error = checksum_summary(\"payload?\")",
         "37": "if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}"
@@ -390,9 +818,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -419,8 +855,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"try_checksum_summary(payload).map_err(Into::into)","line":67}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_checksum_summary(payload).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_checksum_summary(payload).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "34": "let error = checksum_summary(\"payload?\")",
         "37": "if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}"
@@ -493,9 +929,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -522,8 +966,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"try_render_summary(raw).map_err(Into::into)","line":81}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_render_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach render_summary: render_summary_observes_other_enum_variant"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_render_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach render_summary: render_summary_observes_other_enum_variant", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "48": "let error = render_summary(\"zhex\")",
         "51": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}"
@@ -596,9 +1040,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -625,8 +1077,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"try_render_summary(raw).map_err(Into::into)","line":81}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_render_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach render_summary: render_summary_observes_other_enum_variant"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_render_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach render_summary: render_summary_observes_other_enum_variant", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "48": "let error = render_summary(\"zhex\")",
         "51": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}"
@@ -699,9 +1151,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -728,8 +1188,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"try_length_summary(raw).map_err(Into::into)","line":95}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_length_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach length_summary: length_summary_only_checks_is_err"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_length_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach length_summary: length_summary_only_checks_is_err", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "62": "let result = length_summary(\"way-too-long-input-that-exceeds-the-forty-char-limit!!\");"
       },
@@ -769,9 +1229,17 @@
       "stop_reasons": [],
       "oracle_kind": "broad_error",
       "oracle_strength": "weak",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -798,8 +1266,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"try_length_summary(raw).map_err(Into::into)","line":95}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_length_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach length_summary: length_summary_only_checks_is_err"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_length_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach length_summary: length_summary_only_checks_is_err", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "62": "let result = length_summary(\"way-too-long-input-that-exceeds-the-forty-char-limit!!\");"
       },
@@ -839,9 +1307,17 @@
       "stop_reasons": [],
       "oracle_kind": "broad_error",
       "oracle_strength": "weak",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -868,8 +1344,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"try_glyph_summary(raw).map_err(|error| error.to_string().into())","line":109}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for error variant: try_glyph_summary(raw).map_err(|error| error.to_string().into())", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach glyph_summary: glyph_summary_downcast_witness_on_stringified_wrapper"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for error variant: try_glyph_summary(raw).map_err(|error| error.to_string().into())", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach glyph_summary: glyph_summary_downcast_witness_on_stringified_wrapper", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "69": "let error = glyph_summary(\"#glyph\")",
         "72": "if !matches!(\nerror.downcast_ref::<GlyphError>(),\nSome(GlyphError::MalformedGlyph)\n) {\nreturn Err(\"glyph variant witness requires the typed conversion\".into());\n}"
@@ -942,9 +1418,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -971,8 +1455,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"try_glyph_summary(raw).map_err(|error| error.to_string().into())","line":109}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: try_glyph_summary(raw).map_err(|error| error.to_string().into())", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach glyph_summary: glyph_summary_downcast_witness_on_stringified_wrapper"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: try_glyph_summary(raw).map_err(|error| error.to_string().into())", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach glyph_summary: glyph_summary_downcast_witness_on_stringified_wrapper", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "69": "let error = glyph_summary(\"#glyph\")",
         "72": "if !matches!(\nerror.downcast_ref::<GlyphError>(),\nSome(GlyphError::MalformedGlyph)\n) {\nreturn Err(\"glyph variant witness requires the typed conversion\".into());\n}"
@@ -1045,9 +1529,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -1074,8 +1566,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"try_theme_summary(raw).map_err(Into::into)","line":123}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_theme_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach theme_summary: theme_summary_ignores_matches_result"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_theme_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach theme_summary: theme_summary_ignores_matches_result", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "83": "let error = theme_summary(\"&theme\")",
         "86": "matches!(\n        error.downcast_ref::<ThemeError>(),\n        Some(ThemeError::DuplicateTheme)\n    );"
@@ -1126,9 +1618,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -1155,8 +1655,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"try_theme_summary(raw).map_err(Into::into)","line":123}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_theme_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach theme_summary: theme_summary_ignores_matches_result"],
-      "missing": ["Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: try_theme_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach theme_summary: theme_summary_ignores_matches_result", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "83": "let error = theme_summary(\"&theme\")",
         "86": "matches!(\n        error.downcast_ref::<ThemeError>(),\n        Some(ThemeError::DuplicateTheme)\n    );"
@@ -1207,9 +1707,17 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
-      "suggested_next_action": "#3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     }
   ]

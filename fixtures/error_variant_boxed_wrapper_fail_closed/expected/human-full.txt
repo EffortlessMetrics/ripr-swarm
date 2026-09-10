@@ -43,10 +43,19 @@ return Err("checksum witness pinned the malformed-payload sibling".into());
   - observed enum variant value ChecksumError::MalformedPayload at line 8
 
 Weakness
-  - Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type
+  - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
+
+Static limitation
+  wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper                  (`map_err(Into::into)`), so whether the wrapper faithfully carries the                  callee's error variant is not statically established; ripr cannot credit                  a downcast witness to this conversion.
+
+Limitation detail
+  last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
+  first unresolved edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers
+  analyzer route: analysis/wrapper-error-binding
+  non-claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test
 
 Next step
-  #3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.
+  Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.
 
 WARNING fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs:29
 
@@ -84,10 +93,19 @@ return Err("checksum witness pinned the malformed-payload sibling".into());
   - observed enum variant value ChecksumError::MalformedPayload at line 8
 
 Weakness
-  - Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type
+  - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
+
+Static limitation
+  wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper                  (`map_err(Into::into)`), so whether the wrapper faithfully carries the                  callee's error variant is not statically established; ripr cannot credit                  a downcast witness to this conversion.
+
+Limitation detail
+  last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
+  first unresolved edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers
+  analyzer route: analysis/wrapper-error-binding
+  non-claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test
 
 Next step
-  #3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.
+  Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.
 
 WARNING fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs:43
 
@@ -125,10 +143,19 @@ return Err("render witness pinned the parse-summary variant instead".into());
   - observed enum variant value ParseSummaryError::MalformedSource at line 22
 
 Weakness
-  - Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type
+  - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
+
+Static limitation
+  wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper                  (`map_err(Into::into)`), so whether the wrapper faithfully carries the                  callee's error variant is not statically established; ripr cannot credit                  a downcast witness to this conversion.
+
+Limitation detail
+  last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
+  first unresolved edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers
+  analyzer route: analysis/wrapper-error-binding
+  non-claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test
 
 Next step
-  #3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.
+  Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.
 
 WARNING fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs:43
 
@@ -166,7 +193,16 @@ return Err("render witness pinned the parse-summary variant instead".into());
   - observed enum variant value ParseSummaryError::MalformedSource at line 22
 
 Weakness
-  - Wrapper-to-variant binding not established: no witness binds the wrapper result to the converted callee's error type
+  - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
+
+Static limitation
+  wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper                  (`map_err(Into::into)`), so whether the wrapper faithfully carries the                  callee's error variant is not statically established; ripr cannot credit                  a downcast witness to this conversion.
+
+Limitation detail
+  last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
+  first unresolved edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers
+  analyzer route: analysis/wrapper-error-binding
+  non-claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test
 
 Next step
-  #3700: no witness establishes the wrapper-to-variant binding. Add a witness that calls this wrapper, downcasts the boxed error, and returns Err unless it matches the converted callee's variant; a callee-only pin, a sibling variant, or a message-text mention does not bind the wrapper.
+  Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.

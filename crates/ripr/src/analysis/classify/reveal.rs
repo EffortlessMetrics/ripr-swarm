@@ -1,9 +1,7 @@
 use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
 };
-use super::related_tests::{
-    body_contains_direct_owner_call, body_contains_owner_call, test_directly_calls_owner,
-};
+
 use super::rust_string_literals;
 use crate::domain::*;
 
@@ -12,14 +10,13 @@ fn reveal_evidence(
     probe: &Probe,
     related_tests: &[(&TestSummary, RelationReason)],
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
-    reveal_evidence_with_expression(probe, &probe.expression, related_tests, None)
+    reveal_evidence_with_expression(probe, &probe.expression, related_tests)
 }
 
 pub(in crate::analysis) fn reveal_evidence_with_expression(
     probe: &Probe,
     analysis_expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
-    owner_name: Option<&str>,
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
     if related_tests.is_empty() {
         return (
@@ -37,8 +34,7 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
         );
     }
 
-    let analysis =
-        analyze_related_assertions(probe, analysis_expression, related_tests, owner_name);
+    let analysis = analyze_related_assertions(probe, analysis_expression, related_tests);
     let related = finalize_related_tests(analysis.related);
     let observe = build_observe_evidence(analysis.matched_any);
     let discriminate = build_discriminate_evidence(
@@ -178,7 +174,6 @@ fn analyze_related_assertions(
     probe: &Probe,
     analysis_expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
-    owner_name: Option<&str>,
 ) -> RevealAssertionAnalysis {
     let probe_tokens = if is_effect_family(&probe.family) {
         effect_target_tokens(analysis_expression)
@@ -218,42 +213,29 @@ fn analyze_related_assertions(
     } else {
         None
     };
-    // #3700: a wrapper error seam (`callee(..).map_err(..)`) whose changed
-    // expression carries no parseable variant has no seam-side variant
-    // identity. For such a seam, observation is confirmed only through the
-    // established wrapper-to-variant binding — never through bare identifier
-    // overlap between the seam expression and witness message text (the
-    // token-coincidence over-credit family: a witness message that happens to
-    // name the seam's parameter or `Into::into` used to upgrade the seam to
-    // `exposed` even when the witness pins a sibling variant or an unrelated
-    // enum).
-    let wrapper_binding: Option<Vec<String>> = if error_construction_variant.is_none()
+    // #3700 (final consolidation): a wrapper error seam
+    // (`callee(..).map_err(..)`) whose changed expression carries no
+    // parseable variant has no statically establishable variant identity —
+    // whether the wrapper faithfully carries the callee's error variant
+    // through the boxed conversion is not statically resolvable. Such a seam
+    // therefore NEVER confirms observation from lexical matching (every
+    // confirming signal is token coincidence by construction); it stays
+    // below `exposed` and carries the typed
+    // `wrapper_error_binding_unresolved` limitation attached by
+    // `apply_wrapper_error_binding_limit` (analysis/language/rust.rs).
+    let wrapper_seam = error_construction_variant.is_none()
         && matches!(
             probe.family,
             ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
         )
-        && wrapper_error_seam_expression(&[probe.expression.as_str(), analysis_expression])
-    {
-        // #3700 round-2 review (devin g2nVJ): the changed-line fragment may
-        // not carry the callee (parser-backed analysis reconstructs the full
-        // `callee(..).map_err(..)` expression), so establishment falls back
-        // to the same expression authority wrapper detection used. Same
-        // seam, same authority — never a different expression.
-        let mut established = wrapper_established_variants(&probe.expression, related_tests);
-        if established.is_empty() && analysis_expression != probe.expression {
-            established = wrapper_established_variants(analysis_expression, related_tests);
-        }
-        Some(established)
-    } else {
-        None
-    };
+        && wrapper_error_seam_expression(&[probe.expression.as_str(), analysis_expression]);
     let match_context = RevealMatchContext {
         probe_tokens: &probe_tokens,
         effect_literals: &effect_literals,
         match_arm_variants: &match_arm_variants,
         error_construction_variant: error_construction_variant.as_deref(),
         family: &probe.family,
-        wrapper_binding: wrapper_binding.as_deref(),
+        wrapper_seam,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     let mut related = Vec::new();
@@ -280,21 +262,11 @@ fn analyze_related_assertions(
             });
             continue;
         }
-        // #3713 review: the wrapper-owner invocation verdict is
-        // receiver-aware. `DirectOwnerCall` fires on the bare terminal name,
-        // so a same-named method on another receiver would otherwise confirm
-        // observation of a wrapper seam no test invokes. Confirmation
-        // requires a direct, receiver-free spelling of the owner call and
-        // fails closed when the owner is unknown or the spelling is
-        // qualified.
-        let test_invokes_wrapper_owner = *reason == RelationReason::DirectOwnerCall
-            && owner_name.is_some_and(|name| test_directly_calls_owner(test, name));
         for assertion in &test.assertions {
             let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
                 &match_context,
                 assertion,
                 test.assertions.len(),
-                test_invokes_wrapper_owner,
             );
             if matched {
                 if confirm_required {
@@ -382,11 +354,11 @@ struct RevealMatchContext<'a> {
     match_arm_variants: &'a [String],
     error_construction_variant: Option<&'a str>,
     family: &'a ProbeFamily,
-    /// `Some` only for #3700 wrapper error seams: the established
-    /// wrapper-to-variant bindings. An empty slice means the wrapper seam has
-    /// no established variant identity, so nothing may confirm observation
-    /// through bare token overlap.
-    wrapper_binding: Option<&'a [String]>,
+    /// `true` only for #3700 wrapper error seams: the changed expression is a
+    /// `map_err` conversion with no parseable variant, so the variant
+    /// binding is not statically establishable and nothing may confirm
+    /// observation through lexical matching.
+    wrapper_seam: bool,
 }
 
 /// Returns `(matched, has_token_match)`.
@@ -422,13 +394,15 @@ struct RevealMatchContext<'a> {
 ///
 /// Without `error_construction_variant` (probe has no parseable variant),
 /// falls back to the standard `token_match` behavior — except for #3700
-/// wrapper error seams (`context.wrapper_binding` is `Some`), where only a
-/// variant-bound pin confirms observation.
+/// wrapper error seams (`context.wrapper_seam` is `true`), where lexical
+/// matching can never confirm observation: the variant binding of a
+/// `map_err` conversion is not statically establishable, so the seam stays
+/// below `exposed` and carries the typed
+/// `wrapper_error_binding_unresolved` limitation.
 fn assertion_matches_probe_detail_with_literals(
     context: &RevealMatchContext,
     assertion: &OracleFact,
     assertion_count: usize,
-    test_invokes_wrapper_owner: bool,
 ) -> (bool, bool) {
     let RevealMatchContext {
         probe_tokens,
@@ -436,7 +410,7 @@ fn assertion_matches_probe_detail_with_literals(
         match_arm_variants,
         error_construction_variant,
         family,
-        wrapper_binding,
+        wrapper_seam,
     } = *context;
     let token_match = probe_tokens
         .iter()
@@ -445,58 +419,20 @@ fn assertion_matches_probe_detail_with_literals(
         && rust_string_literals(&assertion.text)
             .iter()
             .any(|literal| effect_literals.contains(literal));
-    // #3700: a wrapper error seam (`callee(..).map_err(..)`) whose changed
-    // expression carries no parseable variant has no seam-side variant
-    // identity, so bare identifier overlap between the seam expression and the
-    // witness's message text is token coincidence, not identity. Such a seam
-    // is confirmed only through the established wrapper-to-variant binding
-    // (see `wrapper_established_variants`) **by a test that invokes the
-    // wrapper owner itself**: a callee-only pin supplies variant identity but
-    // observes nothing about the wrapper, so it must not confirm. The caller
-    // passes the relation verdict (`DirectOwnerCall` holds exactly when the
-    // test calls the changed owner by captured call or call-shaped body
-    // text — see `related_tests`), never a name-only or file-only match.
-    // #3713: the invocation verdict is additionally receiver-aware (see
-    // `test_directly_calls_owner`): `DirectOwnerCall` fires on the bare
-    // terminal name, so a same-named method on another receiver relates but
-    // never confirms. Only a direct, receiver-free spelling of the owner call
-    // confirms; relation breadth for method owners is unchanged.
-    // `None` bindings keep the legacy signals for seams whose variant
-    // identity is established by other means.
-    let variant_binding_match = wrapper_binding.is_some_and(|established| {
-        established
-            .iter()
-            .any(|variant| contains_as_whole_word(&assertion.text, variant))
-    }) && test_invokes_wrapper_owner;
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
+    // For #3700 wrapper error seams there is no confirmation signal at all:
+    // every lexical overlap between the seam expression and a witness text
+    // (parameter names, the callee name, `Into::into`, a message string) is
+    // token coincidence by construction, so observation stays unverified and
+    // the seam cannot read `exposed` from lexical heuristics.
     let has_token_match = if matches!(family, ProbeFamily::MatchArm) {
         match_arm_variants
             .iter()
             .any(|v| contains_as_whole_word(&assertion.text, v))
-    } else if wrapper_binding.is_some() {
-        // #3700 round-2 review (devin g2nUV, bounded): two wrappers-only
-        // confirmation bounds, both under-credit-biased:
-        // - a discarded `let _ = matches!(..)` statement observes nothing
-        //   and must not confirm the wrapper seam; and
-        // - only a strong confirming assertion may clear the unverified
-        //   flag — a weak broad assertion whose message names the variant
-        //   would otherwise confirm observation while the unconfirmed
-        //   callee-only binder supplies the strong score, so the wrapper
-        //   would read `exposed` without a strong wrapper discriminator.
-        // (A fuller observing-form gate was evaluated and reverted: the
-        // recorded consumer witness records its guard as a bare
-        // `matches!(..)` fact — brace on the next line — so an
-        // observing-form requirement regressed the verified consumer
-        // replay.)
-        let confirming_assertion_is_strong = matches!(
-            probe_relative_oracle_strength(family, assertion),
-            OracleStrength::Strong
-        );
-        variant_binding_match
-            && confirming_assertion_is_strong
-            && !assertion.text.trim_start().starts_with("let ")
+    } else if wrapper_seam {
+        false
     } else {
         token_match || effect_literal_match
     };
@@ -533,11 +469,10 @@ fn assertion_matches_probe_detail(
             match_arm_variants,
             error_construction_variant,
             family,
-            wrapper_binding: None,
+            wrapper_seam: false,
         },
         assertion,
         assertion_count,
-        false,
     )
 }
 
@@ -586,99 +521,6 @@ fn wrapper_map_err_position(expression: &str) -> Option<usize> {
     None
 }
 
-/// The callee name a wrapper seam converts: the method called immediately
-/// before `.map_err(..)` — the last top-level `.segment` of the converted
-/// expression. For `try_parse_summary(raw).map_err(Into::into)` this is
-/// `try_parse_summary`; receiver-qualified (`parser.try_parse_summary(..)`)
-/// and chained (`self.client().try_parse_summary(..)`) forms resolve to the
-/// same final segment, and turbofish arguments (`::<Mode>`) are stripped.
-/// A leading `return ` is stripped first, so
-/// `return try_parse_summary(raw).map_err(Into::into)` binds
-/// `try_parse_summary` (#3700 round-1 review, gemini g0Fgu).
-/// Returns `None` when the final segment is not a name-like call, in which
-/// case no wrapper-to-variant binding can be established (fail-closed: an
-/// unrecognized callee can only under-credit, never over-credit).
-fn wrapper_callee_name(expression: &str) -> Option<String> {
-    let trimmed = expression.trim();
-    let trimmed = trimmed
-        .strip_prefix("return ")
-        .unwrap_or(trimmed)
-        .trim_start();
-    let conversion = wrapper_map_err_position(trimmed)?;
-    let lhs = trimmed[..conversion].trim_end();
-    // Last `.` at bracket depth 0 (string literals skipped): everything after
-    // it is the final call segment; an unbalanced bracket aborts to `None`.
-    let bytes = lhs.as_bytes();
-    let mut depth = 0isize;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut last_dot = None;
-    for (index, byte) in bytes.iter().enumerate() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if *byte == b'\\' {
-                escaped = true;
-            } else if *byte == b'"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match byte {
-            b'"' => in_string = true,
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => {
-                depth -= 1;
-                if depth < 0 {
-                    return None;
-                }
-            }
-            b'.' if depth == 0 => last_dot = Some(index),
-            _ => {}
-        }
-    }
-    // Unbalanced brackets mean the shape cannot be trusted: fail closed.
-    if depth != 0 {
-        return None;
-    }
-    let segment = match last_dot {
-        Some(index) => lhs[index + 1..].trim(),
-        None => lhs.trim(),
-    };
-    // A name-like head: identifier/`::` segments only, terminated by `<`
-    // (turbofish), `(` (arguments), or the segment end.
-    let mut head_end = segment.len();
-    for (index, ch) in segment.char_indices() {
-        if !(ch.is_alphanumeric() || ch == '_' || ch == ':') {
-            head_end = index;
-            break;
-        }
-    }
-    // The head must open arguments or turbofish arguments: a bare identifier
-    // (`value.map_err(..)` converts a value, not a callee call) establishes
-    // nothing.
-    let rest = segment[head_end..].trim_start();
-    if !(rest.starts_with('<') || rest.starts_with('(')) {
-        return None;
-    }
-    // A trailing `::` is the turbofish opener (`name::<T>`), not an empty
-    // final path segment.
-    let name = segment[..head_end]
-        .trim_end_matches(':')
-        .rsplit("::")
-        .next()
-        .unwrap_or("");
-    if name.is_empty()
-        || !name
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
-    {
-        return None;
-    }
-    Some(name.to_string())
-}
-
 /// Establish the wrapper-to-variant binding for a wrapper error seam.
 ///
 /// The seam's changed expression carries no parseable variant, so the
@@ -690,260 +532,6 @@ fn wrapper_callee_name(expression: &str) -> Option<String> {
 /// terminal variant names from different enums cannot align. A witness that
 /// only calls the wrapper, only names a variant in message text, or pins a
 /// variant against another call establishes nothing (#3700).
-///
-/// Binding authority: captured `calls` facts are the authority. A witness
-/// with captured calls that never name the callee does not bind it — the
-/// lexical fallback must not resurrect a refuted binding. The fallback
-/// applies only when the witness has no captured call facts at all.
-/// Both paths require a direct, receiver-free spelling of the callee
-/// (`test_directly_calls_owner`): `CallFact` keeps only the bare trailing
-/// identifier, so a receiver-qualified same-named method
-/// (`helper.try_parse(..)`) would otherwise bind another function. A
-/// wrong-type downcast pin compiles (downcasting to an uninhabited target
-/// yields `None` at runtime but parses statically), so "it would not compile"
-/// is not a defense — only the call-site spelling is.
-fn wrapper_established_variants(
-    expression: &str,
-    related_tests: &[(&TestSummary, RelationReason)],
-) -> Vec<String> {
-    let Some(callee) = wrapper_callee_name(expression) else {
-        return Vec::new();
-    };
-    let mut established: Vec<String> = Vec::new();
-    for (test, _) in related_tests {
-        // The producer call must spell the callee itself. Captured `calls`
-        // facts are the authority: when they exist but never name the callee,
-        // the lexical fallback must not resurrect a refuted binding. Both
-        // paths additionally require a direct, receiver-free spelling — a
-        // receiver-qualified same-named method (`helper.try_parse(..)`) binds
-        // another function, so it establishes nothing. Fail closed, symmetric
-        // with the receiver-aware wrapper-invocation verdict below.
-        let binds_callee = if test.calls.is_empty() {
-            body_contains_direct_owner_call(&test.body, &callee)
-        } else {
-            test.calls.iter().any(|call| {
-                call.name == callee
-                    && super::helper_transfer::is_direct_call_site(&call.text, &callee)
-            })
-        };
-        if !binds_callee {
-            continue;
-        }
-        for assertion in &test.assertions {
-            if assertion.kind != OracleKind::ExactErrorVariant {
-                continue;
-            }
-            let Some(qualified) = exact_error_variant_path(&assertion.text) else {
-                continue;
-            };
-            if !matches_scrutinee_bound_to_callee(&assertion.text, &test.body, &callee) {
-                continue;
-            }
-            established.push(qualified);
-        }
-    }
-    established.sort();
-    established.dedup();
-    established
-}
-
-/// The qualified `Enum::Variant` path an assertion pins, without reducing to
-/// the terminal variant token (which collides across enums).
-fn exact_error_variant_path(text: &str) -> Option<String> {
-    use super::text::exact_error_variant;
-    exact_error_variant(text)
-}
-
-/// True when the `matches!(scrutinee, ...)` pin in `assertion_text`
-/// constrains a value produced by `callee`: the scrutinee calls the callee
-/// directly, or names a variable bound from a callee call in `body`.
-/// Anything else (a pin against another call, a message-text mention) leaves
-/// the binding unestablished — fail-closed.
-fn matches_scrutinee_bound_to_callee(assertion_text: &str, body: &str, callee: &str) -> bool {
-    let Some(scrutinee) = matches_macro_scrutinee(assertion_text) else {
-        return false;
-    };
-    if body_contains_owner_call(&scrutinee, callee) {
-        return true;
-    }
-    let scrutinee = scrutinee.trim();
-    if !is_bare_identifier(scrutinee) {
-        return false;
-    }
-    body_let_binding_calls_callee(body, scrutinee, callee)
-}
-
-/// The scrutinee of the first `matches!(...)` invocation in `text`: the
-/// top-level comma-separated head of its argument list. Returns `None` when
-/// no `matches!` invocation parses out (string-aware scan).
-fn matches_macro_scrutinee(text: &str) -> Option<String> {
-    let macro_at = text.find("matches!")?;
-    let open = text[macro_at..].find('(')? + macro_at;
-    let mut depth = 0isize;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut raw_hashes = 0usize;
-    let mut in_raw_string = false;
-    let mut in_char = false;
-    let bytes = text.as_bytes();
-    let mut index = open;
-    let mut scrutinee_end = None;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if in_raw_string {
-            if byte == b'"'
-                && text[index + 1..]
-                    .chars()
-                    .take_while(|ch| *ch == '#')
-                    .count()
-                    >= raw_hashes
-                && text[index + 1..]
-                    .chars()
-                    .take(raw_hashes)
-                    .all(|ch| ch == '#')
-            {
-                in_raw_string = false;
-                index += 1 + raw_hashes;
-                continue;
-            }
-            index += 1;
-            continue;
-        }
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'"' {
-                in_string = false;
-            }
-            index += 1;
-            continue;
-        }
-        if in_char {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'\'' {
-                in_char = false;
-            }
-            index += 1;
-            continue;
-        }
-        match byte {
-            b'r' if text[index + 1..].starts_with('#') || text[index + 1..].starts_with('"') => {
-                // Possible raw-string opener: r" or r#*" — confirm the quote.
-                let mut hashes = 0usize;
-                while text[index + 1 + hashes..].starts_with('#') {
-                    hashes += 1;
-                }
-                if text[index + 1 + hashes..].starts_with('"') {
-                    raw_hashes = hashes;
-                    in_raw_string = true;
-                    index += 1 + hashes + 1;
-                    continue;
-                }
-                index += 1;
-            }
-            b'"' => {
-                in_string = true;
-                index += 1;
-            }
-            b'\'' if is_char_literal_start(text, index) => {
-                in_char = true;
-                index += 1;
-            }
-            b'(' => {
-                depth += 1;
-                index += 1;
-            }
-            b')' => {
-                depth -= 1;
-                if depth <= 0 {
-                    break;
-                }
-                index += 1;
-            }
-            b',' if depth == 1 => {
-                scrutinee_end = Some(index);
-                break;
-            }
-            _ => index += 1,
-        }
-    }
-    let end = scrutinee_end?;
-    Some(text[open + 1..end].trim().to_string())
-}
-
-/// True when a `'` at `index` opens a character literal rather than a
-/// lifetime: the next quote lands within two characters (`'x'`, `'\n'`).
-fn is_char_literal_start(text: &str, index: usize) -> bool {
-    let tail = &text.as_bytes()[index + 1..];
-    tail.first() == Some(&b'\\') && tail.get(2) == Some(&b'\'') || tail.get(1) == Some(&b'\'')
-}
-
-fn is_bare_identifier(text: &str) -> bool {
-    !text.is_empty()
-        && text.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
-        && text
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
-}
-
-/// True when `body` binds `ident` from a callee call: a `let` statement
-/// naming it whose right-hand side (to its depth-0 `;`) calls the callee.
-/// Statement scanning is string-aware; anything unrecognized fails closed.
-fn body_let_binding_calls_callee(body: &str, ident: &str, callee: &str) -> bool {
-    let mut search = 0usize;
-    while let Some(found) = body[search..].find("let ") {
-        let statement_start = search + found;
-        let after_let = body[statement_start + "let ".len()..].trim_start();
-        let rest = after_let.strip_prefix("mut ").unwrap_or(after_let);
-        if rest == ident
-            || rest.starts_with(&format!("{ident} "))
-            || rest.starts_with(&format!("{ident}:"))
-            || rest.starts_with(&format!("{ident}="))
-        {
-            // Right-hand side runs to the statement's depth-0 `;`.
-            let mut depth = 0isize;
-            let mut in_string = false;
-            let mut escaped = false;
-            let mut end = None;
-            for (offset, byte) in body[statement_start..].bytes().enumerate() {
-                if in_string {
-                    if escaped {
-                        escaped = false;
-                    } else if byte == b'\\' {
-                        escaped = true;
-                    } else if byte == b'"' {
-                        in_string = false;
-                    }
-                    continue;
-                }
-                match byte {
-                    b'"' => in_string = true,
-                    b'(' | b'[' | b'{' => depth += 1,
-                    b')' | b']' | b'}' => depth -= 1,
-                    b';' if depth == 0 => {
-                        end = Some(statement_start + offset);
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(end) = end
-                && body_contains_owner_call(&body[statement_start..end], callee)
-            {
-                return true;
-            }
-        }
-        search = statement_start + "let ".len();
-    }
-    false
-}
-
 /// Check whether `text` contains `token` as a whole word — delimited by
 /// non-identifier characters (or string boundaries) on both sides. This
 /// replaces the old `token.len() > 3` gate, which filtered out short tokens
@@ -1502,6 +1090,110 @@ mod tests {
         );
     }
 
+    // #3700 (final consolidation): a wrapper error seam never confirms
+    // observation from lexical matching — not from a callee-side exact Err
+    // pin, not from a wrapper-invoking downcast pin, not from message text —
+    // so the seam stays `weakly_exposed` (unverified observation) and the
+    // typed `wrapper_error_binding_unresolved` limitation (attached by
+    // `apply_wrapper_error_binding_limit`) is the honest outcome instead of
+    // an escalating lexical binding heuristic.
+    #[test]
+    fn wrapper_seam_never_confirms_and_stays_weak_under_strongest_witnesses() {
+        let wrapper_probe = probe(
+            ProbeFamily::ErrorPath,
+            "try_parse_summary(raw).map_err(Into::into)",
+        );
+        let binder = test_with_body_assertions(
+            "try_parse_summary_pins_malformed_source",
+            "let result = try_parse_summary(\"@bad;\");",
+            vec![oracle(
+                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
+return Err(\"callee pin\".into());
+}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let observer = test_with_body_assertions(
+            "parse_summary_boxed_variant_propagates_malformed_source",
+            "let error = parse_summary(\"@bad;\").err().ok_or(\"expected error\")?;",
+            vec![oracle(
+                "if !matches!(error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource)) {
+return Err(\"boxed identity should survive\".into());
+}",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (observe, discriminate, _) = reveal_evidence(
+            &wrapper_probe,
+            &[
+                (&binder, RelationReason::OwnerNamedTest),
+                (&observer, RelationReason::DirectOwnerCall),
+            ],
+        );
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a wrapper seam without a parseable variant must never read exposed from lexical heuristics"
+        );
+    }
+
+    // #3700 removal-fails control for the typed path: the parseable-variant
+    // site (`return Err(ParseSummaryError::MalformedSource);`) credits only
+    // while the witness pins the exact variant against the callee's own
+    // result. Removing the variant pin (broad is_err) drops the seam to
+    // weakly_exposed — the pre-existing main behavior, no wrapper heuristics
+    // involved.
+    #[test]
+    fn typed_variant_site_loses_credit_when_witness_pin_removed() {
+        let typed_probe = probe(
+            ProbeFamily::ErrorPath,
+            "return Err(ParseSummaryError::MalformedSource);",
+        );
+        let exact_witness = test_with_body_assertions(
+            "try_parse_summary_fails_closed_on_malformed_source",
+            "let result = try_parse_summary(\"@bad;\");",
+            vec![oracle(
+                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
+return Err(\"typed pin\".into());
+}",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let (observe, discriminate, _) = reveal_evidence(
+            &typed_probe,
+            &[(&exact_witness, RelationReason::OwnerNamedTest)],
+        );
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "the parseable-variant path keeps the pre-existing variant-bound credit"
+        );
+
+        let broad_witness = test_with_body_assertions(
+            "try_parse_summary_fails_closed_on_malformed_source",
+            "let result = try_parse_summary(\"@bad;\");",
+            vec![oracle(
+                "assert!(result.is_err());",
+                OracleKind::BroadError,
+                OracleStrength::Weak,
+            )],
+        );
+        let (_, degraded, _) = reveal_evidence(
+            &typed_probe,
+            &[(&broad_witness, RelationReason::OwnerNamedTest)],
+        );
+        assert_eq!(
+            degraded.state,
+            StageState::Weak,
+            "removing the variant pin must fail the typed path's credit"
+        );
+    }
+
     // RIPR-SPEC-0106 Control 1 (POSITIVE): exact variant assertion DOES match
     // the probe when the specific variant token is present.
     #[test]
@@ -1529,679 +1221,11 @@ mod tests {
         );
     }
 
-    // #3700 producer-binding control (POSITIVE half), reduced from
-    // fixtures/error_variant_boxed_wrapper_downcast_witness: a wrapper
-    // `map_err(Into::into)` seam has no parseable variant of its own, so the
-    // strong credit flows through the established wrapper-to-variant binding —
-    // the witness calls the seam's callee and pins the exact variant against
-    // it (`matches!(result, Err(ParseSummaryError::MalformedSource))`, a pin
-    // the compiler type-checks against the callee's error type).
-    #[test]
-    fn boxed_wrapper_seam_credits_exact_variant_witness_through_callee_binding() {
-        let wrapper_probe = probe(
-            ProbeFamily::ErrorPath,
-            "try_parse_summary(raw).map_err(Into::into)",
-        );
-        // The binder supplies variant identity: it calls the callee and pins
-        // the exact variant against the callee's own result — but it never
-        // invokes the wrapper, so on its own it cannot confirm observation.
-        let binder = test_with_body_assertions(
-            "try_parse_summary_pins_malformed_source",
-            "let result = try_parse_summary(\"@bad;\");",
-            vec![oracle(
-                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"callee pin\".into());\n}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        // The observer invokes the wrapper owner and pins the qualified
-        // variant against the wrapper's boxed error: this is the test that
-        // would fail if the wrapper destroyed variant identity.
-        let observer = test_with_body_assertions(
-            "parse_summary_boxed_variant_propagates_malformed_source",
-            "let error = parse_summary(\"@bad;\").err().ok_or(\"expected error\")?;",
-            vec![oracle(
-                "if !matches!(error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource)) {\nreturn Err(\"boxed identity should survive\".into());\n}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        // #3713 review: the observer invokes the wrapper owner through a
-        // direct, receiver-free spelling, so it confirms under the
-        // receiver-aware invocation verdict.
-        let (observe, discriminate, related) = reveal_evidence_with_expression(
-            &wrapper_probe,
-            &wrapper_probe.expression,
-            &[
-                (&binder, RelationReason::OwnerNamedTest),
-                (&observer, RelationReason::DirectOwnerCall),
-            ],
-            Some("parse_summary"),
-        );
-        assert_eq!(observe.state, StageState::Yes);
-        assert_eq!(
-            discriminate.state,
-            StageState::Yes,
-            "the callee-bound identity plus the wrapper-invoking downcast witness must keep the wrapper seam strong"
-        );
-        assert!(
-            related.iter().any(|test| test.name
-                == "parse_summary_boxed_variant_propagates_malformed_source"
-                && test.oracle_kind == OracleKind::ExactErrorVariant
-                && test.oracle_strength == OracleStrength::Strong),
-            "the wrapper-invoking observer must be retained with strong exact-variant credit"
-        );
-    }
-
     // #3700 callee-extraction pins: the converted callee is the final
     // top-level call segment before `.map_err(..)` — receiver qualification,
     // chaining, and turbofish must not misattribute it, and non-call shapes
     // fail closed to `None`.
 
-    // #3700 round-2 review (devin g2Xtt): whitespace around the conversion
-    // must not bypass the wrapper gate — the gate and the callee extraction
-    // share one whitespace-tolerant `map_err` locator.
-    #[test]
-    fn spaced_map_err_call_stays_a_wrapper_seam() {
-        assert!(wrapper_error_seam_expression(&[
-            "try_parse_summary(raw) .map_err (Into::into)",
-        ]));
-        assert_eq!(
-            wrapper_callee_name("return try_parse_summary(raw) .map_err (Into::into)").as_deref(),
-            Some("try_parse_summary")
-        );
-        // A `map_err` that is not a method conversion is not a wrapper seam.
-        assert!(!wrapper_error_seam_expression(&[
-            "let debug_map_err = 1; try_x(raw)",
-        ]));
-    }
-
-    // #3700 round-2 review (devin g2nUV): with a valid callee binder present,
-    // a wrapper-invoking test that DISCARDS the matches! result must not
-    // confirm the seam even though its text pins the established variant.
-    #[test]
-    fn wrapper_seam_stays_weak_when_wrapper_test_discards_matches_with_binder() {
-        let wrapper_probe = probe(
-            ProbeFamily::ErrorPath,
-            "try_theme_summary(raw).map_err(Into::into)",
-        );
-        let binder = test_with_body_assertions(
-            "try_theme_summary_pins_duplicate_theme",
-            "let result = try_theme_summary(\"&theme\");",
-            vec![oracle(
-                "if !matches!(result, Err(ThemeError::DuplicateTheme)) {
-return Err(\"callee pin\".into());
-}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        let discarded_observer = test_with_body_assertions(
-            "theme_summary_ignores_matches_result",
-            "let error = theme_summary(\"&theme\")
-    .err()
-    .ok_or(\"theme wrapper must fail closed\")?;",
-            vec![oracle(
-                "let _ = matches!(
-error.downcast_ref::<ThemeError>(),
-Some(ThemeError::DuplicateTheme)
-);",
-                OracleKind::ExactValue,
-                OracleStrength::Strong,
-            )],
-        );
-        let (_, discriminate, _) = reveal_evidence(
-            &wrapper_probe,
-            &[
-                (&binder, RelationReason::OwnerNamedTest),
-                (&discarded_observer, RelationReason::DirectOwnerCall),
-            ],
-        );
-        assert_eq!(
-            discriminate.state,
-            StageState::Weak,
-            "a discarded matches! result must not confirm the wrapper seam"
-        );
-    }
-
-    // #3700 round-2 review (devin g2nUV): with a valid callee binder present,
-    // a wrapper-invoking test whose assertion is broad but whose MESSAGE names
-    // the variant must not lift the seam past weakly_exposed — a broad
-    // assertion is a weak discriminator even when its message names the
-    // established variant.
-    #[test]
-    fn wrapper_seam_stays_weak_when_broad_wrapper_message_names_variant() {
-        let wrapper_probe = probe(
-            ProbeFamily::ErrorPath,
-            "try_parse_summary(raw).map_err(Into::into)",
-        );
-        let binder = test_with_body_assertions(
-            "try_parse_summary_pins_malformed_source",
-            "let result = try_parse_summary(\"@bad;\");",
-            vec![oracle(
-                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
-return Err(\"callee pin\".into());
-}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        let broad_observer = test_with_body_assertions(
-            "parse_summary_smoke_with_variant_message",
-            "let result = parse_summary(\"@bad;\");",
-            vec![oracle(
-                "assert!(result.is_err(), \"must be ParseSummaryError::MalformedSource\");",
-                OracleKind::BroadError,
-                OracleStrength::Weak,
-            )],
-        );
-        let (_, discriminate, _) = reveal_evidence(
-            &wrapper_probe,
-            &[
-                (&binder, RelationReason::OwnerNamedTest),
-                (&broad_observer, RelationReason::DirectOwnerCall),
-            ],
-        );
-        assert_eq!(
-            discriminate.state,
-            StageState::Weak,
-            "a broad wrapper assertion whose message names the variant must not confirm the seam"
-        );
-    }
-
-    // #3700 round-2 review (devin g2nVJ): when the changed-line fragment does
-    // not carry the callee, establishment falls back to the parser-backed
-    // analysis expression that reconstructs `callee(..).map_err(..)`.
-    #[test]
-    fn wrapper_establishment_falls_back_to_parser_analysis_expression() {
-        let wrapper_probe = probe(ProbeFamily::ErrorPath, ".map_err(Into::into)");
-        let binder = test_with_body_assertions(
-            "try_parse_summary_pins_malformed_source",
-            "let result = try_parse_summary(\"@bad;\");",
-            vec![oracle(
-                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
-return Err(\"callee pin\".into());
-}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        let observer = test_with_body_assertions(
-            "parse_summary_boxed_variant_propagates_malformed_source",
-            "let error = parse_summary(\"@bad;\").err().ok_or(\"expected error\")?;",
-            vec![oracle(
-                "if !matches!(error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource)) {
-return Err(\"boxed identity should survive\".into());
-}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        // Without the fallback the fragment finds no callee and the witness
-        // stays unconfirmed.
-        let (_, discriminate_fragment, _) = reveal_evidence(
-            &wrapper_probe,
-            &[
-                (&binder, RelationReason::OwnerNamedTest),
-                (&observer, RelationReason::DirectOwnerCall),
-            ],
-        );
-        assert_eq!(
-            discriminate_fragment.state,
-            StageState::Weak,
-            "the fragment alone must not confirm"
-        );
-        // The parser-backed analysis expression reconstructs the wrapper, so
-        // the same witness set confirms through the established binding.
-        let (observe, discriminate, _) = reveal_evidence_with_expression(
-            &wrapper_probe,
-            "try_parse_summary(raw).map_err(Into::into)",
-            &[
-                (&binder, RelationReason::OwnerNamedTest),
-                (&observer, RelationReason::DirectOwnerCall),
-            ],
-            Some("parse_summary"),
-        );
-        assert_eq!(observe.state, StageState::Yes);
-        assert_eq!(
-            discriminate.state,
-            StageState::Yes,
-            "the parser-backed wrapper expression must establish the binding"
-        );
-    }
-
-    #[test]
-    fn wrapper_callee_name_resolves_final_call_segment() {
-        let cases = [
-            (
-                "try_parse_summary(raw).map_err(Into::into)",
-                Some("try_parse_summary"),
-            ),
-            (
-                "parser.try_parse_summary(raw).map_err(Into::into)",
-                Some("try_parse_summary"),
-            ),
-            (
-                "self.client().try_parse_summary(raw).map_err(Into::into)",
-                Some("try_parse_summary"),
-            ),
-            (
-                "try_parse_summary::<Mode>(raw).map_err(Into::into)",
-                Some("try_parse_summary"),
-            ),
-            ("foo(bar(x)).map_err(Into::into)", Some("foo")),
-        ];
-        for (expression, expected) in cases {
-            assert_eq!(
-                wrapper_callee_name(expression).as_deref(),
-                expected,
-                "callee of {expression}"
-            );
-        }
-    }
-
-    #[test]
-    fn wrapper_callee_name_rejects_non_call_shapes() {
-        for expression in [
-            "value.map_err(Into::into)",
-            "operation_failed.map_err(Into::into)",
-            "42.map_err(Into::into)",
-            "foo(bar(x)",
-        ] {
-            assert_eq!(
-                wrapper_callee_name(expression),
-                None,
-                "non-call shape must not establish a binding: {expression}"
-            );
-        }
-    }
-
-    // #3700 removal-fails control: removing the wrapper-to-variant binding
-    // from the witness (the witness degrades to the broad `Err(_)` shape,
-    // which the oracle scanner classifies BroadError/Weak instead of
-    // ExactErrorVariant/Strong, so it no longer establishes any variant
-    // identity) must drop the wrapper seam's discriminator to weak. This is
-    // the layer that would regress the fixture back to the released-0.10.0
-    // miss if the variant-binding producer is removed.
-    #[test]
-    fn boxed_wrapper_seam_loses_strong_credit_when_witness_lacks_variant_binding() {
-        let wrapper_probe = probe(
-            ProbeFamily::ErrorPath,
-            "try_parse_summary(raw).map_err(Into::into)",
-        );
-        let broad_witness = test_with_body_assertions(
-            "parse_summary_fails_closed_on_malformed_source",
-            "let result = try_parse_summary(\"@bad;\");",
-            vec![oracle(
-                "if !matches!(result, Err(_)) {\nreturn Err(\"malformed source should fail closed\".into());\n}",
-                OracleKind::BroadError,
-                OracleStrength::Weak,
-            )],
-        );
-        let (observe, discriminate, _) = reveal_evidence(
-            &wrapper_probe,
-            &[(&broad_witness, RelationReason::OwnerNamedTest)],
-        );
-        assert_eq!(observe.state, StageState::Yes);
-        assert_eq!(
-            discriminate.state,
-            StageState::Weak,
-            "without the exact-variant binding the wrapper seam must not keep a strong discriminator"
-        );
-    }
-
-    // #3700 fail-closed control: a witness that computes `matches!` and
-    // discards the result has no observing failure path, so the assertion stays
-    // unconfirmed and the wrapper seam keeps a weak discriminator.
-    #[test]
-    fn boxed_wrapper_seam_ignores_witness_with_discarded_matches_result() {
-        let wrapper_probe = probe(
-            ProbeFamily::ErrorPath,
-            "try_theme_summary(raw).map_err(Into::into)",
-        );
-        let discarded_witness = test_with_assertions(
-            "theme_summary_ignores_matches_result",
-            vec![oracle(
-                "let _ = matches!(\nerror.downcast_ref::<ThemeError>(),\nSome(ThemeError::DuplicateTheme)\n);",
-                OracleKind::ExactValue,
-                OracleStrength::Strong,
-            )],
-        );
-        let (observe, discriminate, _) = reveal_evidence(
-            &wrapper_probe,
-            &[(&discarded_witness, RelationReason::DirectOwnerCall)],
-        );
-        assert_eq!(
-            observe.state,
-            StageState::Yes,
-            "the single-assertion association rule keeps the discarded witness visible"
-        );
-        assert_eq!(
-            discriminate.state,
-            StageState::Weak,
-            "a discarded matches! result must not confirm the wrapper witness"
-        );
-    }
-
-    // #3700 regression guards for the two over-credit shapes this fix closes:
-    // a witness that calls only the WRAPPER and pins a variant can no longer
-    // upgrade the seam — neither when the pin is a sibling of what the callee
-    // produces, nor when it belongs to an unrelated enum. Statically nothing
-    // binds either pin to the callee's error type, so the seam stays weak
-    // instead of crediting token overlap from the witness message text.
-    #[test]
-    fn wrapper_seam_stays_weak_when_witness_pins_variant_without_callee_binding() {
-        let sibling_probe = probe(
-            ProbeFamily::ErrorPath,
-            "try_checksum_summary(payload).map_err(Into::into)",
-        );
-        let sibling_witness = test_with_body_assertions(
-            "checksum_summary_pins_wrong_sibling_variant",
-            "let error = checksum_summary(\"payload?\").err().ok_or(\"checksum wrapper must fail closed\")?;",
-            vec![oracle(
-                "if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}",
-                OracleKind::ExactValue,
-                OracleStrength::Strong,
-            )],
-        );
-        let (_, sibling_discriminate, _) = reveal_evidence(
-            &sibling_probe,
-            &[(&sibling_witness, RelationReason::DirectOwnerCall)],
-        );
-        assert_eq!(
-            sibling_discriminate.state,
-            StageState::Weak,
-            "a wrapper-only witness pinning a sibling variant must not confirm the seam"
-        );
-
-        let unrelated_probe = probe(
-            ProbeFamily::ErrorPath,
-            "try_render_summary(raw).map_err(Into::into)",
-        );
-        let unrelated_witness = test_with_body_assertions(
-            "render_summary_observes_other_enum_variant",
-            "let error = render_summary(\"zhex\").err().ok_or(\"render wrapper must fail closed\")?;",
-            vec![oracle(
-                "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}",
-                OracleKind::ExactValue,
-                OracleStrength::Strong,
-            )],
-        );
-        let (_, unrelated_discriminate, _) = reveal_evidence(
-            &unrelated_probe,
-            &[(&unrelated_witness, RelationReason::DirectOwnerCall)],
-        );
-        assert_eq!(
-            unrelated_discriminate.state,
-            StageState::Weak,
-            "a wrapper-only witness pinning an unrelated enum's variant must not confirm the seam"
-        );
-    }
-
-    // #3700 round-1 review: callee extraction must bind the LAST callee of
-    // the chain (the one whose result the map_err conversion consumes), strip
-    // a `return ` prefix, skip a generic argument list, and refuse value
-    // receivers that name no callee at all.
-    #[test]
-    fn wrapper_callee_extraction_binds_last_chain_callee_and_rejects_values() {
-        let extraction = |expression: &str| {
-            wrapper_callee_name(expression)
-                .as_deref()
-                .map(str::to_string)
-        };
-        assert_eq!(
-            extraction("try_parse_summary(raw).map_err(Into::into)"),
-            Some("try_parse_summary".to_string())
-        );
-        assert_eq!(
-            extraction("return try_parse_summary(raw).map_err(Into::into)"),
-            Some("try_parse_summary".to_string()),
-            "a `return ` prefix must be stripped before callee extraction"
-        );
-        assert_eq!(
-            extraction("self.client().try_parse_summary(raw).map_err(Into::into)"),
-            Some("try_parse_summary".to_string()),
-            "a receiver chain must bind the last callee, not the receiver hop"
-        );
-        assert_eq!(
-            extraction("ParseSummary::try_parse_summary(raw).map_err(Into::into)"),
-            Some("try_parse_summary".to_string()),
-            "a module-qualified callee binds by its terminal segment"
-        );
-        assert_eq!(
-            extraction("try_parse_summary::<T>(raw).map_err(Into::into)"),
-            Some("try_parse_summary".to_string()),
-            "a generic argument list between name and paren must be skipped"
-        );
-        assert_eq!(
-            extraction("value.map_err(Into::into)"),
-            None,
-            "a value receiver with no call group establishes no callee"
-        );
-        assert_eq!(
-            extraction("42.map_err(Into::into)"),
-            None,
-            "a numeric receiver establishes no callee"
-        );
-    }
-
-    // #3700 BUG-1 reproduction (devin review): a test that calls ONLY the
-    // callee and pins the exact variant must not itself confirm the wrapper
-    // seam — no test invokes the wrapper owner, so observation is unverified.
-    #[test]
-    fn wrapper_seam_stays_weak_when_only_callee_test_pins_variant() {
-        let wrapper_probe = probe(
-            ProbeFamily::ErrorPath,
-            "try_parse_summary(raw).map_err(Into::into)",
-        );
-        let callee_only = test_with_body_assertions(
-            "try_parse_summary_pins_malformed_source",
-            "let result = try_parse_summary(\"@bad;\");",
-            vec![oracle(
-                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"callee-only pin\".into());\n}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        let (_, discriminate, _) = reveal_evidence(
-            &wrapper_probe,
-            &[(&callee_only, RelationReason::OwnerNamedTest)],
-        );
-        assert_eq!(
-            discriminate.state,
-            StageState::Weak,
-            "a callee-only pin establishes variant identity but cannot confirm wrapper observation"
-        );
-    }
-
-    // #3700 round-1 review: a witness whose captured call facts are present
-    // and never name the callee must not bind it through the lexical
-    // fallback — the fallback exists only for witnesses without captured
-    // call facts.
-    #[test]
-    fn wrapper_binding_does_not_resurrect_refuted_callee_binding_from_body_text() {
-        let wrapper_probe = probe(
-            ProbeFamily::ErrorPath,
-            "try_parse_summary(raw).map_err(Into::into)",
-        );
-        let mut refuted_witness = test_with_body_assertions(
-            "parse_summary_fails_closed_on_malformed_source",
-            "let result = try_parse_summary(\"@bad;\");",
-            vec![oracle(
-                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        // Captured facts exist and name only the wrapper: the callee is
-        // refuted even though the body text still mentions it.
-        refuted_witness.calls = vec![call_fact("parse_summary", "parse_summary(\"@bad;\")")];
-        let (_, discriminate, _) = reveal_evidence(
-            &wrapper_probe,
-            &[(&refuted_witness, RelationReason::OwnerNamedTest)],
-        );
-        assert_eq!(
-            discriminate.state,
-            StageState::Weak,
-            "captured calls naming only the wrapper must refute the callee binding"
-        );
-    }
-
-    // #3700 BUG-2 reproduction (devin review): a test that calls the callee
-    // but pins an exact variant against ANOTHER function's result (same
-    // terminal variant name, different enum) must neither establish nor
-    // confirm the wrapper seam.
-    #[test]
-    fn wrapper_seam_stays_weak_when_variant_pin_targets_another_call() {
-        let wrapper_probe = probe(
-            ProbeFamily::ErrorPath,
-            "try_parse_summary(raw).map_err(Into::into)",
-        );
-        let mixed_witness = test_with_body_assertions(
-            "mixed_callee_call_with_foreign_pin",
-            "let result = try_parse_summary(\"@bad;\");\nlet other = unrelated_check();",
-            vec![oracle(
-                "if !matches!(other, Err(OtherError::MalformedSource)) {\nreturn Err(\"foreign pin\".into());\n}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        let (_, discriminate, _) = reveal_evidence(
-            &wrapper_probe,
-            &[(&mixed_witness, RelationReason::OwnerNamedTest)],
-        );
-        assert_eq!(
-            discriminate.state,
-            StageState::Weak,
-            "an exact-variant pin against another call must not establish the wrapper binding"
-        );
-    }
-
-    // #3713 review (devin BUG): a same-named method call on another receiver
-    // relates as `DirectOwnerCall` by bare terminal name, but it never invokes
-    // the wrapper owner — so it must not confirm the wrapper seam even when it
-    // pins the established qualified variant.
-    #[test]
-    fn wrapper_seam_stays_weak_when_owner_call_is_receiver_qualified() {
-        let wrapper_probe = probe(
-            ProbeFamily::ErrorPath,
-            "try_parse_summary(raw).map_err(Into::into)",
-        );
-        let binder = test_with_body_assertions(
-            "try_parse_summary_pins_malformed_source",
-            "let result = try_parse_summary(\"@bad;\");",
-            vec![oracle(
-                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"callee pin\".into());\n}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        // Same bare terminal name, another receiver: production relates this
-        // as DirectOwnerCall, but the receiver-free verdict must refuse it.
-        let other_receiver = test_with_body_assertions(
-            "parse_summary_other_receiver_pins_same_variant",
-            "let parser = ParserB;\nlet result = parser.parse_summary(\"@bad;\");",
-            vec![oracle(
-                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"other receiver pin\".into());\n}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        let (_, discriminate, _) = reveal_evidence_with_expression(
-            &wrapper_probe,
-            &wrapper_probe.expression,
-            &[
-                (&binder, RelationReason::OwnerNamedTest),
-                (&other_receiver, RelationReason::DirectOwnerCall),
-            ],
-            Some("parse_summary"),
-        );
-        assert_eq!(
-            discriminate.state,
-            StageState::Weak,
-            "a receiver-qualified owner-name call never invokes the wrapper owner and must not confirm the seam"
-        );
-    }
-
-    // Binding half of the receiver verdict: a receiver-qualified same-named
-    // method call (`helper.try_parse_summary(..)`) binds another function, so
-    // it establishes no wrapper-to-variant binding even when it pins an exact
-    // variant against its own result.
-    #[test]
-    fn wrapper_established_variants_ignores_receiver_qualified_callee_call() {
-        let foreign_witness = test_with_body_assertions(
-            "try_parse_summary_helper_method_pins_foreign_variant",
-            "let helper = Helper;\nlet result = helper.try_parse_summary(\"@bad;\");",
-            vec![oracle(
-                "if !matches!(result, Err(OtherError::MalformedSource)) {\nreturn Err(\"foreign pin\".into());\n}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        let established = wrapper_established_variants(
-            "try_parse_summary(raw).map_err(Into::into)",
-            &[(&foreign_witness, RelationReason::OwnerNamedTest)],
-        );
-        assert!(
-            established.is_empty(),
-            "a receiver-qualified same-named call must not seed the wrapper binding: {established:?}"
-        );
-    }
-
-    // Captured-call half of the receiver verdict: a `CallFact` spelling the
-    // owner through a receiver (`parser.parse_summary(..)`) is not a direct
-    // invocation even when the bare name matches.
-    #[test]
-    fn wrapper_seam_stays_weak_when_captured_owner_call_has_receiver() {
-        use crate::analysis::rust_index::CallFact;
-
-        let wrapper_probe = probe(
-            ProbeFamily::ErrorPath,
-            "try_parse_summary(raw).map_err(Into::into)",
-        );
-        let binder = test_with_body_assertions(
-            "try_parse_summary_pins_malformed_source",
-            "let result = try_parse_summary(\"@bad;\");",
-            vec![oracle(
-                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"callee pin\".into());\n}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        let mut receiver_call = test_with_body_assertions(
-            "parse_summary_other_receiver_pins_same_variant",
-            "let parser = ParserB;",
-            vec![oracle(
-                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"other receiver pin\".into());\n}",
-                OracleKind::ExactErrorVariant,
-                OracleStrength::Strong,
-            )],
-        );
-        receiver_call.calls = vec![CallFact {
-            line: 3,
-            name: "parse_summary".to_string(),
-            text: "parser.parse_summary(\"@bad;\")".to_string(),
-        }];
-        let (_, discriminate, _) = reveal_evidence_with_expression(
-            &wrapper_probe,
-            &wrapper_probe.expression,
-            &[
-                (&binder, RelationReason::OwnerNamedTest),
-                (&receiver_call, RelationReason::DirectOwnerCall),
-            ],
-            Some("parse_summary"),
-        );
-        assert_eq!(
-            discriminate.state,
-            StageState::Weak,
-            "a captured receiver-qualified owner call must not confirm the seam"
-        );
-    }
-
-    // RIPR-SPEC-0106 Part B extended to direct value families: a
-    // `return_value` probe on an `Err(...)` construction must not let a
-    // sibling-variant ExactErrorVariant oracle confirm observation through
-    // the shared enum qualifier token.
     #[test]
     fn sibling_variant_assertion_does_not_confirm_return_value_error_construction() {
         let sibling_assertion = oracle(
@@ -2766,14 +1790,6 @@ return Err(\"boxed identity should survive\".into());
         TestSummary {
             body: body.to_string(),
             ..test_with_assertions(name, assertions)
-        }
-    }
-
-    fn call_fact(name: &str, text: &str) -> crate::analysis::rust_index::CallFact {
-        crate::analysis::rust_index::CallFact {
-            line: 1,
-            name: name.to_string(),
-            text: text.to_string(),
         }
     }
 
@@ -3358,7 +2374,6 @@ return Err(\"boxed identity should survive\".into());
             &probe,
             "Err(ParseError::SiblingVariant)",
             &[(&test, RelationReason::DirectOwnerCall)],
-            None,
         );
 
         assert_eq!(

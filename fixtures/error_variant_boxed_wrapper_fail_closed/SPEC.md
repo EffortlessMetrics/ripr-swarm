@@ -35,9 +35,11 @@ ripr check --root fixtures/error_variant_boxed_wrapper_fail_closed/input \
 
 ## Then
 
-Every finding stays `weakly_exposed`. The wrapper seams carry no parseable
-variant and no established wrapper-to-variant binding, so the witnesses'
-strong-shaped assertions cannot clear `observation_unverified` — token
+Every finding stays `weakly_exposed` and carries the typed static
+limitation `static_limit_kind: wrapper_error_binding_unresolved`. The
+wrapper seams carry no parseable variant, and whether the boxed conversion
+carries the callee's error variant is not statically establishable, so the
+witnesses' strong-shaped assertions never confirm observation — token
 overlap between the seam expression and the witness message text (the
 parameter names, the callee names, or `Into::into`) upgrades nothing.
 

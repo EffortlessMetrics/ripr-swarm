@@ -50,7 +50,6 @@ impl ClassifiedProbeEvidence {
             context.probe,
             reveal_expression,
             &context.related_tests,
-            context.owner_fn.map(|owner| owner.name.as_str()),
         );
 
         let ripr = RiprEvidence {

@@ -1209,6 +1209,7 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "must_not_promote" },
+        { "type": "must_emit_limitation", "expected_limit_kind": "wrapper_error_binding_unresolved" },
         { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
@@ -1222,6 +1223,7 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "must_not_promote" },
+        { "type": "must_emit_limitation", "expected_limit_kind": "wrapper_error_binding_unresolved" },
         { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
@@ -1249,7 +1251,8 @@
         { "type": "must_not_have_receipt_command" },
         { "type": "expected_finding_count", "count": 2 },
         { "type": "maximum_class", "class": "weakly_exposed" },
-        { "type": "must_not_promote" }
+        { "type": "must_not_promote" },
+        { "type": "must_emit_limitation", "expected_limit_kind": "wrapper_error_binding_unresolved" }
       ]
     },
     {
@@ -1265,7 +1268,8 @@
         { "type": "must_not_have_receipt_command" },
         { "type": "expected_finding_count", "count": 2 },
         { "type": "maximum_class", "class": "weakly_exposed" },
-        { "type": "must_not_promote" }
+        { "type": "must_not_promote" },
+        { "type": "must_emit_limitation", "expected_limit_kind": "wrapper_error_binding_unresolved" }
       ]
     },
     {
@@ -1281,7 +1285,8 @@
         { "type": "must_not_have_receipt_command" },
         { "type": "expected_finding_count", "count": 2 },
         { "type": "maximum_class", "class": "weakly_exposed" },
-        { "type": "must_not_promote" }
+        { "type": "must_not_promote" },
+        { "type": "must_emit_limitation", "expected_limit_kind": "wrapper_error_binding_unresolved" }
       ]
     }
   ]
