@@ -3606,6 +3606,7 @@ tests = [
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
+  "fixtures/constant_declaration_probe_reconciliation",
   "fixtures/gap-decision-ledger/corpus.json",
 ]
 code = [
@@ -3640,6 +3641,8 @@ outputs = [
   "docs/OUTPUT_SCHEMA.md",
   "docs/BADGE_POLICY.md",
   "docs/CAPABILITY_MATRIX.md",
+  "fixtures/constant_declaration_probe_reconciliation/expected/check.json",
+  "fixtures/constant_declaration_probe_reconciliation/expected/human.txt",
   "fixtures/gap-decision-ledger/README.md",
   "fixtures/gap-decision-ledger/corpus.json",
   ".ripr/traceability.toml",
