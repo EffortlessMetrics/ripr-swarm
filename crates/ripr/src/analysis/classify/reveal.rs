@@ -487,6 +487,46 @@ pub(in crate::analysis) fn wrapper_error_seam_expression(expressions: &[&str]) -
         .any(|expression| last_top_level_map_err_dot(expression).is_some())
 }
 
+/// Strips grouping that wraps the ENTIRE expression — balanced `(..)` and
+/// `{..}` pairs whose opener is the first character and whose closer is the
+/// last — repeatedly (`(try_x(raw).map_err(Into::into));` -> the inner
+/// conversion, #3714 round-2 review, devin hGdAZ). Grouping that does NOT
+/// span the whole expression (`(a) + (b.map_err(f))`) is left in place:
+/// those shapes fail closed instead of crediting an ambiguous conversion.
+pub(in crate::analysis) fn without_harmless_outer_groups(expression: &str) -> &str {
+    // A trailing statement semicolon must not defeat the group-span check.
+    let mut working = expression.trim();
+    if let Some(stripped) = working.strip_suffix(';') {
+        working = stripped.trim_end();
+    }
+    loop {
+        let bytes = working.as_bytes();
+        if bytes.first() != Some(&b'(') && bytes.first() != Some(&b'{') {
+            return working;
+        }
+        let opener = bytes[0];
+        let closer = if opener == b'(' { b')' } else { b'}' };
+        let mut depth = 0isize;
+        let mut matched = false;
+        for (index, byte) in bytes.iter().enumerate() {
+            if *byte == opener {
+                depth += 1;
+            } else if *byte == closer {
+                depth -= 1;
+                if depth == 0 {
+                    matched = index == bytes.len() - 1;
+                    break;
+                }
+            }
+        }
+        if !matched {
+            return working;
+        }
+        working = &working[1..working.len() - 1];
+        working = working.trim();
+    }
+}
+
 /// The byte index of the `.` opening the LAST top-level `.map_err(..)`
 /// conversion in `expression`. Top-level means bracket depth zero, with
 /// string literals, char literals, and lifetimes skipped (a `'` that does
@@ -497,6 +537,7 @@ pub(in crate::analysis) fn wrapper_error_seam_expression(expressions: &[&str]) -
 /// paths disagree (#3714 round-2 review, devin hDRP-). `None` when no
 /// `.map_err(..)` conversion opens at depth zero.
 pub(in crate::analysis) fn last_top_level_map_err_dot(expression: &str) -> Option<usize> {
+    let expression = without_harmless_outer_groups(expression);
     let bytes = expression.as_bytes();
     let mut depth = 0isize;
     let mut in_string = false;

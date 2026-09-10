@@ -23,9 +23,12 @@ over the typed callee `try_parse_summary`), with two integration tests:
 - an unrelated-named test (`unrelated_scope_has_no_call`) that calls nothing
   related to the seam.
 
-The diff changes only the wrapper conversion line (stringified conversion
-to a concrete-error-preserving conversion), so the wrapper seam probe fires
-on the changed line.
+The diff changes only the wrapper conversion line (a
+concrete-error-preserving conversion to the stringified conversion — the
+#3700 controlled-proof direction), so the wrapper seam probe fires on the
+changed line. The conversion direction does not affect the attribution:
+`wrapper_error_seam_expression` recognizes the top-level `.map_err(..)`
+conversion in either form.
 
 ## When
 

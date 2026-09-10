@@ -58,8 +58,15 @@ fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
     // The conversion applied to the seam's result is the LAST top-level
     // `.map_err`: an argument may carry its own nested conversion whose
     // receiver is not the seam callee (#3714 round-1 review, devin ik).
-    let conversion = super::reveal::last_top_level_map_err_dot(trimmed)?;
-    let chain = trimmed[..conversion].trim_end();
+    // Harmless outer grouping is stripped by the shared scanner, so the
+    // conversion index refers to the same string the chain is cut from
+    // (#3714 round-2 review, devin hGdAZ).
+    let unwrapped = super::reveal::without_harmless_outer_groups(trimmed);
+    let conversion = super::reveal::last_top_level_map_err_dot(unwrapped)?;
+    // The chain itself may be parenthesized (`(try_x(raw)).map_err(..)`);
+    // strip its own outer grouping before the head extraction
+    // (#3714 round-2 review, devin hGdAZ).
+    let chain = super::reveal::without_harmless_outer_groups(unwrapped[..conversion].trim_end());
     // The converted callee is the identifier of the LAST top-level call in
     // the chain: an identifier at bracket depth zero immediately followed by
     // `(`. Chains (`self.client().try_x(..)`) resolve to the innermost hop,
@@ -177,55 +184,64 @@ fn test_body_shadows_callee(body: &str, callee: &str) -> bool {
     }
     // `let` bindings: the pattern region between the `let` and the
     // initializer `=` naming the callee shadows it. The scan is string-aware
-    // so a message mentioning the callee is not a binding.
+    // so a message mentioning the callee is not a binding. The cursor
+    // advances past every examined occurrence unconditionally — the `let`
+    // occurrence inside a string literal or an initializer-less binding
+    // (`let flag;`) must not re-examine the same position forever
+    // (#3714 round-2 review, coderabbit: infinite loop).
     search = 0usize;
     while let Some(offset) = body[search..].find("let ") {
         let start = search + offset;
+        search = start + 4;
         let before_ok = start == 0
             || !(body.as_bytes()[start - 1].is_ascii_alphanumeric()
                 || body.as_bytes()[start - 1] == b'_');
-        if before_ok {
-            // The binding pattern runs from the `let` to the initializer's
-            // `=` (depth zero, string-aware): `let mut x = ..`,
-            // `let ref x = ..`, `let x: T = ..`, and
-            // `let (a, x) = ..` are all covered by the pattern region.
-            let region = &body[start + "let ".len()..];
-            let bytes = region.as_bytes();
-            let mut depth = 0isize;
-            let mut in_string = false;
-            let mut escaped = false;
-            let mut pattern_end = None;
-            for (offset, byte) in bytes.iter().enumerate() {
-                if in_string {
-                    if escaped {
-                        escaped = false;
-                    } else if *byte == b'\\' {
-                        escaped = true;
-                    } else if *byte == b'"' {
-                        in_string = false;
-                    }
-                    continue;
+        if !before_ok {
+            continue;
+        }
+        // The binding pattern runs from the `let` to the initializer's
+        // `=` (depth zero, string-aware): `let mut x = ..`,
+        // `let ref x = ..`, `let x: T = ..`, and
+        // `let (a, x) = ..` are all covered by the pattern region.
+        let region = &body[start + "let ".len()..];
+        let bytes = region.as_bytes();
+        let mut depth = 0isize;
+        let mut in_string = false;
+        let mut escaped = false;
+        let mut pattern_end = None;
+        for (offset, byte) in bytes.iter().enumerate() {
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if *byte == b'\\' {
+                    escaped = true;
+                } else if *byte == b'"' {
+                    in_string = false;
                 }
-                match byte {
-                    b'"' => in_string = true,
-                    b'(' | b'[' | b'{' => depth += 1,
-                    b')' | b']' | b'}' => depth -= 1,
-                    b'=' if depth == 0 => {
-                        pattern_end = Some(offset);
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            let Some(pattern_end) = pattern_end else {
                 continue;
-            };
-            let pattern = region[..pattern_end].trim();
-            if pattern.starts_with(callee) || pattern_contains_word(pattern, callee) {
-                return true;
+            }
+            match byte {
+                b'"' => in_string = true,
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                b'=' if depth == 0 => {
+                    pattern_end = Some(offset);
+                    break;
+                }
+                _ => {}
             }
         }
-        search = start + 4;
+        let Some(pattern_end) = pattern_end else {
+            continue;
+        };
+        // Whole-word containment only: a binding whose name merely BEGINS
+        // with the callee (`let try_parse_summary_result = ..`) is a
+        // different binding, not a shadow (#3714 round-2 review,
+        // coderabbit).
+        let pattern = region[..pattern_end].trim();
+        if pattern_contains_word(pattern, callee) {
+            return true;
+        }
     }
     false
 }
@@ -2757,6 +2773,95 @@ let r = try_parse_summary();",
         assert!(
             related.is_empty(),
             "a mutable local binding shadowing the callee must not establish SeamCalleeCall"
+        );
+    }
+
+    // #3714 round-2 review (coderabbit hGkkh, critical): a `let ` occurrence
+    // inside a string literal or an initializer-less binding must not hang
+    // the scan. Pre-fix, the cursor never advanced past the occurrence and
+    // the loop spun forever; the suite would time out on this input.
+    #[test]
+    fn shadow_scan_terminates_on_string_and_initializer_less_let_occurrences() {
+        // `let ` inside a string literal near the end of the body.
+        let string_occurrence = "assert_eq!(message, \"let x\");";
+        assert!(
+            !test_body_shadows_callee(string_occurrence, "try_parse_summary"),
+            "a `let ` inside a string literal is not a shadow"
+        );
+        // An initializer-less binding (`let flag;`) has no depth-zero `=`.
+        let initializer_less = "let flag;
+if flag { }";
+        assert!(
+            !test_body_shadows_callee(initializer_less, "try_parse_summary"),
+            "an initializer-less binding is not a shadow"
+        );
+    }
+
+    // #3714 round-2 review (coderabbit hGkkm): a binding whose name merely
+    // BEGINS with the callee is a different binding — the unbounded prefix
+    // check would falsely defeat the admit and drop the test's relation.
+    #[test]
+    fn given_near_name_binding_when_wrapper_probe_then_relation_survives() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![
+                function("src/lib.rs", "parse_summary"),
+                function("src/lib.rs", "try_parse_summary"),
+            ],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "let try_parse_summary_result = try_parse_summary(\"x\");",
+                "try_parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::SeamCalleeCall);
+    }
+
+    // #3714 round-2 review (devin hGdAZ): harmless outer grouping must not
+    // hide the wrapper conversion — the parenthesized form still attributes
+    // the callee and (via the shared scanner) still carries the typed
+    // limitation gate.
+    #[test]
+    fn given_parenthesized_wrapper_when_expecting_callee_then_extracts_callee() {
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "(try_parse_summary(raw)).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "return (try_parse_summary(raw).map_err(Into::into));"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "{ try_parse_summary(raw).map_err(Into::into) }"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        // Grouping that does not span the whole expression stays fail-closed.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "(a) + (try_parse_summary(raw).map_err(Into::into))"
+            ))
+            .as_deref(),
+            None
         );
     }
 

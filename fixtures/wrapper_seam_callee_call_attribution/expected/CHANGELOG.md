@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — wrapper_seam_callee_call_attribution (3)
+
+Reason:
+RIPR-SPEC-0106: #3714 round-2 review — input gains Display/Error impls so the fixture compiles standalone; classifications unchanged (2 weakly_exposed, seam_callee_call relations intact)
+
+Command:
+`cargo xtask goldens bless wrapper_seam_callee_call_attribution --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

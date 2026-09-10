@@ -1288,6 +1288,19 @@
         { "type": "must_not_promote" },
         { "type": "must_emit_limitation", "expected_limit_kind": "wrapper_error_binding_unresolved" }
       ]
+    },
+    {
+      "id": "rust_wrapper_seam_callee_call_weak_relation",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/wrapper_seam_callee_call_attribution",
+      "vector": "generic_callee_call_weak_relation_not_exposed",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
     }
   ]
 }
