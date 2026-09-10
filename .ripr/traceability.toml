@@ -8895,3 +8895,32 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0174"
+name = "target support closure rule for Rust scope selection"
+spec = "docs/specs/RIPR-SPEC-0174-target-support-closure-rule.md"
+tests = [
+  "crates/ripr/src/analysis/workspace/select.rs::tests::draft_and_fast_keep_workspace_root_multi_target_package_together",
+  "crates/ripr/src/analysis/workspace/select.rs::tests::draft_and_fast_keep_nested_multi_target_crate_together",
+  "crates/ripr/src/analysis/workspace/select.rs::tests::instant_selection_leaves_integration_tests_behind_for_bin_only_change",
+  "crates/ripr/src/analysis/workspace/select.rs::tests::module_closure_brings_lib_sibling_for_bin_only_change",
+  "crates/ripr/src/analysis/workspace/select.rs::tests::custom_target_change_without_dependents_stays_changed_files_only",
+  "crates/ripr/src/analysis/workspace/select.rs::tests::dependent_custom_target_files_enter_selection_by_root_prefix",
+  "crates/ripr/src/analysis/workspace/select.rs::tests::nested_crate_inside_dependent_stays_out_unless_itself_dependent",
+  "crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_enter_draft_and_fast_selection",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/workspace/select.rs",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs",
+  "crates/ripr/src/analysis/workspace/path_dependencies.rs",
+  "crates/ripr/src/analysis/workspace/source_role.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0174-target-support-closure-rule.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]

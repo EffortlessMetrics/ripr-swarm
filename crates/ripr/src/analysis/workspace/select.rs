@@ -445,6 +445,7 @@ mod tests {
             "src/main.rs",
             "tests/root.rs",
             "examples/root.rs",
+            "benches/root.rs",
             "crates/alpha/src/lib.rs",
             "crates/alpha/tests/alpha.rs",
             "crates/beta/src/lib.rs",
@@ -731,5 +732,143 @@ mod tests {
                 "{mode:?} with include_unchanged_tests=false must stay changed-files-only"
             );
         }
+    }
+
+    /// #3705 / RIPR-SPEC-0174: the package-together baseline. A binary-only
+    /// change in a multi-target package keeps lib, integration tests,
+    /// examples, and benches together under Draft/Fast. A future narrowing
+    /// may omit one of these only with closure evidence; the binary label
+    /// alone is not such evidence, so removing package narrowing here must
+    /// fail this test (the Instant control below shows the edge is
+    /// load-bearing).
+    #[test]
+    fn draft_and_fast_keep_workspace_root_multi_target_package_together() {
+        let all = files(&[
+            "src/lib.rs",
+            "src/main.rs",
+            "tests/it.rs",
+            "examples/ex.rs",
+            "benches/b.rs",
+            "crates/other/src/lib.rs",
+        ]);
+        let changed = files(&["src/main.rs"]);
+
+        for mode in [AnalysisMode::Draft, AnalysisMode::Fast] {
+            assert_eq!(
+                select_rust_files_for_mode(&all, &changed, mode, true),
+                files(&[
+                    "benches/b.rs",
+                    "examples/ex.rs",
+                    "src/lib.rs",
+                    "src/main.rs",
+                    "tests/it.rs",
+                ]),
+                "{mode:?}: binary-only change keeps the whole multi-target package"
+            );
+        }
+    }
+
+    /// #3705 / RIPR-SPEC-0174: per-crate separation for nested multi-target
+    /// crates. A binary-only change in `crates/app` keeps app's lib and
+    /// integration tests but excludes `crates/other`.
+    #[test]
+    fn draft_and_fast_keep_nested_multi_target_crate_together() {
+        let all = files(&[
+            "crates/app/src/lib.rs",
+            "crates/app/src/main.rs",
+            "crates/app/tests/app.rs",
+            "crates/other/src/lib.rs",
+            "crates/other/src/main.rs",
+            "crates/other/tests/other.rs",
+        ]);
+        let changed = files(&["crates/app/src/main.rs"]);
+
+        for mode in [AnalysisMode::Draft, AnalysisMode::Fast] {
+            assert_eq!(
+                select_rust_files_for_mode(&all, &changed, mode, true),
+                files(&[
+                    "crates/app/src/lib.rs",
+                    "crates/app/src/main.rs",
+                    "crates/app/tests/app.rs",
+                ]),
+                "{mode:?}: app stays together, other stays out"
+            );
+        }
+    }
+
+    /// #3705 / RIPR-SPEC-0174: the load-bearing control. The
+    /// changed-files-plus-parents path (Instant) omits `tests/it.rs` for
+    /// the same binary-only change, proving the Draft/Fast package edge —
+    /// not proximity or the binary label — carries the integration test.
+    #[test]
+    fn instant_selection_leaves_integration_tests_behind_for_bin_only_change() {
+        let all = files(&[
+            "src/lib.rs",
+            "src/main.rs",
+            "tests/it.rs",
+            "examples/ex.rs",
+            "benches/b.rs",
+        ]);
+        let selected =
+            select_rust_files_for_mode(&all, &files(&["src/main.rs"]), AnalysisMode::Instant, true);
+        assert_eq!(selected, files(&["src/lib.rs", "src/main.rs"]));
+        assert!(
+            !selected.contains(&PathBuf::from("tests/it.rs")),
+            "without the package edge the integration test is lost"
+        );
+    }
+
+    /// #3705 / RIPR-SPEC-0174: the module-parent edge for the binary shape,
+    /// pinned directly. `src/lib.rs` is the declaring sibling of
+    /// `src/main.rs`; removing the closure from the pipeline must fail the
+    /// Instant pipeline tests and this direct pin.
+    #[test]
+    fn module_closure_brings_lib_sibling_for_bin_only_change() {
+        let all = files(&["src/lib.rs", "src/main.rs", "tests/it.rs"]);
+        assert_eq!(
+            with_module_context_files(&all, files(&["src/main.rs"])),
+            files(&["src/lib.rs", "src/main.rs"]),
+            "the closure — not package narrowing — brings the lib sibling"
+        );
+    }
+
+    /// #3705 / RIPR-SPEC-0174: honest custom-path fallback. A changed
+    /// custom-target file with no heuristic root and no attributed
+    /// dependents selects changed files only — the sibling integration
+    /// test stays out until dependents attribute the package. That
+    /// omission is the current limitation, not an exclusion license.
+    #[test]
+    fn custom_target_change_without_dependents_stays_changed_files_only() {
+        let all = files(&["pkg/lib/core.rs", "pkg/tests/core.rs"]);
+        let changed = files(&["pkg/lib/core.rs"]);
+        let prefixes = ["pkg/".to_string()];
+
+        assert_eq!(
+            select_rust_files_for_mode_with_dependent_packages(
+                &all,
+                &changed,
+                AnalysisMode::Draft,
+                true,
+                &std::collections::BTreeSet::new(),
+                &prefixes
+            ),
+            files(&["pkg/lib/core.rs"]),
+            "no heuristic root and no dependents: changed files only"
+        );
+        let dependents = ["pkg/".to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            select_rust_files_for_mode_with_dependent_packages(
+                &all,
+                &changed,
+                AnalysisMode::Draft,
+                true,
+                &dependents,
+                &prefixes
+            ),
+            files(&["pkg/lib/core.rs", "pkg/tests/core.rs"]),
+            "attributed dependents bring the package's tests back in"
+        );
     }
 }
