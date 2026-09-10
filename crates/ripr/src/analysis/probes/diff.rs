@@ -49,6 +49,9 @@ pub(crate) fn probes_for_file_with_relations(
         .map(|line| line.new_side_line)
         .collect::<Vec<_>>();
     let changed_nodes = changed_nodes_for_lines(index, &changed.path, &changed_lines);
+    // Inline test-module scopes are file structure, not per-line evidence:
+    // build once per file so ownerless-line checks stay linear (#3718).
+    let test_module_ranges = test_module_ranges_for(index, &changed.path);
     let build_context = ProbeBuildContext {
         root,
         changed,
@@ -62,7 +65,12 @@ pub(crate) fn probes_for_file_with_relations(
         if should_ignore_changed_line(text) {
             continue;
         }
-        if changed_line_is_test_evidence(index, &changed.path, added.new_side_line) {
+        if changed_line_is_test_evidence(
+            index,
+            &changed.path,
+            added.new_side_line,
+            &test_module_ranges,
+        ) {
             continue;
         }
         let parser_shapes =
@@ -158,7 +166,12 @@ pub(crate) fn probes_for_file_with_relations(
         // Use new_side_line so the owner lookup queries the new-file index at the
         // correct position (RANK-1 fix: `removed.line` is an old-side coordinate
         // and diverges from the new file when an earlier hunk shifted lines).
-        if changed_line_is_test_evidence(index, &changed.path, removed.new_side_line) {
+        if changed_line_is_test_evidence(
+            index,
+            &changed.path,
+            removed.new_side_line,
+            &test_module_ranges,
+        ) {
             continue;
         }
         for family in classify_changed_line(text) {
@@ -277,20 +290,25 @@ fn dedup_probe_ids(probes: &mut [ProbeWithRelation]) {
 /// Tests are the instrument, not the surface under test: a probe on a line
 /// inside a `#[test]` function (e.g. the error path of a `?` in the test body)
 /// is unactionable, because the test failing *is* the discrimination (#1055).
-fn changed_line_is_test_evidence(index: &RustIndex, path: &Path, line: usize) -> bool {
+fn changed_line_is_test_evidence(
+    index: &RustIndex,
+    path: &Path,
+    line: usize,
+    test_module_ranges: &[InlineModuleRange],
+) -> bool {
     if let Some(function) = find_owner_function(index, path, line) {
         return function.source_role.is_evidence_role();
     }
-    let Some(facts) = find_file_facts(index, path) else {
-        return false;
-    };
     // Lines outside functions but inside an inline `#[cfg(test)]` module
     // (fixture constants, raw-string data) are test evidence even when the
     // file itself is production (#3718). Unknown module structure fails
     // closed to production-eligible below.
-    if line_in_cfg_test_module(&facts.source, line) {
+    if line_in_module_ranges(test_module_ranges, line) {
         return true;
     }
+    let Some(facts) = find_file_facts(index, path) else {
+        return false;
+    };
     // Declarations outside functions consume the composer's existing evidence
     // authority (#3695), without guessing from filenames or parsing cfg again.
     // Missing or unresolved provenance cannot remove production eligibility.
@@ -303,55 +321,138 @@ fn changed_line_is_test_evidence(index: &RustIndex, path: &Path, line: usize) ->
             .any(|edge| edge.requires_test)
 }
 
-/// Whether `line` (1-based) sits inside an inline `mod` block whose own
-/// attributes — or any enclosing inline `mod`'s — require a test build
-/// (#3718). Detection runs on masked text so string/comment contents can
-/// never forge module structure, attributes reuse the shared
-/// `cfg_predicates` conjunction (a bare `mod tests` without `cfg(test)`
-/// grants nothing), and any unrecognized shape returns false so the
-/// caller keeps production eligibility.
-fn line_in_cfg_test_module(source: &str, line: usize) -> bool {
-    let masked = mask_comments_and_strings(source);
-    let lines: Vec<&str> = masked.lines().collect();
-    if line == 0 || line > lines.len() {
-        return false;
-    }
-    // Open inline modules as (depth after the opening line, requires_test).
-    let mut stack: Vec<(usize, bool)> = Vec::new();
-    let mut depth = 0usize;
-    for (index, text) in lines.iter().enumerate().take(line.saturating_sub(1)) {
-        if let Some((requires_test, braced)) = parse_inline_module(&lines, index) {
-            if braced {
-                let opens = text.bytes().filter(|byte| *byte == b'{').count();
-                let closes = text.bytes().filter(|byte| *byte == b'}').count();
-                depth = depth.saturating_add(opens).saturating_sub(closes);
-                stack.push((depth, requires_test));
-            }
-            // Out-of-line `mod name;` contributes no scope here; the
-            // composer owns cross-file roles.
-        } else {
-            let opens = text.bytes().filter(|byte| *byte == b'{').count();
-            let closes = text.bytes().filter(|byte| *byte == b'}').count();
-            depth = depth.saturating_add(opens).saturating_sub(closes);
-        }
-        stack.retain(|(open_depth, _)| *open_depth <= depth);
-    }
-    stack.iter().any(|(_, requires_test)| *requires_test)
+/// Cap on the upward walk for a module item's attached attribute lines.
+/// Attributes attach directly; anything further away is not this item's
+/// gate, and the walk must stay bounded on pathological files.
+const MAX_ATTRIBUTE_LOOKBEHIND_LINES: usize = 32;
+
+/// One inline module scope: 1-based lines strictly inside the braces.
+/// `close_line` is the closing-brace line, or [`usize::MAX`] when the
+/// block never closes. The opening and closing lines themselves are
+/// never members (fail-closed: bare syntax lines stay eligible).
+struct InlineModuleRange {
+    open_line: usize,
+    close_line: usize,
+    requires_test: bool,
 }
 
-/// Parse an inline or out-of-line module item starting at `lines[index]`.
-/// Returns (requires_test, braced) using the item's same-line attributes
-/// plus directly attached attribute lines above. `None` when the line
-/// holds no module item.
-fn parse_inline_module(lines: &[&str], index: usize) -> Option<(bool, bool)> {
-    let mut attributes: Vec<String> = Vec::new();
-    let mut rest = lines[index].trim();
-    while let Some((attribute, remainder)) = split_leading_attribute(rest) {
-        attributes.push(attribute.to_string());
-        rest = remainder.trim();
+/// Inline test-module scopes for one file, built once per file (the
+/// per-line check is then a membership test, not a rescan).
+fn test_module_ranges_for(index: &RustIndex, path: &Path) -> Vec<InlineModuleRange> {
+    find_file_facts(index, path)
+        .map(|facts| inline_test_module_ranges(&facts.source))
+        .unwrap_or_default()
+}
+
+/// Whether `line` (1-based) sits inside a `requires_test` inline-module
+/// range (#3718).
+fn line_in_module_ranges(ranges: &[InlineModuleRange], line: usize) -> bool {
+    ranges
+        .iter()
+        .any(|range| range.requires_test && range.open_line < line && line < range.close_line)
+}
+
+/// Whether `line` (1-based) sits inside an inline `mod` block whose own
+/// attributes — or any enclosing inline `mod`'s — require a test build
+/// (#3718). Unit-test entry point; production calls precompute ranges
+/// once per file with [`test_module_ranges_for`].
+fn line_in_cfg_test_module(source: &str, line: usize) -> bool {
+    line_in_module_ranges(&inline_test_module_ranges(source), line)
+}
+
+/// Collect every inline module scope in `source` as line ranges.
+/// Each open entry binds to its module's own opening brace: a block
+/// already closed on its opening line (`mod tests {}`) contributes no
+/// range, and a same-line nested opener never shifts its parent's
+/// entry — only the parent scope (already on the stack) covers the
+/// lines beneath.
+fn inline_test_module_ranges(source: &str) -> Vec<InlineModuleRange> {
+    let masked = mask_comments_and_strings(source);
+    let masked_lines: Vec<&str> = masked.lines().collect();
+    let original_lines: Vec<&str> = source.lines().collect();
+    let mut ranges = Vec::new();
+    // Open entries as (entry depth bound to the module's own brace,
+    // requires_test, 1-based opening line).
+    let mut stack: Vec<(usize, bool, usize)> = Vec::new();
+    let mut depth = 0usize;
+    for (index, masked_line) in masked_lines.iter().enumerate() {
+        let line_number = index + 1;
+        if let Some((requires_test, brace_index)) =
+            parse_inline_module(&original_lines, &masked_lines, index)
+        {
+            // Only a block continuing past this line opens a scope.
+            if let Some(brace) = brace_index {
+                let (opens, closes) = brace_delta(&masked_line[brace..]);
+                if opens > closes {
+                    stack.push((depth + 1, requires_test, line_number));
+                }
+            }
+            // Out-of-line `mod name;` (no brace index) and self-closed
+            // blocks contribute no scope; the composer owns cross-file
+            // roles and bare syntax lines stay eligible.
+        }
+        let (opens, closes) = brace_delta(masked_line);
+        depth = depth.saturating_add(opens).saturating_sub(closes);
+        let mut still_open = Vec::new();
+        for (entry_depth, requires_test, open_line) in stack.drain(..) {
+            if entry_depth > depth {
+                ranges.push(InlineModuleRange {
+                    open_line,
+                    close_line: line_number,
+                    requires_test,
+                });
+            } else {
+                still_open.push((entry_depth, requires_test, open_line));
+            }
+        }
+        stack = still_open;
     }
-    rest = strip_visibility(rest);
-    let after_mod = rest.strip_prefix("mod")?;
+    for (_, requires_test, open_line) in stack {
+        ranges.push(InlineModuleRange {
+            open_line,
+            close_line: usize::MAX,
+            requires_test,
+        });
+    }
+    ranges
+}
+
+/// Count `{` and `}` in one pass.
+fn brace_delta(line: &str) -> (usize, usize) {
+    line.bytes()
+        .fold((0, 0), |(opens, closes), byte| match byte {
+            b'{' => (opens + 1, closes),
+            b'}' => (opens, closes + 1),
+            _ => (opens, closes),
+        })
+}
+
+/// Parse an inline or out-of-line module item starting at line `index`.
+/// Structure (the `mod` keyword, name, and opening brace) is read from
+/// the masked lines; attribute text is read from the original lines so
+/// string-bearing predicates (`feature = "slow"`) keep their literals.
+/// Returns (requires_test, byte index of the module's opening `{` in the
+/// masked line) — `None` for out-of-line items and non-module lines.
+fn parse_inline_module(
+    original_lines: &[&str],
+    masked_lines: &[&str],
+    index: usize,
+) -> Option<(bool, Option<usize>)> {
+    let mut attributes: Vec<String> = Vec::new();
+    let mut masked_rest = masked_lines[index].trim();
+    let mut original_rest = original_lines[index].trim();
+    // Same-line attributes, in lockstep: structure from masked text, text
+    // from the original. Divergence fails closed (fewer attributes).
+    while let (Some((_, masked_remainder)), Some((attribute, original_remainder))) = (
+        split_leading_attribute(masked_rest),
+        split_leading_attribute(original_rest),
+    ) {
+        attributes.push(attribute.to_string());
+        masked_rest = masked_remainder.trim();
+        original_rest = original_remainder.trim();
+    }
+    let masked_rest = strip_visibility(masked_rest);
+    let after_mod = masked_rest.strip_prefix("mod")?;
     if after_mod
         .chars()
         .next()
@@ -359,7 +460,8 @@ fn parse_inline_module(lines: &[&str], index: usize) -> Option<(bool, bool)> {
     {
         return None;
     }
-    let mut name = after_mod.trim_start();
+    let name_start = masked_rest.len() - after_mod.trim_start().len();
+    let name = after_mod.trim_start();
     // Module name: one identifier; anything else is not an item we scope.
     let end = name
         .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
@@ -367,55 +469,63 @@ fn parse_inline_module(lines: &[&str], index: usize) -> Option<(bool, bool)> {
     if end == 0 {
         return None;
     }
-    name = name[end..].trim_start();
-    let braced = if name.starts_with('{') {
-        true
-    } else if name.starts_with(';') {
-        false
-    } else {
+    let after_name = &masked_rest[name_start + end..];
+    let brace_offset = after_name.find('{')?;
+    // A `;` before any `{` is an out-of-line declaration: no scope here.
+    if after_name.find(';').is_some_and(|semi| semi < brace_offset) {
         return None;
-    };
-    // Attached attribute lines directly above (masked comments read as
-    // blank lines and are skipped); anything else stops the walk.
+    }
+    // Attached attribute lines directly above: blank masked lines
+    // (comments included) are skipped; text comes from the original
+    // lines; anything else stops the walk.
     let mut cursor = index;
     let mut skipped = 0usize;
-    while cursor > 0 && skipped < 32 {
+    while cursor > 0 && skipped < MAX_ATTRIBUTE_LOOKBEHIND_LINES {
         cursor -= 1;
         skipped += 1;
-        let above = lines[cursor].trim();
-        if above.is_empty() {
-            continue;
-        }
-        let mut pending = above;
-        let mut found = false;
-        while let Some((attribute, remainder)) = split_leading_attribute(pending) {
-            attributes.push(attribute.to_string());
-            pending = remainder.trim();
-            found = true;
-        }
-        if !(found && pending.is_empty()) {
-            break;
+        if !masked_lines[cursor].trim().is_empty() {
+            let mut pending = original_lines[cursor].trim();
+            let mut found = false;
+            while let Some((attribute, remainder)) = split_leading_attribute(pending) {
+                attributes.push(attribute.to_string());
+                pending = remainder.trim();
+                found = true;
+            }
+            if !(found && pending.is_empty()) {
+                break;
+            }
         }
     }
-    Some((attributes_require_test(&attributes), braced))
+    Some((
+        attributes_require_test(&attributes),
+        Some(name_start + end + brace_offset),
+    ))
 }
 
-/// Strip a leading `pub`, `pub(...)`, or `pub(crate)` visibility qualifier.
+/// Strip a leading `pub`, `pub(...)`, or `pub(crate)` visibility qualifier
+/// (whitespace between `pub` and the qualifier is legal Rust).
 /// Text without a qualifier passes through unchanged; unrecognized shapes
 /// fall through so the module parse fails closed below.
 fn strip_visibility(text: &str) -> &str {
     let Some(after_pub) = text.strip_prefix("pub") else {
         return text;
     };
-    match after_pub.chars().next() {
-        // `pub` followed by an identifier character is another token
-        // (`publish`); there is no visibility qualifier here.
-        Some(next) if next.is_ascii_alphanumeric() || next == '_' => text,
-        Some('(') => match after_pub.find(')') {
-            Some(close) => after_pub[close + 1..].trim_start(),
+    // `pub` followed by an identifier character is another token
+    // (`publish`); there is no visibility qualifier here.
+    if after_pub
+        .chars()
+        .next()
+        .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
+    {
+        return text;
+    }
+    let after_pub = after_pub.trim_start();
+    match after_pub.strip_prefix('(') {
+        Some(rest) => match rest.find(')') {
+            Some(close) => rest[close + 1..].trim_start(),
             None => text,
         },
-        _ => after_pub.trim_start(),
+        None => after_pub,
     }
 }
 
@@ -1674,5 +1784,39 @@ mod source_currentness_tests {
              pub fn live() {}\n";
         assert!(line_in_cfg_test_module(source, 5));
         assert!(!line_in_cfg_test_module(source, 8));
+    }
+
+    /// Review (#3721): string-bearing predicates, one-line modules,
+    /// same-line nested openers, and spaced visibility all resolve.
+    #[test]
+    fn cfg_test_module_scope_covers_predicates_and_brace_edges() {
+        // `feature = "slow"` keeps its literal for the shared classifier.
+        let gated = "#[cfg(all(test, feature = \"slow\"))]\n\
+             mod tests {\n\
+             \x20   const JSON: &str = \"{}\";\n\
+             }\n\
+             pub fn live() {}\n";
+        assert!(line_in_cfg_test_module(gated, 3));
+        assert!(!line_in_cfg_test_module(gated, 5));
+        // A one-line module contributes no scope to later lines.
+        let one_liner = "#[cfg(test)] mod tests {}\n\
+             const LIMIT: usize = 2;\n";
+        assert!(!line_in_cfg_test_module(one_liner, 2));
+        // A same-line nested opener never shifts the parent entry: one
+        // `}` closes the nested block while the outer test scope stays
+        // open; only the second `}` ends it.
+        let nested_same_line = "#[cfg(test)] mod tests { mod nested {\n\
+             \x20   const DEEP: u32 = 1;\n\
+             }\n\
+             }\n\
+             const LIMIT: usize = 2;\n";
+        assert!(line_in_cfg_test_module(nested_same_line, 2));
+        assert!(!line_in_cfg_test_module(nested_same_line, 5));
+        // Spaced visibility is legal Rust.
+        let spaced = "#[cfg(test)]\n\
+             pub (crate) mod tests {\n\
+             \x20   const VALUE: u32 = 3;\n\
+             }\n";
+        assert!(line_in_cfg_test_module(spaced, 3));
     }
 }

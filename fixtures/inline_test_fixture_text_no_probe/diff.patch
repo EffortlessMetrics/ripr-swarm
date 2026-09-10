@@ -1,7 +1,7 @@
 diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -7,7 +7,7 @@ pub fn triage(input: &str) -> bool {
+@@ -7,6 +7,6 @@ pub fn triage(input: &str) -> bool {
  #[cfg(test)]
  mod tests {
      const FIXTURE_JSON: &str = r#"{

@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — inline_test_fixture_text_no_probe (3)
+
+Reason:
+RIPR-SPEC-0002: correct hunk line counts after trailing-context removal; input_identity re-hash only
+
+Command:
+`cargo xtask goldens bless inline_test_fixture_text_no_probe --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
