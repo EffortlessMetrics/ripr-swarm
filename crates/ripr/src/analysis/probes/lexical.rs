@@ -1,7 +1,11 @@
+use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::ProbeFamily;
 
 pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     let text = text.trim_start();
+    if is_constant_declaration(text) {
+        return classify_constant_declaration(text);
+    }
     let mut out = Vec::new();
     if has_predicate_shape(text) {
         out.push(ProbeFamily::Predicate);
@@ -15,21 +19,6 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     if has_effect_shape(text) {
         out.push(ProbeFamily::SideEffect);
     }
-    if is_constant_declaration(text) {
-        // FIX #3719: a constant declaration line keeps the behavioral
-        // families of its initializer (a threshold comparison still reads
-        // Predicate; an Err initializer still reads ErrorPath) and always
-        // adds StaticUnknown for the declared-flow limitation. Only the
-        // declaration-syntax shapes are gated: `has_call_shape` and
-        // `has_field_shape` both reject constant declarations, so the
-        // `pub(crate)` parens and `: Type` colon never read as
-        // call/field behavior. An early return here would discard genuine
-        // initializer discriminators (review: devin BUG thread).
-        out.push(ProbeFamily::StaticUnknown);
-        out.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-        out.dedup_by(|a, b| a.as_str() == b.as_str());
-        return out;
-    }
     if has_call_shape(text) {
         out.push(ProbeFamily::CallDeletion);
     }
@@ -42,6 +31,40 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     if out.is_empty() {
         out.push(ProbeFamily::StaticUnknown);
     }
+    out.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    out.dedup_by(|a, b| a.as_str() == b.as_str());
+    out
+}
+
+/// Classify a constant (`const`/`static`) declaration line.
+///
+/// FIX #3719: declaration syntax never reads as behavior — the
+/// `pub(crate)` parens and `: Type` colon are gated absolutely, so no
+/// `call_deletion` or `field_construction` family ever attaches, whatever
+/// the initializer. Behavioral families come from code spans of the
+/// initializer only: the matchers run on string/comment-masked text, so
+/// literal data such as `" > "` cannot mint threshold families while a
+/// genuine threshold (`a > b`) still reads `Predicate`. `StaticUnknown`
+/// is always added for the declared-flow limitation.
+fn classify_constant_declaration(text: &str) -> Vec<ProbeFamily> {
+    let scan = mask_comments_and_strings(text);
+    let mut out = Vec::new();
+    if has_predicate_shape(&scan) {
+        out.push(ProbeFamily::Predicate);
+    }
+    if has_error_shape(&scan) {
+        out.push(ProbeFamily::ErrorPath);
+    }
+    if has_return_shape(&scan) {
+        out.push(ProbeFamily::ReturnValue);
+    }
+    if has_effect_shape(&scan) {
+        out.push(ProbeFamily::SideEffect);
+    }
+    if scan.starts_with("match ") || scan.contains("=>") {
+        out.push(ProbeFamily::MatchArm);
+    }
+    out.push(ProbeFamily::StaticUnknown);
     out.sort_by(|a, b| a.as_str().cmp(b.as_str()));
     out.dedup_by(|a, b| a.as_str() == b.as_str());
     out
@@ -358,6 +381,25 @@ mod tests {
             assert!(
                 !families.contains(&ProbeFamily::FieldConstruction),
                 "{text} must not read declaration syntax as field_construction"
+            );
+        }
+    }
+
+    /// Review (#3720, devin BUG thread): operator/match tokens inside
+    /// string literals are data, not behavior — they must not mint
+    /// threshold or match families on a declaration line.
+    #[test]
+    fn constant_string_literals_do_not_mint_behavioral_families() {
+        for text in [
+            "const OPERATOR: &str = \" > \";",
+            "const ARROW: &str = \"=>\";",
+            "pub(crate) const MSG: &str = \"Err(not real)\";",
+        ] {
+            let families = classify_changed_line(text);
+            assert_eq!(
+                families,
+                vec![ProbeFamily::StaticUnknown],
+                "{text} must classify as static_unknown alone"
             );
         }
     }

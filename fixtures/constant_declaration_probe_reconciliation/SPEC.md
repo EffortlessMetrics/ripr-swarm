@@ -59,15 +59,20 @@ Issue #3700 is a different, class-gated route.
 The input also carries initializer-variant constants so the
 declaration gate is exercised across initializer shapes: a
 call-initializer (`const LIMIT: usize = compute_limit(64);`), a
-`static` binding, and the diffed numeric literal. All classify
-`static_unknown` with no call/field/return/effect families —
-initializer shapes must not leak behavioral families from the
-initializer expression.
+`static` binding, and the diffed numeric literal. Those plain shapes
+classify `static_unknown` with no call/field/return/effect families.
+Behavioral families are not banned outright: they come from code spans
+of the initializer only (a threshold comparison still reads
+`Predicate`), while string/comment contents never mint families
+(`" > "` stays `static_unknown` alone). Declaration syntax never reads
+as `call_deletion`/`field_construction`, whatever the initializer.
 ## Must Not
 
 - Emit `call_deletion` or `field_construction` probes for a constant
   declaration, whatever its visibility or initializer.
-- Classify the constant line as anything other than `static_unknown` in fast
-  mode, or claim exposure/reach from the observing constant-read test.
+- Classify the fixture's plain-literal constant lines as anything other than
+  `static_unknown` in fast mode (behavioral code-span initializers keep
+  their families alongside `static_unknown` per the contract above), or
+  claim exposure/reach from the observing constant-read test.
 - Prescribe a deleted-call or field-construction repair for the declaration.
 - Use mutation-runtime outcome vocabulary reserved for real mutation execution.
