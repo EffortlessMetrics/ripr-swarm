@@ -27,6 +27,7 @@ Support-tier impact:
 
 - No tier change. This rule binds future narrowing work only; current
   selection behavior is unchanged.
+  [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
 Policy impact:
 
