@@ -2,6 +2,13 @@ use crate::domain::ProbeFamily;
 
 pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     let text = text.trim_start();
+    if is_constant_declaration(text) {
+        // FIX #3719 (review): gate before any behavioral classifier — a
+        // declaration such as `const VALUE: Result<(), Error> = Err(error);`
+        // would otherwise retain ErrorPath (or Predicate/ReturnValue/
+        // SideEffect for other initializer shapes) alongside StaticUnknown.
+        return vec![ProbeFamily::StaticUnknown];
+    }
     let mut out = Vec::new();
     if has_predicate_shape(text) {
         out.push(ProbeFamily::Predicate);
@@ -14,16 +21,6 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     }
     if has_effect_shape(text) {
         out.push(ProbeFamily::SideEffect);
-    }
-    if is_constant_declaration(text) {
-        // FIX #3719 (round-2): a constant declaration line — whatever its
-        // initializer shape — falls through to StaticUnknown alone. Its
-        // `pub(crate)` parens, `: Type` colon, and initializer expression
-        // are declaration syntax, not call/field/return/effect behavior.
-        out.push(ProbeFamily::StaticUnknown);
-        out.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-        out.dedup_by(|a, b| a.as_str() == b.as_str());
-        return out;
     }
     if has_call_shape(text) {
         out.push(ProbeFamily::CallDeletion);
@@ -315,6 +312,27 @@ mod tests {
             assert!(
                 families.contains(&ProbeFamily::StaticUnknown),
                 "{text} should fall through to static_unknown"
+            );
+        }
+    }
+
+    /// Review (#3720): the constant gate runs before every behavioral
+    /// classifier, so declarations with behavioral-shape initializers read
+    /// StaticUnknown alone — no retained ErrorPath, Predicate, ReturnValue,
+    /// or SideEffect from the initializer expression.
+    #[test]
+    fn constant_declarations_with_behavioral_initializers_stay_unknown_alone() {
+        for text in [
+            "const VALUE: Result<(), Error> = Err(error);",
+            "pub(crate) const READY: bool = a > b;",
+            "static HANDLER: fn() = handle;",
+            "const LINES: &str = include_str!(\"schema.json\");",
+        ] {
+            let families = classify_changed_line(text);
+            assert_eq!(
+                families,
+                vec![ProbeFamily::StaticUnknown],
+                "{text} must classify as static_unknown alone"
             );
         }
     }
