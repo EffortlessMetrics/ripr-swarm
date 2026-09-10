@@ -51,8 +51,18 @@ validation, or behavior sink"). Local-path note (documented honestly): the
 finding's own `static_limit_kind` field stays `None` in this path — the
 typed limitation rides on the canonical alignment item (`gap_state:
 static_limitation`), not on the finding field; the wrapper-seam limiter from
-#3700 is a different, class-gated route.
+Issue #3700 is a different, class-gated route.
 
+
+## Initializer coverage
+
+The input also carries initializer-variant constants so the
+declaration gate is exercised across initializer shapes: a
+call-initializer (`const LIMIT: usize = compute_limit(64);`), a
+`static` binding, and the diffed numeric literal. All classify
+`static_unknown` with no call/field/return/effect families —
+initializer shapes must not leak behavioral families from the
+initializer expression.
 ## Must Not
 
 - Emit `call_deletion` or `field_construction` probes for a constant

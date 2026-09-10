@@ -15,6 +15,16 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     if has_effect_shape(text) {
         out.push(ProbeFamily::SideEffect);
     }
+    if is_constant_declaration(text) {
+        // FIX #3719 (round-2): a constant declaration line — whatever its
+        // initializer shape — falls through to StaticUnknown alone. Its
+        // `pub(crate)` parens, `: Type` colon, and initializer expression
+        // are declaration syntax, not call/field/return/effect behavior.
+        out.push(ProbeFamily::StaticUnknown);
+        out.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        out.dedup_by(|a, b| a.as_str() == b.as_str());
+        return out;
+    }
     if has_call_shape(text) {
         out.push(ProbeFamily::CallDeletion);
     }
@@ -152,10 +162,10 @@ fn is_assertion_macro(text: &str) -> bool {
 }
 
 fn has_call_shape(text: &str) -> bool {
-    text.contains('(')
+    !is_constant_declaration(text)
+        && text.contains('(')
         && text.contains(')')
         && !is_function_signature(text)
-        && !is_constant_declaration(text)
         && !text.contains("assert")
         && !has_return_shape(text)
         && !starts_with_binding_or_control(text)
@@ -236,13 +246,17 @@ fn strip_extern_abi(text: &str) -> &str {
 fn is_constant_declaration(text: &str) -> bool {
     let mut rest = text.trim_start();
 
-    if let Some(next) = rest.strip_prefix("pub ") {
-        rest = next.trim_start();
-    } else if let Some(next) = rest.strip_prefix("pub(") {
-        let Some((_, after_visibility)) = next.split_once(')') else {
-            return false;
-        };
-        rest = after_visibility.trim_start();
+    if let Some(next) = rest.strip_prefix("pub") {
+        // Tolerates `pub(crate)`, `pub (crate)`, and bare `pub const`.
+        let after_pub = next.trim_start();
+        if let Some(rest_after_vis) = after_pub.strip_prefix('(') {
+            let Some((_, after_visibility)) = rest_after_vis.split_once(')') else {
+                return false;
+            };
+            rest = after_visibility.trim_start();
+        } else {
+            rest = after_pub;
+        }
     }
 
     rest.starts_with("const ") || rest.starts_with("static ")
