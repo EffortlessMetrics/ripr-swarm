@@ -2,13 +2,6 @@ use crate::domain::ProbeFamily;
 
 pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     let text = text.trim_start();
-    if is_constant_declaration(text) {
-        // FIX #3719 (review): gate before any behavioral classifier — a
-        // declaration such as `const VALUE: Result<(), Error> = Err(error);`
-        // would otherwise retain ErrorPath (or Predicate/ReturnValue/
-        // SideEffect for other initializer shapes) alongside StaticUnknown.
-        return vec![ProbeFamily::StaticUnknown];
-    }
     let mut out = Vec::new();
     if has_predicate_shape(text) {
         out.push(ProbeFamily::Predicate);
@@ -21,6 +14,21 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     }
     if has_effect_shape(text) {
         out.push(ProbeFamily::SideEffect);
+    }
+    if is_constant_declaration(text) {
+        // FIX #3719: a constant declaration line keeps the behavioral
+        // families of its initializer (a threshold comparison still reads
+        // Predicate; an Err initializer still reads ErrorPath) and always
+        // adds StaticUnknown for the declared-flow limitation. Only the
+        // declaration-syntax shapes are gated: `has_call_shape` and
+        // `has_field_shape` both reject constant declarations, so the
+        // `pub(crate)` parens and `: Type` colon never read as
+        // call/field behavior. An early return here would discard genuine
+        // initializer discriminators (review: devin BUG thread).
+        out.push(ProbeFamily::StaticUnknown);
+        out.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        out.dedup_by(|a, b| a.as_str() == b.as_str());
+        return out;
     }
     if has_call_shape(text) {
         out.push(ProbeFamily::CallDeletion);
@@ -316,23 +324,40 @@ mod tests {
         }
     }
 
-    /// Review (#3720): the constant gate runs before every behavioral
-    /// classifier, so declarations with behavioral-shape initializers read
-    /// StaticUnknown alone — no retained ErrorPath, Predicate, ReturnValue,
-    /// or SideEffect from the initializer expression.
+    /// Review (#3720, devin BUG thread): declarations with behavioral-shape
+    /// initializers keep the initializer family alongside StaticUnknown —
+    /// the threshold comparison still reads Predicate, the Err initializer
+    /// still reads ErrorPath — while declaration syntax never reads as
+    /// call/field behavior.
     #[test]
-    fn constant_declarations_with_behavioral_initializers_stay_unknown_alone() {
-        for text in [
-            "const VALUE: Result<(), Error> = Err(error);",
-            "pub(crate) const READY: bool = a > b;",
-            "static HANDLER: fn() = handle;",
-            "const LINES: &str = include_str!(\"schema.json\");",
+    fn constant_declarations_keep_initializer_behavior_alongside_unknown() {
+        for (text, expected) in [
+            (
+                "const VALUE: Result<(), Error> = Err(error);",
+                ProbeFamily::ErrorPath,
+            ),
+            (
+                "pub(crate) const READY: bool = a > b;",
+                ProbeFamily::Predicate,
+            ),
         ] {
             let families = classify_changed_line(text);
-            assert_eq!(
-                families,
-                vec![ProbeFamily::StaticUnknown],
-                "{text} must classify as static_unknown alone"
+            assert!(
+                families.contains(&expected),
+                "{text} must keep {} from its initializer",
+                expected.as_str()
+            );
+            assert!(
+                families.contains(&ProbeFamily::StaticUnknown),
+                "{text} must record the declared-flow limitation"
+            );
+            assert!(
+                !families.contains(&ProbeFamily::CallDeletion),
+                "{text} must not read declaration syntax as call_deletion"
+            );
+            assert!(
+                !families.contains(&ProbeFamily::FieldConstruction),
+                "{text} must not read declaration syntax as field_construction"
             );
         }
     }
