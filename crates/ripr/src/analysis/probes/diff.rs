@@ -356,6 +356,7 @@ fn line_in_module_ranges(ranges: &[InlineModuleRange], line: usize) -> bool {
 /// attributes — or any enclosing inline `mod`'s — require a test build
 /// (#3718). Unit-test entry point; production calls precompute ranges
 /// once per file with [`test_module_ranges_for`].
+#[cfg(test)]
 fn line_in_cfg_test_module(source: &str, line: usize) -> bool {
     line_in_module_ranges(&inline_test_module_ranges(source), line)
 }
@@ -377,19 +378,17 @@ fn inline_test_module_ranges(source: &str) -> Vec<InlineModuleRange> {
     let mut depth = 0usize;
     for (index, masked_line) in masked_lines.iter().enumerate() {
         let line_number = index + 1;
-        if let Some((requires_test, brace_index)) =
+        if let Some((requires_test, Some(brace))) =
             parse_inline_module(&original_lines, &masked_lines, index)
         {
             // Only a block continuing past this line opens a scope.
-            if let Some(brace) = brace_index {
-                let (opens, closes) = brace_delta(&masked_line[brace..]);
-                if opens > closes {
-                    stack.push((depth + 1, requires_test, line_number));
-                }
-            }
             // Out-of-line `mod name;` (no brace index) and self-closed
             // blocks contribute no scope; the composer owns cross-file
             // roles and bare syntax lines stay eligible.
+            let (opens, closes) = brace_delta(&masked_line[brace..]);
+            if opens > closes {
+                stack.push((depth + 1, requires_test, line_number));
+            }
         }
         let (opens, closes) = brace_delta(masked_line);
         depth = depth.saturating_add(opens).saturating_sub(closes);
