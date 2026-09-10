@@ -358,6 +358,7 @@ mod tests {
                 RelationReason::ReExportChainFollowed,
                 "re_export_chain_followed",
             ),
+            (RelationReason::SeamCalleeCall, "seam_callee_call"),
         ];
         for (reason, label) in cases {
             assert_eq!(reason.as_str(), label);

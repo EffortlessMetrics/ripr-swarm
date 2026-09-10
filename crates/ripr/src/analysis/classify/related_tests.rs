@@ -47,19 +47,24 @@ fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
     ) {
         return None;
     }
-    if !super::reveal::wrapper_error_seam_expression(&[probe.expression.as_str()]) {
-        return None;
-    }
     if super::text::exact_error_variant(&probe.expression).is_some() {
         return None;
     }
-    let conversion = super::reveal::wrapper_map_err_position(&probe.expression)?;
-    let lhs = probe.expression[..conversion].trim_end();
+    let trimmed = probe.expression.trim();
+    let trimmed = trimmed
+        .strip_prefix("return ")
+        .unwrap_or(trimmed)
+        .trim_start();
+    // The conversion applied to the seam's result is the LAST top-level
+    // `.map_err`: an argument may carry its own nested conversion whose
+    // receiver is not the seam callee (#3714 round-1 review, devin ik).
+    let conversion = last_top_level_map_err_dot(trimmed)?;
+    let chain = trimmed[..conversion].trim_end();
     // The converted callee is the head of the last TOP-LEVEL call segment of
     // the chain: dots inside parentheses or brackets do not split it. A bare
     // call (`try_parse_summary(raw)`) has no top-level dot, so the whole
-    // left-hand side is the segment.
-    let bytes = lhs.as_bytes();
+    // chain is the segment.
+    let bytes = chain.as_bytes();
     let mut depth = 0isize;
     let mut segment_start = 0usize;
     for (index, byte) in bytes.iter().enumerate() {
@@ -70,7 +75,7 @@ fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
             _ => {}
         }
     }
-    let segment = lhs[segment_start..].trim();
+    let segment = chain[segment_start..].trim();
     let head_end = segment
         .char_indices()
         .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_' || *ch == ':'))
@@ -93,6 +98,110 @@ fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
         return None;
     }
     Some(name.to_string())
+}
+
+/// The byte index of the `.` opening the LAST top-level `.map_err(..)`
+/// conversion in `expression` (#3714 round-1 review, devin ik: an argument
+/// may carry its own nested conversion; the seam conversion is the one
+/// applied to the result). Top-level means bracket depth zero, with string
+/// and char literals skipped. `None` when no `.map_err(..)` conversion opens
+/// at depth zero. Computing the position here also identifies the wrapper
+/// seam itself, so callers need no separate wrapper-expression predicate.
+fn last_top_level_map_err_dot(expression: &str) -> Option<usize> {
+    let bytes = expression.as_bytes();
+    let mut depth = 0isize;
+    let mut in_string = false;
+    let mut in_char = false;
+    let mut escaped = false;
+    let mut last = None;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if in_char {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\'' {
+                in_char = false;
+            }
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'\'' => in_char = true,
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'.' if depth == 0 => {
+                let rest = &expression[index + 1..];
+                let name = rest.trim_start();
+                if let Some(after_name) = name.strip_prefix("map_err") {
+                    let token_is_whole = after_name
+                        .chars()
+                        .next()
+                        .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
+                    let followed_by_call = after_name.trim_start().starts_with('(');
+                    if token_is_whole && followed_by_call {
+                        last = Some(index);
+                    }
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    last
+}
+
+/// #3714 round-1 review (devin hC): a same-named local definition or local
+/// binding in the test body impersonates the seam callee — the captured
+/// `CallFact` name alone cannot distinguish a real seam-callee call from a
+/// call of a same-named helper defined in the test itself. Bounded lexical
+/// defeat: `fn <callee>` (a same-named local fn) and `let <callee>` (a local
+/// binding shadowing the callee name) defeat the admit. Residual
+/// (documented): same-named definitions elsewhere in the test's package and
+/// qualified paths remain indistinguishable at name level; the
+/// `SeamCalleeCall` relation carries no variant claim, so the defeat gap can
+/// only over-relate (weakly), never over-credit variant identity.
+fn test_body_shadows_callee(body: &str, callee: &str) -> bool {
+    if callee.is_empty() {
+        return false;
+    }
+    let bytes = body.as_bytes();
+    let mut search = 0usize;
+    while let Some(offset) = body[search..].find(callee) {
+        let start = search + offset;
+        let end = start + callee.len();
+        let before_ok =
+            start == 0 || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
+        let after_ok = bytes
+            .get(end)
+            .is_none_or(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'_'));
+        if before_ok && after_ok {
+            let prefix = body[..start].trim_end();
+            if prefix.ends_with("fn") {
+                // A same-named local fn definition impersonates the callee.
+                return true;
+            }
+            if prefix.ends_with("let") {
+                // A local binding shadowing the callee name defeats the
+                // name-level admit (#2972 defeat discipline, bounded).
+                return true;
+            }
+        }
+        search = end;
+    }
+    false
 }
 
 pub(in crate::analysis) fn find_related_tests<'a>(
@@ -199,12 +308,14 @@ pub(in crate::analysis) fn find_related_tests<'a>(
             && (test.calls.iter().any(|call| call.name == owner_name)
                 || body_contains_owner_call(&test.body, owner_name));
         // #3714: captured `calls` facts only — the same authority as
-        // `calls_owner`; no body-text heuristics. Never overrides owner
-        // attribution.
+        // `calls_owner`. Never overrides owner attribution. A same-named
+        // local definition or binding in the test body defeats the admit
+        // (round-1 review, devin hC).
         let calls_seam_callee = !calls_owner
-            && seam_callee
-                .as_deref()
-                .is_some_and(|callee| test.calls.iter().any(|call| call.name == callee));
+            && seam_callee.as_deref().is_some_and(|callee| {
+                test.calls.iter().any(|call| call.name == callee)
+                    && !test_body_shadows_callee(&test.body, callee)
+            });
         // #3296 review: the test-to-entry edge must also be a direct
         // free-function call site — a method or qualified call sharing
         // the entry's terminal name is not callee identity.
@@ -2526,6 +2637,59 @@ fn crate_c_score_test() {
     }
 
     #[test]
+    fn given_test_defining_shadow_fn_when_wrapper_probe_then_no_seam_callee_call() {
+        // Round-1 review (devin hC): a same-named fn defined in the test
+        // body impersonates the seam callee; the admit is defeated.
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "fn try_parse_summary(raw: &str) -> usize { raw.len() }
+let r = try_parse_summary(\"x\");",
+                "try_parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert!(
+            related.is_empty(),
+            "a same-named local fn must not establish SeamCalleeCall"
+        );
+    }
+
+    #[test]
+    fn given_test_shadowing_callee_with_let_when_wrapper_probe_then_no_seam_callee_call() {
+        // Round-1 review (devin hC): a local binding named like the callee
+        // also defeats the name-level admit (#2972 defeat discipline).
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "fn build() -> usize { 0 }
+let try_parse_summary = build();
+let r = try_parse_summary;",
+                "try_parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert!(
+            related.is_empty(),
+            "a local binding shadowing the callee must not establish SeamCalleeCall"
+        );
+    }
+
+    #[test]
     fn given_unrelated_function_sharing_token_when_wrapper_probe_then_no_seam_callee_call() {
         let owner = function("src/lib.rs", "parse_summary");
         let index = RustIndex {
@@ -2584,6 +2748,36 @@ fn crate_c_score_test() {
                 "value.map_err(Into::into)"
             ))
             .is_none()
+        );
+        // #3714 round-1 review (devin f2 / coderabbit glUM-f0): the
+        // return-form display recovers the callee.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "return try_parse_summary(raw).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        // #3714 round-1 review (devin ik): an argument's own nested
+        // conversion must not be mistaken for the seam conversion — the LAST
+        // top-level conversion's receiver is the callee.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "validate(raw.map_err(wrap)?, other).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("validate")
+        );
+        // A conversion mentioned inside a string literal is not top-level.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "report(\"use .map_err(x) here\").map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("report")
         );
     }
 
