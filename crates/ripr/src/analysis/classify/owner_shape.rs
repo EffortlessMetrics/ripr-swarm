@@ -303,6 +303,8 @@ fn strip_comments_and_strings(
                 escaped = true;
             } else if ch == '"' {
                 in_string = false;
+                out.push('"');
+                continue;
             }
             out.push(' ');
             continue;
@@ -340,7 +342,7 @@ fn strip_comments_and_strings(
         }
         if ch == '"' {
             in_string = true;
-            out.push(' ');
+            out.push('"');
         } else {
             out.push(ch);
         }
@@ -899,5 +901,31 @@ mod tests {
             "a plain helper in src/ is a production caller"
         );
         Ok(())
+    }
+
+    /// #3717: per-line stripping stays quote-balanced like the
+    /// whole-source variant — opening and closing delimiters survive.
+    #[test]
+    fn strip_line_preserves_closing_string_delimiter() {
+        let mut block_comment_depth = 0usize;
+        let mut raw_string_hashes: Option<usize> = None;
+        let stripped = strip_comments_and_strings(
+            "let label = \"a > b\"; // trailing",
+            &mut block_comment_depth,
+            &mut raw_string_hashes,
+        );
+        assert_eq!(
+            stripped.matches('"').count(),
+            2,
+            "quotes unbalanced: {stripped:?}"
+        );
+        assert!(
+            !stripped.contains("a > b"),
+            "masked content leaked: {stripped:?}"
+        );
+        assert!(
+            !stripped.contains("trailing"),
+            "masked content leaked: {stripped:?}"
+        );
     }
 }
