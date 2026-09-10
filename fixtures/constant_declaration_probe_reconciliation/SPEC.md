@@ -66,6 +66,7 @@ of the initializer only (a threshold comparison still reads
 `Predicate`), while string/comment contents never mint families
 (`" > "` stays `static_unknown` alone). Declaration syntax never reads
 as `call_deletion`/`field_construction`, whatever the initializer.
+
 ## Must Not
 
 - Emit `call_deletion` or `field_construction` probes for a constant

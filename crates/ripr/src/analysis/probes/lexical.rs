@@ -3,8 +3,12 @@ use crate::domain::ProbeFamily;
 
 pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     let text = text.trim_start();
-    if is_constant_declaration(text) {
-        return classify_constant_declaration(text);
+    // Masked once: comments between `pub` and `const` (`pub /* note */`)
+    // must not hide a declaration, and string/comment contents must not
+    // mint behavioral families downstream.
+    let masked = mask_comments_and_strings(text);
+    if is_constant_declaration(&masked) {
+        return classify_constant_declaration(&masked);
     }
     let mut out = Vec::new();
     if has_predicate_shape(text) {
@@ -36,29 +40,31 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     out
 }
 
-/// Classify a constant (`const`/`static`) declaration line.
+/// Classify a constant (`const`/`static`) declaration line. `text` is the
+/// string/comment-masked line, so literal data and comments never reach
+/// the matchers.
 ///
 /// FIX #3719: declaration syntax never reads as behavior — the
 /// `pub(crate)` parens and `: Type` colon are gated absolutely, so no
 /// `call_deletion` or `field_construction` family ever attaches, whatever
-/// the initializer. Behavioral families come from code spans of the
-/// initializer only: the matchers run on string/comment-masked text, so
-/// literal data such as `" > "` cannot mint threshold families while a
-/// genuine threshold (`a > b`) still reads `Predicate`. `StaticUnknown`
-/// is always added for the declared-flow limitation.
+/// the initializer. Behavioral families come from the initializer span
+/// only (masked text after the top-level `=`), so a type annotation such
+/// as `NoneType` cannot mint `ReturnValue` while a genuine threshold
+/// (`a > b`) still reads `Predicate`. `StaticUnknown` is always added
+/// for the declared-flow limitation.
 fn classify_constant_declaration(text: &str) -> Vec<ProbeFamily> {
-    let scan = mask_comments_and_strings(text);
+    let scan = initializer_span(text);
     let mut out = Vec::new();
-    if has_predicate_shape(&scan) {
+    if has_predicate_shape(scan) {
         out.push(ProbeFamily::Predicate);
     }
-    if has_error_shape(&scan) {
+    if has_error_shape(scan) {
         out.push(ProbeFamily::ErrorPath);
     }
-    if has_return_shape(&scan) {
+    if has_return_shape(scan) {
         out.push(ProbeFamily::ReturnValue);
     }
-    if has_effect_shape(&scan) {
+    if has_effect_shape(scan) {
         out.push(ProbeFamily::SideEffect);
     }
     if scan.starts_with("match ") || scan.contains("=>") {
@@ -68,6 +74,32 @@ fn classify_constant_declaration(text: &str) -> Vec<ProbeFamily> {
     out.sort_by(|a, b| a.as_str().cmp(b.as_str()));
     out.dedup_by(|a, b| a.as_str() == b.as_str());
     out
+}
+
+/// Span of a constant initializer: masked text after the declaration's
+/// top-level `=`. Depth-tracked so `==`, `=>`, `>=`, `<=`, `!=`, and
+/// bracketed `=` never split. Falls back to the whole line when no
+/// top-level `=` exists (same as matching the full line).
+fn initializer_span(masked: &str) -> &str {
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth > 0 => depth -= 1,
+            b'=' if depth == 0
+                && bytes.get(index + 1) != Some(&b'=')
+                && bytes.get(index + 1) != Some(&b'>')
+                && (index == 0 || !matches!(bytes[index - 1], b'=' | b'!' | b'>' | b'<')) =>
+            {
+                return &masked[index + 1..];
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    masked
 }
 
 fn has_predicate_shape(text: &str) -> bool {
@@ -394,6 +426,24 @@ mod tests {
             "const OPERATOR: &str = \" > \";",
             "const ARROW: &str = \"=>\";",
             "pub(crate) const MSG: &str = \"Err(not real)\";",
+        ] {
+            let families = classify_changed_line(text);
+            assert_eq!(
+                families,
+                vec![ProbeFamily::StaticUnknown],
+                "{text} must classify as static_unknown alone"
+            );
+        }
+    }
+
+    /// Review (#3720, coderabbit Major threads): comments between `pub`
+    /// and `const` must not hide the declaration, and the type annotation
+    /// must not mint behavioral families — only the initializer span can.
+    #[test]
+    fn constant_declaration_gate_ignores_comments_and_annotations() {
+        for text in [
+            "pub /* note */ const VALUE: u32 = 3;",
+            "const VALUE: NoneType = value;",
         ] {
             let families = classify_changed_line(text);
             assert_eq!(
