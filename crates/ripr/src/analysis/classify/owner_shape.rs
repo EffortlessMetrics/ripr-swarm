@@ -906,7 +906,7 @@ mod tests {
     /// #3717: per-line stripping stays quote-balanced like the
     /// whole-source variant — opening and closing delimiters survive.
     #[test]
-    fn strip_line_preserves_closing_string_delimiter() -> Result<(), String> {
+    fn strip_line_preserves_closing_string_delimiter() {
         let mut block_comment_depth = 0usize;
         let mut raw_string_hashes: Option<usize> = None;
         let stripped = strip_comments_and_strings(
@@ -914,12 +914,18 @@ mod tests {
             &mut block_comment_depth,
             &mut raw_string_hashes,
         );
-        if stripped.matches('"').count() != 2 {
-            return Err(format!("quotes unbalanced: {stripped:?}"));
-        }
-        if stripped.contains("a > b") || stripped.contains("trailing") {
-            return Err(format!("masked content leaked: {stripped:?}"));
-        }
-        Ok(())
+        assert_eq!(
+            stripped.matches('"').count(),
+            2,
+            "quotes unbalanced: {stripped:?}"
+        );
+        assert!(
+            !stripped.contains("a > b"),
+            "masked content leaked: {stripped:?}"
+        );
+        assert!(
+            !stripped.contains("trailing"),
+            "masked content leaked: {stripped:?}"
+        );
     }
 }
