@@ -161,6 +161,13 @@ pub enum RelationReason {
     /// one hop was followed to verify the chain leads to the changed owner.
     /// Two-hop and deeper chains are NOT followed (fail-closed).
     ReExportChainFollowed,
+    /// Matched because the test's captured calls include the converted
+    /// callee of a wrapper error seam (`callee(..).map_err(..)` — #3714).
+    /// A direct captured call fact, but the attribution to THIS seam is
+    /// weaker than calling the changed owner: every test of the callee
+    /// relates. Ranked below `HelperOwnerCall`, above
+    /// `WeakTokenSubstring`.
+    SeamCalleeCall,
 }
 
 impl RelationReason {
@@ -176,6 +183,7 @@ impl RelationReason {
             Self::FixtureOwnerAffinity => "fixture_owner_affinity",
             Self::WeakTokenSubstring => "weak_token_substring",
             Self::ReExportChainFollowed => "re_export_chain_followed",
+            Self::SeamCalleeCall => "seam_callee_call",
         }
     }
 
@@ -193,7 +201,10 @@ impl RelationReason {
             // the inference is explicit in-source but involves one hop of indirection.
             Self::ReExportChainFollowed => 6,
             Self::FixtureOwnerAffinity => 7,
-            Self::WeakTokenSubstring => 8,
+            // #3714: a captured callee call outranks token-substring
+            // affinity but stays below every owner-anchored signal.
+            Self::SeamCalleeCall => 8,
+            Self::WeakTokenSubstring => 9,
         }
     }
 
@@ -210,6 +221,9 @@ impl RelationReason {
             // one hop of indirection means ripr cannot see deeper aliasing.
             | Self::ReExportChainFollowed => RelationConfidence::Medium,
             Self::FixtureOwnerAffinity | Self::WeakTokenSubstring => RelationConfidence::Low,
+            // A captured direct call of the seam's callee is a solid fact;
+            // the uncertainty is in attributing it to this seam.
+            Self::SeamCalleeCall => RelationConfidence::Medium,
         }
     }
 }
@@ -344,6 +358,7 @@ mod tests {
                 RelationReason::ReExportChainFollowed,
                 "re_export_chain_followed",
             ),
+            (RelationReason::SeamCalleeCall, "seam_callee_call"),
         ];
         for (reason, label) in cases {
             assert_eq!(reason.as_str(), label);

@@ -24,7 +24,7 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
 impl ClassifiedProbeEvidence {
     pub(in crate::analysis) fn gather(context: &ProbeContext<'_>, reveal_expression: &str) -> Self {
         let test_summaries = context.related_test_summaries();
-        let reach = reach_evidence(&test_summaries, context.owner_fn);
+        let reach = reach_evidence(&context.related_tests, context.owner_fn);
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
             .map(PropagationWitnessDiagnostic::from_witness);

@@ -31,6 +31,241 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
 /// Tokens shorter than this threshold are too common to safely assert ownership.
 const ASSERTION_TOKEN_MIN_LEN: usize = 5;
 
+/// #3714: the converted callee of a wrapper error seam
+/// (`callee(..).map_err(..)` whose changed expression carries no parseable
+/// variant), for error-shaped probes. A test whose captured calls include
+/// this callee reaches the changed behavior through the wrapper even when
+/// its name carries no owner or probe-token affinity — the name-anchored
+/// weak-signal gate would otherwise leave the seam with no related tests at
+/// all. A parseable variant (`Err(Type::Variant)`) means the changed
+/// expression IS the variant identity; the pre-existing variant-bound paths
+/// own attribution there, so this returns `None`.
+fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
+    if !matches!(
+        probe.family,
+        crate::domain::ProbeFamily::ErrorPath | crate::domain::ProbeFamily::ReturnValue
+    ) {
+        return None;
+    }
+    if super::text::exact_error_variant(&probe.expression).is_some() {
+        return None;
+    }
+    let trimmed = probe.expression.trim();
+    let trimmed = trimmed
+        .strip_prefix("return ")
+        .unwrap_or(trimmed)
+        .trim_start();
+    // The conversion applied to the seam's result is the LAST top-level
+    // `.map_err`: an argument may carry its own nested conversion whose
+    // receiver is not the seam callee (#3714 round-1 review, devin ik).
+    // Harmless outer grouping is stripped by the shared scanner, so the
+    // conversion index refers to the same string the chain is cut from
+    // (#3714 round-2 review, devin hGdAZ).
+    let unwrapped = super::reveal::without_harmless_outer_groups(trimmed);
+    let conversion = super::reveal::last_top_level_map_err_dot(unwrapped)?;
+    // The chain itself may be parenthesized (`(try_x(raw)).map_err(..)`);
+    // strip its own outer grouping before the head extraction
+    // (#3714 round-2 review, devin hGdAZ).
+    let chain = super::reveal::without_harmless_outer_groups(unwrapped[..conversion].trim_end());
+    // The converted callee is the identifier of the LAST top-level call in
+    // the chain: an identifier at bracket depth zero immediately followed by
+    // `(`. Chains (`self.client().try_x(..)`) resolve to the innermost hop,
+    // statement labels and braced blocks before the call are skipped, and a
+    // bare value receiver (`value.map_err(..)`, no call) yields no candidate
+    // and fails closed.
+    let bytes = chain.as_bytes();
+    let mut depth = 0isize;
+    let mut best: Option<&str> = None;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' => {
+                if depth == 0 {
+                    // Skip balanced turbofish/generic argument lists and
+                    // `::` separators ending before the paren
+                    // (`parse::<View<'_>>(raw)` -> `parse`,
+                    // `try_parse_summary::<'a>(raw)` -> `try_parse_summary`).
+                    let mut name_end = index;
+                    loop {
+                        if name_end > 0 && bytes[name_end - 1] == b'>' {
+                            let mut angle = 0isize;
+                            let mut scan = name_end;
+                            let mut matched = false;
+                            while scan > 0 {
+                                scan -= 1;
+                                match bytes[scan] {
+                                    b'>' => angle += 1,
+                                    b'<' => {
+                                        angle -= 1;
+                                        if angle == 0 {
+                                            name_end = scan;
+                                            matched = true;
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if matched {
+                                continue;
+                            }
+                        }
+                        if name_end >= 2 && &bytes[name_end - 2..name_end] == b"::" {
+                            name_end -= 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    if let Some(name_start) = chain[..name_end]
+                        .char_indices()
+                        .rev()
+                        .take_while(|(_, ch)| ch.is_ascii_alphanumeric() || *ch == '_')
+                        .map(|(position, _)| position)
+                        .last()
+                    {
+                        let name = &chain[name_start..name_end];
+                        if name
+                            .chars()
+                            .next()
+                            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+                        {
+                            best = Some(name.rsplit("::").next().unwrap_or(name));
+                        }
+                    }
+                }
+                depth += 1;
+            }
+            b')' => depth -= 1,
+            _ => {}
+        }
+        index += 1;
+    }
+    best.map(str::to_string)
+}
+
+/// #3714 round-1 review (devin hC): a same-named local definition or local
+/// binding in the test body impersonates the seam callee — the captured
+/// `CallFact` name alone cannot distinguish a real seam-callee call from a
+/// call of a same-named helper defined in the test itself.
+///
+/// Bounded lexical defeat, string-aware:
+/// - `fn <callee>` — a same-named local fn impersonates the callee;
+/// - `let <pattern> =` whose binding pattern names the callee — this covers
+///   `let mut`, `let ref`, typed bindings, and destructuring patterns
+///   (round-2 review, devin hDROE).
+///
+/// Residual (documented): same-named definitions elsewhere in the test's
+/// package and qualified paths remain indistinguishable at name level; the
+/// `SeamCalleeCall` relation carries no variant claim, so the defeat gap can
+/// only over-relate (weakly), never over-credit variant identity.
+fn test_body_shadows_callee(body: &str, callee: &str) -> bool {
+    if callee.is_empty() {
+        return false;
+    }
+    let mut search = 0usize;
+    while let Some(offset) = body[search..].find("fn ") {
+        let start = search + offset;
+        let before_ok = start == 0
+            || !(body.as_bytes()[start - 1].is_ascii_alphanumeric()
+                || body.as_bytes()[start - 1] == b'_');
+        if before_ok {
+            let name_start = start + "fn ".len();
+            let name = body[name_start..].trim_start();
+            if let Some(after_name) = name.strip_prefix(callee)
+                && after_name
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            {
+                return true;
+            }
+        }
+        search = start + 3;
+    }
+    // `let` bindings: the pattern region between the `let` and the
+    // initializer `=` naming the callee shadows it. The scan is string-aware
+    // so a message mentioning the callee is not a binding. The cursor
+    // advances past every examined occurrence unconditionally — the `let`
+    // occurrence inside a string literal or an initializer-less binding
+    // (`let flag;`) must not re-examine the same position forever
+    // (#3714 round-2 review, coderabbit: infinite loop).
+    search = 0usize;
+    while let Some(offset) = body[search..].find("let ") {
+        let start = search + offset;
+        search = start + 4;
+        let before_ok = start == 0
+            || !(body.as_bytes()[start - 1].is_ascii_alphanumeric()
+                || body.as_bytes()[start - 1] == b'_');
+        if !before_ok {
+            continue;
+        }
+        // The binding pattern runs from the `let` to the initializer's
+        // `=` (depth zero, string-aware): `let mut x = ..`,
+        // `let ref x = ..`, `let x: T = ..`, and
+        // `let (a, x) = ..` are all covered by the pattern region.
+        let region = &body[start + "let ".len()..];
+        let bytes = region.as_bytes();
+        let mut depth = 0isize;
+        let mut in_string = false;
+        let mut escaped = false;
+        let mut pattern_end = None;
+        for (offset, byte) in bytes.iter().enumerate() {
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if *byte == b'\\' {
+                    escaped = true;
+                } else if *byte == b'"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            match byte {
+                b'"' => in_string = true,
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                b'=' if depth == 0 => {
+                    pattern_end = Some(offset);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let Some(pattern_end) = pattern_end else {
+            continue;
+        };
+        // Whole-word containment only: a binding whose name merely BEGINS
+        // with the callee (`let try_parse_summary_result = ..`) is a
+        // different binding, not a shadow (#3714 round-2 review,
+        // coderabbit).
+        let pattern = region[..pattern_end].trim();
+        if pattern_contains_word(pattern, callee) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whole-word containment: `word` delimited by non-identifier characters on
+/// both sides.
+fn pattern_contains_word(text: &str, word: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut search = 0usize;
+    while let Some(offset) = text[search..].find(word) {
+        let start = search + offset;
+        let end = start + word.len();
+        let before_ok =
+            start == 0 || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
+        let after_ok =
+            end >= bytes.len() || !(bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_');
+        if before_ok && after_ok {
+            return true;
+        }
+        search = end;
+    }
+    false
+}
+
 pub(in crate::analysis) fn find_related_tests<'a>(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -42,6 +277,10 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     let mut related: Vec<(&TestSummary, RelationReason)> = Vec::new();
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let probe_tokens = extract_identifier_tokens(&probe.expression);
+    // #3714: the converted callee of a wrapper error seam, if any. A test
+    // whose captured calls name it relates weakly (SeamCalleeCall) even when
+    // no name-affinity signal fires.
+    let seam_callee = wrapper_seam_callee(probe);
     let file_name = normalized_file_stem(&probe.location.file);
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
@@ -130,6 +369,15 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         let calls_owner = !owner_name.is_empty()
             && (test.calls.iter().any(|call| call.name == owner_name)
                 || body_contains_owner_call(&test.body, owner_name));
+        // #3714: captured `calls` facts only — the same authority as
+        // `calls_owner`. Never overrides owner attribution. A same-named
+        // local definition or binding in the test body defeats the admit
+        // (round-1 review, devin hC).
+        let calls_seam_callee = !calls_owner
+            && seam_callee.as_deref().is_some_and(|callee| {
+                test.calls.iter().any(|call| call.name == callee)
+                    && !test_body_shadows_callee(&test.body, callee)
+            });
         // #3296 review: the test-to-entry edge must also be a direct
         // free-function call site — a method or qualified call sharing
         // the entry's terminal name is not callee identity.
@@ -236,6 +484,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
             && !assertions_reference_owner
             && !same_file_or_named
             && !helper_chain_reaches
+            && !calls_seam_callee
         {
             continue;
         }
@@ -260,6 +509,15 @@ pub(in crate::analysis) fn find_related_tests<'a>(
             // Test file uses the probe's source stem or one of the canonical
             // `_test`/`_tests` companion conventions.
             RelationReason::SameTestFile
+        } else if calls_seam_callee {
+            // #3714: the test calls the wrapper seam's converted callee —
+            // a direct captured call fact, but the attribution to THIS
+            // seam is weaker than every name-anchored signal, so it ranks
+            // last: only when no name affinity fired (the generic-name
+            // witness the weak-signal gate used to skip) does the reason
+            // surface, still above the bare WeakTokenSubstring fallback in
+            // the priority order.
+            RelationReason::SeamCalleeCall
         } else {
             // A path or test-name token substring is the broadest, least
             // precise match branch. `same_file_or_named` guarantees that one
@@ -2351,6 +2609,392 @@ fn crate_c_score_test() {
 
     /// Like `test` but with a configurable call name — needed for cross-crate
     /// tests where the owner name is not hardcoded to `"score"`.
+    /// #3714: an ErrorPath probe on a wrapper seam, for SeamCalleeCall tests.
+    fn wrapper_error_probe(file: &str, expression: &str) -> Probe {
+        Probe {
+            id: ProbeId("probe:wrapper".to_string()),
+            location: SourceLocation::new(file, 5, 1),
+            owner: Some(SymbolId(format!("{file}::owner"))),
+            family: ProbeFamily::ErrorPath,
+            delta: DeltaKind::Value,
+            before: None,
+            after: Some(expression.to_string()),
+            expression: expression.to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn given_generic_named_test_calling_seam_callee_when_wrapper_probe_then_related_seam_callee_call()
+     {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![
+                function("src/lib.rs", "parse_summary"),
+                function("src/lib.rs", "try_parse_summary"),
+            ],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "let result = try_parse_summary(\"@bad;\");",
+                "try_parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::SeamCalleeCall);
+    }
+
+    #[test]
+    fn given_generic_named_test_calling_nothing_when_wrapper_probe_then_not_related() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "other_helper();",
+                "other_helper",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert!(
+            related.is_empty(),
+            "a test that calls nothing relevant must not relate"
+        );
+    }
+
+    #[test]
+    fn given_test_calling_both_owner_and_callee_when_wrapper_probe_then_direct_owner_call_wins() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![
+                function("src/lib.rs", "parse_summary"),
+                function("src/lib.rs", "try_parse_summary"),
+            ],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "let a = parse_summary(\"x\"); let b = try_parse_summary(\"y\");",
+                "parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    #[test]
+    fn given_test_defining_shadow_fn_when_wrapper_probe_then_no_seam_callee_call() {
+        // Round-1 review (devin hC): a same-named fn defined in the test
+        // body impersonates the seam callee; the admit is defeated.
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "fn try_parse_summary(raw: &str) -> usize { raw.len() }
+let r = try_parse_summary(\"x\");",
+                "try_parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert!(
+            related.is_empty(),
+            "a same-named local fn must not establish SeamCalleeCall"
+        );
+    }
+
+    #[test]
+    fn given_test_shadowing_callee_with_let_when_wrapper_probe_then_no_seam_callee_call() {
+        // Round-1 review (devin hC): a local binding named like the callee
+        // also defeats the name-level admit (#2972 defeat discipline).
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "fn build() -> usize { 0 }
+let try_parse_summary = build();
+let r = try_parse_summary;",
+                "try_parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert!(
+            related.is_empty(),
+            "a local binding shadowing the callee must not establish SeamCalleeCall"
+        );
+    }
+
+    // Round-2 review (devin hDROE): `let mut <callee>` binds a mutable
+    // local; the pattern-region scan covers the binding modifier.
+    #[test]
+    fn given_test_shadowing_callee_with_let_mut_when_wrapper_probe_then_no_seam_callee_call() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "let mut try_parse_summary = || Ok(3);
+let r = try_parse_summary();",
+                "try_parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert!(
+            related.is_empty(),
+            "a mutable local binding shadowing the callee must not establish SeamCalleeCall"
+        );
+    }
+
+    // #3714 round-2 review (coderabbit hGkkh, critical): a `let ` occurrence
+    // inside a string literal or an initializer-less binding must not hang
+    // the scan. Pre-fix, the cursor never advanced past the occurrence and
+    // the loop spun forever; the suite would time out on this input.
+    #[test]
+    fn shadow_scan_terminates_on_string_and_initializer_less_let_occurrences() {
+        // `let ` inside a string literal near the end of the body.
+        let string_occurrence = "assert_eq!(message, \"let x\");";
+        assert!(
+            !test_body_shadows_callee(string_occurrence, "try_parse_summary"),
+            "a `let ` inside a string literal is not a shadow"
+        );
+        // An initializer-less binding (`let flag;`) has no depth-zero `=`.
+        let initializer_less = "let flag;
+if flag { }";
+        assert!(
+            !test_body_shadows_callee(initializer_less, "try_parse_summary"),
+            "an initializer-less binding is not a shadow"
+        );
+    }
+
+    // #3714 round-2 review (coderabbit hGkkm): a binding whose name merely
+    // BEGINS with the callee is a different binding — the unbounded prefix
+    // check would falsely defeat the admit and drop the test's relation.
+    #[test]
+    fn given_near_name_binding_when_wrapper_probe_then_relation_survives() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![
+                function("src/lib.rs", "parse_summary"),
+                function("src/lib.rs", "try_parse_summary"),
+            ],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "let try_parse_summary_result = try_parse_summary(\"x\");",
+                "try_parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::SeamCalleeCall);
+    }
+
+    // #3714 round-2 review (devin hGdAZ): harmless outer grouping must not
+    // hide the wrapper conversion — the parenthesized form still attributes
+    // the callee and (via the shared scanner) still carries the typed
+    // limitation gate.
+    #[test]
+    fn given_parenthesized_wrapper_when_expecting_callee_then_extracts_callee() {
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "(try_parse_summary(raw)).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "return (try_parse_summary(raw).map_err(Into::into));"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "{ try_parse_summary(raw).map_err(Into::into) }"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        // Grouping that does not span the whole expression stays fail-closed.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "(a) + (try_parse_summary(raw).map_err(Into::into))"
+            ))
+            .as_deref(),
+            None
+        );
+    }
+
+    #[test]
+    fn given_unrelated_function_sharing_token_when_wrapper_probe_then_no_seam_callee_call() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "try_parse_summary_impl(\"@bad;\");",
+                "try_parse_summary_impl",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert!(
+            related.is_empty(),
+            "a near-name callee must not establish SeamCalleeCall: captured call names match exactly"
+        );
+    }
+
+    #[test]
+    fn given_parseable_variant_seam_when_probe_then_no_seam_callee_attribution() {
+        // A parseable `Err(V)` construction IS the variant identity; the
+        // pre-existing variant-bound paths own attribution there.
+        assert!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "return Err(ParseSummaryError::MalformedSource);"
+            ))
+            .is_none()
+        );
+        // The wrapper seam itself yields the converted callee.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "try_parse_summary(raw).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        // Chained receivers resolve to the last segment; non-call shapes fail
+        // closed; `return ` prefixes are stripped.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "self.client().try_parse_summary(raw) .map_err (Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        assert!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "value.map_err(Into::into)"
+            ))
+            .is_none()
+        );
+        // #3714 round-1 review (devin f2 / coderabbit glUM-f0): the
+        // return-form display recovers the callee.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "return try_parse_summary(raw).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        // #3714 round-1 review (devin ik): an argument's own nested
+        // conversion must not be mistaken for the seam conversion — the LAST
+        // top-level conversion's receiver is the callee.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "validate(raw.map_err(wrap)?, other).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("validate")
+        );
+        // A conversion mentioned inside a string literal is not top-level.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "report(\"use .map_err(x) here\").map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("report")
+        );
+        // #3714 round-2 review (devin hDRNH): lifetimes and labels are not
+        // character literals — the scanner must not swallow the conversion
+        // behind them.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "parse::<View<'_>>(raw).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("parse")
+        );
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "try_parse_summary::<'a>(raw).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "'outer: loop { break 'outer; }
+try_parse_summary(raw).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        // An escaped-quote character literal is still a char literal.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "skip('\'');
+try_parse_summary(raw).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+    }
+
     fn test_with_call(file: &str, name: &str, body: &str, call_name: &str) -> TestSummary {
         TestSummary {
             name: name.to_string(),
