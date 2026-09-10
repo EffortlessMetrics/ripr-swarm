@@ -31,6 +31,70 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
 /// Tokens shorter than this threshold are too common to safely assert ownership.
 const ASSERTION_TOKEN_MIN_LEN: usize = 5;
 
+/// #3714: the converted callee of a wrapper error seam
+/// (`callee(..).map_err(..)` whose changed expression carries no parseable
+/// variant), for error-shaped probes. A test whose captured calls include
+/// this callee reaches the changed behavior through the wrapper even when
+/// its name carries no owner or probe-token affinity — the name-anchored
+/// weak-signal gate would otherwise leave the seam with no related tests at
+/// all. A parseable variant (`Err(Type::Variant)`) means the changed
+/// expression IS the variant identity; the pre-existing variant-bound paths
+/// own attribution there, so this returns `None`.
+fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
+    if !matches!(
+        probe.family,
+        crate::domain::ProbeFamily::ErrorPath | crate::domain::ProbeFamily::ReturnValue
+    ) {
+        return None;
+    }
+    if !super::reveal::wrapper_error_seam_expression(&[probe.expression.as_str()]) {
+        return None;
+    }
+    if super::text::exact_error_variant(&probe.expression).is_some() {
+        return None;
+    }
+    let conversion = super::reveal::wrapper_map_err_position(&probe.expression)?;
+    let lhs = probe.expression[..conversion].trim_end();
+    // The converted callee is the head of the last TOP-LEVEL call segment of
+    // the chain: dots inside parentheses or brackets do not split it. A bare
+    // call (`try_parse_summary(raw)`) has no top-level dot, so the whole
+    // left-hand side is the segment.
+    let bytes = lhs.as_bytes();
+    let mut depth = 0isize;
+    let mut segment_start = 0usize;
+    for (index, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'.' if depth == 0 => segment_start = index + 1,
+            _ => {}
+        }
+    }
+    let segment = lhs[segment_start..].trim();
+    let head_end = segment
+        .char_indices()
+        .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_' || *ch == ':'))
+        .map(|(index, _)| index)
+        .unwrap_or(segment.len());
+    // The head must open the call (or turbofish arguments): a bare value
+    // receiver (`value.map_err(..)`) converts a value, not a callee call,
+    // and establishes nothing.
+    if !segment[head_end..].trim_start().starts_with(['(', '<']) {
+        return None;
+    }
+    let name = segment[..head_end].trim_end_matches(':');
+    let name = name.rsplit("::").next().unwrap_or(name);
+    if name.is_empty()
+        || !name
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+    {
+        return None;
+    }
+    Some(name.to_string())
+}
+
 pub(in crate::analysis) fn find_related_tests<'a>(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -42,6 +106,10 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     let mut related: Vec<(&TestSummary, RelationReason)> = Vec::new();
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let probe_tokens = extract_identifier_tokens(&probe.expression);
+    // #3714: the converted callee of a wrapper error seam, if any. A test
+    // whose captured calls name it relates weakly (SeamCalleeCall) even when
+    // no name-affinity signal fires.
+    let seam_callee = wrapper_seam_callee(probe);
     let file_name = normalized_file_stem(&probe.location.file);
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
@@ -130,6 +198,13 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         let calls_owner = !owner_name.is_empty()
             && (test.calls.iter().any(|call| call.name == owner_name)
                 || body_contains_owner_call(&test.body, owner_name));
+        // #3714: captured `calls` facts only — the same authority as
+        // `calls_owner`; no body-text heuristics. Never overrides owner
+        // attribution.
+        let calls_seam_callee = !calls_owner
+            && seam_callee
+                .as_deref()
+                .is_some_and(|callee| test.calls.iter().any(|call| call.name == callee));
         // #3296 review: the test-to-entry edge must also be a direct
         // free-function call site — a method or qualified call sharing
         // the entry's terminal name is not callee identity.
@@ -236,6 +311,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
             && !assertions_reference_owner
             && !same_file_or_named
             && !helper_chain_reaches
+            && !calls_seam_callee
         {
             continue;
         }
@@ -260,6 +336,15 @@ pub(in crate::analysis) fn find_related_tests<'a>(
             // Test file uses the probe's source stem or one of the canonical
             // `_test`/`_tests` companion conventions.
             RelationReason::SameTestFile
+        } else if calls_seam_callee {
+            // #3714: the test calls the wrapper seam's converted callee —
+            // a direct captured call fact, but the attribution to THIS
+            // seam is weaker than every name-anchored signal, so it ranks
+            // last: only when no name affinity fired (the generic-name
+            // witness the weak-signal gate used to skip) does the reason
+            // surface, still above the bare WeakTokenSubstring fallback in
+            // the priority order.
+            RelationReason::SeamCalleeCall
         } else {
             // A path or test-name token substring is the broadest, least
             // precise match branch. `same_file_or_named` guarantees that one
@@ -2351,6 +2436,157 @@ fn crate_c_score_test() {
 
     /// Like `test` but with a configurable call name — needed for cross-crate
     /// tests where the owner name is not hardcoded to `"score"`.
+    /// #3714: an ErrorPath probe on a wrapper seam, for SeamCalleeCall tests.
+    fn wrapper_error_probe(file: &str, expression: &str) -> Probe {
+        Probe {
+            id: ProbeId("probe:wrapper".to_string()),
+            location: SourceLocation::new(file, 5, 1),
+            owner: Some(SymbolId(format!("{file}::owner"))),
+            family: ProbeFamily::ErrorPath,
+            delta: DeltaKind::Value,
+            before: None,
+            after: Some(expression.to_string()),
+            expression: expression.to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        }
+    }
+
+    #[test]
+
+    fn given_generic_named_test_calling_seam_callee_when_wrapper_probe_then_related_seam_callee_call()
+     {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![
+                function("src/lib.rs", "parse_summary"),
+                function("src/lib.rs", "try_parse_summary"),
+            ],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "let result = try_parse_summary(\"@bad;\");",
+                "try_parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::SeamCalleeCall);
+    }
+
+    #[test]
+    fn given_generic_named_test_calling_nothing_when_wrapper_probe_then_not_related() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "other_helper();",
+                "other_helper",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert!(
+            related.is_empty(),
+            "a test that calls nothing relevant must not relate"
+        );
+    }
+
+    #[test]
+    fn given_test_calling_both_owner_and_callee_when_wrapper_probe_then_direct_owner_call_wins() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![
+                function("src/lib.rs", "parse_summary"),
+                function("src/lib.rs", "try_parse_summary"),
+            ],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "let a = parse_summary(\"x\"); let b = try_parse_summary(\"y\");",
+                "parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    #[test]
+    fn given_unrelated_function_sharing_token_when_wrapper_probe_then_no_seam_callee_call() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "try_parse_summary_impl(\"@bad;\");",
+                "try_parse_summary_impl",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert!(
+            related.is_empty(),
+            "a near-name callee must not establish SeamCalleeCall: captured call names match exactly"
+        );
+    }
+
+    #[test]
+    fn given_parseable_variant_seam_when_probe_then_no_seam_callee_attribution() {
+        // A parseable `Err(V)` construction IS the variant identity; the
+        // pre-existing variant-bound paths own attribution there.
+        assert!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "return Err(ParseSummaryError::MalformedSource);"
+            ))
+            .is_none()
+        );
+        // The wrapper seam itself yields the converted callee.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "try_parse_summary(raw).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        // Chained receivers resolve to the last segment; non-call shapes fail
+        // closed; `return ` prefixes are stripped.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "self.client().try_parse_summary(raw) .map_err (Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        assert!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "value.map_err(Into::into)"
+            ))
+            .is_none()
+        );
+    }
+
     fn test_with_call(file: &str, name: &str, body: &str, call_name: &str) -> TestSummary {
         TestSummary {
             name: name.to_string(),

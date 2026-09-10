@@ -494,7 +494,7 @@ pub(in crate::analysis) fn wrapper_error_seam_expression(expressions: &[&str]) -
 /// `None` when the expression carries no `map_err` conversion: the name is
 /// not preceded by a `.` (or expression start) and followed by a call opener,
 /// or the name is part of a longer identifier.
-fn wrapper_map_err_position(expression: &str) -> Option<usize> {
+pub(in crate::analysis) fn wrapper_map_err_position(expression: &str) -> Option<usize> {
     let bytes = expression.as_bytes();
     let mut search = 0usize;
     while let Some(offset) = expression[search..].find("map_err") {
