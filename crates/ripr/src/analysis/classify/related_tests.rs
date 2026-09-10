@@ -58,146 +58,192 @@ fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
     // The conversion applied to the seam's result is the LAST top-level
     // `.map_err`: an argument may carry its own nested conversion whose
     // receiver is not the seam callee (#3714 round-1 review, devin ik).
-    let conversion = last_top_level_map_err_dot(trimmed)?;
+    let conversion = super::reveal::last_top_level_map_err_dot(trimmed)?;
     let chain = trimmed[..conversion].trim_end();
-    // The converted callee is the head of the last TOP-LEVEL call segment of
-    // the chain: dots inside parentheses or brackets do not split it. A bare
-    // call (`try_parse_summary(raw)`) has no top-level dot, so the whole
-    // chain is the segment.
+    // The converted callee is the identifier of the LAST top-level call in
+    // the chain: an identifier at bracket depth zero immediately followed by
+    // `(`. Chains (`self.client().try_x(..)`) resolve to the innermost hop,
+    // statement labels and braced blocks before the call are skipped, and a
+    // bare value receiver (`value.map_err(..)`, no call) yields no candidate
+    // and fails closed.
     let bytes = chain.as_bytes();
     let mut depth = 0isize;
-    let mut segment_start = 0usize;
-    for (index, byte) in bytes.iter().enumerate() {
-        match byte {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => depth -= 1,
-            b'.' if depth == 0 => segment_start = index + 1,
-            _ => {}
-        }
-    }
-    let segment = chain[segment_start..].trim();
-    let head_end = segment
-        .char_indices()
-        .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_' || *ch == ':'))
-        .map(|(index, _)| index)
-        .unwrap_or(segment.len());
-    // The head must open the call (or turbofish arguments): a bare value
-    // receiver (`value.map_err(..)`) converts a value, not a callee call,
-    // and establishes nothing.
-    if !segment[head_end..].trim_start().starts_with(['(', '<']) {
-        return None;
-    }
-    let name = segment[..head_end].trim_end_matches(':');
-    let name = name.rsplit("::").next().unwrap_or(name);
-    if name.is_empty()
-        || !name
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
-    {
-        return None;
-    }
-    Some(name.to_string())
-}
-
-/// The byte index of the `.` opening the LAST top-level `.map_err(..)`
-/// conversion in `expression` (#3714 round-1 review, devin ik: an argument
-/// may carry its own nested conversion; the seam conversion is the one
-/// applied to the result). Top-level means bracket depth zero, with string
-/// and char literals skipped. `None` when no `.map_err(..)` conversion opens
-/// at depth zero. Computing the position here also identifies the wrapper
-/// seam itself, so callers need no separate wrapper-expression predicate.
-fn last_top_level_map_err_dot(expression: &str) -> Option<usize> {
-    let bytes = expression.as_bytes();
-    let mut depth = 0isize;
-    let mut in_string = false;
-    let mut in_char = false;
-    let mut escaped = false;
-    let mut last = None;
+    let mut best: Option<&str> = None;
     let mut index = 0usize;
     while index < bytes.len() {
-        let byte = bytes[index];
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'"' {
-                in_string = false;
-            }
-            index += 1;
-            continue;
-        }
-        if in_char {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\'' {
-                in_char = false;
-            }
-            index += 1;
-            continue;
-        }
-        match byte {
-            b'"' => in_string = true,
-            b'\'' => in_char = true,
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => depth -= 1,
-            b'.' if depth == 0 => {
-                let rest = &expression[index + 1..];
-                let name = rest.trim_start();
-                if let Some(after_name) = name.strip_prefix("map_err") {
-                    let token_is_whole = after_name
-                        .chars()
-                        .next()
-                        .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
-                    let followed_by_call = after_name.trim_start().starts_with('(');
-                    if token_is_whole && followed_by_call {
-                        last = Some(index);
+        match bytes[index] {
+            b'(' => {
+                if depth == 0 {
+                    // Skip balanced turbofish/generic argument lists and
+                    // `::` separators ending before the paren
+                    // (`parse::<View<'_>>(raw)` -> `parse`,
+                    // `try_parse_summary::<'a>(raw)` -> `try_parse_summary`).
+                    let mut name_end = index;
+                    loop {
+                        if name_end > 0 && bytes[name_end - 1] == b'>' {
+                            let mut angle = 0isize;
+                            let mut scan = name_end;
+                            let mut matched = false;
+                            while scan > 0 {
+                                scan -= 1;
+                                match bytes[scan] {
+                                    b'>' => angle += 1,
+                                    b'<' => {
+                                        angle -= 1;
+                                        if angle == 0 {
+                                            name_end = scan;
+                                            matched = true;
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if matched {
+                                continue;
+                            }
+                        }
+                        if name_end >= 2 && &bytes[name_end - 2..name_end] == b"::" {
+                            name_end -= 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    if let Some(name_start) = chain[..name_end]
+                        .char_indices()
+                        .rev()
+                        .take_while(|(_, ch)| ch.is_ascii_alphanumeric() || *ch == '_')
+                        .map(|(position, _)| position)
+                        .last()
+                    {
+                        let name = &chain[name_start..name_end];
+                        if name
+                            .chars()
+                            .next()
+                            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+                        {
+                            best = Some(name.rsplit("::").next().unwrap_or(name));
+                        }
                     }
                 }
+                depth += 1;
             }
+            b')' => depth -= 1,
             _ => {}
         }
         index += 1;
     }
-    last
+    best.map(str::to_string)
 }
 
 /// #3714 round-1 review (devin hC): a same-named local definition or local
 /// binding in the test body impersonates the seam callee — the captured
 /// `CallFact` name alone cannot distinguish a real seam-callee call from a
-/// call of a same-named helper defined in the test itself. Bounded lexical
-/// defeat: `fn <callee>` (a same-named local fn) and `let <callee>` (a local
-/// binding shadowing the callee name) defeat the admit. Residual
-/// (documented): same-named definitions elsewhere in the test's package and
-/// qualified paths remain indistinguishable at name level; the
+/// call of a same-named helper defined in the test itself.
+///
+/// Bounded lexical defeat, string-aware:
+/// - `fn <callee>` — a same-named local fn impersonates the callee;
+/// - `let <pattern> =` whose binding pattern names the callee — this covers
+///   `let mut`, `let ref`, typed bindings, and destructuring patterns
+///   (round-2 review, devin hDROE).
+///
+/// Residual (documented): same-named definitions elsewhere in the test's
+/// package and qualified paths remain indistinguishable at name level; the
 /// `SeamCalleeCall` relation carries no variant claim, so the defeat gap can
 /// only over-relate (weakly), never over-credit variant identity.
 fn test_body_shadows_callee(body: &str, callee: &str) -> bool {
     if callee.is_empty() {
         return false;
     }
-    let bytes = body.as_bytes();
     let mut search = 0usize;
-    while let Some(offset) = body[search..].find(callee) {
+    while let Some(offset) = body[search..].find("fn ") {
         let start = search + offset;
-        let end = start + callee.len();
+        let before_ok = start == 0
+            || !(body.as_bytes()[start - 1].is_ascii_alphanumeric()
+                || body.as_bytes()[start - 1] == b'_');
+        if before_ok {
+            let name_start = start + "fn ".len();
+            let name = body[name_start..].trim_start();
+            if let Some(after_name) = name.strip_prefix(callee)
+                && after_name
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            {
+                return true;
+            }
+        }
+        search = start + 3;
+    }
+    // `let` bindings: the pattern region between the `let` and the
+    // initializer `=` naming the callee shadows it. The scan is string-aware
+    // so a message mentioning the callee is not a binding.
+    search = 0usize;
+    while let Some(offset) = body[search..].find("let ") {
+        let start = search + offset;
+        let before_ok = start == 0
+            || !(body.as_bytes()[start - 1].is_ascii_alphanumeric()
+                || body.as_bytes()[start - 1] == b'_');
+        if before_ok {
+            // The binding pattern runs from the `let` to the initializer's
+            // `=` (depth zero, string-aware): `let mut x = ..`,
+            // `let ref x = ..`, `let x: T = ..`, and
+            // `let (a, x) = ..` are all covered by the pattern region.
+            let region = &body[start + "let ".len()..];
+            let bytes = region.as_bytes();
+            let mut depth = 0isize;
+            let mut in_string = false;
+            let mut escaped = false;
+            let mut pattern_end = None;
+            for (offset, byte) in bytes.iter().enumerate() {
+                if in_string {
+                    if escaped {
+                        escaped = false;
+                    } else if *byte == b'\\' {
+                        escaped = true;
+                    } else if *byte == b'"' {
+                        in_string = false;
+                    }
+                    continue;
+                }
+                match byte {
+                    b'"' => in_string = true,
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b'=' if depth == 0 => {
+                        pattern_end = Some(offset);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(pattern_end) = pattern_end else {
+                continue;
+            };
+            let pattern = region[..pattern_end].trim();
+            if pattern.starts_with(callee) || pattern_contains_word(pattern, callee) {
+                return true;
+            }
+        }
+        search = start + 4;
+    }
+    false
+}
+
+/// Whole-word containment: `word` delimited by non-identifier characters on
+/// both sides.
+fn pattern_contains_word(text: &str, word: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut search = 0usize;
+    while let Some(offset) = text[search..].find(word) {
+        let start = search + offset;
+        let end = start + word.len();
         let before_ok =
             start == 0 || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
-        let after_ok = bytes
-            .get(end)
-            .is_none_or(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'_'));
+        let after_ok =
+            end >= bytes.len() || !(bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_');
         if before_ok && after_ok {
-            let prefix = body[..start].trim_end();
-            if prefix.ends_with("fn") {
-                // A same-named local fn definition impersonates the callee.
-                return true;
-            }
-            if prefix.ends_with("let") {
-                // A local binding shadowing the callee name defeats the
-                // name-level admit (#2972 defeat discipline, bounded).
-                return true;
-            }
+            return true;
         }
         search = end;
     }
@@ -2564,7 +2610,6 @@ fn crate_c_score_test() {
     }
 
     #[test]
-
     fn given_generic_named_test_calling_seam_callee_when_wrapper_probe_then_related_seam_callee_call()
      {
         let owner = function("src/lib.rs", "parse_summary");
@@ -2689,6 +2734,32 @@ let r = try_parse_summary;",
         );
     }
 
+    // Round-2 review (devin hDROE): `let mut <callee>` binds a mutable
+    // local; the pattern-region scan covers the binding modifier.
+    #[test]
+    fn given_test_shadowing_callee_with_let_mut_when_wrapper_probe_then_no_seam_callee_call() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "let mut try_parse_summary = || Ok(3);
+let r = try_parse_summary();",
+                "try_parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert!(
+            related.is_empty(),
+            "a mutable local binding shadowing the callee must not establish SeamCalleeCall"
+        );
+    }
+
     #[test]
     fn given_unrelated_function_sharing_token_when_wrapper_probe_then_no_seam_callee_call() {
         let owner = function("src/lib.rs", "parse_summary");
@@ -2778,6 +2849,44 @@ let r = try_parse_summary;",
             ))
             .as_deref(),
             Some("report")
+        );
+        // #3714 round-2 review (devin hDRNH): lifetimes and labels are not
+        // character literals — the scanner must not swallow the conversion
+        // behind them.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "parse::<View<'_>>(raw).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("parse")
+        );
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "try_parse_summary::<'a>(raw).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "'outer: loop { break 'outer; }
+try_parse_summary(raw).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
+        );
+        // An escaped-quote character literal is still a char literal.
+        assert_eq!(
+            wrapper_seam_callee(&wrapper_error_probe(
+                "src/lib.rs",
+                "skip('\'');
+try_parse_summary(raw).map_err(Into::into)"
+            ))
+            .as_deref(),
+            Some("try_parse_summary")
         );
     }
 

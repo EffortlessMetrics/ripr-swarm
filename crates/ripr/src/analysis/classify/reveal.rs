@@ -484,41 +484,87 @@ fn assertion_matches_probe_detail(
 pub(in crate::analysis) fn wrapper_error_seam_expression(expressions: &[&str]) -> bool {
     expressions
         .iter()
-        .any(|expression| wrapper_map_err_position(expression).is_some())
+        .any(|expression| last_top_level_map_err_dot(expression).is_some())
 }
 
-/// The byte index of the `.` that opens the `.map_err(..)` conversion in
-/// `expression`, tolerating whitespace around the conversion
-/// (`try_x(raw) .map_err (..)` — #3700 round-2 review, devin g2Xtt: a spaced
-/// call used to bypass the wrapper gate and resume token matching).
-/// `None` when the expression carries no `map_err` conversion: the name is
-/// not preceded by a `.` (or expression start) and followed by a call opener,
-/// or the name is part of a longer identifier.
-pub(in crate::analysis) fn wrapper_map_err_position(expression: &str) -> Option<usize> {
+/// The byte index of the `.` opening the LAST top-level `.map_err(..)`
+/// conversion in `expression`. Top-level means bracket depth zero, with
+/// string literals, char literals, and lifetimes skipped (a `'` that does
+/// not close as a character literal is a lifetime or loop label, not a
+/// literal — #3714 round-2 review, devin hDRNH). Single shared authority
+/// for wrapper-seam detection (decision.rs, the limitation limiter, and
+/// the #3714 related-test attribution) so syntax fixes cannot make the
+/// paths disagree (#3714 round-2 review, devin hDRP-). `None` when no
+/// `.map_err(..)` conversion opens at depth zero.
+pub(in crate::analysis) fn last_top_level_map_err_dot(expression: &str) -> Option<usize> {
     let bytes = expression.as_bytes();
-    let mut search = 0usize;
-    while let Some(offset) = expression[search..].find("map_err") {
-        let name_start = search + offset;
-        let name_end = name_start + "map_err".len();
-        let token_is_whole = bytes
-            .get(name_end)
-            .is_none_or(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'_'));
-        let prefix = expression[..name_start].trim_end();
-        let preceded_by_dot = prefix.ends_with('.') || prefix.is_empty();
-        let followed_by_call = bytes[name_end..]
-            .iter()
-            .find(|byte| !byte.is_ascii_whitespace())
-            .is_some_and(|byte| *byte == b'(');
-        if token_is_whole && preceded_by_dot && followed_by_call {
-            return if prefix.is_empty() {
-                Some(name_start)
-            } else {
-                Some(prefix.len() - 1)
-            };
+    let mut depth = 0isize;
+    let mut in_string = false;
+    let mut in_char = false;
+    let mut escaped = false;
+    let mut last = None;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
         }
-        search = name_end;
+        if in_char {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\'' {
+                in_char = false;
+            }
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'\'' => {
+                // A quote opens a char literal only in the `'x'` and
+                // `'\x'` forms; lifetimes (`'_`, `'a`, `'ctx`) and loop
+                // labels have no closing quote and are skipped.
+                let tail = &bytes[index + 1..];
+                let opens_char = (tail.first() == Some(&b'\\') && tail.get(2) == Some(&b'\''))
+                    || tail.first() == Some(&b'\'')
+                    || (tail
+                        .first()
+                        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+                        && tail.get(1) == Some(&b'\''));
+                if opens_char {
+                    in_char = true;
+                }
+                index += 1;
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'.' if depth == 0 => {
+                let rest = &expression[index + 1..];
+                let name = rest.trim_start();
+                if let Some(after_name) = name.strip_prefix("map_err") {
+                    let token_is_whole = after_name
+                        .chars()
+                        .next()
+                        .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
+                    let followed_by_call = after_name.trim_start().starts_with('(');
+                    if token_is_whole && followed_by_call {
+                        last = Some(index);
+                    }
+                }
+            }
+            _ => {}
+        }
+        index += 1;
     }
-    None
+    last
 }
 
 /// Establish the wrapper-to-variant binding for a wrapper error seam.

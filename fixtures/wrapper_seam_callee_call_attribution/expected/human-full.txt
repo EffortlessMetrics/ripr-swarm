@@ -22,7 +22,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.66)
 
 Evidence
-  - reach yes: Related tests appear to reach parse_summary: observes_callee_outcome
+  - reach yes: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): observes_callee_outcome
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation weak: No complete owner-bound propagation witness found for error variant: try_parse_summary(raw).map_err(|error| error.to_string().into())
   - observation yes: A related test observes a value or effect near the changed behavior
@@ -61,7 +61,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.66)
 
 Evidence
-  - reach yes: Related tests appear to reach parse_summary: observes_callee_outcome
+  - reach yes: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): observes_callee_outcome
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation weak: No complete owner-bound propagation witness found for returned value: try_parse_summary(raw).map_err(|error| error.to_string().into())
   - observation yes: A related test observes a value or effect near the changed behavior

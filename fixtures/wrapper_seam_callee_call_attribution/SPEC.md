@@ -4,6 +4,14 @@ Spec: RIPR-SPEC-0106
 
 Issue: #3714
 
+Citation note: RIPR-SPEC-0106 owns the error-seam family this fixture
+belongs to (its Fixture 5 documents the #3700 typed wrapper limitation);
+the unwrap_err/expect_err binding shapes 0106 details are exercised by its
+own fixtures. What THIS fixture adds is the #3714 call-based relation
+attribution (round-1/round-2): a generically-named callee-calling test is
+weakly related (`seam_callee_call`, medium) instead of being dropped at
+`no_static_path`.
+
 ## Given
 
 A wrapper error seam (`parse_summary(raw).map_err(|error| error.to_string().into())`
