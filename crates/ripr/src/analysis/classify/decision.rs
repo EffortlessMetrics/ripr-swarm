@@ -1,4 +1,5 @@
 use super::super::rust_index::{FunctionSummary, TestSummary};
+use super::reveal::wrapper_error_seam_expression;
 use crate::domain::*;
 
 pub(in crate::analysis) fn ensure_unknown_stop_reason(
@@ -136,7 +137,21 @@ pub(in crate::analysis) fn missing_evidence(
         missing.push("No relevant oracle was detected".to_string());
     }
     if discriminate.state != StageState::Yes {
-        if matches!(probe.family, ProbeFamily::ErrorPath) {
+        if matches!(
+            probe.family,
+            ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+        ) && wrapper_error_seam_expression(&[probe.expression.as_str()])
+        {
+            // #3700 (final consolidation): for a wrapper error seam the
+            // typed static limitation — not an exact-variant prescription —
+            // is the honest outcome. The witnesses may already
+            // downcast-and-pin the variant; what ripr cannot statically
+            // establish is whether the boxed conversion carries that variant.
+            missing.push(
+                "Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"
+                    .to_string(),
+            );
+        } else if matches!(probe.family, ProbeFamily::ErrorPath) {
             missing.push("No exact error variant discriminator was detected".to_string());
         } else {
             missing.push("No strong discriminator was detected".to_string());
@@ -212,7 +227,16 @@ pub(in crate::analysis) fn recommended_next_step(
     match class {
         ExposureClass::Exposed => None,
         ExposureClass::WeaklyExposed => Some(
-            if matches!(probe.family, ProbeFamily::ReturnValue)
+            if matches!(probe.family, ProbeFamily::ErrorPath | ProbeFamily::ReturnValue)
+                && wrapper_error_seam_expression(&[probe.expression.as_str()])
+            {
+                // #3700 (final consolidation): do not prescribe an assertion
+                // the suite may already contain. The typed limitation names
+                // what static analysis cannot establish; discriminating this
+                // seam needs real mutation testing or deeper conversion
+                // modeling (Into/From through Box).
+                "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling."
+            } else if matches!(probe.family, ProbeFamily::ReturnValue)
                 && super::exact_error_variant(&probe.expression).is_some()
             {
                 // A changed `Err(...)` construction is not a "broad assertion"

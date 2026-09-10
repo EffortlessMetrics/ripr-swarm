@@ -854,6 +854,9 @@ pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str
     })
 }
 
+/// Whether `test` invokes `owner_name` through a call site that spells the
+/// owner itself — a bare `owner(..)` call, never a receiver-qualified
+/// `other.owner(..)` or path-qualified `Type::owner(..)` spelling.
 #[cfg(test)]
 mod tests {
     use super::*;

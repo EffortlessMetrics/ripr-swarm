@@ -31,6 +31,7 @@ pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, body_contains_owner_call, find_related_tests,
 };
 pub(in crate::analysis) use reveal::reveal_evidence_with_expression;
+pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.
 pub(in crate::analysis) use text::{

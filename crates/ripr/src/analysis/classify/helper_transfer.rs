@@ -205,24 +205,41 @@ pub(crate) fn call_sites(
     (!sites.is_empty()).then_some(sites)
 }
 
+/// Byte index of the `(` that opens a direct free-function call of
+/// `callee_name`: the first `callee(` occurrence at a token boundary that
+/// is preceded by neither a receiver (`.`), a path qualifier (`:`), nor an
+/// identifier character. Later occurrences are examined when an earlier one
+/// is shadowed (e.g. `my_inner(2); inner(1)` still resolves the direct
+/// `inner(1)` site). `None` when no occurrence qualifies.
+fn direct_call_paren(text: &str, callee_name: &str) -> Option<usize> {
+    let needle = format!("{callee_name}(");
+    let mut search = 0usize;
+    while let Some(relative) = text[search..].find(&needle) {
+        let at = search + relative;
+        let direct = match text[..at].chars().next_back() {
+            None => true,
+            Some(before) => {
+                !before.is_ascii_alphanumeric() && before != '_' && before != '.' && before != ':'
+            }
+        };
+        if direct {
+            return Some(at);
+        }
+        search = at + 1;
+    }
+    None
+}
+
 /// Whether `text` invokes `callee_name` as a direct free-function call:
 /// the callee occurrence is at a token boundary and is preceded by
 /// neither a receiver (`.`) nor a path qualifier (`::`).
 pub(crate) fn is_direct_call_site(text: &str, callee_name: &str) -> bool {
-    let needle = format!("{callee_name}(");
-    let Some(at) = text.find(&needle) else {
-        return false;
-    };
-    let before = text[..at].chars().next_back();
-    match before {
-        None => true,
-        Some(ch) => !ch.is_ascii_alphanumeric() && ch != '_' && ch != '.' && ch != ':',
-    }
+    direct_call_paren(text, callee_name).is_some()
 }
 
 /// Split a call's argument texts, quote- and nesting-aware.
 pub(crate) fn split_call_arguments_text(text: &str, callee_name: &str) -> Option<Vec<String>> {
-    let open = text.find(&format!("{callee_name}("))?;
+    let open = direct_call_paren(text, callee_name)?;
     let after = &text[open + callee_name.len() + 1..];
     let mut arguments = Vec::new();
     let mut depth = 0usize;
@@ -630,7 +647,10 @@ mod tests {
     fn method_call_sites_never_bind() -> Result<(), String> {
         assert!(!is_direct_call_site("word.validate()", "validate"));
         assert!(!is_direct_call_site("internal::inner(a, b)", "inner"));
-        assert!(!is_direct_call_site("outer_inner(inner(2))", "inner"));
+        // #3713 review (splitter-occurrence thread): the shared
+        // occurrence rule looks past the shadowed `outer_inner(` prefix to
+        // the direct `inner(2)` site.
+        assert!(is_direct_call_site("outer_inner(inner(2))", "inner"));
         assert!(is_direct_call_site(
             "is_word_start(input, 0)",
             "is_word_start"
@@ -712,6 +732,46 @@ mod tests {
             ..function("src/lib.rs", "is_word_start", &[])
         };
         assert!(helper_return_value(&closed, &inputs, &eval).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn shadowed_first_occurrence_still_resolves_direct_site() -> Result<(), String> {
+        // #3713 review: the matcher and the splitter share one
+        // occurrence-resolution rule, so a shadowed first occurrence no
+        // longer hides a direct call later on the same line.
+        if !is_direct_call_site("my_inner(2); inner(1)", "inner") {
+            return Err("expected the second occurrence to qualify".to_string());
+        }
+        match split_call_arguments_text("my_inner(2); inner(1)", "inner") {
+            Some(arguments) if arguments == vec!["1".to_string()] => Ok(()),
+            other => Err(format!("expected [\"1\"], got {other:?}")),
+        }
+    }
+
+    #[test]
+    fn nested_call_splits_inner_arguments() -> Result<(), String> {
+        match split_call_arguments_text("foo(inner(2))", "inner") {
+            Some(arguments) if arguments == vec!["2".to_string()] => Ok(()),
+            other => Err(format!("expected [\"2\"], got {other:?}")),
+        }
+    }
+
+    #[test]
+    fn receiver_path_and_spaced_calls_stay_rejected() -> Result<(), String> {
+        for (text, callee) in [
+            ("word.validate()", "validate"),
+            ("internal::inner(..)", "inner"),
+            ("inner (2)", "inner"),
+            ("my_inner(2)", "inner"),
+        ] {
+            if is_direct_call_site(text, callee) {
+                return Err(format!("expected no direct site in {text:?}"));
+            }
+            if split_call_arguments_text(text, callee).is_some() {
+                return Err(format!("expected no split in {text:?}"));
+            }
+        }
         Ok(())
     }
 }

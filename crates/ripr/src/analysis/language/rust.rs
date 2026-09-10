@@ -869,7 +869,45 @@ fn apply_rust_value_propagation_limit(finding: &mut Finding, probe: &Probe, inde
     );
 }
 
-/// #3294: attach the changed-binding relation evidence to a retargeted
+/// #3700 (final consolidation): a wrapper error seam — a `map_err`
+/// conversion whose changed expression carries no parseable error variant —
+/// carries the typed `wrapper_error_binding_unresolved` limitation. Whether
+/// the boxed conversion faithfully carries the converted callee's error
+/// variant (`Into`/`From` through `Box<dyn Error>`) is not statically
+/// establishable, so the seam stays below `exposed` and the limitation names
+/// what ripr could not resolve instead of prescribing an assertion the suite
+/// may already contain. Classification (already `weakly_exposed` via the
+/// unconfirmed-observation rule in reveal) is unchanged.
+fn apply_wrapper_error_binding_limit(finding: &mut Finding, probe: &Probe) {
+    if finding.class != ExposureClass::WeaklyExposed || finding.static_limit_kind.is_some() {
+        return;
+    }
+    if !matches!(
+        probe.family,
+        crate::domain::ProbeFamily::ErrorPath | crate::domain::ProbeFamily::ReturnValue
+    ) {
+        return;
+    }
+    if !crate::analysis::classify::wrapper_error_seam_expression(&[probe.expression.as_str()]) {
+        return;
+    }
+
+    finding.static_limit_kind = Some(StaticLimitKind::WrapperErrorBindingUnresolved);
+    finding.evidence.push(
+        "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel".to_string(),
+    );
+    finding.evidence.push(
+        "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers".to_string(),
+    );
+    finding
+        .evidence
+        .push("limitation_analyzer_route: analysis/wrapper-error-binding".to_string());
+    finding.evidence.push(
+        "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+            .to_string(),
+    );
+}
+
 /// probe's finding. The probe is predicate-shaped and classifies through
 /// the normal predicate path; this only discloses the causal link (which
 /// binding and initializer fed the predicate) and the operand-value
@@ -1791,6 +1829,7 @@ impl RustAdapter {
                 // or promotion.
                 apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
                 apply_rust_value_propagation_limit(&mut finding, &probe, &index);
+                apply_wrapper_error_binding_limit(&mut finding, &probe);
                 // #3294: a retargeted changed-binding probe keeps its
                 // predicate-shaped classification, but the finding still
                 // discloses the operand-value limitation it inherited from the
@@ -1980,6 +2019,7 @@ impl RustAdapter {
                 apply_rust_no_static_path_limit(&mut finding, &probe, &index);
                 apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
                 apply_rust_value_propagation_limit(&mut finding, &probe, &index);
+                apply_wrapper_error_binding_limit(&mut finding, &probe);
                 // Fail closed on cross-language seams (#910).
                 if let Some(limit) = cross_language_limit_kind(&probe, &index, &finding.class) {
                     finding.static_limit_kind = Some(limit);
