@@ -97,6 +97,16 @@ for each omission, and the retained unknown-relationship disclosures. The
 falsifying matrix in Test Mapping must stay green: each row fails if its
 support edge is removed.
 
+Coverage boundary: the matrix pins path-selection edges only (package
+membership, dependent expansion, module-parent closure, custom-path
+prefix attribution, changed-file inclusion). `CARGO_BIN_EXE_*` subprocess
+callers, `#[path]` redirections, `include!` fragments, and `cfg`-derived
+relationships have no falsifying row yet — the selection tests consume
+path lists, not Cargo invocations, source declarations, or
+conditional-compilation inputs. A narrowing candidate that excludes on
+any of those shapes must add the falsifying row first; until then those
+shapes keep current broad behavior and the omission is unsupported.
+
 ## Inputs
 
 - The changed-file set, the workspace file list, dependent package roots,
