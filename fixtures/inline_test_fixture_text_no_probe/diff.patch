@@ -9,4 +9,3 @@ diff --git a/src/lib.rs b/src/lib.rs
 +        "producer_id": "abd",
          "admission": 1
      }"#;
- 
