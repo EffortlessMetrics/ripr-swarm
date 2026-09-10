@@ -105,7 +105,10 @@ relationships have no falsifying row yet — the selection tests consume
 path lists, not Cargo invocations, source declarations, or
 conditional-compilation inputs. A narrowing candidate that excludes on
 any of those shapes must add the falsifying row first; until then those
-shapes keep current broad behavior and the omission is unsupported.
+shapes keep exactly current behavior — broad where package-attributed,
+fail-closed invisible where the current closure does not follow them
+(e.g. external `#[path]` redirections stay invisible in narrowed modes,
+#3533) — and any exclusion beyond current behavior is unsupported.
 
 ## Inputs
 
