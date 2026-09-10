@@ -155,6 +155,7 @@ fn has_call_shape(text: &str) -> bool {
     text.contains('(')
         && text.contains(')')
         && !is_function_signature(text)
+        && !is_constant_declaration(text)
         && !text.contains("assert")
         && !has_return_shape(text)
         && !starts_with_binding_or_control(text)
@@ -181,7 +182,10 @@ fn call_prefix_is_named(text: &str) -> bool {
 }
 
 fn has_field_shape(text: &str) -> bool {
-    text.contains(':') && !text.contains("::") && !is_function_signature(text)
+    !is_constant_declaration(text)
+        && text.contains(':')
+        && !text.contains("::")
+        && !is_function_signature(text)
 }
 
 fn is_function_signature(text: &str) -> bool {
@@ -224,6 +228,26 @@ fn strip_extern_abi(text: &str) -> &str {
     after_quote
 }
 
+/// FIX #3719: a `const`/`static` declaration (with any visibility, including
+/// `pub(crate)`) is a named value binding — its `pub(crate)` parentheses and
+/// `: Type` colon are declaration syntax, not call or field-construction
+/// behavior. Without this gate, `pub(crate) const X: u32 = 3;` misclassified
+/// as both call_deletion and field_construction (#3719).
+fn is_constant_declaration(text: &str) -> bool {
+    let mut rest = text.trim_start();
+
+    if let Some(next) = rest.strip_prefix("pub ") {
+        rest = next.trim_start();
+    } else if let Some(next) = rest.strip_prefix("pub(") {
+        let Some((_, after_visibility)) = next.split_once(')') else {
+            return false;
+        };
+        rest = after_visibility.trim_start();
+    }
+
+    rest.starts_with("const ") || rest.starts_with("static ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,6 +274,55 @@ mod tests {
                 expected.as_str()
             );
         }
+    }
+
+    /// FIX #3719: a constant declaration must not acquire call_deletion or
+    /// field_construction behavior from its `pub(crate)` parentheses or its
+    /// `: Type` colon. It falls through to StaticUnknown, which the canonical
+    /// alignment maps to the static_limitation canonical item.
+    #[test]
+    fn constant_declarations_do_not_acquire_call_or_field_shapes() {
+        for text in [
+            "pub(crate) const OBSERVATION_SCHEMA_GENERATION: u32 = 3;",
+            "pub const MAX_RETRIES: usize = 5;",
+            "const CACHE_TTL_SECS: u64 = 60;",
+            "static ACTIVE: AtomicUsize = AtomicUsize::new(0);",
+            "pub static INSTANCE: OnceLock<Config> = OnceLock::new();",
+        ] {
+            let families = classify_changed_line(text);
+            assert!(
+                !families.contains(&ProbeFamily::CallDeletion),
+                "{text} must not classify as call_deletion"
+            );
+            assert!(
+                !families.contains(&ProbeFamily::FieldConstruction),
+                "{text} must not classify as field_construction"
+            );
+            assert!(
+                families.contains(&ProbeFamily::StaticUnknown),
+                "{text} should fall through to static_unknown"
+            );
+        }
+    }
+
+    /// Controls: actual deletable calls and actual field constructions keep
+    /// their families, and a const with a function-call initializer stays
+    /// out of call_deletion (the initializer call is not the declaration).
+    #[test]
+    fn call_and_field_controls_keep_their_families() {
+        assert!(
+            classify_changed_line("send_invoice(invoice)").contains(&ProbeFamily::CallDeletion)
+        );
+        assert!(
+            classify_changed_line("total: discounted_total")
+                .contains(&ProbeFamily::FieldConstruction)
+        );
+        let initializer =
+            classify_changed_line("pub(crate) const LIMIT: usize = compute_limit(64);");
+        assert!(
+            !initializer.contains(&ProbeFamily::CallDeletion),
+            "const initializer call must not classify the declaration as call_deletion"
+        );
     }
 
     #[test]
