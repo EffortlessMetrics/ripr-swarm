@@ -37,9 +37,11 @@
 //!    the process with the child's exact exit code (falling back to 1 only
 //!    when the child was terminated without a code),
 //! 6. best-effort deletes the driver copy — deletable now that the child has
-//!    exited — and the stale image, which is still mapped by this process
-//!    until it exits, so that delete normally fails and the next launch's
-//!    sweep removes the file once it is unlocked.
+//!    exited — and the stale image. Renaming releases the image's deletion
+//!    lock on current Windows builds, so both deletes normally succeed and a
+//!    clean launch leaves the drivers directory empty; if a delete is denied
+//!    anyway, the failure is ignored and the next launch's sweep collects the
+//!    file.
 //!
 //! Two independent guards stop the bootstrap from re-running inside an
 //! already-relocated image: the `xtask-driver-` / `xtask-stale-` /
@@ -53,12 +55,15 @@
 //! a working arrangement into an error. On non-Windows targets it compiles
 //! to a no-op.
 //!
-//! The artifact sweep is deliberately age-less: a file that backs a running
-//! image cannot be removed on Windows, so a failed removal proves the
-//! artifact is still in use and a successful removal proves it is not. The
-//! OS image lock is the liveness oracle; pid or mtime bookkeeping would only
-//! duplicate it. The sweep never touches paths outside the drivers directory
-//! and never recurses.
+//! The artifact sweep is deliberately age-less. Every owned artifact is
+//! disposable by construction: a driver copy runs only while its child lives
+//! (removing a running image at its launch path is denied by the OS), and a
+//! stale image is rename-released — deletable even while its parent still
+//! maps it, with the mapping keeping the bytes alive until the process exits.
+//! A denied removal is ignored, so safety never depends on a delete
+//! succeeding; pid or mtime bookkeeping would only duplicate what the OS
+//! already decides. The sweep never touches paths outside the drivers
+//! directory and never recurses.
 
 #[cfg(windows)]
 mod windows_driver {
@@ -153,7 +158,10 @@ mod windows_driver {
 
     /// Spawn the staged copy with identical argv, an inherited environment
     /// plus the re-exec guard, and inherited stdio; wait; report the child's
-    /// exit code; then clean up what this process can already delete.
+    /// exit code; then clean up both artifacts. The rename in
+    /// [`stage_relocation`] releases the image's deletion lock, so the stale
+    /// delete succeeds on current Windows builds even though this process
+    /// still runs from that file; any denial is ignored and left to the sweep.
     fn delegate_to_copy(
         plan: &RelocationPlan,
         args: impl IntoIterator<Item = OsString>,
@@ -237,7 +245,8 @@ mod windows_driver {
     }
 
     /// Remove leftover driver artifacts from earlier launches. Best effort by
-    /// design: see the module docs for why no age or pid bookkeeping is used.
+    /// design: see the module docs for why no age or pid bookkeeping is used,
+    /// and why a denied removal is safe to ignore.
     fn sweep_driver_artifacts(drivers_dir: &Path) {
         let Ok(entries) = fs::read_dir(drivers_dir) else {
             return;
