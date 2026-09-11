@@ -242,10 +242,13 @@ pub struct RustIndex {
     pub files: BTreeMap<PathBuf, FileFacts>,
     pub tests: Vec<TestFact>,
     pub functions: Vec<FunctionFact>,
-    /// #3731 review: package names declared by the analyzed root manifest's
-    /// `[package] name`, used by the reveal-side same-name-import gate to
-    /// tell an own-crate import (the normal integration-test binding of the
-    /// changed owner) from a foreign same-name import. Workspace members'
+    /// #3731 review: crate names declared by the analyzed root manifest —
+    /// the `[package] name` plus the `[lib] name` target when declared —
+    /// each in raw and crate-identifier form (hyphens normalize to
+    /// underscores, #3731 review F23). Used by the reveal-side
+    /// same-name-import gate to tell an own-crate import (the normal
+    /// integration-test binding of the changed owner, through the lib
+    /// target) from a foreign same-name import. Workspace members'
     /// manifests are not resolved here, so a same-name import through a
     /// member crate's name counts as foreign (fail-closed under-credit);
     /// empty when the root manifest declares no package (a virtual

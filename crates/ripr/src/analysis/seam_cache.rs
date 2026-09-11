@@ -135,7 +135,16 @@ pub(crate) struct CachedSeamLimitInfo {
 /// discrimination requires scrutinee/owner callee identity. Old classified
 /// entries would serve successful-exit over-credits and stale guarded
 /// discrimination for warm workspaces.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.8";
+/// `1.8` -> `1.9`: the #3731 review round-5 fixes change the guarded facts
+/// and gates again — a guard equality pins only when its compared operand
+/// is rooted at the arm's error binding, the first control transfer
+/// decides arm termination, every Err arm's variant pin is collected, the
+/// repo-mode scrutinee gate is bare-only, the foreign-import defeat scans
+/// nested `use` declarations, and the own-crate gate admits the `[lib]`
+/// target and hyphen-normalized names. Old classified entries would serve
+/// unrelated-guard over-credits, stale pin lists, and stale guarded
+/// discrimination for warm workspaces.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.9";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -163,7 +172,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.8";
 /// `0.13` -> `0.14`: the #3731 review round-4 fixes change the guarded
 /// facts and gates again — same semantic transition as the outer
 /// classified-seam cache.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.14";
+/// `0.14` -> `0.15`: the #3731 review round-5 fixes change the guarded
+/// facts and gates again — same semantic transition as the outer
+/// classified-seam cache.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.15";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -197,7 +209,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.14";
 /// `0.14` -> `0.15`: the #3731 review round-4 fixes change the guarded
 /// facts and gates again — same semantic transition as the outer
 /// classified-seam cache.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.15";
+/// `0.15` -> `0.16`: the #3731 review round-5 fixes change the guarded
+/// facts and gates again — same semantic transition as the outer
+/// classified-seam cache.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.16";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -259,6 +274,13 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `.expect(`/`.unwrap(` added as observers and ALL invocations
 /// considered), so a warm pre-fix hit would serve successful-exit and
 /// discarded/unobserved-downcast oracles as live facts.
+/// `1.4` -> `1.5`: the #3731 review round-5 fixes change which guarded
+/// oracles exist and what they pin again — a guard equality pins only when
+/// its compared operand is rooted at the arm's error binding, the arm's
+/// FIRST control transfer decides termination, and every Err arm's variant
+/// pin joins the synthesized pin list — so a warm pre-fix hit would serve
+/// unrelated-guard pins, successful-transfer arms, and single-pin texts as
+/// live facts.
 ///
 /// Still no bump for #3603/#3608/#3636 themselves: per-file parser
 /// facts are unchanged by the harness registry — it applies
@@ -266,7 +288,7 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// build against the current manifests, and the #3636 reachability
 /// authority runs inside that re-application — so a warm hit cannot
 /// bypass either validation or reachability classification.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.4";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.5";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2703,25 +2725,32 @@ mod tests {
         // expect/unwrap as observers), so a warm pre-fix 1.3 hit would
         // serve successful-exit and unobserved-downcast oracles as live
         // facts.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.4");
+        // 1.4 -> 1.5: the #3731 review round-5 fixes change which guarded
+        // oracles exist again (binding-rooted guard-equality pins,
+        // first-control-transfer termination, every-arm pin collection),
+        // so a warm pre-fix 1.4 hit would serve unrelated-guard pins,
+        // successful-transfer arms, and single-pin texts as live facts.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.5");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
         // unreachable harness trial constructions from the
         // executable-test denominator.
-        // 1.6 -> 1.7 / 1.7 -> 1.8: the #3731 review fixes (and their
-        // round-4 continuation) change which guarded oracles exist and
-        // what they confirm (terminal grammar, first-comma slice,
-        // bare-scrutinee and exact-variant confirmation gates, successful
-        // exits, observed-cast pins, foreign-import and callee-identity
-        // gates), so classified seams derived from pre-fix oracle facts
-        // must miss.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.8");
-        // 0.12 -> 0.13 through 0.14 / 0.15: same #3731 semantic
+        // 1.6 -> 1.7 / 1.7 -> 1.8 / 1.8 -> 1.9: the #3731 review fixes
+        // (and their round-4 and round-5 continuations) change which
+        // guarded oracles exist and what they confirm (terminal grammar,
+        // first-comma slice, bare-scrutinee and exact-variant confirmation
+        // gates, successful exits, observed-cast pins, foreign-import and
+        // callee-identity gates, binding-rooted guard pins, first-transfer
+        // termination, all-arm pin collection, bare-only repo scrutinees,
+        // nested-import defeats, lib-target own-crate names), so
+        // classified seams derived from pre-fix oracle facts must miss.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.9");
+        // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16: same #3731 semantic
         // transition as the outer classified-seam cache, for the sharded
         // and compact envelopes.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.14");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.15");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.15");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.16");
     }
 
     #[test]

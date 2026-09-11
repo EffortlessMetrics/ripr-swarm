@@ -582,26 +582,30 @@ fn assertion_matches_probe_detail(
     )
 }
 
-/// #3731 review (F11): whether the related test's file imports the owner
-/// callee's bare name FROM A FOREIGN PATH — a file-level `use` binding
-/// whose first path segment is neither `crate`/`self`/`super` nor one of
-/// the analyzed workspace's own package names (`crate_names`). Such an
-/// import makes a bare `match <callee>(..)` scrutinee ambiguous between
-/// the changed owner and the imported same-named callee, so the
-/// reveal-side owner binding must not confirm (fail closed, under-credit).
-/// An own-crate import (`use this_crate::callee;` — the normal
+/// #3731 review (F11, F22): whether the related test's file imports the
+/// owner callee's bare name FROM A FOREIGN PATH — a `use` binding whose
+/// first path segment is neither `crate`/`self`/`super` nor one of the
+/// analyzed workspace's own package names (`crate_names`). Such an import
+/// makes a bare `match <callee>(..)` scrutinee ambiguous between the
+/// changed owner and the imported same-named callee, so the reveal-side
+/// owner binding must not confirm (fail closed, under-credit). An
+/// own-crate import (`use this_crate::callee;` — the normal
 /// integration-test binding of the changed owner) binds the owner itself
 /// and does not defeat.
 ///
-/// Bounded lexical scan over the masked file source, file-level `use`
-/// statements only (the #3619 module-visibility rule: a `use` inside a
-/// nested module is invisible outside it). A binding is the terminal `::`
-/// segment of an import item — a simple path or a (nested) brace-list
+/// Bounded lexical scan over the masked file source covering ALL `use`
+/// declarations (#3731 review F22): file-level items, module-nested `use`s
+/// (`mod tests { use other::expect_response; .. }` — the historical
+/// harness shape), and function-local imports. A binding is the terminal
+/// `::` segment of an import item — a simple path or a (nested) brace-list
 /// item; a `callee as alias` rename binds the alias, not the name. Glob
 /// (`use p::*;`) imports prove nothing and are not detected, and a
 /// brace-rooted `use {..};` with no path prefix counts as foreign (its
 /// binding target is not statically the owner's own export) — bounded-scan
-/// residuals; parser-backed import resolution is #3727.
+/// residuals; parser-backed import resolution is #3727. Scanning past
+/// module boundaries can defeat a confirmation for a test the nested
+/// import is not visible to — a documented under-credit residual, since
+/// lexical scope resolution is exactly what this scan cannot do.
 pub(in crate::analysis) fn file_imports_foreign_callee_name(
     source: &str,
     callee: &str,
@@ -611,22 +615,72 @@ pub(in crate::analysis) fn file_imports_foreign_callee_name(
         return false;
     }
     let masked = crate::analysis::extract::mask_comments_and_strings(source);
-    let use_text = super::related_tests::file_level_use_text(&masked);
-    for statement in use_text.lines() {
+    for statement in all_use_statements(&masked) {
         let statement = statement.trim();
         let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
         let Some(first_segment) = use_statement_first_segment(statement) else {
             continue;
         };
-        let foreign = first_segment != "crate"
-            && first_segment != "self"
-            && first_segment != "super"
-            && !crate_names.contains(first_segment);
+        // Both sides compare in crate-identifier form (#3731 review F23):
+        // a hyphenated package name (`foo-bar`) is imported through its
+        // underscore identifier (`foo_bar`), so every stored crate name
+        // admits both spellings.
+        let own = crate_names
+            .iter()
+            .any(|name| name == first_segment || crate_identifier(name) == first_segment);
+        let foreign =
+            first_segment != "crate" && first_segment != "self" && first_segment != "super" && !own;
         if foreign && use_statement_binds_name(statement, callee) {
             return true;
         }
     }
     false
+}
+
+/// The crate-identifier form of a manifest name: hyphens normalize to
+/// underscores in crate identifiers, so a package named `foo-bar` is
+/// imported as `foo_bar` and an import gate must treat the two spellings
+/// as the same crate (#3731 review F23).
+fn crate_identifier(name: &str) -> String {
+    name.replace('-', "_")
+}
+
+/// Every `use` declaration in a (masked) source, at any brace depth: the
+/// statement runs from a whole-word `use` keyword to its terminating `;`
+/// (a `use` path or brace list cannot contain `;`, and comments/strings
+/// are already masked, so a masked-out `use` inside a string or comment
+/// never appears). Consuming each statement whole keeps a later
+/// same-tuned text inside one import from re-matching.
+fn all_use_statements(masked: &str) -> Vec<String> {
+    let bytes = masked.as_bytes();
+    let mut out = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let use_starts = bytes[index] == b'u'
+            && bytes.get(index + 1) == Some(&b's')
+            && bytes.get(index + 2) == Some(&b'e')
+            && (index == 0 || !is_ident_byte(bytes[index - 1]))
+            && bytes[index + 3..]
+                .first()
+                .is_some_and(|byte| byte.is_ascii_whitespace());
+        if use_starts {
+            let mut end = index;
+            while end < bytes.len() && bytes[end] != b';' {
+                end += 1;
+            }
+            if end < bytes.len() {
+                out.push(masked[index..=end].to_string());
+                index = end + 1;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    out
+}
+
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 /// The first path segment of a `use` statement (the keyword is still
@@ -646,10 +700,10 @@ fn use_statement_first_segment(statement: &str) -> Option<&str> {
 /// (nested brace lists recurse). `as` renames bind the alias; `*` and
 /// `self` bind nothing nameable here.
 fn use_statement_binds_name(statement: &str, callee: &str) -> bool {
-    let Some(rest) = statement.trim_start().strip_prefix("use ") else {
+    let Some(rest) = statement.trim_start().strip_prefix("use") else {
         return false;
     };
-    use_items_bind(rest.trim(), callee)
+    use_items_bind(rest.trim_start(), callee)
 }
 
 /// Whether one comma-separated `use` item group binds `callee`. An item is
@@ -2498,6 +2552,113 @@ return Err(\"typed pin\".into());
             discriminate.state,
             StageState::Yes,
             "an aliased import binds the alias, not the bare name: {discriminate:?}"
+        );
+    }
+
+    /// F22 (#3731 review): a foreign import NESTED inside a test module —
+    /// the historical `mod tests { use other_crate::expect_response; .. }`
+    /// harness shape — defeats the owner confirmation too. Pre-fix the
+    /// scan read file-level `use` statements only, so the nested import
+    /// bypassed the defeat.
+    #[test]
+    fn nested_module_foreign_import_defeats_owner_confirmation() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_an_imported_same_named_callee_from_a_test_module",
+            vec![oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleKind::GuardedResultMatch,
+                OracleStrength::Strong,
+            )],
+        );
+        let test_source = "mod tests {\n    use other_crate::expect_response;\n\n    #[test]\n    fn guards_the_result() {}\n}\n";
+        let crate_names = std::collections::BTreeSet::new();
+        let (_, discriminate, _) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &[(&test, RelationReason::DirectOwnerCall)],
+            &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
+        );
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a module-nested foreign same-name import must defeat the owner binding: {discriminate:?}"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "the ambiguous binding leaves observation unverified: {discriminate:?}"
+        );
+    }
+
+    /// F22 direct-scan controls on the same function: a nested import is
+    /// found at any depth, a function-local import counts, and text
+    /// without the keyword does not.
+    #[test]
+    fn foreign_callee_import_scan_covers_nested_and_local_use_declarations() {
+        let crate_names = std::collections::BTreeSet::new();
+        let nested = "mod tests {\n    use other_crate::expect_response;\n}\n";
+        assert!(
+            file_imports_foreign_callee_name(nested, "expect_response", &crate_names),
+            "a module-nested foreign import must defeat"
+        );
+        let brace_list = "mod tests {\n    use other_crate::{setup, expect_response};\n}\n";
+        assert!(
+            file_imports_foreign_callee_name(brace_list, "expect_response", &crate_names),
+            "a module-nested brace-list import must defeat"
+        );
+        let function_local = "fn t() {\n    use other_crate::expect_response;\n}\n";
+        assert!(
+            file_imports_foreign_callee_name(function_local, "expect_response", &crate_names),
+            "a function-local foreign import must defeat"
+        );
+        let own_path = "mod tests {\n    use crate::expect_response;\n}\n";
+        assert!(
+            !file_imports_foreign_callee_name(own_path, "expect_response", &crate_names),
+            "an own-crate nested import binds the owner and must not defeat"
+        );
+    }
+
+    /// F23 (#3731 review): the analyzed crate's own names include the
+    /// `[lib]` target name, and hyphenated package names normalize to
+    /// underscores in crate identifiers — an import through the
+    /// underscore form of a hyphenated package name binds the owner's own
+    /// export and must NOT defeat, while a foreign first segment still
+    /// does.
+    #[test]
+    fn own_lib_target_and_hyphen_normalized_names_do_not_defeat() {
+        // Package `foo-bar` (hyphenated) whose lib target is `foo_bar`:
+        // the integration-test binding `use foo_bar::expect_response;` is
+        // the owner's own export on both spellings.
+        let hyphenated_and_lib_names: std::collections::BTreeSet<String> = ["foo-bar", "foo_bar"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let import = "use foo_bar::expect_response;\n";
+        assert!(
+            !file_imports_foreign_callee_name(import, "expect_response", &hyphenated_and_lib_names),
+            "an import through the crate's own lib-target name must not defeat"
+        );
+        // The normalization direction too: a raw hyphenated manifest name
+        // admits its underscore crate identifier.
+        let hyphenated_only: std::collections::BTreeSet<String> =
+            ["foo-bar"].into_iter().map(str::to_string).collect();
+        assert!(
+            !file_imports_foreign_callee_name(import, "expect_response", &hyphenated_only),
+            "a hyphenated own package name must admit its underscore identifier"
+        );
+        // A foreign first segment still defeats.
+        let foreign_names: std::collections::BTreeSet<String> = ["unrelated_crate"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        assert!(
+            file_imports_foreign_callee_name(import, "expect_response", &foreign_names),
+            "a foreign first segment must still defeat"
         );
     }
 

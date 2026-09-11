@@ -864,14 +864,14 @@ fn oracle_semantics_keeps_exact_value_without_extra_upgrade() {
 #[test]
 fn oracle_semantics_covers_supported_oracle_families() {
     let cases = [
+        // #3731 review (coderabbit): a STRONG oracle gets no upgrade
+        // suggestion — the same kind at medium-or-below keeps one.
         (
             OracleKind::ExactErrorVariant,
             OracleStrength::Strong,
             SeamKind::ErrorVariant,
             "the exact error variant",
-            Some(
-                "assert the payload inside the matched error variant when payload behavior changed",
-            ),
+            None,
         ),
         (
             OracleKind::WholeObjectEquality,
@@ -924,6 +924,33 @@ fn oracle_semantics_covers_supported_oracle_families() {
         assert_eq!(semantics.observes, observes);
         assert_eq!(semantics.upgrade_suggestion.as_deref(), upgrade);
     }
+}
+
+// #3731 review (coderabbit): the upgrade suggestion is gated on strength —
+// a STRONG oracle already discriminates, so the same kind at strong carries
+// no suggestion while medium-or-below keeps it (both branches).
+#[test]
+fn strong_oracle_carries_no_upgrade_suggestion_but_weaker_strength_keeps_it() {
+    let strong = oracle_semantics_for(
+        &OracleKind::ExactErrorVariant,
+        &OracleStrength::Strong,
+        SeamKind::ErrorVariant,
+    );
+    assert!(
+        strong.upgrade_suggestion.is_none(),
+        "a strong oracle must not suggest an upgrade: {:?}",
+        strong.upgrade_suggestion
+    );
+    let medium = oracle_semantics_for(
+        &OracleKind::ExactErrorVariant,
+        &OracleStrength::Medium,
+        SeamKind::ErrorVariant,
+    );
+    assert_eq!(
+        medium.upgrade_suggestion.as_deref(),
+        Some("assert the payload inside the matched error variant when payload behavior changed"),
+        "medium-or-below keeps the upgrade suggestion"
+    );
 }
 
 #[test]
@@ -12827,14 +12854,16 @@ fn wrong_callee_guarded_oracle_does_not_discriminate_the_seam() -> Result<(), St
         own_callee.text
     );
 
-    // A qualified scrutinee shares the owner's terminal name and keeps the
-    // identity binding (the terminal-segment rule matches the diff path).
+    // A qualified scrutinee sharing the owner's terminal name does NOT
+    // bind the seam (F20): repo discrimination requires a BARE scrutinee,
+    // the same rule the reveal side applies — the terminal-segment match
+    // was the token-coincidence family.
     let qualified = guarded_oracle(
         "match helpers::expect_response(..) { Err(..) => ParseError::InvalidData, _ => .. }",
     );
     assert!(
-        oracle_discriminates_seam(&seam, &qualified),
-        "a qualified scrutinee with the owner's terminal name binds the seam: {}",
+        !oracle_discriminates_seam(&seam, &qualified),
+        "a qualified scrutinee with a matching terminal name must not discriminate: {}",
         qualified.text
     );
 

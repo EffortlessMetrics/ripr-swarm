@@ -1507,11 +1507,15 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
     error_variant_oracle_matches_seam_variant(seam, &oracle.text)
 }
 
-/// The scrutinee callee's terminal name embedded in a synthesized
-/// guarded-Result-match oracle text (`match <path>(..) { .. }`): the final
-/// `::` segment of the plain path before the call marker, extracted the
-/// same way the diff-side owner path is. `None` when the text does not
-/// embed a recognizable plain-path scrutinee (#3731 review round 4).
+/// The scrutinee callee embedded in a synthesized guarded-Result-match
+/// oracle text (`match <path>(..) { .. }`), when the scrutinee is a BARE
+/// single-segment path (#3731 review F20: repo discrimination aligns with
+/// the diff-path bare-only rule). A qualified scrutinee
+/// (`other_crate::parse`) shares its terminal segment with any same-named
+/// owner, so reducing the path to that segment would bind a different
+/// entity by token coincidence — qualified scrutinees do not discriminate,
+/// and `None` fails closed. `None` also when the text does not embed a
+/// recognizable plain-path scrutinee (#3731 review round 4).
 fn guarded_oracle_scrutinee_callee(oracle_text: &str) -> Option<&str> {
     let rest = oracle_text.strip_prefix("match ")?;
     let open = rest.find("(..)")?;
@@ -1524,7 +1528,10 @@ fn guarded_oracle_scrutinee_callee(oracle_text: &str) -> Option<&str> {
     if !plain {
         return None;
     }
-    path.rsplit("::").next()
+    if path.contains("::") {
+        return None;
+    }
+    Some(path)
 }
 
 /// The variant pin carried by a synthesized guarded-Result-match oracle
@@ -1551,12 +1558,15 @@ fn guarded_oracle_variant_pins(oracle_text: &str) -> Vec<String> {
 /// Variant comparison for a `GuardedResultMatch` oracle against an
 /// ErrorVariant or ReturnValue seam (#3731 review).
 ///
-/// Callee identity gates everything (#3731 review round 4): the
+/// Callee identity gates everything (#3731 review round 4, F20): the
 /// synthesized text embeds the scrutinee path after `match `, and a
 /// guarded match over a DIFFERENT callee observes someone else's result no
-/// matter which variant it pins. The scrutinee path's terminal segment
-/// must equal the seam's owner terminal name; an unrecognizable scrutinee
-/// fails closed.
+/// matter which variant it pins. The scrutinee must be BARE and exactly
+/// equal to the seam's owner terminal name — a qualified scrutinee whose
+/// terminal segment matches (`other_crate::parse` over an owner named
+/// `parse`) is the token-coincidence family and never discriminates, the
+/// same bare-only rule the reveal side applies; an unrecognizable or
+/// qualified scrutinee fails closed.
 ///
 /// - An `ErrorVariant` seam compares the pin against the producer-owned
 ///   exact variant identity. A payload-shaped identity (constructor or
@@ -1968,6 +1978,25 @@ fn oracle_kind_matches_seam(seam: &RepoSeam, oracle: &OracleKind) -> bool {
 }
 
 pub(crate) fn oracle_semantics_for(
+    kind: &OracleKind,
+    strength: &OracleStrength,
+    seam_kind: SeamKind,
+) -> OracleSemantics {
+    let semantics = oracle_semantics_by_kind(kind, strength, seam_kind);
+    // #3731 review (coderabbit): an upgrade suggestion contradicts the
+    // strength it accompanies — a STRONG oracle already discriminates, so
+    // suggesting an upgrade would tell the reader the evidence is weaker
+    // than the field just stated. Medium-or-below keeps the suggestion.
+    if matches!(strength, OracleStrength::Strong) {
+        return OracleSemantics {
+            upgrade_suggestion: None,
+            ..semantics
+        };
+    }
+    semantics
+}
+
+fn oracle_semantics_by_kind(
     kind: &OracleKind,
     strength: &OracleStrength,
     seam_kind: SeamKind,

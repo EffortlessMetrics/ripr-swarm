@@ -182,13 +182,19 @@ fn build_index_with_adapters(
     Ok(index)
 }
 
-/// The `[package] name` of the analyzed root manifest, when it declares
-/// one. Root manifest only: member manifests are not resolved here, so
-/// multi-crate workspaces leave member-crate names unlisted and the
-/// same-name-import gate treats member imports as foreign (fail-closed
-/// under-credit; see `RustIndex.package_names`). A missing or unparseable
-/// manifest yields an empty set, never an error: the gate only ever
-/// under-credits.
+/// The crate names of the analyzed root manifest: the `[package] name`
+/// plus the `[lib] name` target when the manifest declares one. Root
+/// manifest only: member manifests are not resolved here, so multi-crate
+/// workspaces leave member-crate names unlisted and the same-name-import
+/// gate treats member imports as foreign (fail-closed under-credit; see
+/// `RustIndex.package_names`). Each name is stored in BOTH spellings —
+/// raw and crate-identifier form (#3731 review F23: hyphens normalize to
+/// underscores in crate identifiers, so a package named `foo-bar` is
+/// imported as `foo_bar`, and integration tests import the `[lib]`
+/// target, whose name may differ from the package name) — so the
+/// import gate admits an import through any of the crate's own
+/// identifiers. A missing or unparseable manifest yields an empty set,
+/// never an error: the gate only ever under-credits.
 fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
     let mut names = std::collections::BTreeSet::new();
     let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
@@ -199,13 +205,23 @@ fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
     let Ok(value) = text.parse::<toml::Table>() else {
         return names;
     };
+    let mut insert = |name: &str| {
+        names.insert(name.to_string());
+        names.insert(name.replace('-', "_"));
+    };
     if let Some(name) = value
         .get("package")
         .and_then(|package| package.get("name"))
         .and_then(toml::Value::as_str)
     {
-        eprintln!("DEBUG package_names root={} name={}", root.display(), name);
-        names.insert(name.to_string());
+        insert(name);
+    }
+    if let Some(name) = value
+        .get("lib")
+        .and_then(|lib| lib.get("name"))
+        .and_then(toml::Value::as_str)
+    {
+        insert(name);
     }
     names
 }
@@ -293,6 +309,58 @@ fn test_add() {
         assert!(!index.functions.is_empty());
         assert!(!index.tests.is_empty());
         assert!(index.files.contains_key(&PathBuf::from("src/lib.rs")));
+        Ok(())
+    }
+
+    /// F23 (#3731 review): the analyzed crate's own names include the
+    /// `[lib]` target when declared, and hyphenated package names are
+    /// stored in their underscore crate-identifier form too — an
+    /// integration test imports the lib target, not the package name.
+    #[test]
+    fn manifest_package_names_include_lib_target_and_underscore_forms() -> Result<(), Box<dyn Error>>
+    {
+        let root = temp_dir("index_package_names")?;
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("src/lib.rs"), "pub fn existing() {}\n")?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='foo-bar'\nversion='0.1.0'\nedition='2024'\n\n[lib]\nname='foo_bar'\n",
+        )?;
+        let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
+        assert!(
+            index.package_names.contains("foo-bar"),
+            "the raw package name is listed: {:?}",
+            index.package_names
+        );
+        assert!(
+            index.package_names.contains("foo_bar"),
+            "the underscore crate identifier is listed: {:?}",
+            index.package_names
+        );
+        Ok(())
+    }
+
+    /// F23: without an explicit `[lib] name`, a hyphenated package's
+    /// default lib target is the underscore form, so that spelling is
+    /// admitted too; a plain name stays itself.
+    #[test]
+    fn manifest_package_names_normalize_hyphenated_defaults() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("index_package_names_default_lib")?;
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("src/lib.rs"), "pub fn existing() {}\n")?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='baz-qux'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
+        assert_eq!(
+            index.package_names,
+            ["baz-qux", "baz_qux"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            "both spellings of the hyphenated package name are listed"
+        );
         Ok(())
     }
 

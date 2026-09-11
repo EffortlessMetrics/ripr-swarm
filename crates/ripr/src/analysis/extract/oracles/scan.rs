@@ -118,11 +118,11 @@ pub(crate) struct GuardedResultMatchScan {
 /// the historical `expect_response` harness). An oracle fact is emitted
 /// only when every Err arm carries a recognized discriminator AND is
 /// terminal under the bounded depth-0 statement grammar (see
-/// `arm_terminates`):
-/// - at least one depth-0 statement that is UNCONDITIONALLY diverging
-///   (`panic!`/`unreachable!`/`unimplemented!`/`todo!`/`bail!` covering
-///   the statement, `return Err(..)`, `process::exit(<nonzero
-///   literal>)`), or the
+/// `arm_terminates`): the arm's FIRST control transfer — in depth-0
+/// statement order — must be UNCONDITIONALLY diverging
+/// (`panic!`/`unreachable!`/`unimplemented!`/`todo!`/`bail!` covering
+/// the statement, `return Err(..)`, `process::exit(<nonzero literal>)`),
+/// or the
 ///   body-predicate failure form (`if !matches!(.., Type::Variant ..)`,
 ///   `if error != Type::Variant`, `if downcast..is_none()` whose block
 ///   diverges), or
@@ -135,8 +135,11 @@ pub(crate) struct GuardedResultMatchScan {
 ///
 /// Recognized discriminators: an exact error-variant pin in binding
 /// position (the arm pattern proper, a `matches!`/`assert_matches!` guard
-/// or body pattern, or a guard equality `==`/`!=` against a variant path)
-/// ranks strong; a bare concrete downcast pin ranks medium. Everything
+/// or body pattern, or a guard equality whose compared operand is rooted
+/// at the arm's error binding and whose other operand is a variant path)
+/// ranks strong — every Err arm's pin is collected, so two arms pinning
+/// two variants carry both; a bare concrete downcast pin ranks medium.
+/// Everything
 /// else — wildcard arms, no-op arms, opaque or message-only guards, silent
 /// catch-alls — emits no oracle and keeps the shape's existing weaker
 /// meaning.
@@ -436,21 +439,25 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
     if !all_terminal {
         return None;
     }
-    // Exact variant pin, per Err arm in order, strongest binding first: the
+    // Exact variant pins, one per Err arm, ALL collected (#3731 review: a
+    // later Err arm's pin must not disappear behind the first arm's): the
     // arm pattern proper, a `matches!`/`assert_matches!` pattern in the
-    // arm's body or its guard, or a guard equality (`==`/`!=`) against a
-    // variant path. Arbitrary path tokens elsewhere in a guard never pin —
-    // exactness is not inferred from names. EVERY Err arm must carry a
-    // pin: one pinned arm beside an unpinned escape hatch is not an exact
-    // result identity, and the match stays unrecognized (fail-closed).
-    let mut variant_pin = None;
+    // arm's body or its guard, or a guard equality (`==`/`!=`) whose
+    // compared operand is rooted at the arm's error binding and whose other
+    // operand is a variant path. Arbitrary path tokens elsewhere in a guard
+    // never pin — exactness is not inferred from names. EVERY Err arm must
+    // carry a pin: one pinned arm beside an unpinned escape hatch is not an
+    // exact result identity, and the match stays unrecognized (fail-closed).
+    let mut variant_pins: Vec<String> = Vec::new();
     let mut all_pinned = true;
     for (pattern_slice, body) in shape.err_patterns.iter().zip(shape.err_bodies.iter()) {
         let (pattern_proper, guard) = split_pattern_guard(pattern_slice);
+        let binding = err_arm_binding_identifier(pattern_proper);
         let mut pinned = false;
         if contains_named_enum_variant(pattern_proper) {
-            if variant_pin.is_none() {
-                variant_pin = Some(compact_whitespace(pattern_proper));
+            let pin = compact_whitespace(pattern_proper);
+            if !variant_pins.contains(&pin) {
+                variant_pins.push(pin);
             }
             pinned = true;
         }
@@ -460,18 +467,19 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
         }
         for candidate in candidates {
             if contains_named_enum_variant(&candidate) {
-                if variant_pin.is_none() {
-                    variant_pin = Some(compact_whitespace(&candidate));
+                let pin = compact_whitespace(&candidate);
+                if !variant_pins.contains(&pin) {
+                    variant_pins.push(pin);
                 }
                 pinned = true;
                 break;
             }
         }
         if let Some(guard) = guard
-            && let Some(token) = guard_equality_variant_pin(guard)
+            && let Some(token) = guard_equality_variant_pin(guard, binding)
         {
-            if variant_pin.is_none() {
-                variant_pin = Some(token);
+            if !variant_pins.contains(&token) {
+                variant_pins.push(token);
             }
             pinned = true;
         }
@@ -492,8 +500,12 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
         .err_bodies
         .iter()
         .find_map(|body| observed_downcast_invocation(body));
-    let (pin_text, strength) = if let Some(pin) = variant_pin {
-        (pin, OracleStrength::Strong)
+    let (pin_text, strength) = if !variant_pins.is_empty() {
+        // Every collected pin joins the synthesized text, so a downstream
+        // seam whose changed variant equals ANY collected pin confirms
+        // (reveal reads whole-word containment; repo grading re-parses the
+        // pin list out of this same text).
+        (variant_pins.join(" | "), OracleStrength::Strong)
     } else if let Some(pin) = downcast_pin {
         (pin, OracleStrength::Medium)
     } else {
@@ -553,28 +565,89 @@ fn split_pattern_guard(pattern_slice: &str) -> (&str, Option<&str>) {
     (pattern_slice, None)
 }
 
-/// A guard equality against an error-variant path: the `==`/`!=` operand at
-/// delimiter depth zero whose right-hand side is a `Path::Variant` token
-/// (`error.kind() == io::ErrorKind::InvalidData`). The variant path is the
-/// pin; arbitrary operands and message strings never qualify.
-fn guard_equality_variant_pin(guard: &str) -> Option<String> {
+/// The error binding identifier an Err arm's pattern proper introduces
+/// (`Err(e)` -> `e`): the name a guard equality must reference to compare
+/// THIS arm's error. Only a bare identifier (optionally `mut`/`ref`
+/// prefixed) binds one — `Err(_)`, struct/tuple/`@` patterns, and variant
+/// patterns introduce no binding name, and a guard equality in those arms
+/// cannot pin through the binding (fail-closed).
+fn err_arm_binding_identifier(pattern_proper: &str) -> Option<&str> {
+    let inner = pattern_proper.trim().strip_prefix("Err(")?;
+    let inner = inner.strip_suffix(')')?.trim();
+    let mut tokens = inner.split_whitespace();
+    let mut candidate = tokens.next()?;
+    if candidate == "mut" || candidate == "ref" {
+        candidate = tokens.next()?;
+    }
+    if tokens.next().is_some() || candidate.is_empty() || candidate == "_" {
+        return None;
+    }
+    let is_binding = candidate
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        && candidate
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_lowercase() || character == '_');
+    is_binding.then_some(candidate)
+}
+
+/// A guard equality against an error-variant path where the compared
+/// operand is rooted at the arm's error binding (#3731 review F19: an
+/// equality on an UNRELATED value — `config.mode == ParseError::Bad` — is
+/// not a pin of the matched error). For each depth-0 `==`/`!=` site, one
+/// operand must be a `Path::Variant` token and the OTHER must start with
+/// the arm's binding identifier (`e`, `e.kind()`, `e.inner.field` — a
+/// field/method chain rooted at the binding), in either order
+/// (`e == ParseError::Bad`, `ParseError::Bad == e`). The variant path is
+/// the pin; arbitrary operands and message strings never qualify.
+fn guard_equality_variant_pin(guard: &str, binding: Option<&str>) -> Option<String> {
+    let binding = binding?;
     let bytes = guard.as_bytes();
     let mut depth = 0i32;
+    // Start of the operand that contains the next operator: moved past each
+    // top-level separator (`&&`, `||`, `,`, `;`), so the left operand of a
+    // later equality does not swallow an earlier conjunct.
+    let mut operand_start = 0usize;
     let mut index = 0usize;
     while index < bytes.len() {
         match bytes[index] {
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' => depth -= 1,
+            b',' | b';' | b'&' | b'|' if depth == 0 => {
+                // `&&`/`||` skip both operator bytes; single `&`/`|` (never
+                // part of a comparison operand) skip one.
+                operand_start = index
+                    + if bytes.get(index + 1) == Some(&bytes[index]) {
+                        2
+                    } else {
+                        1
+                    };
+            }
             b'=' | b'!' if depth == 0 && bytes.get(index + 1) == Some(&b'=') => {
-                let rhs = guard[index + 2..].trim_start();
-                let token: String = rhs
+                let lhs = guard[operand_start..index].trim();
+                let rhs_rest = guard[index + 2..].trim_start();
+                let rhs_token: String = rhs_rest
                     .chars()
                     .take_while(|character| {
                         character.is_ascii_alphanumeric() || *character == '_' || *character == ':'
                     })
                     .collect();
-                if is_variant_path(&token) {
-                    return Some(token);
+                let lhs_token: String = lhs
+                    .chars()
+                    .take_while(|character| {
+                        character.is_ascii_alphanumeric() || *character == '_' || *character == ':'
+                    })
+                    .collect();
+                // The variant path on the right, binding-rooted operand on
+                // the left (`e.kind() == io::ErrorKind::InvalidData`).
+                if is_variant_path(&rhs_token) && operand_rooted_at(lhs, binding) {
+                    return Some(rhs_token);
+                }
+                // Mirrored order: variant path on the left
+                // (`ParseError::Bad == e`).
+                if is_variant_path(&lhs_token) && operand_rooted_at(rhs_rest, binding) {
+                    return Some(lhs_token);
                 }
             }
             _ => {}
@@ -582,6 +655,19 @@ fn guard_equality_variant_pin(guard: &str) -> Option<String> {
         index += 1;
     }
     None
+}
+
+/// Whether a comparison operand is a chain rooted at `binding`: the operand
+/// starts with the binding identifier and continues only into a field or
+/// method chain (`e`, `e.kind()`, `e.inner.field`) — never an unrelated
+/// root (`config.mode`, `error_code`).
+fn operand_rooted_at(operand: &str, binding: &str) -> bool {
+    let Some(rest) = operand.trim_start().strip_prefix(binding) else {
+        return false;
+    };
+    rest.chars()
+        .next()
+        .is_none_or(|character| !(character.is_ascii_alphanumeric() || character == '_'))
 }
 
 /// A plain path token whose final segment names an enum variant
@@ -611,8 +697,12 @@ fn arm_body_is_trivial(body: &str) -> bool {
 /// loudly (#3731 review: bounded depth-0 statement grammar, replacing
 /// substring containment). The body is split into top-level statements
 /// (balanced delimiters; string/comment content is already masked), and
-/// the arm counts as terminal only when at least one depth-0 statement is
-/// UNCONDITIONALLY diverging:
+/// the statements are scanned IN ORDER: the arm's outcome is decided by the
+/// FIRST control transfer — the first statement that is a `return`/`
+/// process::exit` form, or that unconditionally diverges (#3731 review F21:
+/// an earlier successful return swallows everything after it, so a
+/// `return Ok(..)` followed by a `panic!` is NOT terminal). The arm
+/// terminates only when that first transfer diverges:
 /// - a statement whose whole form is a `panic!`/`unreachable!`/
 ///   `unimplemented!`/`todo!`/`bail!` invocation (optionally
 ///   `;`-terminated),
@@ -637,9 +727,58 @@ fn arm_body_is_trivial(body: &str) -> bool {
 /// normally swallows the error, and crediting it would fabricate a strong
 /// discriminator (fail-closed under-credit).
 fn arm_terminates(body: &str) -> bool {
-    top_level_statements(body)
-        .iter()
-        .any(|statement| statement_diverges(statement))
+    first_control_transfer_diverges(body) == Some(true)
+}
+
+/// The in-order walk behind [`arm_terminates`]: `Some(diverges)` is the
+/// disposition of the body's FIRST control transfer; `None` when control
+/// can reach the arm's end (no transfer at all — non-terminal).
+fn first_control_transfer_diverges(body: &str) -> Option<bool> {
+    for statement in top_level_statements(body) {
+        let statement = statement.trim();
+        if statement.is_empty() {
+            continue;
+        }
+        // A segment wrapped in one balanced brace pair — a bare nested
+        // block statement — transfers control exactly when one of its own
+        // top-level statements does, decided by the same in-order rule.
+        // (`balanced_block` treats the first byte as the opener, so the
+        // leading `{` is required here; blocks that do not span the whole
+        // segment, like an `if` statement's own block, fall through to the
+        // forms below.)
+        if statement.starts_with('{')
+            && let Some(inner) = balanced_block(statement)
+            && statement.len() == inner.len() + 2
+        {
+            if let Some(decision) = first_control_transfer_diverges(inner) {
+                return Some(decision);
+            }
+            continue;
+        }
+        if is_control_transfer_statement(statement) || statement_diverges(statement) {
+            return Some(statement_diverges(statement));
+        }
+    }
+    None
+}
+
+/// Whether one (masked) statement is a control-transfer FORM: a `return`
+/// expression (any returned value — the divergence check decides whether
+/// the transfer is loud) or a `process::exit(..)` invocation covering the
+/// statement. Whole-statement diverging macros are handled by
+/// [`statement_diverges`] directly.
+fn is_control_transfer_statement(statement: &str) -> bool {
+    let bare = statement.strip_suffix(';').unwrap_or(statement).trim_end();
+    if bare == "return" || bare.starts_with("return ") || bare.starts_with("return\t") {
+        return true;
+    }
+    [
+        "::std::process::exit",
+        "std::process::exit",
+        "process::exit",
+    ]
+    .iter()
+    .any(|name| process_exit_covers_statement(bare, name))
 }
 
 /// The top-level (depth-0) statements of a (masked) body: split on `;` at
@@ -729,21 +868,30 @@ fn statement_diverges(statement: &str) -> bool {
     if_statement_diverges(statement)
 }
 
-/// Whether `statement` is exactly `<name>(..)` — the invocation opens the
-/// statement and its balanced close paren is the final character.
 /// Whether `statement` is exactly `<name>(<nonzero integer literal>)` —
 /// the invocation covers the statement and its exit code is a nonzero
 /// integer literal (`1`, `2`, `-1`). `exit(0)` reports success and a
 /// non-literal argument is not statically a failure; both fail closed to
 /// non-diverging (#3731 review).
 fn nonzero_process_exit_covers_statement(statement: &str, name: &str) -> bool {
-    let Some(rest) = statement.strip_prefix(name) else {
-        return false;
-    };
+    process_exit_covers_statement(statement, name)
+        && process_exit_argument(statement, name).is_some_and(|argument| {
+            let digits = argument.strip_prefix('-').unwrap_or(argument);
+            !digits.is_empty() && digits != "0" && digits.bytes().all(|byte| byte.is_ascii_digit())
+        })
+}
+
+/// Whether `statement` is exactly `<name>(..)` — the invocation opens the
+/// statement and its balanced close paren is the final character — and the
+/// call's argument text when it is.
+fn process_exit_covers_statement(statement: &str, name: &str) -> bool {
+    process_exit_argument(statement, name).is_some()
+}
+
+fn process_exit_argument<'a>(statement: &'a str, name: &str) -> Option<&'a str> {
+    let rest = statement.strip_prefix(name)?;
     let rest = rest.trim_start();
-    let Some(after_open) = rest.strip_prefix('(') else {
-        return false;
-    };
+    let after_open = rest.strip_prefix('(')?;
     let mut depth = 1i32;
     for (index, byte) in after_open.bytes().enumerate() {
         match byte {
@@ -752,19 +900,15 @@ fn nonzero_process_exit_covers_statement(statement: &str, name: &str) -> bool {
                 depth -= 1;
                 if depth == 0 {
                     if !after_open[index + 1..].trim().is_empty() {
-                        return false;
+                        return None;
                     }
-                    let argument = after_open[..index].trim();
-                    let digits = argument.strip_prefix('-').unwrap_or(argument);
-                    return !digits.is_empty()
-                        && digits != "0"
-                        && digits.bytes().all(|byte| byte.is_ascii_digit());
+                    return Some(after_open[..index].trim());
                 }
             }
             _ => {}
         }
     }
-    false
+    None
 }
 
 fn invocation_covers_statement(statement: &str, name: &str) -> bool {
@@ -2593,6 +2737,168 @@ fn exits_failing() {
         let scan = guarded_result_match_scan(exit_two, 1);
         assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
         assert_eq!(scan.oracles[0].strength, OracleStrength::Strong);
+    }
+
+    /// F21 (#3731 review): the arm's outcome is decided by its FIRST
+    /// control transfer in depth-0 statement order. A successful
+    /// `return Ok(())` ahead of a later `panic!` ends the arm without
+    /// failing the test, so the arm does not terminate even though a
+    /// diverging statement follows it.
+    #[test]
+    fn successful_return_ahead_of_a_later_panic_is_not_terminal() {
+        let body = r#"
+#[test]
+fn returns_ok_then_panics() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => {
+            return Ok(());
+            panic!("unreachable after the successful return");
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "a successful first transfer swallows the later panic: {:?}",
+            scan.oracles
+        );
+    }
+
+    /// F21 ordering control: when the diverging statement comes FIRST, the
+    /// arm still terminates (the first transfer diverges).
+    #[test]
+    fn panic_ahead_of_a_later_return_stays_terminal() {
+        let body = r#"
+#[test]
+fn panics_then_returns() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => {
+            panic!("invalid data");
+            return Ok(());
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(
+            scan.oracles.len(),
+            1,
+            "the first transfer diverges, so the arm terminates: {:?}",
+            scan.oracles
+        );
+    }
+
+    // --- #3731 review (F19): guard equalities must reference the binding ---
+
+    /// F19: a guard equality on an UNRELATED value
+    /// (`config.mode == ParseError::Bad`) never pins the matched error —
+    /// neither operand is rooted at the arm's error binding, so the
+    /// otherwise-loud routing shape stays unrecognized.
+    #[test]
+    fn guard_equality_on_an_unrelated_value_does_not_pin() {
+        let body = r#"
+#[test]
+fn unrelated_guard_equality() {
+    match parse(input) {
+        Err(other) if config.mode == ParseError::Bad => {}
+        result => bail!("unexpected result: {result:?}"),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "an equality against an unrelated value must not pin: {:?}",
+            scan.oracles
+        );
+    }
+
+    /// F19 positive: the guard equality compares a value rooted at the
+    /// arm's error binding (`e`) with the variant path — an exact pin.
+    #[test]
+    fn guard_equality_on_the_error_binding_pins() {
+        let direct = r#"
+#[test]
+fn binding_equality() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(e) if e == ParseError::InvalidData => panic!("invalid data"),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(direct, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        assert_eq!(scan.oracles[0].strength, OracleStrength::Strong);
+        let mirrored = r#"
+#[test]
+fn mirrored_binding_equality() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(e) if ParseError::InvalidData == e => panic!("invalid data"),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(mirrored, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        assert_eq!(scan.oracles[0].strength, OracleStrength::Strong);
+    }
+
+    // --- #3731 review (F24): every Err arm's pin is collected ---
+
+    /// F24: two Err arms pinning two variants carry BOTH pins in the
+    /// synthesized text, so either variant's seam can confirm. Pre-fix the
+    /// second arm's pin disappeared behind the first arm's.
+    #[test]
+    fn every_err_arm_pin_is_collected() {
+        let body = r#"
+#[test]
+fn two_variant_arms() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => panic!("invalid data"),
+        Err(ParseError::UnexpectedEof) => panic!("unexpected eof"),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        assert_eq!(scan.oracles[0].strength, OracleStrength::Strong);
+        assert!(
+            scan.oracles[0].text.contains("ParseError::InvalidData"),
+            "the first arm's pin is named: {}",
+            scan.oracles[0].text
+        );
+        assert!(
+            scan.oracles[0].text.contains("ParseError::UnexpectedEof"),
+            "the later arm's pin must not disappear: {}",
+            scan.oracles[0].text
+        );
+    }
+
+    /// F24 control: an unpinned Err arm beside a pinned one still blocks
+    /// the oracle (every arm must pin) — collection does not weaken the
+    /// fail-closed gate. (`multi_err_arm_requires_every_arm_pinned_and_
+    /// terminal` pins the classic form; this pins the routing form.)
+    #[test]
+    fn unpinned_second_arm_still_blocks_collection() {
+        let body = r#"
+#[test]
+fn pinned_then_wildcard() {
+    match parse(input) {
+        Err(ParseError::InvalidData) => panic!("invalid data"),
+        Err(other) => bail!("other: {other}"),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "an unpinned Err arm blocks the oracle regardless of collection: {:?}",
+            scan.oracles
+        );
     }
 
     // --- #3731 review round 4: every downcast invocation participates ---
