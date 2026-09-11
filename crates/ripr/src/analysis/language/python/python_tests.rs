@@ -1740,6 +1740,12 @@ fn collect_workspace_python_files_skips_excluded_directories() -> Result<(), Str
     let included = [
         PathBuf::from("src/keep.py"),
         PathBuf::from("nested/also_keep.py"),
+        // Generated-family near-misses must keep being collected (#3672):
+        // none of them terminates a generated suffix and none carries the
+        // `generated_` prefix.
+        PathBuf::from("src/pb2.py"),
+        PathBuf::from("src/generated.py"),
+        PathBuf::from("src/regenerated_client.py"),
     ];
     let excluded = [
         PathBuf::from(".git/skip.py"),
@@ -1758,6 +1764,9 @@ fn collect_workspace_python_files_skips_excluded_directories() -> Result<(), Str
         PathBuf::from(".mypy_cache/skip.py"),
         PathBuf::from("dist/skip.py"),
         PathBuf::from("build/skip.py"),
+        // Vendored Python is not project or production source, so diff
+        // discovery prunes it too (#3672).
+        PathBuf::from("vendor/skip.py"),
         PathBuf::from("src/generated_client.py"),
         PathBuf::from("src/schema_pb2.py"),
         PathBuf::from("src/schema_pb2_grpc.py"),
@@ -1809,6 +1818,204 @@ fn collect_workspace_python_files_returns_empty_for_missing_root() {
             .unwrap_or(0)
     ));
     assert!(collect_workspace_python_files(&missing).is_empty());
+}
+
+#[test]
+fn vendor_only_tree_neither_enables_python_nor_enters_diff_inputs() -> Result<(), String> {
+    // #3672: vendored Python is not project or production source. A tree
+    // whose only Python lives under `vendor` must not enable project
+    // detection and must contribute nothing to the diff-mode workspace
+    // walk (the source of diff-mode production inputs).
+    let root = unique_tempdir("vendor-only-tree")?;
+    write_file(&root.join("vendor/dep.py"), "VALUE = 1\n")?;
+    write_file(&root.join("src/vendor/dep.py"), "VALUE = 2\n")?;
+
+    let files = collect_workspace_python_files(&root);
+    let detection_enabled = crate::config::detect_python_project(&root);
+    let cleanup = std::fs::remove_dir_all(&root);
+
+    if !files.is_empty() {
+        let _ = cleanup;
+        return Err(format!(
+            "vendor-only Python must not enter the diff workspace, got {files:?}"
+        ));
+    }
+    if detection_enabled {
+        let _ = cleanup;
+        return Err("vendor-only Python must not enable Python detection".to_string());
+    }
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_does_not_count_vendor_subtree_changes() -> Result<(), String> {
+    // #3672 follow-up: `vendor` is pruned from the diff-mode workspace walk,
+    // so no workspace facts can back a changed vendored file and no findings
+    // can ever be emitted for it. Diff analysis must skip it BEFORE counting
+    // (same treatment as generated names), or the report denominator counts
+    // an uninspected file as a handled changed subject.
+    let root = unique_tempdir("analyze-diff-vendor-count")?;
+    let vendor_rel = PathBuf::from("vendor/dep.py");
+    write_file(
+        &root.join(&vendor_rel),
+        "def encode_status(status):\n    return {'status': status, 'version': 2}\n",
+    )?;
+
+    let adapter = PythonAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: vendor_rel,
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    return {'status': status, 'version': 2}".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+
+    if result.changed_files != 0 {
+        return Err(format!(
+            "expected vendored Python change to be excluded from changed files, got {}",
+            result.changed_files
+        ));
+    }
+    if !result.findings.is_empty() {
+        return Err(format!(
+            "expected vendored Python change to emit no preview findings, got {}",
+            result.findings.len()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_does_not_count_environment_subtree_changes() -> Result<(), String> {
+    // Same denominator rule as the vendor case (#3672): `.venv` is an
+    // environment subtree excluded from the diff-mode workspace walk, so a
+    // changed file under it must not be counted as a handled changed subject.
+    let root = unique_tempdir("analyze-diff-venv-count")?;
+    let venv_rel = PathBuf::from(".venv/x.py");
+    write_file(
+        &root.join(&venv_rel),
+        "def encode_status(status):\n    return {'status': status, 'version': 2}\n",
+    )?;
+
+    let adapter = PythonAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: venv_rel,
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    return {'status': status, 'version': 2}".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+
+    if result.changed_files != 0 {
+        return Err(format!(
+            "expected environment-subtree Python change to be excluded from changed files, got {}",
+            result.changed_files
+        ));
+    }
+    if !result.findings.is_empty() {
+        return Err(format!(
+            "expected environment-subtree Python change to emit no preview findings, got {}",
+            result.findings.len()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_still_counts_regular_source_changes() -> Result<(), String> {
+    // Control for the excluded-subtree skip (#3672 follow-up): a changed
+    // regular production file is still counted, proving the skip is scoped
+    // to excluded subtrees rather than suppressing the diff loop entirely.
+    let root = unique_tempdir("analyze-diff-regular-control")?;
+    let source_rel = PathBuf::from("src/x.py");
+    write_file(
+        &root.join(&source_rel),
+        "def encode_status(status):\n    return {'status': status, 'version': 2}\n",
+    )?;
+
+    let adapter = PythonAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: source_rel,
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    return {'status': status, 'version': 2}".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+
+    if result.changed_files != 1 {
+        return Err(format!(
+            "expected the regular source change to count as one changed file, got {}",
+            result.changed_files
+        ));
+    }
+    Ok(())
 }
 
 #[test]

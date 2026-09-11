@@ -1,7 +1,6 @@
 use super::source_utils::normalized_path;
-use super::{
-    ChangedFile, LanguageAdapter, PYTHON_WORKSPACE_EXCLUDED_DIRS, PythonAdapter, PythonOwner,
-};
+use super::{ChangedFile, LanguageAdapter, PythonAdapter, PythonOwner};
+use crate::config::{is_detectable_generated_python_path, is_python_excluded_dir_everywhere};
 use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
@@ -37,7 +36,11 @@ pub(super) fn visit_workspace(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default();
-        if is_python_workspace_excluded_dir(name) {
+        // Diff discovery prunes the config-owned excluded-directory
+        // authority, including `vendor` (#3672): vendored Python is not
+        // project or production source, so it never enters the diff-mode
+        // working set.
+        if is_python_excluded_dir_everywhere(name) {
             continue;
         }
         let file_type = match entry.file_type() {
@@ -48,27 +51,12 @@ pub(super) fn visit_workspace(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
             visit_workspace(root, &path, out);
         } else if file_type.is_file() {
             let adapter = PythonAdapter;
-            if adapter.accepts_path(&path) && !is_detectable_generated_python_file(&path) {
+            if adapter.accepts_path(&path) && !is_detectable_generated_python_path(&path) {
                 let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
                 out.push(relative);
             }
         }
     }
-}
-
-fn is_python_workspace_excluded_dir(name: &str) -> bool {
-    PYTHON_WORKSPACE_EXCLUDED_DIRS.contains(&name)
-}
-
-pub(super) fn is_detectable_generated_python_file(path: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return false;
-    };
-    name.ends_with("_pb2.py")
-        || name.ends_with("_pb2_grpc.py")
-        || name.ends_with(".generated.py")
-        || name.ends_with("_generated.py")
-        || name.starts_with("generated_")
 }
 
 /// Reconstructs the old side of one changed file from the current source and

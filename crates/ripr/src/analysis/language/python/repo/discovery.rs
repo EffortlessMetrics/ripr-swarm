@@ -1,17 +1,21 @@
 //! Bounded repo working-set discovery for the Python adapter (#3554 PR A).
 //!
 //! Issue #2109 contract: repo-scoped analysis must never read a workspace
-//! without a working-set bound. The Python repo walk prunes the adapter's
-//! excluded directory subtrees at directory granularity (no descent, so a
-//! large `.venv` costs nothing), counts every adapter-routed Python file it
-//! sees, classifies each with the shared role authority, and selects at most
-//! the working-set limit of eligible files in deterministic (sorted) order.
+//! without a working-set bound. The Python repo walk prunes the config
+//! excluded-directory subtrees at directory granularity via
+//! `is_python_dir_pruned_from_repo_discovery` (#3672) — deliberately NOT
+//! `vendor`, so vendor files are walked and counted as typed excluded-role
+//! inputs while environment/cache/build subtrees cost nothing — counts every
+//! adapter-routed Python file it sees, classifies each with the shared role
+//! authority, and selects at most the working-set limit of eligible files in
+//! deterministic (sorted) order.
 //!
 //! The cap source and the operator recovery route are retained as typed
 //! fields so every surface can disclose the same remediation.
 
-use super::super::{LanguageAdapter, PYTHON_WORKSPACE_EXCLUDED_DIRS, PythonAdapter};
+use super::super::{LanguageAdapter, PythonAdapter};
 use super::roles::{PythonFileRole, classify_python_file_role, role_is_excluded_from_analysis};
+use crate::config::is_python_dir_pruned_from_repo_discovery;
 use std::path::{Path, PathBuf};
 
 /// Default repo working-set limit for the Python adapter.
@@ -248,10 +252,12 @@ pub(in crate::analysis::language::python) fn discover_repo_working_set(
 /// Pruned workspace walk.
 ///
 /// Mirrors the adapter's `visit_workspace` pattern (no descent into
-/// excluded-directory subtrees). Eligible files are retained in the
-/// bounded per-role heaps; excluded-role and generated files are counted
-/// but never stored, so walk memory is bounded by the working-set cap
-/// (#3666 review). Read failures on subtrees or entries count as
+/// excluded-directory subtrees), except that `vendor` is deliberately NOT
+/// pruned (#3672): vendor files must be discovered so the role authority
+/// counts them as typed excluded-role inputs. Eligible files are retained
+/// in the bounded per-role heaps; excluded-role and generated files are
+/// counted but never stored, so walk memory is bounded by the working-set
+/// cap (#3666 review). Read failures on subtrees or entries count as
 /// incomplete-discovery accounting.
 /// Accumulated bounded-retention walk state: per-role candidate heaps
 /// (bounded by the working-set limit), the incomplete-discovery
@@ -304,7 +310,7 @@ fn visit_repo_workspace(root: &Path, dir: &Path, state: &mut BoundedWalkState) {
         };
         let name = entry.file_name();
         let name_text = name.to_str().unwrap_or_default();
-        if PYTHON_WORKSPACE_EXCLUDED_DIRS.contains(&name_text) {
+        if is_python_dir_pruned_from_repo_discovery(name_text) {
             continue;
         }
         let file_type = match entry.file_type() {

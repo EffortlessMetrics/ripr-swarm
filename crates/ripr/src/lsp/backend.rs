@@ -44,8 +44,8 @@ use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::{AnalysisAbortKind, is_cancellation_error};
 use crate::config::{
     CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS,
-    is_detectable_python_source_name, is_python_project_excluded_dir, python_project_marker_name,
-    python_source_dir_marker_name,
+    is_detectable_python_source_name, is_python_excluded_dir_everywhere,
+    python_project_marker_name, python_source_dir_marker_name,
 };
 use crate::domain::context_packet::ContextPacket;
 use crate::domain::{StageEvidence, StageState};
@@ -2642,7 +2642,7 @@ fn path_is_detectable_source_dir_python(root: &Path, path: &Path) -> bool {
     };
     directories
         .iter()
-        .all(|dir| !is_python_project_excluded_dir(dir))
+        .all(|dir| !is_python_excluded_dir_everywhere(dir))
         && is_detectable_python_source_name(file_name)
 }
 
@@ -2728,7 +2728,7 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
 #[cfg(test)]
 mod workspace_input_tests {
     use super::*;
-    use crate::config::PYTHON_PROJECT_EXCLUDED_DIRS;
+    use crate::config::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
     use std::collections::BTreeSet;
 
     #[test]
@@ -2820,7 +2820,11 @@ mod workspace_input_tests {
                 );
             }
 
-            for excluded in PYTHON_PROJECT_EXCLUDED_DIRS {
+            for excluded in PYTHON_EXCLUDED_DIRS
+                .iter()
+                .copied()
+                .chain([PYTHON_VENDOR_DIR])
+            {
                 let path = root.join(dir).join(excluded).join("ignored.py");
                 assert_eq!(
                     workspace_input_kind(&root, &path),

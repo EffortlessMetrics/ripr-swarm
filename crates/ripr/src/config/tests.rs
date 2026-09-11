@@ -1,4 +1,4 @@
-use super::python::PYTHON_PROJECT_EXCLUDED_DIRS;
+use super::python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
 #[cfg(feature = "lang-python")]
 use super::python::{PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS};
 use super::*;
@@ -101,7 +101,11 @@ fn missing_config_does_not_treat_empty_src_or_tests_as_python() -> Result<(), St
 #[test]
 fn missing_config_ignores_excluded_python_directories_and_generated_files() -> Result<(), String> {
     let root = temp_root("excluded-python-sources")?;
-    for excluded_dir in PYTHON_PROJECT_EXCLUDED_DIRS {
+    for excluded_dir in PYTHON_EXCLUDED_DIRS
+        .iter()
+        .copied()
+        .chain([PYTHON_VENDOR_DIR])
+    {
         write_file(
             &root.join("src").join(excluded_dir).join("ignored.py"),
             "x = 1\n",
