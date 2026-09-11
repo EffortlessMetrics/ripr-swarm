@@ -118,7 +118,15 @@ the #13162 `expect_response` comparison shape.
   `.expect()` statements, `assert!` forms, and conditional failures never
   terminate — and those same shapes are neither terminal nor pinning: an
   arm that can return normally swallows the error, and crediting it would
-  fabricate a discriminator. Residual (documented under-credit): a bare
+  fabricate a discriminator. Inside the body-predicate if-form the branch
+  rule is strict (#3731 review): EVERY depth-0 statement of the then-block
+  — and of the else-block when present — must diverge, and no successful
+  `return` may sit anywhere inside either block at any depth; a successful
+  return beside the panic is an escape path that swallows the matched
+  error, so the form is not terminal and the condition's pin does not
+  credit (a pin-conditioned `if` whose branch returns successfully never
+  credits, even when a trailing panic terminates the arm). Residual
+  (documented under-credit): a bare
   `if error != Type::Variant { panic!(..) }` body terminates but does not
   pin — the pin authority does not read body inequalities as exact-variant
   identity. An arm that swallows the error, and a routing target that
@@ -131,11 +139,25 @@ the #13162 `expect_response` comparison shape.
     binding (`e`, `e.kind()`), the other is the variant path, in either
     order —) ranks `strong`. Every Err arm's pin is collected into the
     fact (#3731 review): two Err arms pinning two variants carry both, so
-    a changed seam matching ANY collected pin confirms;
+    a changed seam matching ANY collected pin confirms. Pattern pins and
+    guard pins gate the arm's SELECTION, so they always participate; a
+    BODY pin counts only when it participates in the arm's divergence
+    decision (#3731 review: a `let`-computed pin the control flow never
+    consumes does not gate the terminal statement — the pin counts either
+    when it appears inside the condition of the depth-0 `if` that guards
+    the diverging statement, or when the arm's first control transfer
+    references the pin's binding variable whole-word). Each pin is
+    truncated individually at a documented 80-character per-pin cap and
+    the joined pin list carries NO overall truncation (#3731 review: an
+    overall cap dropped later variants from the fact text — and with them
+    from reveal/repo parsing);
   - a concrete `.downcast[_ref|_mut]::<Type>()` pin ranks `medium`, and
     only when the cast's OWN result is observed (#3731 review round 4:
     the observer must bind to the invocation, not to any token in the
-    statement). Observation means the text immediately after the
+    statement) and the cast participates in the arm's divergence decision
+    (a cast computed into an unconsumed `let` binding is dead
+    computation, not a pin — #3731 review). Observation means the text
+    immediately after the
     invocation's call-closing paren starts a boolean inspection
     (`.is_ok()`, `.is_err()`, `.is_some()`, `.is_none()`) or an observing
     unwrap (`.expect(`, `.unwrap(` — both panic on the wrong type, so
@@ -147,7 +169,8 @@ the #13162 `expect_response` comparison shape.
     `let _: Type =` before the invocation) observes nothing by
     construction. ALL downcast invocations in the arm participate: a
     discarded first cast no longer hides a later observed one, and the
-    first OBSERVED cast supplies the pin text. Residual (documented
+    first OBSERVED, participating cast supplies the pin text. Residual
+    (documented
     under-credit): a cast whose result flows into a variable that a
     LATER statement observes is not credited — parser-backed observation
     rides #3727.
@@ -165,20 +188,26 @@ the #13162 `expect_response` comparison shape.
 - In reveal classification, the fact confirms observation for
   `error_path` and `return_value` probes whose changed owner's bare name
   is the scrutinee callee, without any changed-line token overlap, under
-  three fail-closed gates (#3731 review): the oracle text must embed a
+  four fail-closed gates (#3731 review): the oracle text must embed a
   BARE one-segment scrutinee (`match <owner>(..)` — a qualified path's
   identity is unresolvable at name level, so a qualified same-named
   callee never confirms); when the changed expression constructs an
   exact error variant, the guarded pin must name that exact variant — a
   sibling-variant or type-only guard leaves the observation
   `observation_unverified`, and the shared enum-qualifier token is not a
-  specificity signal; and the related test's file must not import the
+  specificity signal; the related test's file must not import the
   owner callee's bare name from a FOREIGN path — a `use` declaration
   whose first path segment is neither `crate`/`self`/`super` nor one of
   the analyzed crate's own names makes the bare binding
   ambiguous (`use other_crate::expect_response;` defeats; the normal
   own-crate integration-test binding `use this_crate::expect_response;`
-  does not, and an `as` alias binds the alias, not the name). The own
+  does not, and an `as` alias binds the alias, not the name); and the
+  test's own package must not define a function with the callee's bare
+  name while the changed owner lives in another package (#3731 review:
+  index-backed through the workspace's indexed functions and the shared
+  package-scope authority — the bare call in that test may bind the
+  local definition, so the confirmation is refused; both package scopes
+  must resolve, and an unscopable side keeps today's behavior). The own
   names are the root manifest's `[package] name` plus its `[lib] name`
   target when declared (#3731 review: integration tests import the lib
   target), each admitted in raw and crate-identifier form — hyphens
@@ -277,12 +306,21 @@ the #13162 `expect_response` comparison shape.
   first cast), `.expect(` observation, adversarial statement windows
   (closure arguments, nested brackets, string-embedded observer text),
   negated-pin condition termination, first-comma `matches!` pattern
-  slices, bare-only shadow scoping.
+  slices, bare-only shadow scoping, computed-but-unconsumed body pins
+  (`matches!` and observed downcast into an unconsumed `let`) never
+  pinning while a pin the decisive statement consumes (or a pin inside a
+  diverging if's condition) stays credited, successful returns beside or
+  ahead of the panic inside a body-predicate if-form disqualifying the
+  form and its pin while an all-diverging branch stays terminal, and
+  per-pin truncation controls (two long pins both surviving the untruncated
+  join, one over-cap pin truncating alone).
 - In-crate reveal tests: owner-bound confirmation without token overlap,
   wrong-owner non-confirmation, type-pin weakness, effect-family refusal,
   sibling-variant non-confirmation with its exact-variant positive
   control, qualified-scrutinee non-confirmation, foreign same-name import
-  defeat with its no-import/own-crate-import/aliased-import controls.
+  defeat with its no-import/own-crate-import/aliased-import controls,
+  cross-package same-name-function defeat with its same-package and
+  unscopable-path positive controls.
 - Repo-grading tests: guarded-match kind matching for error and
   return-value seams, exact-pin discrimination with sibling/type-only
   rejection, wrong-callee non-discrimination with its own-callee and
@@ -308,10 +346,14 @@ the #13162 `expect_response` comparison shape.
   the changed error; a qualified scrutinee sharing the owner's bare name;
   an Err arm whose panic fires only under an unrelated condition; an Err
   arm whose only failure action is an unrelated `.unwrap()`; an Err arm
-  that ends in a bare `return`, `return Ok(())`, or `exit(0)`; a guard
+  that ends in a bare `return`, `return Ok(())`, or `exit(0)`; an Err arm
+  whose only pin is a computed-but-unconsumed `let` pin; a body-predicate
+  if-form whose branches contain a successful return; a guard
   whose downcast pin is discarded or observed only through another
   value's `.is_ok()` or a `.map_err` conversion; a related test file that
-  imports the owner's bare name from a foreign crate.
+  imports the owner's bare name from a foreign crate; a related test
+  whose own package defines the owner callee's bare name while the owner
+  lives in another package.
 
 ## Test Mapping
 
@@ -351,7 +393,10 @@ the #13162 `expect_response` comparison shape.
   in raw and crate-identifier form), feeding the own-crate side of the
   import gate.
 - `crates/ripr/src/analysis/classifier/evidence.rs` — the caller-supplied
-  per-test defeat closure threading `FileFacts.source`.
+  per-test defeat closures threading `FileFacts.source` (the F11/F22
+  same-name-import defeat) and `RustIndex.functions` with the shared
+  package-scope authority (the cross-package same-name defeat, #3731
+  review).
 - `crates/ripr/src/analysis/test_grip_evidence.rs` —
   `guarded_result_oracle_matches_seam_variant` (variant comparison plus
   the scrutinee/owner callee-identity gate).
@@ -365,13 +410,16 @@ the #13162 `expect_response` comparison shape.
   scoping); 1.3 -> 1.4 for the #3731 review round-4 fixes (successful
   exits, observed-cast pins); 1.4 -> 1.5 for the #3731 review round-5
   fixes (binding-rooted guard-equality pins, first-control-transfer
-  termination, every-arm pin collection); classified
-  `CACHE_SCHEMA_VERSION` 1.6 -> 1.7 -> 1.8 -> 1.9, sharded 0.12 -> 0.13
-  -> 0.14 -> 0.15, and compact 0.13 -> 0.14 -> 0.15 -> 0.16 (the last
-  steps for the round-4 and round-5 fixes, including the bare-only repo
-  scrutinee gate, the nested-import defeat, and the lib-target own-crate
-  names) so warm classified envelopes derived from pre-fix oracle facts
-  cannot serve stale discrimination.
+  termination, every-arm pin collection); 1.5 -> 1.6 for the #3731
+  review round-6 fixes (divergence-participating body pins, escape-free
+  if-form termination, per-pin truncation with an untruncated join);
+  classified `CACHE_SCHEMA_VERSION` 1.6 -> 1.7 -> 1.8 -> 1.9 -> 1.10,
+  sharded 0.12 -> 0.13 -> 0.14 -> 0.15 -> 0.16, and compact 0.13 -> 0.14
+  -> 0.15 -> 0.16 -> 0.17 (the last steps for the round-4 through
+  round-6 fixes, including the bare-only repo scrutinee gate, the
+  nested-import defeat, the lib-target own-crate names, and the
+  cross-package same-name defeat) so warm classified envelopes derived
+  from pre-fix oracle facts cannot serve stale discrimination.
 
 ## Metrics
 

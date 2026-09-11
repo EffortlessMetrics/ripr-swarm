@@ -313,9 +313,13 @@ fn test_add() {
     }
 
     /// F23 (#3731 review): the analyzed crate's own names include the
-    /// `[lib]` target when declared, and hyphenated package names are
-    /// stored in their underscore crate-identifier form too — an
-    /// integration test imports the lib target, not the package name.
+    /// `[lib]` target when declared, and hyphenated names are stored in
+    /// their underscore crate-identifier form too — an integration test
+    /// imports the lib target, not the package name. The lib target name
+    /// is DISTINCT from the normalized package name (#3731 review G5: a
+    /// `[lib] name` equal to the underscore package spelling would satisfy
+    /// both assertions even if lib-target insertion regressed), so both
+    /// spellings of each name are asserted.
     #[test]
     fn manifest_package_names_include_lib_target_and_underscore_forms() -> Result<(), Box<dyn Error>>
     {
@@ -324,7 +328,7 @@ fn test_add() {
         fs::write(root.join("src/lib.rs"), "pub fn existing() {}\n")?;
         fs::write(
             root.join("Cargo.toml"),
-            "[package]\nname='foo-bar'\nversion='0.1.0'\nedition='2024'\n\n[lib]\nname='foo_bar'\n",
+            "[package]\nname='foo-bar'\nversion='0.1.0'\nedition='2024'\n\n[lib]\nname='foo-core'\n",
         )?;
         let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
         assert!(
@@ -334,7 +338,23 @@ fn test_add() {
         );
         assert!(
             index.package_names.contains("foo_bar"),
-            "the underscore crate identifier is listed: {:?}",
+            "the package's underscore crate identifier is listed: {:?}",
+            index.package_names
+        );
+        assert!(
+            index.package_names.contains("foo-core"),
+            "the raw [lib] target name is listed: {:?}",
+            index.package_names
+        );
+        assert!(
+            index.package_names.contains("foo_core"),
+            "the [lib] target's underscore crate identifier is listed: {:?}",
+            index.package_names
+        );
+        assert_eq!(
+            index.package_names.len(),
+            4,
+            "each name in both spellings, nothing else: {:?}",
             index.package_names
         );
         Ok(())

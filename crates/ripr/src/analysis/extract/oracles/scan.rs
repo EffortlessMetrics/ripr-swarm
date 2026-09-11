@@ -139,7 +139,12 @@ pub(crate) struct GuardedResultMatchScan {
 /// at the arm's error binding and whose other operand is a variant path)
 /// ranks strong — every Err arm's pin is collected, so two arms pinning
 /// two variants carry both; a bare concrete downcast pin ranks medium.
-/// Everything
+/// Pattern pins and guard pins gate the arm's SELECTION and always
+/// participate; a BODY pin counts only when it participates in the arm's
+/// divergence decision (#3731 review G2: a `let`-computed pin the control
+/// flow never consumes does not gate the terminal statement). Each pin is
+/// capped individually in the synthesized text and the join is not
+/// truncated (#3731 review G4). Everything
 /// else — wildcard arms, no-op arms, opaque or message-only guards, silent
 /// catch-alls — emits no oracle and keeps the shape's existing weaker
 /// meaning.
@@ -445,9 +450,14 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
     // arm's body or its guard, or a guard equality (`==`/`!=`) whose
     // compared operand is rooted at the arm's error binding and whose other
     // operand is a variant path. Arbitrary path tokens elsewhere in a guard
-    // never pin — exactness is not inferred from names. EVERY Err arm must
-    // carry a pin: one pinned arm beside an unpinned escape hatch is not an
-    // exact result identity, and the match stays unrecognized (fail-closed).
+    // never pin — exactness is not inferred from names. Pattern pins and
+    // guard pins gate the arm's SELECTION, so they always participate; a
+    // body pin counts only when it participates in the arm's divergence
+    // decision (#3731 review G2: a `let`-computed pin the control flow
+    // never consumes does not gate the terminal statement). EVERY Err arm
+    // must carry a pin: one pinned arm beside an unpinned escape hatch is
+    // not an exact result identity, and the match stays unrecognized
+    // (fail-closed).
     let mut variant_pins: Vec<String> = Vec::new();
     let mut all_pinned = true;
     for (pattern_slice, body) in shape.err_patterns.iter().zip(shape.err_bodies.iter()) {
@@ -461,19 +471,35 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
             }
             pinned = true;
         }
-        let mut candidates = matches_guard_patterns(body);
+        // Body candidates first, then guard candidates — the merged order
+        // keeps pin selection stable — with only the body candidates gated
+        // on divergence participation.
+        let mut candidates = matches_guard_invocations(body)
+            .into_iter()
+            .map(|(at, pattern)| (Some(at), pattern))
+            .collect::<Vec<_>>();
         if let Some(guard_text) = guard {
-            candidates.extend(matches_guard_patterns(guard_text));
+            candidates.extend(
+                matches_guard_patterns(guard_text)
+                    .into_iter()
+                    .map(|pattern| (None, pattern)),
+            );
         }
-        for candidate in candidates {
-            if contains_named_enum_variant(&candidate) {
-                let pin = compact_whitespace(&candidate);
-                if !variant_pins.contains(&pin) {
-                    variant_pins.push(pin);
-                }
-                pinned = true;
-                break;
+        for (body_at, candidate) in candidates {
+            if !contains_named_enum_variant(&candidate) {
+                continue;
             }
+            if let Some(at) = body_at
+                && !body_pin_participates(body, at, &candidate)
+            {
+                continue;
+            }
+            let pin = compact_whitespace(&candidate);
+            if !variant_pins.contains(&pin) {
+                variant_pins.push(pin);
+            }
+            pinned = true;
+            break;
         }
         if let Some(guard) = guard
             && let Some(token) = guard_equality_variant_pin(guard, binding)
@@ -483,7 +509,7 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
             }
             pinned = true;
         }
-        if observed_downcast_invocation(body).is_some() {
+        if participating_downcast_invocation(body).is_some() {
             pinned = true;
         }
         if !pinned {
@@ -494,27 +520,42 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
         return None;
     }
     // Concrete type pin: a downcast to a named error type without a variant.
-    // Every downcast invocation in the body participates; the first OBSERVED
-    // one supplies the pin text (#3731 review round 4).
+    // Every downcast invocation in the body participates; the first OBSERVED,
+    // divergence-participating one supplies the pin text (#3731 review
+    // round 4, participation per G2).
     let downcast_pin = shape
         .err_bodies
         .iter()
-        .find_map(|body| observed_downcast_invocation(body));
+        .find_map(|body| participating_downcast_invocation(body).map(|(_, invocation)| invocation));
     let (pin_text, strength) = if !variant_pins.is_empty() {
         // Every collected pin joins the synthesized text, so a downstream
         // seam whose changed variant equals ANY collected pin confirms
         // (reveal reads whole-word containment; repo grading re-parses the
-        // pin list out of this same text).
-        (variant_pins.join(" | "), OracleStrength::Strong)
+        // pin list out of this same text). Each pin is capped individually
+        // and the JOIN IS NOT TRUNCATED (#3731 review G4): an overall cap
+        // dropped later variants from the synthesized text — and with them
+        // from reveal/repo parsing — so a two-pin harness lost its second
+        // discriminator. Long single pins still cap (see
+        // `PIN_TEXT_MAX_CHARS`).
+        (
+            variant_pins
+                .iter()
+                .map(|pin| truncate_chars(pin, PIN_TEXT_MAX_CHARS))
+                .collect::<Vec<_>>()
+                .join(" | "),
+            OracleStrength::Strong,
+        )
     } else if let Some(pin) = downcast_pin {
-        (pin, OracleStrength::Medium)
+        (
+            truncate_chars(&pin, PIN_TEXT_MAX_CHARS),
+            OracleStrength::Medium,
+        )
     } else {
         // Wildcard arms, opaque predicates, and message-only diagnostics
         // stay unrecognized: exactness is never inferred from names or
         // payload text (#3709 fail-closed).
         return None;
     };
-    let pin_text = truncate_chars(&pin_text, 120);
     let text = if shape.has_ok_arm {
         format!(
             "match {}(..) {{ Ok(..) => .., Err(..) => {pin_text} }}",
@@ -715,8 +756,11 @@ fn arm_body_is_trivial(body: &str) -> bool {
 ///   arguments are not terminal), or
 /// - the body-predicate failure form: a depth-0 `if <cond> { .. }`
 ///   statement whose condition carries the NEGATED changed-error pin and
-///   whose block holds an unconditionally diverging statement (recursively
-///   under the same grammar) — see `condition_pins_changed_error`.
+///   whose every branch terminates (recursively under the same grammar) —
+///   every depth-0 statement of the then-block and else-block diverges and
+///   no successful `return` sits anywhere inside them (#3731 review G3: an
+///   escape path swallows the matched error) — see
+///   `condition_pins_changed_error`.
 ///
 /// Explicitly NOT accepted: failure markers nested inside `if`/`match`/
 /// closure blocks of an unpinned statement (depth > 0 — a conditional
@@ -734,6 +778,16 @@ fn arm_terminates(body: &str) -> bool {
 /// disposition of the body's FIRST control transfer; `None` when control
 /// can reach the arm's end (no transfer at all — non-terminal).
 fn first_control_transfer_diverges(body: &str) -> Option<bool> {
+    first_control_transfer_statement(body).map(statement_diverges)
+}
+
+/// The body's FIRST control transfer in depth-0 statement order — the
+/// statement that decides the body's outcome (`return`/`process::exit`
+/// form, unconditionally diverging statement, or body-predicate `if`).
+/// Used by [`first_control_transfer_diverges`] and by the pin-participation
+/// gate, which must know whether the decisive statement consumes a
+/// computed pin (#3731 review G2).
+fn first_control_transfer_statement(body: &str) -> Option<&str> {
     for statement in top_level_statements(body) {
         let statement = statement.trim();
         if statement.is_empty() {
@@ -750,13 +804,13 @@ fn first_control_transfer_diverges(body: &str) -> Option<bool> {
             && let Some(inner) = balanced_block(statement)
             && statement.len() == inner.len() + 2
         {
-            if let Some(decision) = first_control_transfer_diverges(inner) {
-                return Some(decision);
+            if let Some(transfer) = first_control_transfer_statement(inner) {
+                return Some(transfer);
             }
             continue;
         }
         if is_control_transfer_statement(statement) || statement_diverges(statement) {
-            return Some(statement_diverges(statement));
+            return Some(statement);
         }
     }
     None
@@ -935,20 +989,25 @@ fn invocation_covers_statement(statement: &str, name: &str) -> bool {
     false
 }
 
-/// The depth-0 `if <cond> { .. }` form of the body-predicate failure
-/// grammar: the condition carries the NEGATED changed-error pin and the
-/// block diverges, so a guard miss is observed. An `else` tail does not
-/// disqualify: the pin-miss branch is the observed route.
-fn if_statement_diverges(statement: &str) -> bool {
-    let Some(rest) = statement.strip_prefix("if") else {
-        return false;
-    };
+/// The parts of a depth-0 `if <cond> { .. } [else ..]` statement: the
+/// condition, the then-block's inner text, and the `else` tail when one is
+/// present. `None` for every other statement form.
+struct IfParts<'a> {
+    condition: &'a str,
+    block: &'a str,
+    else_tail: Option<&'a str>,
+}
+
+/// Split a depth-0 `if` statement into its condition, then-block, and
+/// optional `else` tail (the text after the then-block's closing brace).
+fn depth_zero_if_parts(statement: &str) -> Option<IfParts<'_>> {
+    let rest = statement.strip_prefix("if")?;
     if rest
         .chars()
         .next()
         .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
     {
-        return false;
+        return None;
     }
     let rest = rest.trim_start();
     let mut depth = 0i32;
@@ -964,17 +1023,108 @@ fn if_statement_diverges(statement: &str) -> bool {
             _ => {}
         }
     }
-    let Some(brace) = brace else {
-        return false;
-    };
+    let brace = brace?;
     let condition = rest[..brace].trim();
-    let Some(block) = balanced_block(&rest[brace..]) else {
+    let after = &rest[brace..];
+    let block = balanced_block(after)?;
+    let after_block = after[block.len() + 2..].trim_start();
+    let else_tail = after_block.strip_prefix("else").filter(|tail| {
+        tail.chars()
+            .next()
+            .is_none_or(|character| !(character.is_ascii_alphanumeric() || character == '_'))
+    });
+    Some(IfParts {
+        condition,
+        block,
+        else_tail,
+    })
+}
+
+/// The depth-0 `if <cond> { .. }` form of the body-predicate failure
+/// grammar: the condition carries the NEGATED changed-error pin and every
+/// branch terminates under the bounded grammar, so a guard miss is observed.
+/// See [`if_blocks_terminate`] for the branch rule (#3731 review G3: a
+/// successful return beside the panic is an escape path that swallows the
+/// matched error and disqualifies the form).
+fn if_statement_diverges(statement: &str) -> bool {
+    let Some(parts) = depth_zero_if_parts(statement) else {
         return false;
     };
-    condition_pins_changed_error(condition)
-        && top_level_statements(block)
-            .iter()
-            .any(|statement| statement_diverges(statement))
+    condition_pins_changed_error(parts.condition)
+        && if_blocks_terminate(parts.block, parts.else_tail)
+}
+
+/// Whether an if-form's branches terminate (#3731 review G3): EVERY depth-0
+/// statement of the then-block — and of the else-block when present — must
+/// diverge under [`statement_diverges`] (a log-then-panic block still ends
+/// in the panic, but a successful transfer beside it does not), no
+/// successful `return` may sit anywhere inside either block at any depth
+/// (an escape path ends the arm without failing the test), and an
+/// `else if` chain must itself terminate under the same rule — a chain that
+/// can fall through ends the arm normally. An absent else does not
+/// disqualify: the pin-miss branch is the observed route and the arm's own
+/// first-transfer walk handles what follows the `if`.
+fn if_blocks_terminate(block: &str, else_tail: Option<&str>) -> bool {
+    let all_diverging = |text: &str| {
+        top_level_statements(text).iter().all(|statement| {
+            let statement = statement.trim();
+            statement.is_empty() || statement_diverges(statement)
+        })
+    };
+    if !all_diverging(block) || contains_successful_return(block) {
+        return false;
+    }
+    let Some(tail) = else_tail else {
+        return true;
+    };
+    let tail = tail.trim_start();
+    if let Some(chained) = tail.strip_prefix("if")
+        && chained
+            .chars()
+            .next()
+            .is_none_or(|character| !(character.is_ascii_alphanumeric() || character == '_'))
+    {
+        // `else if` chain: the chained form must itself terminate under the
+        // same grammar (its own condition must pin and its own branches
+        // must hold the same rule) — fail closed otherwise.
+        return if_statement_diverges(chained.trim_start());
+    }
+    if tail.starts_with('{')
+        && let Some(else_block) = balanced_block(tail)
+    {
+        return all_diverging(else_block) && !contains_successful_return(else_block);
+    }
+    false
+}
+
+/// Whether a successful `return` — any returned value that is not `Err(..)` —
+/// appears anywhere in the (masked) text at any depth (#3731 review G3):
+/// inside an if-form's blocks such a return is an escape path that ends the
+/// arm without failing the test. `return Err(..)` is the loud failure form
+/// and does not trip the sweep. Closures are not distinguished — a
+/// closure-internal `return` under-credits here, the same documented
+/// residual as closure-nested failure markers.
+fn contains_successful_return(text: &str) -> bool {
+    const NEEDLE: &str = "return";
+    let bytes = text.as_bytes();
+    let mut from = 0usize;
+    while let Some(relative) = text[from..].find(NEEDLE) {
+        let at = from + relative;
+        let after = at + NEEDLE.len();
+        let whole_word = (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && bytes
+                .get(after)
+                .copied()
+                .is_none_or(|byte| !is_ident_byte(byte));
+        if whole_word {
+            let value = text[after..].trim_start();
+            if !value.starts_with("Err(") {
+                return true;
+            }
+        }
+        from = after;
+    }
+    false
 }
 
 /// Whether a depth-0 `if` condition carries the NEGATED changed-error pin:
@@ -1045,6 +1195,190 @@ fn matches_guard_patterns(body: &str) -> Vec<String> {
         }
     }
     patterns
+}
+
+/// The `matches!`/`assert_matches!` invocations in a (masked) arm body with
+/// their byte offsets and pattern arguments, in source order. Positions let
+/// the pin collector bind each body candidate to its containing statement,
+/// so a computed-but-unconsumed pin can be told apart from a pin that
+/// participates in the arm's divergence decision (#3731 review G2). The
+/// `matches!(` substring inside `assert_matches!(` is scanned too — the
+/// same double-scan [`matches_guard_patterns`] performs — so both
+/// occurrences bind to the same statement and the outcome is unchanged.
+fn matches_guard_invocations(body: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for prefix in ["matches!(", "assert_matches!("] {
+        let mut from = 0usize;
+        while let Some(relative) = body[from..].find(prefix) {
+            let name_start = from + relative;
+            let open = name_start + prefix.len() - 1;
+            if let Some(pattern) = slice_after_first_top_level_comma(&body[open..]) {
+                out.push((name_start, pattern));
+            }
+            from = open + 1;
+        }
+    }
+    out.sort_by_key(|(at, _)| *at);
+    out
+}
+
+/// The depth-0 statement containing byte offset `at`, as `(statement start,
+/// statement)`: [`top_level_statements`] slices tile the body exactly, so
+/// the offset falls in exactly one slice.
+fn containing_top_level_statement(body: &str, at: usize) -> Option<(usize, &str)> {
+    let mut cursor = 0usize;
+    for statement in top_level_statements(body) {
+        let end = cursor + statement.len();
+        if at < end {
+            return Some((cursor, statement));
+        }
+        cursor = end;
+    }
+    None
+}
+
+/// Whether `statement` is an `if`-headed statement (whole-word `if`).
+fn is_if_statement(statement: &str) -> bool {
+    statement.starts_with("if(")
+        || statement.starts_with("if ")
+        || statement
+            .strip_prefix("if")
+            .is_some_and(|rest| rest.starts_with('{'))
+}
+
+/// The variable a `let` binding head computes a pin into: the head before
+/// a pin invocation contains a whole-word `let` whose binder runs to the
+/// first `=`/`:` after the keyword (`let x = <pin>..`, `let ok = r.cast()..`,
+/// `let typed: T = <pin>..`). `let _ =` discards and binds nothing; a head
+/// with no `let` (an `if` condition, an assertion wrapper) binds nothing.
+/// The LAST whole-word `let` wins, so earlier statements inside the same
+/// statement window cannot shadow the binding the invocation actually
+/// feeds.
+fn let_binding_name(head: &str) -> Option<String> {
+    const KEYWORD: &str = "let";
+    let bytes = head.as_bytes();
+    let mut last = None;
+    let mut from = 0usize;
+    while let Some(relative) = head[from..].find(KEYWORD) {
+        let at = from + relative;
+        let after = at + KEYWORD.len();
+        let whole_word = (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && bytes
+                .get(after)
+                .is_some_and(|byte| byte.is_ascii_whitespace());
+        if whole_word {
+            last = Some(after);
+        }
+        from = at + KEYWORD.len();
+    }
+    let after = last?;
+    let binder = &head[after..];
+    let binder_end = binder.find(['=', ':']).unwrap_or(binder.len());
+    let name = binder[..binder_end].trim();
+    let is_name = !name.is_empty()
+        && name != "_"
+        && name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        && name
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_lowercase() || character == '_');
+    is_name.then(|| name.to_string())
+}
+
+/// Whether a body-computed pin participates in the arm's divergence decision
+/// (#3731 review G2). `at` is the invocation's byte offset in the (masked)
+/// body and `pin_text` the candidate pattern/invocation text used for the
+/// condition-membership check.
+///
+/// A pin whose statement computes it into a variable (`let x = matches!(..);`,
+/// `let ok = cast.is_ok();`) is dead computation unless it participates:
+/// either (a) the pin appears inside the condition of a depth-0 `if` that
+/// guards the diverging statement (the body-predicate failure form), or (b)
+/// the arm's FIRST control transfer — the statement that decides the arm's
+/// outcome — references the pin's binding variable (whole-word). An
+/// unconsumed `let` pin does not gate the terminal statement, so a changed
+/// variant cannot affect the outcome and the pin must not credit.
+///
+/// A pin whose statement IS the observation (an `if` condition or an
+/// asserting statement) participates by construction — except when its
+/// `if`-form swallows the matched error through a successful return
+/// (#3731 review G3): an escape path ends the arm before any guard miss is
+/// observed, so the pin does not credit.
+/// The statement body behind an arm body: a brace-wrapped arm body
+/// (`{ stmt; .. }` — arm bodies keep their braces through the arm split)
+/// unwraps to its inner text; an expression body is its own text. The
+/// participation rule walks STATEMENTS, so the wrapper must go.
+fn arm_statement_body(arm_body: &str) -> &str {
+    if arm_body.starts_with('{')
+        && let Some(inner) = balanced_block(arm_body)
+        && arm_body.len() == inner.len() + 2
+    {
+        return inner;
+    }
+    arm_body
+}
+
+fn body_pin_participates(body: &str, at: usize, pin_text: &str) -> bool {
+    let Some((statement_start, statement)) = containing_top_level_statement(body, at) else {
+        return true;
+    };
+    let head = &body[statement_start..at];
+    let Some(binding) = let_binding_name(head) else {
+        let statement = arm_statement_body(statement.trim());
+        return !(is_if_statement(statement) && contains_successful_return(statement));
+    };
+    bound_pin_participates_in_divergence(body, &binding, pin_text)
+}
+
+/// The `(a)`/`(b)` participation rule for a `let`-computed pin: see
+/// [`body_pin_participates`].
+fn bound_pin_participates_in_divergence(body: &str, binding: &str, pin_text: &str) -> bool {
+    let body = arm_statement_body(body);
+    // (a) the pin appears inside the condition of a depth-0 `if` that guards
+    // the diverging statement (the body-predicate failure form).
+    for statement in top_level_statements(body) {
+        let statement = statement.trim();
+        if let Some(parts) = depth_zero_if_parts(statement)
+            && if_statement_diverges(statement)
+            && parts.condition.contains(pin_text)
+        {
+            return true;
+        }
+    }
+    // (b) the arm's decisive statement references the pin's binding.
+    if let Some(transfer) = first_control_transfer_statement(body)
+        && references_whole_word(transfer, binding)
+    {
+        return true;
+    }
+    false
+}
+
+/// Whether `text` contains `token` delimited by identifier boundaries on
+/// both sides (local whole-word authority for the pin-participation gate,
+/// kept beside the lexical grammar it serves).
+fn references_whole_word(text: &str, token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    let mut from = 0usize;
+    while let Some(relative) = text[from..].find(token) {
+        let at = from + relative;
+        let after = at + token.len();
+        let whole_word = (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && bytes
+                .get(after)
+                .copied()
+                .is_none_or(|byte| !is_ident_byte(byte));
+        if whole_word {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
 }
 
 /// Inside `text` (which starts at an opening paren), the slice after the
@@ -1276,15 +1610,38 @@ fn downcast_invocation(body: &str) -> Option<String> {
         .map(|(_, text)| text)
 }
 
-/// The first OBSERVED downcast invocation in a (masked) body, per the
-/// `downcast_statement_is_observed` rule: every invocation participates
-/// (#3731 review — a discarded first cast no longer hides a later observed
-/// one), and the first observed one supplies the pin text.
-fn observed_downcast_invocation(body: &str) -> Option<String> {
+/// The first OBSERVED, divergence-participating downcast invocation in a
+/// (masked) body, as `(invocation offset, invocation text)`: every
+/// invocation is considered (#3731 review — a discarded first cast no
+/// longer hides a later observed one), `downcast_statement_is_observed`
+/// decides observation, and a cast computed into an UNCONSUMED `let`
+/// binding is skipped — it is dead computation, not a pin (#3731 review
+/// G2). A cast observed directly in an `if` condition participates unless
+/// that if-form swallows the matched error through a successful return
+/// (#3731 review G3).
+fn participating_downcast_invocation(body: &str) -> Option<(usize, String)> {
     downcast_invocations(body)
         .into_iter()
-        .find(|(start, invocation)| downcast_statement_is_observed(body, *start, invocation))
-        .map(|(_, invocation)| invocation)
+        .find(|(start, invocation)| {
+            downcast_statement_is_observed(body, *start, invocation)
+                && downcast_pin_participates(body, *start, invocation)
+        })
+}
+
+/// The participation gate for one observed downcast invocation: see
+/// [`participating_downcast_invocation`].
+fn downcast_pin_participates(body: &str, start: usize, invocation: &str) -> bool {
+    let Some((statement_start, statement)) = containing_top_level_statement(body, start) else {
+        return true;
+    };
+    let head = &body[statement_start..start];
+    match let_binding_name(head) {
+        Some(binding) => bound_pin_participates_in_divergence(body, &binding, invocation),
+        None => {
+            let statement = arm_statement_body(statement.trim());
+            !(is_if_statement(statement) && contains_successful_return(statement))
+        }
+    }
 }
 
 /// Collapse whitespace runs to single spaces (stable fact text for
@@ -1305,6 +1662,15 @@ fn compact_whitespace(text: &str) -> String {
     }
     out
 }
+
+/// The per-pin character cap for the synthesized guarded-match pin text
+/// (#3731 review G4): each variant or downcast pin is truncated
+/// individually at this boundary, and the joined pin list carries NO
+/// overall truncation, so a multi-pin harness keeps every later variant in
+/// the fact text that reveal and repo grading parse. 80 characters covers
+/// the grammar's realistic variant paths while bounding one pathological
+/// pin.
+const PIN_TEXT_MAX_CHARS: usize = 80;
 
 /// Truncate to at most `max` characters without splitting one.
 fn truncate_chars(text: &str, max: usize) -> String {
@@ -3111,6 +3477,269 @@ fn expects_the_parse_error_type() {
         );
         assert!(downcast_statement_is_observed(&masked, start, &invocation));
         Ok(())
+    }
+
+    // --- #3731 review (G2): a body pin must participate in the divergence ---
+
+    /// G2 falsifier: a `matches!` pin computed into an unconsumed `let`
+    /// binding does not gate the unconditional panic — the arm diverges
+    /// regardless of the changed variant, so the pin must not credit.
+    /// Pre-fix this shape credited Strong.
+    #[test]
+    fn computed_but_unconsumed_matches_pin_does_not_pin() {
+        let body = r#"
+#[test]
+fn computed_then_any_panic() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(error) => {
+            let matched = matches!(error, ParseError::InvalidData);
+            panic!("any error surfaced: {error}");
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "a computed-but-unconsumed pin must not credit: {:?}",
+            scan.oracles
+        );
+    }
+
+    /// G2 falsifier (downcast family): an observed cast computed into an
+    /// unconsumed binding is dead computation, not a pin. Pre-fix this
+    /// shape credited Medium.
+    #[test]
+    fn computed_but_unconsumed_downcast_does_not_pin() {
+        let body = r#"
+#[test]
+fn observed_then_discarded_binding() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(error) => {
+            let is_parse = error.downcast_ref::<ParseError>().is_ok();
+            panic!("any error surfaced: {error}");
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "an unconsumed observed cast must not pin: {:?}",
+            scan.oracles
+        );
+    }
+
+    /// G2 clause (b) control: when the arm's FIRST control transfer — the
+    /// statement deciding the arm's outcome — references the pin's binding
+    /// variable in its own (non-string) code, the computed pin
+    /// participates. The reference must sit outside a string literal:
+    /// masked string content is erased before the scan.
+    #[test]
+    fn computed_pin_consumed_by_the_decisive_statement_pins() {
+        let body = r#"
+#[test]
+fn computed_and_consumed() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(error) => {
+            let matched = matches!(error, ParseError::InvalidData);
+            panic!("{}", matched);
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(
+            scan.oracles.len(),
+            1,
+            "a pin the decisive statement consumes participates: {:?}",
+            scan.oracles
+        );
+        assert_eq!(scan.oracles[0].strength, OracleStrength::Strong);
+    }
+
+    /// G2 positive control (clause a): the computed pin feeding a
+    /// body-predicate `if` condition through the same pattern stays
+    /// credited — the diverging if's condition carries the pin.
+    #[test]
+    fn computed_pin_also_in_a_diverging_if_condition_pins() {
+        let body = r#"
+#[test]
+fn computed_and_conditioned() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(error) => {
+            let matched = matches!(error, ParseError::InvalidData);
+            if !matches!(error, ParseError::InvalidData) {
+                panic!("unexpected variant: {error}");
+            }
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        assert_eq!(scan.oracles[0].strength, OracleStrength::Strong);
+    }
+
+    // --- #3731 review (G3): successful returns inside the if-form ---
+
+    /// G3 falsifier (negated form): a successful `return Ok(())` beside the
+    /// panic inside the body-predicate `if` is an escape path — the first
+    /// depth-0 statement does not diverge, so the form is not terminal.
+    /// Pre-fix the block's `.any()` rule credited the later panic.
+    #[test]
+    fn successful_return_beside_the_panic_disqualifies_the_if_form() {
+        let body = r#"
+#[test]
+fn escapes_through_the_branch() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(error) => {
+            if !matches!(error, ParseError::InvalidData) {
+                return Ok(());
+                panic!("unreachable after the successful return");
+            }
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "a successful return inside the if-form swallows the error: {:?}",
+            scan.oracles
+        );
+    }
+
+    /// G3 falsifier (the finding's shape): a pin-conditioned `if` whose
+    /// branch returns successfully swallows the matched variant; the
+    /// condition's pin must not credit even though a trailing unconditional
+    /// panic terminates the arm.
+    #[test]
+    fn successful_return_in_branch_blocks_the_condition_pin() {
+        let body = r#"
+#[test]
+fn branch_returns_ok_then_any_panic() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(error) => {
+            if matches!(error, ParseError::InvalidData) {
+                return Ok(());
+            }
+            panic!("any error surfaced: {error}");
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "a branch that returns successfully must not credit its pin: {:?}",
+            scan.oracles
+        );
+    }
+
+    /// G3 positive control: a negated body-predicate form whose block holds
+    /// only diverging statements stays terminal.
+    #[test]
+    fn all_diverging_branch_keeps_the_if_form_terminal() {
+        let body = r#"
+#[test]
+fn loud_branch() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(error) => {
+            if !matches!(error, ParseError::InvalidData) {
+                panic!("wrong variant");
+                unreachable!("never reached");
+            }
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(
+            scan.oracles.len(),
+            1,
+            "an all-diverging branch terminates: {:?}",
+            scan.oracles
+        );
+        assert_eq!(scan.oracles[0].strength, OracleStrength::Strong);
+    }
+
+    // --- #3731 review (G4): per-pin truncation ---
+
+    /// G4 falsifier: two long variant pins whose JOIN exceeds the pre-fix
+    /// 120-character overall cap both survive into the synthesized text
+    /// whole — each pin is capped individually and the join is not
+    /// truncated — so a changed seam matching either variant still finds
+    /// its pin in the text reveal and repo grading parse. (Confirmation
+    /// through any collected pin is pinned by
+    /// `every_err_arm_pin_is_collected` on the reveal side.)
+    #[test]
+    fn two_long_pins_both_survive_into_the_oracle_text() {
+        let body = r#"
+#[test]
+fn two_long_variant_arms() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidPayloadChecksumDetectedInResponseBodyPayload) => {
+            panic!("checksum")
+        }
+        Err(ParseError::UnexpectedEofDetectedInResponseBodyPayloadSection) => {
+            panic!("eof")
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        let text = &scan.oracles[0].text;
+        assert!(
+            text.contains("Err(ParseError::InvalidPayloadChecksumDetectedInResponseBodyPayload)"),
+            "the first long pin survives whole: {text}"
+        );
+        assert!(
+            text.contains("Err(ParseError::UnexpectedEofDetectedInResponseBodyPayloadSection)"),
+            "the later long pin must not disappear behind an overall cap: {text}"
+        );
+        assert!(!text.contains("..."), "no overall truncation: {text}");
+    }
+
+    /// G4 control: a single pin over the documented per-pin cap is
+    /// truncated at that boundary, so one pathological pin stays bounded.
+    #[test]
+    fn a_single_pin_over_the_per_pin_cap_truncates_alone() {
+        let body = r#"
+#[test]
+fn one_pathological_variant_arm() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidPayloadChecksumDetectedInResponseBodyPayloadSectionMarker) => {
+            panic!("checksum")
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        let text = &scan.oracles[0].text;
+        // The pin (81 chars) caps at the 80-character per-pin boundary: the
+        // truncated slice plus the marker appears, the closed whole pin
+        // does not.
+        assert!(
+            text.contains("Err(ParseError::InvalidPayloadChecksumDetectedInResponseBodyPayloadSectionMarker..."),
+            "the pin is truncated at the per-pin cap: {text}"
+        );
+        assert!(
+            !text.contains("SectionMarker)"),
+            "the over-cap pin carries the truncation marker, not its closed \
+             form: {text}"
+        );
     }
 }
 

@@ -960,7 +960,13 @@ fn path_is_absolute_form(path: &Path) -> bool {
     path.is_absolute() || normalized.starts_with('/') || has_drive_prefix
 }
 
-fn package_prefix(path: &Path) -> Option<String> {
+/// The workspace-package scope of a source path (`crates/foo/src/lib.rs`
+/// -> `crates/foo/`), or `None` when the path carries no package scope:
+/// single-crate relative paths (`src/lib.rs`, `tests/basic.rs`) and
+/// absolute paths are unscopable (#3235). Shared with the classifier's
+/// evidence stage, whose cross-package same-name defeat gate (#3731 review
+/// G1) compares the changed owner's package against each related test's.
+pub(in crate::analysis) fn package_prefix(path: &Path) -> Option<String> {
     let normalized = normalize_path(path);
     let crate_relative = normalized
         .strip_prefix("crates/")

@@ -10,7 +10,13 @@ fn reveal_evidence(
     probe: &Probe,
     related_tests: &[(&TestSummary, RelationReason)],
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
-    reveal_evidence_with_expression(probe, &probe.expression, related_tests, &|_, _| false)
+    reveal_evidence_with_expression(
+        probe,
+        &probe.expression,
+        related_tests,
+        &|_, _| false,
+        &|_, _| false,
+    )
 }
 
 pub(in crate::analysis) fn reveal_evidence_with_expression(
@@ -18,6 +24,7 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
     analysis_expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
     same_name_import_defeats: &dyn Fn(&TestSummary, &str) -> bool,
+    cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
     if related_tests.is_empty() {
         return (
@@ -40,6 +47,7 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
         analysis_expression,
         related_tests,
         same_name_import_defeats,
+        cross_package_name_defeats,
     );
     let related = finalize_related_tests(analysis.related);
     let observe = build_observe_evidence(analysis.matched_any);
@@ -181,6 +189,7 @@ fn analyze_related_assertions(
     analysis_expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
     same_name_import_defeats: &dyn Fn(&TestSummary, &str) -> bool,
+    cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
 ) -> RevealAssertionAnalysis {
     let probe_tokens = if is_effect_family(&probe.family) {
         effect_target_tokens(analysis_expression)
@@ -282,12 +291,21 @@ fn analyze_related_assertions(
         let import_defeats_owner = match_context
             .owner_callee
             .is_some_and(|callee| same_name_import_defeats(test, callee));
+        // #3731 review (G1): computed once per test — whether the test's
+        // own package defines a function with the owner callee's bare name
+        // while the changed owner lives in ANOTHER package, which makes the
+        // bare call ambiguous across packages the same way a foreign
+        // import does.
+        let cross_package_defeats_owner = match_context
+            .owner_callee
+            .is_some_and(|callee| cross_package_name_defeats(test, callee));
         for assertion in &test.assertions {
             let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
                 &match_context,
                 assertion,
                 test.assertions.len(),
                 import_defeats_owner,
+                cross_package_defeats_owner,
             );
             if matched {
                 if confirm_required {
@@ -438,14 +456,17 @@ fn guarded_oracle_names_bare_callee(text: &str, callee: &str) -> bool {
 /// `wrapper_error_binding_unresolved` limitation.
 ///
 /// A `GuardedResultMatch` assertion confirms a probe only through the
-/// producer-owned binding, under three #3731 fail-closed gates: the
+/// producer-owned binding, under four #3731 fail-closed gates: the
 /// synthesized text must embed a BARE one-segment scrutinee
 /// (`match <owner>(..)` — a qualified path's identity is unresolvable
 /// here, #3727), when the changed expression constructs an exact
-/// error variant the guarded pin must name that exact variant, and the
+/// error variant the guarded pin must name that exact variant, the
 /// related test's file must not import the owner callee's bare name from
 /// a FOREIGN path (a same-name import makes the bare binding ambiguous —
-/// see `file_imports_foreign_callee_name`). For a variant-carrying probe
+/// see `file_imports_foreign_callee_name`), and the test's own package
+/// must not define a same-named function while the changed owner lives in
+/// another package (a bare call may bind the test package's own function —
+/// the cross-package ambiguity gate). For a variant-carrying probe
 /// the qualifier token is not a specificity signal, so the guarded
 /// oracle's `has_token_match` is exactly the variant-gated owner binding.
 fn assertion_matches_probe_detail_with_literals(
@@ -453,6 +474,7 @@ fn assertion_matches_probe_detail_with_literals(
     assertion: &OracleFact,
     assertion_count: usize,
     import_defeats_owner: bool,
+    cross_package_defeats_owner: bool,
 ) -> (bool, bool) {
     let RevealMatchContext {
         probe_tokens,
@@ -480,7 +502,7 @@ fn assertion_matches_probe_detail_with_literals(
     // a changed effect or call inside the owner need not flow through the
     // matched result, so those families keep their existing observers.
     //
-    // #3731 review, three fail-closed gates on the owner shortcut:
+    // #3731 review, four fail-closed gates on the owner shortcut:
     // - BARE scrutinee only. The synthesized text embeds the scrutinee path
     //   after `match `, so a one-segment scrutinee reads `match <callee>(`;
     //   a qualified path (`match helpers::parse(..)`) names an entity this
@@ -500,10 +522,16 @@ fn assertion_matches_probe_detail_with_literals(
     //   under-credit). An own-crate import (`use this_crate::callee;` — the
     //   normal integration-test binding) is the owner's own export and does
     //   not defeat.
+    // - No same-named function in the test's OWN package when the owner
+    //   lives in another package (G1). The RustIndex knows the test
+    //   package's own functions; a bare `match <callee>(..)` scrutinee in
+    //   that test may bind the local definition instead of the owner, so
+    //   the confirmation is refused (fail-closed under-credit).
     let producer_owned_result = owner_callee.is_some_and(|owner| {
         matches!(assertion.kind, OracleKind::GuardedResultMatch)
             && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::ReturnValue)
             && !import_defeats_owner
+            && !cross_package_defeats_owner
             && guarded_oracle_names_bare_callee(&assertion.text, owner)
             && error_construction_variant
                 .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant))
@@ -578,6 +606,7 @@ fn assertion_matches_probe_detail(
         },
         assertion,
         assertion_count,
+        false,
         false,
     )
 }
@@ -2457,6 +2486,7 @@ return Err(\"typed pin\".into());
             &probe.expression,
             &[(&test, RelationReason::DirectOwnerCall)],
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
+            &|_, _| false,
         );
 
         assert_eq!(
@@ -2500,6 +2530,7 @@ return Err(\"typed pin\".into());
             &probe.expression,
             &[(&test, RelationReason::DirectOwnerCall)],
             &|_, callee| file_imports_foreign_callee_name(without_import, callee, &own_crate_names),
+            &|_, _| false,
         );
         assert_eq!(
             discriminate.state,
@@ -2514,6 +2545,7 @@ return Err(\"typed pin\".into());
             &|_, callee| {
                 file_imports_foreign_callee_name(own_crate_import, callee, &own_crate_names)
             },
+            &|_, _| false,
         );
         assert_eq!(
             own_crate.state,
@@ -2547,6 +2579,7 @@ return Err(\"typed pin\".into());
             &probe.expression,
             &[(&test, RelationReason::DirectOwnerCall)],
             &|_, callee| file_imports_foreign_callee_name(aliased_import, callee, &crate_names),
+            &|_, _| false,
         );
         assert_eq!(
             discriminate.state,
@@ -2582,6 +2615,7 @@ return Err(\"typed pin\".into());
             &probe.expression,
             &[(&test, RelationReason::DirectOwnerCall)],
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
+            &|_, _| false,
         );
 
         assert_eq!(
@@ -2659,6 +2693,58 @@ return Err(\"typed pin\".into());
         assert!(
             file_imports_foreign_callee_name(import, "expect_response", &foreign_names),
             "a foreign first segment must still defeat"
+        );
+    }
+
+    /// #3731 review (G1): the cross-package same-name defeat threads
+    /// through the same per-test path as the import defeat — when the
+    /// test's own package defines the callee's name while the changed
+    /// owner lives in another package, the bare binding is ambiguous and
+    /// the confirmation is refused; without the defeat it stands.
+    #[test]
+    fn cross_package_same_name_defeat_blocks_owner_confirmation() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_a_same_named_local_function",
+            vec![oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleKind::GuardedResultMatch,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, defeated, _) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &[(&test, RelationReason::DirectOwnerCall)],
+            &|_, _| false,
+            &|_, _| true,
+        );
+        assert_eq!(
+            defeated.state,
+            StageState::Weak,
+            "a same-named function in the test's own package must defeat the \
+             bare binding: {defeated:?}"
+        );
+        assert!(
+            defeated.summary.contains("observation_unverified"),
+            "the ambiguous binding leaves observation unverified: {defeated:?}"
+        );
+
+        let (_, confirmed, _) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &[(&test, RelationReason::DirectOwnerCall)],
+            &|_, _| false,
+            &|_, _| false,
+        );
+        assert_eq!(
+            confirmed.state,
+            StageState::Yes,
+            "without a same-named local definition the confirmation stands: {confirmed:?}"
         );
     }
 
@@ -3233,6 +3319,7 @@ return Err(\"typed pin\".into());
             &probe,
             "Err(ParseError::SiblingVariant)",
             &[(&test, RelationReason::DirectOwnerCall)],
+            &|_, _| false,
             &|_, _| false,
         );
 
