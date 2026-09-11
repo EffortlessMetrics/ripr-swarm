@@ -479,6 +479,32 @@
       ]
     },
     {
+      "id": "rust_guarded_result_match_sibling_variant_no_promotion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/guarded_result_match_sibling_variant",
+      "vector": "owner_guard_pins_sibling_variant_of_changed_error",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_guarded_result_match_conditional_failure_no_promotion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/guarded_result_match_conditional_failure",
+      "vector": "conditional_panic_unrelated_unwrap_nested_closure_marker",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "no_static_path" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
       "id": "ts_strong_oracle_control",
       "language": "typescript",
       "tier": "pure",
