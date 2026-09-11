@@ -115,7 +115,9 @@ jobs:
       disk-guard-threshold: 35
       use-scratch: true
       artifact-name: ripr-rust-small-cx43
-      job-timeout-minutes: 60
+      # 120min hard deadline: the rust-gates PR-evidence producer itself
+      # allows 3600s (#3731), so the job envelope must exceed it.
+      job-timeout-minutes: 120
       run-advisory-reports: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
       upload-success-artifacts: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
 
@@ -130,7 +132,9 @@ jobs:
       disk-guard-threshold: 35
       use-scratch: true
       artifact-name: ripr-rust-small-cpx42
-      job-timeout-minutes: 60
+      # 120min hard deadline: the rust-gates PR-evidence producer itself
+      # allows 3600s (#3731), so the job envelope must exceed it.
+      job-timeout-minutes: 120
       run-advisory-reports: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
       upload-success-artifacts: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
 
@@ -145,7 +149,9 @@ jobs:
       disk-guard-threshold: 50
       use-scratch: true
       artifact-name: ripr-rust-small-cx53
-      job-timeout-minutes: 60
+      # 120min hard deadline: the rust-gates PR-evidence producer itself
+      # allows 3600s (#3731), so the job envelope must exceed it.
+      job-timeout-minutes: 120
       run-advisory-reports: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
       upload-success-artifacts: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
 
@@ -167,7 +173,9 @@ jobs:
       disk-guard-threshold: 0
       use-scratch: false
       artifact-name: ripr-rust-small-github
-      job-timeout-minutes: 90
+      # 120min hard deadline: the rust-gates PR-evidence producer itself
+      # allows 3600s (#3731), so the job envelope must exceed it.
+      job-timeout-minutes: 120
       run-advisory-reports: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
       upload-success-artifacts: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
 

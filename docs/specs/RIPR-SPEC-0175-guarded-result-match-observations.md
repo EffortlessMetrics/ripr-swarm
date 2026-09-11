@@ -79,9 +79,11 @@ the #13162 `expect_response` comparison shape.
 - An oracle fact (`oracle_kind: "guarded_result_match"`) is emitted only
   when every Err arm both terminates and carries a recognized
   discriminator. Terminating means, under a bounded depth-0 statement
-  grammar (the masked arm body splits into top-level statements), that at
-  least one depth-0 statement is unconditionally diverging. The accepted
-  whole-statement forms are exactly:
+  grammar (the masked arm body splits into top-level statements), that the
+  arm's FIRST control transfer — in statement order — is unconditionally
+  diverging (#3731 review: an earlier successful return swallows
+  everything after it, so `return Ok(..)` followed by `panic!` does not
+  terminate). The accepted whole-statement forms are exactly:
   - a statement whose whole form is a `panic!`/`unreachable!`/
     `unimplemented!`/`todo!`/`bail!` invocation (optionally
     `;`-terminated);
@@ -100,6 +102,18 @@ the #13162 `expect_response` comparison shape.
   - a guarded accept arm (`Err(e) if <pin> => {}`): the guard must carry
     the pin, the body must be trivial, and every catch-all arm must fail
     loudly, so a guard miss routes to an observed failure.
+
+  A clarifying distinction between the two termination rules (#3731
+  review): the Err-arm rule above decides termination by divergence, and
+  the accept arm's TRIVIALITY requirement is not an exception to it — it
+  belongs to the guarded-routing-form grammar. A guarded accept arm does
+  not terminate the match on its own (an empty body ends the arm
+  silently); it only participates in the recognized shape when a guard
+  carries the pin, the body stays trivial, and a loud catch-all —
+  terminating under the same divergence grammar — provides the routing
+  target that observes a guard miss. The loud catch-all is the
+  terminating element of the routing form; the accept arm's grammar
+  constrains what may sit beside it.
   Markers merely nested inside `if`/`match`/closure blocks, `.unwrap()`/
   `.expect()` statements, `assert!` forms, and conditional failures never
   terminate — and those same shapes are neither terminal nor pinning: an
@@ -112,8 +126,12 @@ the #13162 `expect_response` comparison shape.
   Discriminators, strongest first:
   - an exact error-variant pin in binding position (the arm pattern
     proper, the pattern argument of a `matches!`/`assert_matches!` in
-    the arm body or guard, or a guard equality `==`/`!=` against a
-    variant path) ranks `strong`;
+    the arm body or guard, or a guard equality `==`/`!=` whose compared
+    operand is rooted at the arm's error binding — one operand names the
+    binding (`e`, `e.kind()`), the other is the variant path, in either
+    order —) ranks `strong`. Every Err arm's pin is collected into the
+    fact (#3731 review): two Err arms pinning two variants carry both, so
+    a changed seam matching ANY collected pin confirms;
   - a concrete `.downcast[_ref|_mut]::<Type>()` pin ranks `medium`, and
     only when the cast's OWN result is observed (#3731 review round 4:
     the observer must bind to the invocation, not to any token in the
@@ -155,13 +173,24 @@ the #13162 `expect_response` comparison shape.
   sibling-variant or type-only guard leaves the observation
   `observation_unverified`, and the shared enum-qualifier token is not a
   specificity signal; and the related test's file must not import the
-  owner callee's bare name from a FOREIGN path — a file-level `use`
+  owner callee's bare name from a FOREIGN path — a `use` declaration
   whose first path segment is neither `crate`/`self`/`super` nor one of
-  the analyzed workspace's own package names makes the bare binding
+  the analyzed crate's own names makes the bare binding
   ambiguous (`use other_crate::expect_response;` defeats; the normal
   own-crate integration-test binding `use this_crate::expect_response;`
-  does not, and an `as` alias binds the alias, not the name). The
-  import scan is bounded and lexical: globs (`use p::*;`), re-export
+  does not, and an `as` alias binds the alias, not the name). The own
+  names are the root manifest's `[package] name` plus its `[lib] name`
+  target when declared (#3731 review: integration tests import the lib
+  target), each admitted in raw and crate-identifier form — hyphens
+  normalize to underscores, so package `foo-bar` admits
+  `use foo_bar::..;`. The import scan is bounded and lexical and covers
+  ALL `use` declarations in the test's file at any brace depth —
+  file-level, module-nested (`mod tests { use other::expect_response; }`,
+  the historical harness shape), and function-local (#3731 review: a
+  nested foreign import bypassed a file-level-only scan); scanning past
+  module boundaries can defeat a confirmation the import is not visible
+  to, a documented under-credit residual, since lexical scope resolution
+  is what the scan cannot do. Globs (`use p::*;`), re-export
   chains, and workspace-member manifests are not resolved — the residual
   ambiguity they can hide is documented under-credit/over-credit risk
   that parser-backed import resolution retires (#3727). The fact's text
@@ -172,12 +201,14 @@ the #13162 `expect_response` comparison shape.
   association remains the pre-existing generic (weak) rules. In
   repo-mode grading, the guarded oracle kind-matches error and
   return-value seams and `oracle_discriminates_seam` applies the
-  exact-variant rule plus a CALLEE-IDENTITY gate (#3731 review round 4):
-  the synthesized text's scrutinee path (extracted after `match `, the
-  same terminal-segment way the diff path is) must equal the seam's owner
-  terminal name — a guarded match over a different callee observes
-  someone else's result and never discriminates, no matter which variant
-  it pins; an unrecognizable scrutinee fails closed.
+  exact-variant rule plus a CALLEE-IDENTITY gate (#3731 review rounds 4
+  and 5): the synthesized text's scrutinee must be BARE and exactly equal
+  the seam's owner terminal name — the same bare-only rule the reveal
+  side applies; a qualified scrutinee whose terminal segment matches
+  (`other_crate::parse` over an owner named `parse`) is the
+  token-coincidence family — so a guarded match over a different callee
+  observes someone else's result and never discriminates, no matter which
+  variant it pins; an unrecognizable or qualified scrutinee fails closed.
 - Strength maps through the existing stage authority: `strong` credits
   discrimination (`exposed` when reach, infection, and propagation also
   hold); `medium` keeps the seam below `exposed` with observation
@@ -312,10 +343,13 @@ the #13162 `expect_response` comparison shape.
   statement-joiner suppression.
 - `crates/ripr/src/analysis/classify/reveal.rs` — `owner_callee` context,
   the producer-owned confirmation, and
-  `file_imports_foreign_callee_name` (the F11 import-defeat scanner,
-  sharing the #3619 file-level `use` extraction).
+  `file_imports_foreign_callee_name` (the F11/F22 import-defeat scanner,
+  a bounded lexical `use` scan over the masked file source at any brace
+  depth).
 - `crates/ripr/src/analysis/facts/build.rs` — `package_names` from the
-  root manifest, feeding the own-crate side of the import gate.
+  root manifest (the `[package] name` plus the `[lib] name` target, each
+  in raw and crate-identifier form), feeding the own-crate side of the
+  import gate.
 - `crates/ripr/src/analysis/classifier/evidence.rs` — the caller-supplied
   per-test defeat closure threading `FileFacts.source`.
 - `crates/ripr/src/analysis/test_grip_evidence.rs` —
@@ -329,9 +363,14 @@ the #13162 `expect_response` comparison shape.
   fixture; 1.2 -> 1.3 for the #3731 review grammar fixes (bounded
   depth-0 terminal arms, first-comma `matches!` slices, bare-only shadow
   scoping); 1.3 -> 1.4 for the #3731 review round-4 fixes (successful
-  exits, observed-cast pins); classified `CACHE_SCHEMA_VERSION` 1.6 ->
-  1.7 -> 1.8, sharded 0.12 -> 0.13 -> 0.14, and compact 0.13 -> 0.14 ->
-  0.15 so warm classified envelopes derived from pre-fix oracle facts
+  exits, observed-cast pins); 1.4 -> 1.5 for the #3731 review round-5
+  fixes (binding-rooted guard-equality pins, first-control-transfer
+  termination, every-arm pin collection); classified
+  `CACHE_SCHEMA_VERSION` 1.6 -> 1.7 -> 1.8 -> 1.9, sharded 0.12 -> 0.13
+  -> 0.14 -> 0.15, and compact 0.13 -> 0.14 -> 0.15 -> 0.16 (the last
+  steps for the round-4 and round-5 fixes, including the bare-only repo
+  scrutinee gate, the nested-import defeat, and the lib-target own-crate
+  names) so warm classified envelopes derived from pre-fix oracle facts
   cannot serve stale discrimination.
 
 ## Metrics

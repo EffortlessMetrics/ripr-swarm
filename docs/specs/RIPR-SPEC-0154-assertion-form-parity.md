@@ -45,23 +45,15 @@ owner's source role.
   semantics differ; wrong-target, unrelated-strong, and opaque-helper
   controls stay non-crediting.
 - (#3709, bounded addition) A guarded Result match over a direct,
-  resolved callee result (`match path::to::callee(..) { .. }` — no
-  method receiver, no trailing `?`, no macro, no chain) whose block
-  holds at least one `Err(` arm plus an `Ok(` arm or a catch-all arm
-  carries a `guarded_result_match` oracle when every Err arm both pins
-  and terminates. Pins: the arm pattern proper, a
-  `matches!`/`assert_matches!` pattern in body or guard, or a guard
-  equality `==`/`!=` against a variant path rank strong; a bare
-  concrete downcast pin ranks medium. Terminal: a loud failure body
-  (`panic!`/`assert!`/`bail!`/`return`/re-raise/unwrap), or a guarded
-  accept arm (`Err(e) if <pin> => {}`) whose catch-all arms all fail
-  loudly — the historical `expect_response` routing shape. The oracle
-  binds to the scrutinee callee, so a probe whose owner is that callee
-  gains observation without changed-line token overlap. No credit from
-  a bare `?`, terminal `Ok(())`, wildcard or no-op Err arms, silent
-  catch-alls, message-only diagnostics, shadowed callee names, or
-  shapes too weak to pin; one pinned arm beside an unpinned escape arm
-  is not an exact identity and stays unrecognized.
+  resolved callee result now produces its own owner-bound oracle
+  (`guarded_result_match`). That contract — recognition grammar, pin and
+  termination rules, confirmation gates, fixtures, and cache generations
+  — is owned by RIPR-SPEC-0175
+  (`docs/specs/RIPR-SPEC-0175-guarded-result-match-observations.md`);
+  this spec carries no separate guarded-form behavior. The standing
+  boundary stays the non-goal below: the guarded Result match is a
+  separate, owner-bound producer, not an assertion twin of this spec's
+  bounded twin grammar.
 
 ## Required Evidence
 
