@@ -27,6 +27,7 @@ mod command;
 pub mod convergence;
 mod dispatch;
 mod dogfood;
+mod driver;
 mod evidence_audit;
 mod evidence_promotion;
 mod evidence_quality;
@@ -494,6 +495,7 @@ pub(crate) fn acquire_test_cwd_read_guard() -> CwdReadGuard<'static> {
 }
 
 fn main() {
+    driver::bootstrap();
     let command = XtaskCommand::parse(std::env::args().skip(1));
     let result = dispatch::execute(command);
     if let Err(err) = result {
