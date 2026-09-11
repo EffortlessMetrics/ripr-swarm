@@ -236,6 +236,13 @@ fn analyze_related_assertions(
         error_construction_variant: error_construction_variant.as_deref(),
         family: &probe.family,
         wrapper_seam,
+        // #3709: the owner's bare name is the segment after the symbol's
+        // final `::` separator (`src/lib.rs::impl Discount::score` -> `score`,
+        // `src/lib.rs::expect_response` -> `expect_response`).
+        owner_callee: probe.owner.as_ref().and_then(|symbol| {
+            let name = symbol.0.rsplit("::").next()?;
+            (!name.is_empty()).then_some(name)
+        }),
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     let mut related = Vec::new();
@@ -359,6 +366,11 @@ struct RevealMatchContext<'a> {
     /// binding is not statically establishable and nothing may confirm
     /// observation through lexical matching.
     wrapper_seam: bool,
+    /// #3709: the changed owner's bare function name, when the probe has
+    /// one. A guarded Result match whose scrutinee directly calls this
+    /// callee observes the owner's returned `Result` — the exact sink for
+    /// the value/error families — without any changed-line token overlap.
+    owner_callee: Option<&'a str>,
 }
 
 /// Returns `(matched, has_token_match)`.
@@ -411,6 +423,7 @@ fn assertion_matches_probe_detail_with_literals(
         error_construction_variant,
         family,
         wrapper_seam,
+        owner_callee,
     } = *context;
     let token_match = probe_tokens
         .iter()
@@ -419,6 +432,20 @@ fn assertion_matches_probe_detail_with_literals(
         && rust_string_literals(&assertion.text)
             .iter()
             .any(|literal| effect_literals.contains(literal));
+    // #3709: a guarded Result match whose scrutinee directly calls the
+    // probe's owner observes the owner's returned `Result` — the sink every
+    // value/error behavior in the owner flows through — regardless of the
+    // changed line's tokens. The oracle's text embeds the scrutinee callee,
+    // so the binding is same-entity by name, not token coincidence; a
+    // shadowed callee never produces the oracle (extraction-side defeat),
+    // and only the result-defined families (ErrorPath, ReturnValue) credit:
+    // a changed effect or call inside the owner need not flow through the
+    // matched result, so those families keep their existing observers.
+    let producer_owned_result = owner_callee.is_some_and(|owner| {
+        matches!(assertion.kind, OracleKind::GuardedResultMatch)
+            && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::ReturnValue)
+            && contains_as_whole_word(&assertion.text, owner)
+    });
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
@@ -432,9 +459,10 @@ fn assertion_matches_probe_detail_with_literals(
             .iter()
             .any(|v| contains_as_whole_word(&assertion.text, v))
     } else if wrapper_seam {
+        // A #3700 wrapper error seam stays unconfirmable: see above.
         false
     } else {
-        token_match || effect_literal_match
+        token_match || effect_literal_match || producer_owned_result
     };
     // Fail-closed: if error_construction_variant is None (no parseable variant
     // in the probe), fall through to the standard token_match + family_match
@@ -449,7 +477,11 @@ fn assertion_matches_probe_detail_with_literals(
         return (token_match || effect_literal_match, variant_matches);
     }
     let family_match = oracle_matches_family(family, assertion);
-    let matched = token_match || effect_literal_match || family_match || assertion_count == 1;
+    let matched = token_match
+        || effect_literal_match
+        || family_match
+        || producer_owned_result
+        || assertion_count == 1;
     (matched, has_token_match)
 }
 
@@ -470,6 +502,7 @@ fn assertion_matches_probe_detail(
             error_construction_variant,
             family,
             wrapper_seam: false,
+            owner_callee: None,
         },
         assertion,
         assertion_count,
@@ -699,6 +732,9 @@ fn build_discriminate_evidence(
                 OracleKind::ExactErrorVariant => {
                     "Strong oracle found: exact error variant assertion"
                 }
+                OracleKind::GuardedResultMatch => {
+                    "Strong oracle found: guarded Result match over the changed owner's result"
+                }
                 OracleKind::WholeObjectEquality => {
                     "Strong oracle found: whole-object equality assertion"
                 }
@@ -714,6 +750,9 @@ fn build_discriminate_evidence(
                 }
                 OracleKind::MockExpectation => {
                     "Medium oracle found: mock or expectation observes the changed behavior"
+                }
+                OracleKind::GuardedResultMatch => {
+                    "Medium oracle found: guarded Result match pins the error type, not an exact variant"
                 }
                 _ => "Medium oracle found: property or partial structural assertion",
             },
@@ -1837,6 +1876,13 @@ return Err(\"typed pin\".into());
         }
     }
 
+    fn owned_probe(family: ProbeFamily, expression: &str, owner: &str) -> Probe {
+        Probe {
+            owner: Some(SymbolId(format!("src/lib.rs::{owner}"))),
+            ..probe(family, expression)
+        }
+    }
+
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
             id: ProbeId("probe:test".to_string()),
@@ -1888,6 +1934,123 @@ return Err(\"typed pin\".into());
             strength,
             observed_tokens: extract_identifier_tokens(text),
         }
+    }
+
+    // --- #3709 producer-owned guarded Result match ---
+
+    /// A guarded Result match whose scrutinee directly calls the probe's
+    /// owner confirms observation even with zero changed-line token overlap.
+    #[test]
+    fn guarded_result_match_on_owner_confirms_observation_without_token_overlap() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "validates_ready_response",
+            vec![oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleKind::GuardedResultMatch,
+                OracleStrength::Strong,
+            )],
+        );
+        let (observe, discriminate, related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(discriminate.state, StageState::Yes, "{discriminate:?}");
+        assert!(
+            discriminate
+                .summary
+                .contains("guarded Result match over the changed owner's result"),
+            "{discriminate:?}"
+        );
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].oracle_kind, OracleKind::GuardedResultMatch);
+    }
+
+    /// The same oracle against a probe owned by a different function never
+    /// confirms observation: the binding is same-entity by name.
+    #[test]
+    fn guarded_result_match_on_wrong_owner_stays_unverified() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_a_different_helper",
+            vec![oracle(
+                "match other_helper(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleKind::GuardedResultMatch,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, discriminate, related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
+
+        assert_eq!(discriminate.state, StageState::Weak, "{discriminate:?}");
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "wrong owner must not confirm: {discriminate:?}"
+        );
+        assert_eq!(related.len(), 1, "association is via single-assertion only");
+    }
+
+    /// A medium (type-pin) guarded match confirms observation but keeps the
+    /// seam below exposed: the error type is pinned, the variant is not.
+    #[test]
+    fn guarded_result_match_type_pin_keeps_discriminate_weak() {
+        let probe = owned_probe(
+            ProbeFamily::ErrorPath,
+            "return Err(Box::new(ParseError::InvalidData { .. }));",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "checks_error_type",
+            vec![oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => .downcast_ref::<ParseError> }",
+                OracleKind::GuardedResultMatch,
+                OracleStrength::Medium,
+            )],
+        );
+        let (observe, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(discriminate.state, StageState::Weak, "{discriminate:?}");
+        assert!(
+            !matches!(discriminate.state, StageState::Yes),
+            "a type-only pin must not read exposed"
+        );
+    }
+
+    /// Effect families never take the producer-owned path: a changed call or
+    /// effect inside the owner need not flow through the matched result.
+    #[test]
+    fn guarded_result_match_does_not_credit_effect_families() {
+        let probe = owned_probe(
+            ProbeFamily::SideEffect,
+            "audit_log.append(event);",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_result",
+            vec![oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleKind::GuardedResultMatch,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_ne!(
+            discriminate.state,
+            StageState::Yes,
+            "effect families keep their own observers: {discriminate:?}"
+        );
     }
 
     // --- RIPR-SPEC-0093 arm-blind downgrade ---

@@ -1912,6 +1912,16 @@ pub(crate) fn oracle_semantics_for(
                     .to_string(),
             upgrade_suggestion: None,
         },
+        OracleKind::GuardedResultMatch => OracleSemantics {
+            observes: "the callee's returned Result through a guarded Ok/Err match".to_string(),
+            missing:
+                "an exact error-variant pin in the Err guard when only the error type is pinned"
+                    .to_string(),
+            upgrade_suggestion: Some(
+                "pin the exact error variant inside the Err guard with matches! or assert_matches!"
+                    .to_string(),
+            ),
+        },
         OracleKind::Unknown => OracleSemantics {
             observes: "no recognized concrete oracle shape".to_string(),
             missing: "a discriminator assertion for the seam's observable behavior".to_string(),
@@ -1957,6 +1967,7 @@ fn related_test_grip(
             OracleKind::BroadError => "is_err / broad-error assertion".to_string(),
             OracleKind::SmokeOnly => "smoke-only assertion".to_string(),
             OracleKind::MockExpectation => "mock expectation".to_string(),
+            OracleKind::GuardedResultMatch => "guarded Result match".to_string(),
             OracleKind::Unknown => "no recognised oracle".to_string(),
         }
     };

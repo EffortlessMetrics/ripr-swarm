@@ -866,7 +866,13 @@ path = "docs/specs/RIPR-SPEC-0173-trial-subject-evidence-parity.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #3603 records the trial subject evidence-parity contract: a named-invocation trial subject keeps its registration-invocation span while its calls/oracles/literals widen over exactly the code it exercises (one level of a provably-unshadowed top-level helper-callback body, method-position unwrap/expect smoke oracles with receiver-ful text and real lines), with every ambiguous binding failing closed and the classified seam-cache generations bumping with the semantic change."
-
+[[artifact]]
+id = "RIPR-SPEC-0175"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0175-guarded-result-match-observations.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #3709 records the owner-bound guarded Result match observation contract: a test-body match over a direct callee result whose Err arms every pin and terminate produces a guarded_result_match oracle bound to that callee (classic Ok/Err forms and the guarded-routing form with a loud catch-all), with wildcard/no-op arms, message-only diagnostics, non-direct scrutinees, and shadowed callees failing closed, and the file-fact cache generations bumping with the oracle semantics."
 [[artifact]]
 id = "RIPR-SPEC-0174"
 kind = "spec"

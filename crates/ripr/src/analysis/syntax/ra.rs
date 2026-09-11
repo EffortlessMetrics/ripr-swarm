@@ -20,7 +20,7 @@ use crate::analysis::rust_index::{
     PROBE_SHAPE_RETURN_VALUE, PROBE_SHAPE_SIDE_EFFECT, ProbeShapeFact, TestFact,
     classify_assertion, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
     extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
-    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
+    guarded_result_match_scan, is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1054,9 +1054,19 @@ fn extract_parser_oracles(
     for oracle in err_return_guard_oracles(&function_text, function_start) {
         assertions.push(oracle);
     }
+    // #3709: guarded Result matches over direct callee results are extracted
+    // by the dedicated scanner, which owns the whole statement — the
+    // line-scanned statement joiner must not also swallow the match block
+    // through the `expect_` name sniff.
+    let guarded_matches = guarded_result_match_scan(&function_text, function_start);
     for oracle in
         extract_line_scanned_oracles(&function.syntax().text().to_string(), function_start)
+            .into_iter()
+            .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
     {
+        assertions.push(oracle);
+    }
+    for oracle in guarded_matches.oracles {
         assertions.push(oracle);
     }
 
@@ -1784,6 +1794,59 @@ mod guard_pipeline_debug_tests {
                 .iter()
                 .any(|oracle| oracle.kind == crate::domain::OracleKind::RelationalCheck),
             "guard must credit through the parser path: {:?}",
+            test.assertions
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parser_path_credits_guarded_routing_match_in_test_facts() -> Result<(), String> {
+        // #3709: the guarded-routing form over a direct callee result —
+        // guarded accept arm plus loud catch-all, no `Ok` arm, as in the
+        // historical `expect_response` harness — must credit through the
+        // parser path, and the line-scanned joiner must not also swallow
+        // the same statement into a duplicate/mock-expectation fact.
+        let source = concat!(
+            "use routes_fixture::expect_ready;\n",
+            "\n",
+            "#[test]\n",
+            "fn rejects_unready_kind() {\n",
+            "    match expect_ready(\"busy\", 12) {\n",
+            "        Err(error) if error.kind() == io::ErrorKind::InvalidData => {}\n",
+            "        result => bail!(\"accepted: {result:?}\"),\n",
+            "    }\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(std::path::Path::new("tests/routes.rs"), source)
+            .map_err(|error| error.to_string())?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "rejects_unready_kind")
+            .ok_or_else(|| format!("test missing: {:?}", facts.tests))?;
+        let guarded: Vec<_> = test
+            .assertions
+            .iter()
+            .filter(|oracle| oracle.kind == crate::domain::OracleKind::GuardedResultMatch)
+            .collect();
+        assert_eq!(
+            guarded.len(),
+            1,
+            "exactly one guarded Result match oracle: {:?}",
+            test.assertions
+        );
+        assert!(
+            guarded[0].text.contains("match expect_ready(..)"),
+            "the scrutinee callee is the binding token: {}",
+            guarded[0].text
+        );
+        assert!(
+            !test
+                .assertions
+                .iter()
+                .any(|oracle| oracle.kind == crate::domain::OracleKind::MockExpectation),
+            "the expect_-sniff joiner must not swallow the owned match: {:?}",
             test.assertions
         );
         Ok(())

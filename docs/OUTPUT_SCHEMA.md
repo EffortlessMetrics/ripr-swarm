@@ -1654,6 +1654,7 @@ while `call_effect` remains the fallback for other observable calls.
 
 - `exact_value`
 - `exact_error_variant`
+- `guarded_result_match`
 - `whole_object_equality`
 - `snapshot`
 - `relational_check`

@@ -227,7 +227,7 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// build against the current manifests, and the #3636 reachability
 /// authority runs inside that re-application — so a warm hit cannot
 /// bypass either validation or reachability classification.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.0";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.2";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2641,7 +2641,19 @@ mod tests {
         // for the harness registry itself: it re-applies after the
         // file-fact cache loads, so #3636 cannot be bypassed by a warm
         // file-fact hit.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.0");
+        // 1.0 -> 1.1: the guarded-Result-match oracle (#3709) changed the
+        // extracted FileFacts assertions vocabulary (new
+        // `guarded_result_match` kind and statement suppression), so a
+        // warm pre-extension file-fact hit cannot reuse the old oracle
+        // semantics.
+        // 1.1 -> 1.2: the guarded-Result-match grammar gained the
+        // guarded-routing form (guarded accept arm + loud catch-all, no
+        // `Ok` arm), changing both which statements are suppressed from
+        // the generic joiners and which oracle facts are emitted. A warm
+        // 1.1 hit demonstrably replays the pre-routing classification
+        // (observed on a real fixture during #3709), so the generation
+        // moves again.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.2");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes

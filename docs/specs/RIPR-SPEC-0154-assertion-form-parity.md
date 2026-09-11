@@ -44,6 +44,24 @@ owner's source role.
 - Broad versus exact oracle forms remain different wherever the
   semantics differ; wrong-target, unrelated-strong, and opaque-helper
   controls stay non-crediting.
+- (#3709, bounded addition) A guarded Result match over a direct,
+  resolved callee result (`match path::to::callee(..) { .. }` — no
+  method receiver, no trailing `?`, no macro, no chain) whose block
+  holds at least one `Err(` arm plus an `Ok(` arm or a catch-all arm
+  carries a `guarded_result_match` oracle when every Err arm both pins
+  and terminates. Pins: the arm pattern proper, a
+  `matches!`/`assert_matches!` pattern in body or guard, or a guard
+  equality `==`/`!=` against a variant path rank strong; a bare
+  concrete downcast pin ranks medium. Terminal: a loud failure body
+  (`panic!`/`assert!`/`bail!`/`return`/re-raise/unwrap), or a guarded
+  accept arm (`Err(e) if <pin> => {}`) whose catch-all arms all fail
+  loudly — the historical `expect_response` routing shape. The oracle
+  binds to the scrutinee callee, so a probe whose owner is that callee
+  gains observation without changed-line token overlap. No credit from
+  a bare `?`, terminal `Ok(())`, wildcard or no-op Err arms, silent
+  catch-alls, message-only diagnostics, shadowed callee names, or
+  shapes too weak to pin; one pinned arm beside an unpinned escape arm
+  is not an exact identity and stays unrecognized.
 
 ## Required Evidence
 
@@ -89,7 +107,10 @@ leak + production control); `analysis/syntax/ra.rs`
 
 ## Non-Goals
 
-- No recognition of `match`-arm Err returns, `assert_cmd` chains, or
+- No recognition of `match`-arm Err returns in this spec's bounded twin
+  grammar; the guarded Result match is a separate, owner-bound producer
+  (RIPR-SPEC-0175, #3709), not an assertion twin.
+- No recognition of `assert_cmd` chains, or
   stdout `.contains` integration forms (later slices of #3284's corpus
   table).
 - No change to recognized-form classification strengths.
