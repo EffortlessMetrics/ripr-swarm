@@ -953,6 +953,7 @@ fn parser_oracles_for_node_tokens(
                         strength: OracleStrength::Smoke,
                         observed_tokens: extract_identifier_tokens(&text),
                         text,
+                        ok_value_observed: None,
                     });
                     index = close_index;
                     index += 1;
@@ -1094,6 +1095,7 @@ fn parser_oracles_for_node_tokens(
                     strength: classification.strength,
                     observed_tokens: extract_identifier_tokens(&text),
                     text,
+                    ok_value_observed: None,
                 });
                 // The macro body has been consumed; resuming inside it
                 // would rescan nested idents as separate top-level

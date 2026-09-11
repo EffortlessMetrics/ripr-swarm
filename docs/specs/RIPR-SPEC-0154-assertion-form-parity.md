@@ -44,6 +44,16 @@ owner's source role.
 - Broad versus exact oracle forms remain different wherever the
   semantics differ; wrong-target, unrelated-strong, and opaque-helper
   controls stay non-crediting.
+- (#3709, bounded addition) A guarded Result match over a direct,
+  resolved callee result now produces its own owner-bound oracle
+  (`guarded_result_match`). That contract — recognition grammar, pin and
+  termination rules, confirmation gates, fixtures, and cache generations
+  — is owned by RIPR-SPEC-0175
+  (`docs/specs/RIPR-SPEC-0175-guarded-result-match-observations.md`);
+  this spec carries no separate guarded-form behavior. The standing
+  boundary stays the non-goal below: the guarded Result match is a
+  separate, owner-bound producer, not an assertion twin of this spec's
+  bounded twin grammar.
 
 ## Required Evidence
 
@@ -89,7 +99,10 @@ leak + production control); `analysis/syntax/ra.rs`
 
 ## Non-Goals
 
-- No recognition of `match`-arm Err returns, `assert_cmd` chains, or
+- No recognition of `match`-arm Err returns in this spec's bounded twin
+  grammar; the guarded Result match is a separate, owner-bound producer
+  (RIPR-SPEC-0175, #3709), not an assertion twin.
+- No recognition of `assert_cmd` chains, or
   stdout `.contains` integration forms (later slices of #3284's corpus
   table).
 - No change to recognized-form classification strengths.

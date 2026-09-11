@@ -6338,6 +6338,38 @@ mod tests {
         Ok(())
     }
 
+    // #3731 review: exemplar selection consumes the shared kind matcher, so
+    // a Strong GuardedResultMatch related test is now nominatable for an
+    // ErrorVariant seam (exactly-variant discrimination is graded in
+    // oracle_discriminates_seam; the kind gate only decides nomination).
+    #[test]
+    fn kind_gate_error_variant_seam_with_guarded_result_match_strong_test_is_nominated()
+    -> Result<(), String> {
+        let guarded_strong = related_test_with(
+            "authenticate_pins_revoked_token_via_guarded_match",
+            OracleKind::GuardedResultMatch,
+            OracleStrength::Strong,
+            crate::analysis::test_grip_evidence::RelationConfidence::High,
+        );
+        let classified = classified_with(
+            error_variant_seam(),
+            SeamGripClass::WeaklyGripped,
+            vec![guarded_strong],
+        );
+        let json = render_agent_seam_packets_json(&[classified], None);
+        if json.contains("\"nearest_strong_test_to_imitate\": null") {
+            return Err(format!(
+                "#3731: GuardedResultMatch strong test must be nominated for ErrorVariant seam, not null; got: {json}"
+            ));
+        }
+        if !json.contains("\"name\": \"authenticate_pins_revoked_token_via_guarded_match\"") {
+            return Err(format!(
+                "#3731: expected the guarded-match test nominated in: {json}"
+            ));
+        }
+        Ok(())
+    }
+
     // Fixture 4 (must-not-over-credit control):
     // ErrorVariant seam with a Strong relational/whole-object test and NO ExactErrorVariant test
     // → nearest_strong == null, grip stays weakly_gripped.

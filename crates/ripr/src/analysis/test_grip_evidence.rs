@@ -1493,11 +1493,146 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
     if seam.kind() == SeamKind::FieldConstruction {
         return field_construction_oracle_matches_seam_field(seam, &oracle.text);
     }
+    if matches!(oracle.kind, OracleKind::GuardedResultMatch) {
+        // #3731 review: a guarded Result match discriminates only when its
+        // exact pin names the seam's changed variant — the same rule as the
+        // reveal-side confirmation gate. A sibling-variant or type-only pin
+        // never discriminates. The fact's Ok-arm observation decision rides
+        // along for success-payload return-value seams (RIPR-SPEC-0175).
+        return guarded_result_oracle_matches_seam_variant(
+            seam,
+            &oracle.text,
+            oracle.ok_value_observed,
+        );
+    }
     if seam.kind() != SeamKind::ErrorVariant {
         return true;
     }
     // ErrorVariant seam: require variant-level structural match.
     error_variant_oracle_matches_seam_variant(seam, &oracle.text)
+}
+
+/// The scrutinee callee embedded in a synthesized guarded-Result-match
+/// oracle text (`match <path>(..) { .. }`), when the scrutinee is a BARE
+/// single-segment path (#3731 review F20: repo discrimination aligns with
+/// the diff-path bare-only rule). A qualified scrutinee
+/// (`other_crate::parse`) shares its terminal segment with any same-named
+/// owner, so reducing the path to that segment would bind a different
+/// entity by token coincidence — qualified scrutinees do not discriminate,
+/// and `None` fails closed. `None` also when the text does not embed a
+/// recognizable plain-path scrutinee (#3731 review round 4).
+fn guarded_oracle_scrutinee_callee(oracle_text: &str) -> Option<&str> {
+    let rest = oracle_text.strip_prefix("match ")?;
+    let open = rest.find("(..)")?;
+    let path = rest[..open].trim();
+    let plain = !path.is_empty()
+        && path.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == ':'
+        })
+        && path.split("::").all(|segment| !segment.is_empty());
+    if !plain {
+        return None;
+    }
+    if path.contains("::") {
+        return None;
+    }
+    Some(path)
+}
+
+/// The variant pin carried by a synthesized guarded-Result-match oracle
+/// text (`... Err(..) => Some(ParseError::InvalidData { .. }) }`): the
+/// slice after the `Err(..) =>` template marker — cut before the
+/// catch-all template tail when the routing form appended one — reduced
+/// to qualified variant paths. Empty when the pin names no variant (a
+/// type-only pin), so exact-variant seams fail closed.
+fn guarded_oracle_variant_pins(oracle_text: &str) -> Vec<String> {
+    use super::classify::enum_variant_values;
+
+    const MARKER: &str = "Err(..) => ";
+    let Some(start) = oracle_text.find(MARKER).map(|at| at + MARKER.len()) else {
+        return Vec::new();
+    };
+    let rest = &oracle_text[start..];
+    let pin = match rest.find(", _ => ..") {
+        Some(end) => &rest[..end],
+        None => rest.strip_suffix(" }").unwrap_or(rest),
+    };
+    enum_variant_values(pin)
+}
+
+/// Variant comparison for a `GuardedResultMatch` oracle against an
+/// ErrorVariant or ReturnValue seam (#3731 review).
+///
+/// Callee identity gates everything (#3731 review round 4, F20): the
+/// synthesized text embeds the scrutinee path after `match `, and a
+/// guarded match over a DIFFERENT callee observes someone else's result no
+/// matter which variant it pins. The scrutinee must be BARE and exactly
+/// equal to the seam's owner terminal name — a qualified scrutinee whose
+/// terminal segment matches (`other_crate::parse` over an owner named
+/// `parse`) is the token-coincidence family and never discriminates, the
+/// same bare-only rule the reveal side applies; an unrecognizable or
+/// qualified scrutinee fails closed.
+///
+/// - An `ErrorVariant` seam compares the pin against the producer-owned
+///   exact variant identity. A payload-shaped identity (constructor or
+///   string payloads) fails closed: the synthesized pin masks string
+///   contents, so payload equality is not provable.
+/// - A `ReturnValue` seam compares pins only when its changed expression
+///   constructs an exact `Err(Type::Variant)` (the repo-mode analog of
+///   the reveal-side `error_construction_variant` gate); without one, the
+///   seam's changed value is the SUCCESS payload and the oracle must
+///   report an observing Ok arm (RIPR-SPEC-0175): the routing form (no Ok
+///   arm) and a payload-ignoring `Ok(_) => ..` arm never observe a changed
+///   Ok value, so they do not discriminate (fail closed, under-credit).
+///   The error-side comparisons (an `ErrorVariant` seam, and a
+///   `ReturnValue` seam on an exact Err construction) are unchanged — the
+///   Err guard is the discriminator there.
+fn guarded_result_oracle_matches_seam_variant(
+    seam: &RepoSeam,
+    oracle_text: &str,
+    ok_value_observed: Option<bool>,
+) -> bool {
+    use super::classify::{enum_variant_values, exact_error_variant};
+    use crate::analysis::seams::RequiredDiscriminator;
+
+    let Some(owner_terminal) = seam.owner().rsplit("::").next() else {
+        return false;
+    };
+    if guarded_oracle_scrutinee_callee(oracle_text) != Some(owner_terminal) {
+        return false;
+    }
+    let pins = guarded_oracle_variant_pins(oracle_text);
+    if pins.is_empty() {
+        return false;
+    }
+    match seam.kind() {
+        SeamKind::ErrorVariant => {
+            let RequiredDiscriminator::ErrorVariant { variant } = seam.required_discriminator()
+            else {
+                return false;
+            };
+            let Some(seam_variant) = exact_error_variant(variant) else {
+                let candidate = variant.trim();
+                let values = enum_variant_values(candidate);
+                if values.len() == 1 && values[0] == candidate {
+                    return pins.iter().any(|pin| pin == candidate);
+                }
+                return false;
+            };
+            pins.iter().any(|pin| pin == &seam_variant)
+                && tuple_variant_payload_oracle_matches_seam(seam, oracle_text)
+        }
+        _ => match exact_error_variant(seam.expression()) {
+            Some(seam_variant) => {
+                pins.iter().any(|pin| pin == &seam_variant)
+                    && tuple_variant_payload_oracle_matches_seam(seam, oracle_text)
+            }
+            // The seam's changed value is the SUCCESS payload: the oracle
+            // must report an observing Ok arm (RIPR-SPEC-0175) — `None`
+            // (not a guarded fact) and `Some(false)` both fail closed.
+            None => ok_value_observed == Some(true),
+        },
+    }
 }
 
 fn field_construction_oracle_matches_seam_field(seam: &RepoSeam, oracle_text: &str) -> bool {
@@ -1823,17 +1958,33 @@ fn substantial_literal_fragment(fragment: &str) -> bool {
 /// Do not duplicate this rule — call this function instead.
 pub(crate) fn oracle_kind_matches_seam_kind(seam_kind: SeamKind, oracle_kind: &OracleKind) -> bool {
     match seam_kind {
-        SeamKind::PredicateBoundary
-        | SeamKind::ReturnValue
-        | SeamKind::MatchArm
-        | SeamKind::FieldConstruction => matches!(
+        SeamKind::PredicateBoundary | SeamKind::MatchArm | SeamKind::FieldConstruction => matches!(
             oracle_kind,
             OracleKind::ExactValue
                 | OracleKind::WholeObjectEquality
                 | OracleKind::Snapshot
                 | OracleKind::RelationalCheck
         ),
-        SeamKind::ErrorVariant => matches!(oracle_kind, OracleKind::ExactErrorVariant),
+        // #3731 review: a guarded Result match observes the owner's
+        // returned `Result` — the sink a return-value seam changes through.
+        // Kind matching admits it; `oracle_discriminates_seam` applies the
+        // exact-variant comparison where the seam carries one.
+        SeamKind::ReturnValue => matches!(
+            oracle_kind,
+            OracleKind::ExactValue
+                | OracleKind::WholeObjectEquality
+                | OracleKind::Snapshot
+                | OracleKind::RelationalCheck
+                | OracleKind::GuardedResultMatch
+        ),
+        // #3731 review: a guarded match's Err-arm pin is an error
+        // discriminator; the exact-variant comparison happens in
+        // `oracle_discriminates_seam` (a sibling-variant or type-only pin
+        // never discriminates).
+        SeamKind::ErrorVariant => matches!(
+            oracle_kind,
+            OracleKind::ExactErrorVariant | OracleKind::GuardedResultMatch
+        ),
         SeamKind::SideEffect | SeamKind::CallPresence => {
             matches!(oracle_kind, OracleKind::MockExpectation)
         }
@@ -1845,6 +1996,25 @@ fn oracle_kind_matches_seam(seam: &RepoSeam, oracle: &OracleKind) -> bool {
 }
 
 pub(crate) fn oracle_semantics_for(
+    kind: &OracleKind,
+    strength: &OracleStrength,
+    seam_kind: SeamKind,
+) -> OracleSemantics {
+    let semantics = oracle_semantics_by_kind(kind, strength, seam_kind);
+    // #3731 review (coderabbit): an upgrade suggestion contradicts the
+    // strength it accompanies — a STRONG oracle already discriminates, so
+    // suggesting an upgrade would tell the reader the evidence is weaker
+    // than the field just stated. Medium-or-below keeps the suggestion.
+    if matches!(strength, OracleStrength::Strong) {
+        return OracleSemantics {
+            upgrade_suggestion: None,
+            ..semantics
+        };
+    }
+    semantics
+}
+
+fn oracle_semantics_by_kind(
     kind: &OracleKind,
     strength: &OracleStrength,
     seam_kind: SeamKind,
@@ -1912,6 +2082,16 @@ pub(crate) fn oracle_semantics_for(
                     .to_string(),
             upgrade_suggestion: None,
         },
+        OracleKind::GuardedResultMatch => OracleSemantics {
+            observes: "the callee's returned Result through a guarded Ok/Err match".to_string(),
+            missing:
+                "an exact error-variant pin in the Err guard when only the error type is pinned"
+                    .to_string(),
+            upgrade_suggestion: Some(
+                "pin the exact error variant inside the Err guard with matches! or assert_matches!"
+                    .to_string(),
+            ),
+        },
         OracleKind::Unknown => OracleSemantics {
             observes: "no recognized concrete oracle shape".to_string(),
             missing: "a discriminator assertion for the seam's observable behavior".to_string(),
@@ -1957,6 +2137,7 @@ fn related_test_grip(
             OracleKind::BroadError => "is_err / broad-error assertion".to_string(),
             OracleKind::SmokeOnly => "smoke-only assertion".to_string(),
             OracleKind::MockExpectation => "mock expectation".to_string(),
+            OracleKind::GuardedResultMatch => "guarded Result match".to_string(),
             OracleKind::Unknown => "no recognised oracle".to_string(),
         }
     };

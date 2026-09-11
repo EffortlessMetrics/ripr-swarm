@@ -1654,6 +1654,7 @@ while `call_effect` remains the fallback for other observable calls.
 
 - `exact_value`
 - `exact_error_variant`
+- `guarded_result_match`
 - `whole_object_equality`
 - `snapshot`
 - `relational_check`
@@ -2923,7 +2924,10 @@ Field contract:
   oracle-shape explanation with `observes`, `missing`, and nullable
   `upgrade_suggestion`. Weak, broad, smoke-only, and unknown oracle shapes
   name the behavior they observe, the discriminator they fail to observe, and
-  the assertion upgrade RIPR recommends for this seam kind.
+  the assertion upgrade RIPR recommends for this seam kind. The upgrade
+  suggestion is strength-gated (#3731): a `strong` oracle already
+  discriminates, so its `upgrade_suggestion` is `null`; medium-or-below
+  keeps the recommendation.
 - `seams[].evidence_record.recommendation` - bounded test-intent guidance
   derived from existing evidence: recommended test target, nearest test to
   imitate, candidate values, assertion shape, and verification command when

@@ -28,8 +28,9 @@ pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{PropagationWitnessV1, current_path_witness};
 pub(in crate::analysis) use reach::reach_evidence;
 pub(in crate::analysis) use related_tests::{
-    DependencyEdgeContext, body_contains_owner_call, find_related_tests,
+    DependencyEdgeContext, body_contains_owner_call, find_related_tests, package_prefix,
 };
+pub(in crate::analysis) use reveal::file_imports_foreign_callee_name;
 pub(in crate::analysis) use reveal::reveal_evidence_with_expression;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can

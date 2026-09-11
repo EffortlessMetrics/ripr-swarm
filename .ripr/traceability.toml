@@ -8924,3 +8924,52 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0175"
+name = "guarded Result match observations"
+spec = "docs/specs/RIPR-SPEC-0175-guarded-result-match-observations.md"
+tests = [
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests::positive_shape_credits_strong_variant_pin_with_callee_binding",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests::guarded_routing_form_without_ok_arm_credits_strong",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests::routing_form_falsifiers_stay_non_crediting",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests::loud_body_err_arm_with_neighbor_pollution_stays_honest",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests::multi_err_arm_requires_every_arm_pinned_and_terminal",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests::wildcard_or_noop_err_arms_never_credit",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests::wrong_error_predicate_and_message_only_diagnostics_do_not_pin",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests::non_direct_scrutinees_are_not_guarded_result_matches",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests::shadowed_callee_does_not_credit",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests::commented_out_match_and_string_mentions_never_credit",
+  "crates/ripr/src/analysis/syntax/ra.rs::guard_pipeline_debug_tests::parser_path_credits_guarded_routing_match_in_test_facts",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::guarded_result_match_on_owner_confirms_observation_without_token_overlap",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::guarded_result_match_on_wrong_owner_stays_unverified",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::guarded_result_match_type_pin_keeps_discriminate_weak",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::guarded_result_match_does_not_credit_effect_families",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::schema_versions_pin_the_role_composition_generation",
+]
+fixtures = [
+  "fixtures/guarded_result_match_owner_observation",
+  "fixtures/guarded_result_match_positive",
+  "fixtures/guarded_result_match_fail_closed",
+  "fixtures/guarded_result_match_swallowed",
+  "fixtures/guarded_result_match_conditional_failure",
+  "fixtures/guarded_result_match_sibling_variant",
+]
+code = [
+  "crates/ripr/src/analysis/extract/oracles/scan.rs",
+  "crates/ripr/src/analysis/extract/calls.rs",
+  "crates/ripr/src/analysis/syntax/ra.rs",
+  "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/domain/evidence.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0175-guarded-result-match-observations.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "policy/output_contracts.txt",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]

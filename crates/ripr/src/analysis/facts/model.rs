@@ -242,6 +242,19 @@ pub struct RustIndex {
     pub files: BTreeMap<PathBuf, FileFacts>,
     pub tests: Vec<TestFact>,
     pub functions: Vec<FunctionFact>,
+    /// #3731 review: crate names declared by the analyzed root manifest —
+    /// the `[package] name` plus the `[lib] name` target when declared —
+    /// each in raw and crate-identifier form (hyphens normalize to
+    /// underscores, #3731 review F23). Used by the reveal-side
+    /// same-name-import gate to tell an own-crate import (the normal
+    /// integration-test binding of the changed owner, through the lib
+    /// target) from a foreign same-name import. Workspace members'
+    /// manifests are not resolved here, so a same-name import through a
+    /// member crate's name counts as foreign (fail-closed under-credit);
+    /// empty when the root manifest declares no package (a virtual
+    /// workspace root).
+    #[serde(default)]
+    pub package_names: BTreeSet<String>,
     #[serde(default)]
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     #[serde(default)]
@@ -692,6 +705,16 @@ pub struct OracleFact {
     pub kind: OracleKind,
     pub strength: OracleStrength,
     pub observed_tokens: Vec<String>,
+    /// #3731 observation authority: whether the guarded Result match's Ok
+    /// arm(s) observe the unwrapped success value, decided over the Ok-arm
+    /// bodies at extraction time (the synthesized oracle text keeps its
+    /// `Ok(..) => ..` template, so this decision cannot be re-derived from
+    /// the text). `None` when the fact is not a guarded Result match;
+    /// `Some(false)` covers the guarded-routing form (no Ok arm — the
+    /// success value flows into a trivial catch-all) and payload-ignoring
+    /// Ok arms (`Ok(_) => {}`), so a return-value probe's confirmation is
+    /// refused (fail closed, under-credit).
+    pub ok_value_observed: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -10,13 +10,21 @@ fn reveal_evidence(
     probe: &Probe,
     related_tests: &[(&TestSummary, RelationReason)],
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
-    reveal_evidence_with_expression(probe, &probe.expression, related_tests)
+    reveal_evidence_with_expression(
+        probe,
+        &probe.expression,
+        related_tests,
+        &|_, _| false,
+        &|_, _| false,
+    )
 }
 
 pub(in crate::analysis) fn reveal_evidence_with_expression(
     probe: &Probe,
     analysis_expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
+    same_name_import_defeats: &dyn Fn(&TestSummary, &str) -> bool,
+    cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
     if related_tests.is_empty() {
         return (
@@ -34,7 +42,13 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
         );
     }
 
-    let analysis = analyze_related_assertions(probe, analysis_expression, related_tests);
+    let analysis = analyze_related_assertions(
+        probe,
+        analysis_expression,
+        related_tests,
+        same_name_import_defeats,
+        cross_package_name_defeats,
+    );
     let related = finalize_related_tests(analysis.related);
     let observe = build_observe_evidence(analysis.matched_any);
     let discriminate = build_discriminate_evidence(
@@ -174,6 +188,8 @@ fn analyze_related_assertions(
     probe: &Probe,
     analysis_expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
+    same_name_import_defeats: &dyn Fn(&TestSummary, &str) -> bool,
+    cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
 ) -> RevealAssertionAnalysis {
     let probe_tokens = if is_effect_family(&probe.family) {
         effect_target_tokens(analysis_expression)
@@ -236,6 +252,13 @@ fn analyze_related_assertions(
         error_construction_variant: error_construction_variant.as_deref(),
         family: &probe.family,
         wrapper_seam,
+        // #3709: the owner's bare name is the segment after the symbol's
+        // final `::` separator (`src/lib.rs::impl Discount::score` -> `score`,
+        // `src/lib.rs::expect_response` -> `expect_response`).
+        owner_callee: probe.owner.as_ref().and_then(|symbol| {
+            let name = symbol.0.rsplit("::").next()?;
+            (!name.is_empty()).then_some(name)
+        }),
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     let mut related = Vec::new();
@@ -262,11 +285,27 @@ fn analyze_related_assertions(
             });
             continue;
         }
+        // #3731 review (F11): computed once per test — whether the test's
+        // own file imports the owner callee's bare name from a FOREIGN
+        // path, which makes every bare-scrutinee binding in it ambiguous.
+        let import_defeats_owner = match_context
+            .owner_callee
+            .is_some_and(|callee| same_name_import_defeats(test, callee));
+        // #3731 review (G1): computed once per test — whether the test's
+        // own package defines a function with the owner callee's bare name
+        // while the changed owner lives in ANOTHER package, which makes the
+        // bare call ambiguous across packages the same way a foreign
+        // import does.
+        let cross_package_defeats_owner = match_context
+            .owner_callee
+            .is_some_and(|callee| cross_package_name_defeats(test, callee));
         for assertion in &test.assertions {
             let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
                 &match_context,
                 assertion,
                 test.assertions.len(),
+                import_defeats_owner,
+                cross_package_defeats_owner,
             );
             if matched {
                 if confirm_required {
@@ -359,6 +398,22 @@ struct RevealMatchContext<'a> {
     /// binding is not statically establishable and nothing may confirm
     /// observation through lexical matching.
     wrapper_seam: bool,
+    /// #3709: the changed owner's bare function name, when the probe has
+    /// one. A guarded Result match whose scrutinee directly calls this
+    /// callee observes the owner's returned `Result` — the exact sink for
+    /// the value/error families — without any changed-line token overlap.
+    owner_callee: Option<&'a str>,
+}
+
+/// The bare-scrutinee convention of the synthesized guarded-Result-match
+/// oracle text (extract::oracles::scan): the scrutinee path is embedded
+/// directly after `match `, so a BARE one-segment scrutinee appears as
+/// `match <callee>(`. A qualified scrutinee (`match helpers::parse(..)`)
+/// never contains that substring — reveal cannot resolve a qualified path
+/// to the probe owner's identity, so its confirmation stays unverified
+/// (#3731 review; identity resolution tracked on #3727).
+fn guarded_oracle_names_bare_callee(text: &str, callee: &str) -> bool {
+    text.contains(&format!("match {callee}("))
 }
 
 /// Returns `(matched, has_token_match)`.
@@ -399,10 +454,33 @@ struct RevealMatchContext<'a> {
 /// `map_err` conversion is not statically establishable, so the seam stays
 /// below `exposed` and carries the typed
 /// `wrapper_error_binding_unresolved` limitation.
+///
+/// A `GuardedResultMatch` assertion confirms a probe only through the
+/// producer-owned binding, under five #3731 fail-closed gates: the
+/// synthesized text must embed a BARE one-segment scrutinee
+/// (`match <owner>(..)` — a qualified path's identity is unresolvable
+/// here, #3727), when the changed expression constructs an exact
+/// error variant the guarded pin must name that exact variant, the
+/// related test's file must not import the owner callee's bare name from
+/// a FOREIGN path (a same-name import makes the bare binding ambiguous —
+/// see `file_imports_foreign_callee_name`), the test's own package
+/// must not define a same-named function while the changed owner lives in
+/// another package (a bare call may bind the test package's own function —
+/// the cross-package ambiguity gate), and — for a return-value probe whose
+/// changed value is the SUCCESS payload — the match's Ok arm must observe
+/// the unwrapped value (RIPR-SPEC-0175; the fact's extraction-time
+/// `ok_value_observed` decision): a routing form with no Ok arm and a
+/// payload-ignoring `Ok(_) => ..` arm never observe a changed Ok value, so
+/// those confirmations are refused (fail closed, under-credit). For a
+/// variant-carrying probe
+/// the qualifier token is not a specificity signal, so the guarded
+/// oracle's `has_token_match` is exactly the variant-gated owner binding.
 fn assertion_matches_probe_detail_with_literals(
     context: &RevealMatchContext,
     assertion: &OracleFact,
     assertion_count: usize,
+    import_defeats_owner: bool,
+    cross_package_defeats_owner: bool,
 ) -> (bool, bool) {
     let RevealMatchContext {
         probe_tokens,
@@ -411,6 +489,7 @@ fn assertion_matches_probe_detail_with_literals(
         error_construction_variant,
         family,
         wrapper_seam,
+        owner_callee,
     } = *context;
     let token_match = probe_tokens
         .iter()
@@ -419,6 +498,66 @@ fn assertion_matches_probe_detail_with_literals(
         && rust_string_literals(&assertion.text)
             .iter()
             .any(|literal| effect_literals.contains(literal));
+    // #3709: a guarded Result match whose scrutinee directly calls the
+    // probe's owner observes the owner's returned `Result` — the sink every
+    // value/error behavior in the owner flows through — regardless of the
+    // changed line's tokens. The oracle's text embeds the scrutinee callee,
+    // so the binding is same-entity by name, not token coincidence; a
+    // shadowed callee never produces the oracle (extraction-side defeat),
+    // and only the result-defined families (ErrorPath, ReturnValue) credit:
+    // a changed effect or call inside the owner need not flow through the
+    // matched result, so those families keep their existing observers.
+    //
+    // #3731 review, four fail-closed gates on the owner shortcut:
+    // - BARE scrutinee only. The synthesized text embeds the scrutinee path
+    //   after `match `, so a one-segment scrutinee reads `match <callee>(`;
+    //   a qualified path (`match helpers::parse(..)`) names an entity this
+    //   lexical view cannot resolve to the probe owner (an imported or
+    //   re-exported same-named callee is exactly the token-coincidence
+    //   family), so its observation stays unverified. Qualified-path
+    //   identity resolution is the #3727 follow-up.
+    // - Exact variant when the changed expression constructs one. A probe
+    //   with an `error_construction_variant` is confirmed only when the
+    //   guarded oracle's pin names that exact variant; a sibling-variant
+    //   (or type-only) guard does not observe the changed error
+    //   (RIPR-SPEC-0106 Part B, mirrored from the ExactErrorVariant gate).
+    // - No foreign same-name import in the related test's file (F11). An
+    //   import of the callee's bare name from a path outside the analyzed
+    //   crate makes the bare binding ambiguous between the owner and the
+    //   imported callee, so the confirmation is refused (fail-closed
+    //   under-credit). An own-crate import (`use this_crate::callee;` — the
+    //   normal integration-test binding) is the owner's own export and does
+    //   not defeat.
+    // - No same-named function in the test's OWN package when the owner
+    //   lives in another package (G1). The RustIndex knows the test
+    //   package's own functions; a bare `match <callee>(..)` scrutinee in
+    //   that test may bind the local definition instead of the owner, so
+    //   the confirmation is refused (fail-closed under-credit).
+    // - Ok-arm observation for success-payload return-value probes
+    //   (RIPR-SPEC-0175). A return-value probe whose changed expression
+    //   does NOT construct an exact error variant is a probe on the
+    //   owner's returned success value: it is discriminated only when the
+    //   match's Ok arm observes the unwrapped value. The routing form (no
+    //   Ok arm — the success value flows into a trivial catch-all) and a
+    //   payload-ignoring `Ok(_) => ..` arm never observe a changed Ok
+    //   value, so the confirmation is refused (fail closed, under-credit;
+    //   the extraction-time `ok_value_observed` decision rides the fact).
+    //   A return-value probe on an exact Err construction keeps the
+    //   Err-guard discriminator — the pin gate above names the changed
+    //   variant — the same principle that leaves ErrorPath probes
+    //   unchanged here.
+    let producer_owned_result = owner_callee.is_some_and(|owner| {
+        matches!(assertion.kind, OracleKind::GuardedResultMatch)
+            && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::ReturnValue)
+            && !import_defeats_owner
+            && !cross_package_defeats_owner
+            && guarded_oracle_names_bare_callee(&assertion.text, owner)
+            && error_construction_variant
+                .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant))
+            && (matches!(family, ProbeFamily::ErrorPath)
+                || error_construction_variant.is_some()
+                || assertion.ok_value_observed == Some(true))
+    });
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
@@ -432,9 +571,20 @@ fn assertion_matches_probe_detail_with_literals(
             .iter()
             .any(|v| contains_as_whole_word(&assertion.text, v))
     } else if wrapper_seam {
+        // A #3700 wrapper error seam stays unconfirmable: see above.
         false
+    } else if matches!(assertion.kind, OracleKind::GuardedResultMatch)
+        && error_construction_variant.is_some()
+    {
+        // Mirror of the ExactErrorVariant gate (#3731 review): for a
+        // variant-carrying probe, a guarded Result match confirms only
+        // through the variant-gated owner binding above. The shared
+        // enum-qualifier token (`ParseError` in `Err(ParseError::..)`) is
+        // not a specificity signal — a guard pinning a sibling variant of
+        // the same error type would otherwise clear the unverified flag.
+        producer_owned_result
     } else {
-        token_match || effect_literal_match
+        token_match || effect_literal_match || producer_owned_result
     };
     // Fail-closed: if error_construction_variant is None (no parseable variant
     // in the probe), fall through to the standard token_match + family_match
@@ -449,7 +599,11 @@ fn assertion_matches_probe_detail_with_literals(
         return (token_match || effect_literal_match, variant_matches);
     }
     let family_match = oracle_matches_family(family, assertion);
-    let matched = token_match || effect_literal_match || family_match || assertion_count == 1;
+    let matched = token_match
+        || effect_literal_match
+        || family_match
+        || producer_owned_result
+        || assertion_count == 1;
     (matched, has_token_match)
 }
 
@@ -470,10 +624,215 @@ fn assertion_matches_probe_detail(
             error_construction_variant,
             family,
             wrapper_seam: false,
+            owner_callee: None,
         },
         assertion,
         assertion_count,
+        false,
+        false,
     )
+}
+
+/// #3731 review (F11, F22): whether the related test's file imports the
+/// owner callee's bare name FROM A FOREIGN PATH — a `use` binding whose
+/// first path segment is neither `crate`/`self`/`super` nor one of the
+/// analyzed workspace's own package names (`crate_names`). Such an import
+/// makes a bare `match <callee>(..)` scrutinee ambiguous between the
+/// changed owner and the imported same-named callee, so the reveal-side
+/// owner binding must not confirm (fail closed, under-credit). An
+/// own-crate import (`use this_crate::callee;` — the normal
+/// integration-test binding of the changed owner) binds the owner itself
+/// and does not defeat.
+///
+/// Bounded lexical scan over the masked file source covering ALL `use`
+/// declarations (#3731 review F22): file-level items, module-nested `use`s
+/// (`mod tests { use other::expect_response; .. }` — the historical
+/// harness shape), and function-local imports. A binding is the terminal
+/// `::` segment of an import item — a simple path or a (nested) brace-list
+/// item; a `callee as alias` rename binds the alias, not the name. Glob
+/// (`use p::*;`) imports prove nothing and are not detected, and a
+/// brace-rooted `use {..};` with no path prefix counts as foreign (its
+/// binding target is not statically the owner's own export) — bounded-scan
+/// residuals; parser-backed import resolution is #3727. Scanning past
+/// module boundaries can defeat a confirmation for a test the nested
+/// import is not visible to — a documented under-credit residual, since
+/// lexical scope resolution is exactly what this scan cannot do.
+pub(in crate::analysis) fn file_imports_foreign_callee_name(
+    source: &str,
+    callee: &str,
+    crate_names: &std::collections::BTreeSet<String>,
+) -> bool {
+    if callee.is_empty() {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    for statement in all_use_statements(&masked) {
+        let statement = statement.trim();
+        let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
+        let Some(first_segment) = use_statement_first_segment(statement) else {
+            continue;
+        };
+        // Both sides compare in crate-identifier form (#3731 review F23):
+        // a hyphenated package name (`foo-bar`) is imported through its
+        // underscore identifier (`foo_bar`), so every stored crate name
+        // admits both spellings.
+        let own = crate_names
+            .iter()
+            .any(|name| name == first_segment || crate_identifier(name) == first_segment);
+        let foreign =
+            first_segment != "crate" && first_segment != "self" && first_segment != "super" && !own;
+        if foreign && use_statement_binds_name(statement, callee) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The crate-identifier form of a manifest name: hyphens normalize to
+/// underscores in crate identifiers, so a package named `foo-bar` is
+/// imported as `foo_bar` and an import gate must treat the two spellings
+/// as the same crate (#3731 review F23).
+fn crate_identifier(name: &str) -> String {
+    name.replace('-', "_")
+}
+
+/// Every `use` declaration in a (masked) source, at any brace depth: the
+/// statement runs from a whole-word `use` keyword to its terminating `;`
+/// (a `use` path or brace list cannot contain `;`, and comments/strings
+/// are already masked, so a masked-out `use` inside a string or comment
+/// never appears). Consuming each statement whole keeps a later
+/// same-tuned text inside one import from re-matching.
+fn all_use_statements(masked: &str) -> Vec<String> {
+    let bytes = masked.as_bytes();
+    let mut out = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let use_starts = bytes[index] == b'u'
+            && bytes.get(index + 1) == Some(&b's')
+            && bytes.get(index + 2) == Some(&b'e')
+            && (index == 0 || !is_ident_byte(bytes[index - 1]))
+            && bytes[index + 3..]
+                .first()
+                .is_some_and(|byte| byte.is_ascii_whitespace());
+        if use_starts {
+            let mut end = index;
+            while end < bytes.len() && bytes[end] != b';' {
+                end += 1;
+            }
+            if end < bytes.len() {
+                out.push(masked[index..=end].to_string());
+                index = end + 1;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    out
+}
+
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// The first path segment of a `use` statement (the keyword is still
+/// present): `use crate::x::y;` -> `crate`, `use a::b::{c};` -> `a`. An
+/// empty segment (a brace-rooted `use {..};`) signals no path prefix.
+fn use_statement_first_segment(statement: &str) -> Option<&str> {
+    let rest = statement.trim_start().strip_prefix("use")?;
+    let rest = rest.trim_start();
+    let end = rest
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(rest.len());
+    Some(&rest[..end])
+}
+
+/// Whether the `use` statement binds `callee` as an imported item: the
+/// terminal `::` segment of a brace-less path, or any brace-list item
+/// (nested brace lists recurse). `as` renames bind the alias; `*` and
+/// `self` bind nothing nameable here.
+fn use_statement_binds_name(statement: &str, callee: &str) -> bool {
+    let Some(rest) = statement.trim_start().strip_prefix("use") else {
+        return false;
+    };
+    use_items_bind(rest.trim_start(), callee)
+}
+
+/// Whether one comma-separated `use` item group binds `callee`. An item is
+/// a `::`-separated path that may end in a brace list; the binding of a
+/// brace-less item is its terminal segment (respecting `as` renames), and
+/// brace-list items recurse.
+fn use_items_bind(items: &str, callee: &str) -> bool {
+    for item in split_top_level_commas(items) {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        match item.find('{') {
+            None => {
+                if braceless_item_binds(item, callee) {
+                    return true;
+                }
+            }
+            Some(open) => {
+                if let Some(close) = matching_brace_close(item, open)
+                    && use_items_bind(&item[open + 1..close], callee)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// The binding name of a brace-less import item: its terminal `::`
+/// segment, with `callee as alias` renames resolving to the alias.
+fn braceless_item_binds(item: &str, callee: &str) -> bool {
+    let terminal = item.rsplit("::").next().unwrap_or(item).trim();
+    let mut parts = terminal.split_whitespace();
+    let name = parts.next().unwrap_or("");
+    if parts.next() == Some("as") {
+        return parts.next() == Some(callee);
+    }
+    name == callee && name != "*" && name != "self"
+}
+
+/// The comma-separated top-level (depth-0) slices of an item list.
+fn split_top_level_commas(items: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (index, character) in items.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(&items[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&items[start..]);
+    out
+}
+
+/// The byte offset of the `}` closing the `{` at `open`, or `None`.
+fn matching_brace_close(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (index, character) in text[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether the changed expression is a wrapper error seam: a `map_err`
@@ -699,6 +1058,9 @@ fn build_discriminate_evidence(
                 OracleKind::ExactErrorVariant => {
                     "Strong oracle found: exact error variant assertion"
                 }
+                OracleKind::GuardedResultMatch => {
+                    "Strong oracle found: guarded Result match over the changed owner's result"
+                }
                 OracleKind::WholeObjectEquality => {
                     "Strong oracle found: whole-object equality assertion"
                 }
@@ -714,6 +1076,9 @@ fn build_discriminate_evidence(
                 }
                 OracleKind::MockExpectation => {
                     "Medium oracle found: mock or expectation observes the changed behavior"
+                }
+                OracleKind::GuardedResultMatch => {
+                    "Medium oracle found: guarded Result match pins the error type, not an exact variant"
                 }
                 _ => "Medium oracle found: property or partial structural assertion",
             },
@@ -1837,6 +2202,13 @@ return Err(\"typed pin\".into());
         }
     }
 
+    fn owned_probe(family: ProbeFamily, expression: &str, owner: &str) -> Probe {
+        Probe {
+            owner: Some(SymbolId(format!("src/lib.rs::{owner}"))),
+            ..probe(family, expression)
+        }
+    }
+
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
             id: ProbeId("probe:test".to_string()),
@@ -1887,7 +2259,688 @@ return Err(\"typed pin\".into());
             kind,
             strength,
             observed_tokens: extract_identifier_tokens(text),
+            ok_value_observed: None,
         }
+    }
+
+    /// A guarded Result-match oracle fact with an explicit Ok-arm
+    /// observation decision, mirroring what the extraction-side scanner
+    /// threads into the fact (#3731 observation authority).
+    fn guarded_oracle(text: &str, strength: OracleStrength, ok_value_observed: bool) -> OracleFact {
+        OracleFact {
+            line: 2,
+            text: text.to_string(),
+            kind: OracleKind::GuardedResultMatch,
+            strength,
+            observed_tokens: extract_identifier_tokens(text),
+            ok_value_observed: Some(ok_value_observed),
+        }
+    }
+
+    // --- #3709 producer-owned guarded Result match ---
+
+    /// A guarded Result match whose scrutinee directly calls the probe's
+    /// owner confirms observation even with zero changed-line token overlap.
+    #[test]
+    fn guarded_result_match_on_owner_confirms_observation_without_token_overlap() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "validates_ready_response",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let (observe, discriminate, related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(discriminate.state, StageState::Yes, "{discriminate:?}");
+        assert!(
+            discriminate
+                .summary
+                .contains("guarded Result match over the changed owner's result"),
+            "{discriminate:?}"
+        );
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].oracle_kind, OracleKind::GuardedResultMatch);
+    }
+
+    /// The same oracle against a probe owned by a different function never
+    /// confirms observation: the binding is same-entity by name.
+    #[test]
+    fn guarded_result_match_on_wrong_owner_stays_unverified() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_a_different_helper",
+            vec![guarded_oracle(
+                "match other_helper(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let (_, discriminate, related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
+
+        assert_eq!(discriminate.state, StageState::Weak, "{discriminate:?}");
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "wrong owner must not confirm: {discriminate:?}"
+        );
+        assert_eq!(related.len(), 1, "association is via single-assertion only");
+    }
+
+    /// A medium (type-pin) guarded match confirms observation but keeps the
+    /// seam below exposed: the error type is pinned, the variant is not.
+    #[test]
+    fn guarded_result_match_type_pin_keeps_discriminate_weak() {
+        let probe = owned_probe(
+            ProbeFamily::ErrorPath,
+            "return Err(Box::new(ParseError::InvalidData { .. }));",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "checks_error_type",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => .downcast_ref::<ParseError> }",
+                OracleStrength::Medium,
+                true,
+            )],
+        );
+        let (observe, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(discriminate.state, StageState::Weak, "{discriminate:?}");
+        assert!(
+            !matches!(discriminate.state, StageState::Yes),
+            "a type-only pin must not read exposed"
+        );
+    }
+
+    /// Effect families never take the producer-owned path: a changed call or
+    /// effect inside the owner need not flow through the matched result.
+    #[test]
+    fn guarded_result_match_does_not_credit_effect_families() {
+        let probe = owned_probe(
+            ProbeFamily::SideEffect,
+            "audit_log.append(event);",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_result",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_ne!(
+            discriminate.state,
+            StageState::Yes,
+            "effect families keep their own observers: {discriminate:?}"
+        );
+    }
+
+    /// #3731 review: a guarded match pinning a SIBLING variant does not
+    /// confirm a probe whose changed expression constructs the exact
+    /// variant — the shared enum-qualifier token is not a specificity
+    /// signal, so the seam stays weakly exposed with an unverified
+    /// observation.
+    #[test]
+    fn guarded_result_match_sibling_variant_does_not_confirm() {
+        let probe = owned_probe(
+            ProbeFamily::ErrorPath,
+            "return Err(ParseError::InvalidData);",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "pins_a_sibling_variant",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::UnexpectedEof }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let (observe, discriminate, related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(observe.state, StageState::Yes, "the guard still observes");
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a sibling-variant guard must not read exposed: {discriminate:?}"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "the sibling variant leaves observation unverified: {discriminate:?}"
+        );
+        assert_eq!(
+            related.len(),
+            1,
+            "association survives; confirmation does not"
+        );
+    }
+
+    /// Positive control for the sibling gate: the SAME guarded match
+    /// pinning the exact changed variant does confirm, through the
+    /// variant-gated owner binding.
+    #[test]
+    fn guarded_result_match_exact_variant_on_owner_confirms() {
+        let probe = owned_probe(
+            ProbeFamily::ErrorPath,
+            "return Err(ParseError::InvalidData);",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "pins_the_exact_variant",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "the exact-variant guard must confirm: {discriminate:?}"
+        );
+    }
+
+    /// #3731 review: a qualified scrutinee sharing the owner's bare name
+    /// (`other_crate::expect_response`) never confirms the local owner —
+    /// reveal cannot resolve the qualified path's identity, so the
+    /// observation stays unverified.
+    #[test]
+    fn guarded_result_match_on_qualified_scrutinee_stays_unverified() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_a_qualified_same_named_callee",
+            vec![guarded_oracle(
+                "match other_crate::expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a qualified scrutinee must not bind the owner: {discriminate:?}"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "the qualified-path observation stays unverified: {discriminate:?}"
+        );
+    }
+
+    // --- #3731 observation authority (RIPR-SPEC-0175): Ok-arm observation ---
+
+    /// A return-value probe whose changed value is the SUCCESS payload is
+    /// not confirmed by a guarded-routing match with no Ok arm: the success
+    /// value flows into a trivial catch-all, so the test never observes a
+    /// change to it and the fact reports `ok_value_observed: Some(false)`.
+    #[test]
+    fn return_value_probe_routing_form_without_ok_arm_stays_unconfirmed() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "Ok(build_response(expected_id, trimmed.trim()))",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "routes_the_result",
+            vec![guarded_oracle(
+                "match expect_response(..) { Err(..) => ParseError::InvalidData, _ => .. }",
+                OracleStrength::Strong,
+                false,
+            )],
+        );
+        let (_, discriminate, related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a routing form never observes the Ok payload: {discriminate:?}"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "the unobserved success value stays unverified: {discriminate:?}"
+        );
+        assert_eq!(
+            related.len(),
+            1,
+            "association survives; confirmation does not"
+        );
+    }
+
+    /// A payload-ignoring Ok arm (`Ok(_) => {}`) does not confirm a
+    /// success-payload return-value probe either: the synthesized text
+    /// keeps its `Ok(..) => ..` template (output-contract stability), so
+    /// the unobserving decision rides the fact's `ok_value_observed`.
+    #[test]
+    fn return_value_probe_payload_ignoring_ok_arm_stays_unconfirmed() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "Ok(build_response(expected_id, trimmed.trim()))",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "ignores_the_payload",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }",
+                OracleStrength::Strong,
+                false,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "an Ok arm that ignores the payload never discriminates it: {discriminate:?}"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "the ignored payload stays unverified: {discriminate:?}"
+        );
+    }
+
+    /// Positive control: the same probe against an OBSERVING Ok arm
+    /// (`Ok(v) => assert_eq!(v, 3)`) confirms through the producer-owned
+    /// binding — the fact reports `ok_value_observed: Some(true)`.
+    #[test]
+    fn return_value_probe_observing_ok_arm_confirms() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "Ok(build_response(expected_id, trimmed.trim()))",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "asserts_the_payload",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "an observing Ok arm discriminates the success payload: {discriminate:?}"
+        );
+    }
+
+    /// ErrorPath probes keep the existing behavior: the Err guard is the
+    /// discriminator there, so a non-observing Ok arm never blocks the
+    /// variant-gated confirmation.
+    #[test]
+    fn error_path_probe_is_independent_of_ok_arm_observation() {
+        let probe = owned_probe(
+            ProbeFamily::ErrorPath,
+            "return Err(ParseError::InvalidData);",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "pins_the_error_variant",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }",
+                OracleStrength::Strong,
+                false,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "the Err guard discriminates regardless of the Ok arm: {discriminate:?}"
+        );
+    }
+
+    /// A return-value probe on an exact Err CONSTRUCTION also keeps the
+    /// Err-guard discriminator (the pin names the changed variant): the
+    /// Ok-arm observation requirement applies only to success-payload
+    /// probes — the shape the guarded-routing positive fixture pins.
+    #[test]
+    fn return_value_probe_on_err_construction_is_independent_of_ok_arm_observation() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "return Err(ParseError::InvalidData);",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "routes_the_error",
+            vec![guarded_oracle(
+                "match expect_response(..) { Err(..) => ParseError::InvalidData, _ => .. }",
+                OracleStrength::Strong,
+                false,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "the exact-variant pin discriminates the Err construction: {discriminate:?}"
+        );
+    }
+
+    // --- #3731 review round 4 (F11): foreign same-name import defeat ---
+
+    /// The related test's file importing the owner callee's bare name from
+    /// a FOREIGN path (`use other_crate::expect_response;`) makes the bare
+    /// scrutinee binding ambiguous — the owner confirmation is refused and
+    /// the observation stays unverified.
+    #[test]
+    fn foreign_same_name_import_defeats_owner_confirmation() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_an_imported_same_named_callee",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let test_source = "use other_crate::expect_response;\n";
+        let crate_names = std::collections::BTreeSet::new();
+        let (_, discriminate, _) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &[(&test, RelationReason::DirectOwnerCall)],
+            &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
+            &|_, _| false,
+        );
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a foreign same-name import must defeat the owner binding: {discriminate:?}"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "the ambiguous binding leaves observation unverified: {discriminate:?}"
+        );
+    }
+
+    /// Positive control: the same harness WITHOUT the import confirms —
+    /// and an OWN-CRATE import (the normal integration-test binding) does
+    /// not defeat, because it binds the owner's own export.
+    #[test]
+    fn no_import_or_own_crate_import_keeps_owner_confirmation() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_the_owner_directly",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let without_import = "";
+        let own_crate_import = "use guarded_result_match::{ParseError, expect_response};\n";
+        let own_crate_names: std::collections::BTreeSet<String> = ["guarded_result_match"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+
+        let (_, discriminate, _) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &[(&test, RelationReason::DirectOwnerCall)],
+            &|_, callee| file_imports_foreign_callee_name(without_import, callee, &own_crate_names),
+            &|_, _| false,
+        );
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "no import means no ambiguity: {discriminate:?}"
+        );
+
+        let (_, own_crate, _) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &[(&test, RelationReason::DirectOwnerCall)],
+            &|_, callee| {
+                file_imports_foreign_callee_name(own_crate_import, callee, &own_crate_names)
+            },
+            &|_, _| false,
+        );
+        assert_eq!(
+            own_crate.state,
+            StageState::Yes,
+            "an own-crate import binds the owner's own export and must not defeat: {own_crate:?}"
+        );
+    }
+
+    /// An aliased foreign import (`use other_crate::expect_response as
+    /// respond;`) binds the ALIAS, not the bare name, so the bare
+    /// scrutinee is unambiguous and the confirmation stands.
+    #[test]
+    fn aliased_foreign_import_does_not_defeat_owner_confirmation() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_the_owner_with_an_unrelated_alias_import",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let aliased_import = "use other_crate::expect_response as respond;\n";
+        let crate_names = std::collections::BTreeSet::new();
+        let (_, discriminate, _) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &[(&test, RelationReason::DirectOwnerCall)],
+            &|_, callee| file_imports_foreign_callee_name(aliased_import, callee, &crate_names),
+            &|_, _| false,
+        );
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "an aliased import binds the alias, not the bare name: {discriminate:?}"
+        );
+    }
+
+    /// F22 (#3731 review): a foreign import NESTED inside a test module —
+    /// the historical `mod tests { use other_crate::expect_response; .. }`
+    /// harness shape — defeats the owner confirmation too. Pre-fix the
+    /// scan read file-level `use` statements only, so the nested import
+    /// bypassed the defeat.
+    #[test]
+    fn nested_module_foreign_import_defeats_owner_confirmation() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_an_imported_same_named_callee_from_a_test_module",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let test_source = "mod tests {\n    use other_crate::expect_response;\n\n    #[test]\n    fn guards_the_result() {}\n}\n";
+        let crate_names = std::collections::BTreeSet::new();
+        let (_, discriminate, _) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &[(&test, RelationReason::DirectOwnerCall)],
+            &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
+            &|_, _| false,
+        );
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a module-nested foreign same-name import must defeat the owner binding: {discriminate:?}"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "the ambiguous binding leaves observation unverified: {discriminate:?}"
+        );
+    }
+
+    /// F22 direct-scan controls on the same function: a nested import is
+    /// found at any depth, a function-local import counts, and text
+    /// without the keyword does not.
+    #[test]
+    fn foreign_callee_import_scan_covers_nested_and_local_use_declarations() {
+        let crate_names = std::collections::BTreeSet::new();
+        let nested = "mod tests {\n    use other_crate::expect_response;\n}\n";
+        assert!(
+            file_imports_foreign_callee_name(nested, "expect_response", &crate_names),
+            "a module-nested foreign import must defeat"
+        );
+        let brace_list = "mod tests {\n    use other_crate::{setup, expect_response};\n}\n";
+        assert!(
+            file_imports_foreign_callee_name(brace_list, "expect_response", &crate_names),
+            "a module-nested brace-list import must defeat"
+        );
+        let function_local = "fn t() {\n    use other_crate::expect_response;\n}\n";
+        assert!(
+            file_imports_foreign_callee_name(function_local, "expect_response", &crate_names),
+            "a function-local foreign import must defeat"
+        );
+        let own_path = "mod tests {\n    use crate::expect_response;\n}\n";
+        assert!(
+            !file_imports_foreign_callee_name(own_path, "expect_response", &crate_names),
+            "an own-crate nested import binds the owner and must not defeat"
+        );
+    }
+
+    /// F23 (#3731 review): the analyzed crate's own names include the
+    /// `[lib]` target name, and hyphenated package names normalize to
+    /// underscores in crate identifiers — an import through the
+    /// underscore form of a hyphenated package name binds the owner's own
+    /// export and must NOT defeat, while a foreign first segment still
+    /// does.
+    #[test]
+    fn own_lib_target_and_hyphen_normalized_names_do_not_defeat() {
+        // Package `foo-bar` (hyphenated) whose lib target is `foo_bar`:
+        // the integration-test binding `use foo_bar::expect_response;` is
+        // the owner's own export on both spellings.
+        let hyphenated_and_lib_names: std::collections::BTreeSet<String> = ["foo-bar", "foo_bar"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let import = "use foo_bar::expect_response;\n";
+        assert!(
+            !file_imports_foreign_callee_name(import, "expect_response", &hyphenated_and_lib_names),
+            "an import through the crate's own lib-target name must not defeat"
+        );
+        // The normalization direction too: a raw hyphenated manifest name
+        // admits its underscore crate identifier.
+        let hyphenated_only: std::collections::BTreeSet<String> =
+            ["foo-bar"].into_iter().map(str::to_string).collect();
+        assert!(
+            !file_imports_foreign_callee_name(import, "expect_response", &hyphenated_only),
+            "a hyphenated own package name must admit its underscore identifier"
+        );
+        // A foreign first segment still defeats.
+        let foreign_names: std::collections::BTreeSet<String> = ["unrelated_crate"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        assert!(
+            file_imports_foreign_callee_name(import, "expect_response", &foreign_names),
+            "a foreign first segment must still defeat"
+        );
+    }
+
+    /// #3731 review (G1): the cross-package same-name defeat threads
+    /// through the same per-test path as the import defeat — when the
+    /// test's own package defines the callee's name while the changed
+    /// owner lives in another package, the bare binding is ambiguous and
+    /// the confirmation is refused; without the defeat it stands.
+    #[test]
+    fn cross_package_same_name_defeat_blocks_owner_confirmation() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_a_same_named_local_function",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let (_, defeated, _) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &[(&test, RelationReason::DirectOwnerCall)],
+            &|_, _| false,
+            &|_, _| true,
+        );
+        assert_eq!(
+            defeated.state,
+            StageState::Weak,
+            "a same-named function in the test's own package must defeat the \
+             bare binding: {defeated:?}"
+        );
+        assert!(
+            defeated.summary.contains("observation_unverified"),
+            "the ambiguous binding leaves observation unverified: {defeated:?}"
+        );
+
+        let (_, confirmed, _) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &[(&test, RelationReason::DirectOwnerCall)],
+            &|_, _| false,
+            &|_, _| false,
+        );
+        assert_eq!(
+            confirmed.state,
+            StageState::Yes,
+            "without a same-named local definition the confirmation stands: {confirmed:?}"
+        );
     }
 
     // --- RIPR-SPEC-0093 arm-blind downgrade ---
@@ -2461,6 +3514,8 @@ return Err(\"typed pin\".into());
             &probe,
             "Err(ParseError::SiblingVariant)",
             &[(&test, RelationReason::DirectOwnerCall)],
+            &|_, _| false,
+            &|_, _| false,
         );
 
         assert_eq!(

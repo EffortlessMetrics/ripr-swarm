@@ -8,6 +8,15 @@ pub enum OracleKind {
     BroadError,
     SmokeOnly,
     MockExpectation,
+    /// A guarded Result match over a direct callee result:
+    /// `match <callee>(..) { Ok(..) => .., Err(e) => <guard> }` (#3709).
+    /// The scrutinee observes the callee's returned `Result` directly, so
+    /// the Err-arm guard is the result's discriminator and the oracle is
+    /// bound to that callee rather than to changed-line tokens. Strength
+    /// carries the guard's precision: strong for an exact error-variant
+    /// pin, medium for a concrete downcast type pin. Shapes without a
+    /// recognized guard emit no oracle at all.
+    GuardedResultMatch,
     Unknown,
 }
 
@@ -22,6 +31,7 @@ impl OracleKind {
             OracleKind::BroadError => "broad_error",
             OracleKind::SmokeOnly => "smoke_only",
             OracleKind::MockExpectation => "mock_expectation",
+            OracleKind::GuardedResultMatch => "guarded_result_match",
             OracleKind::Unknown => "unknown",
         }
     }
@@ -278,6 +288,7 @@ mod tests {
             (OracleKind::BroadError, "broad_error"),
             (OracleKind::SmokeOnly, "smoke_only"),
             (OracleKind::MockExpectation, "mock_expectation"),
+            (OracleKind::GuardedResultMatch, "guarded_result_match"),
             (OracleKind::Unknown, "unknown"),
         ];
 

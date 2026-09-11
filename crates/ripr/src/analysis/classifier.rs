@@ -1822,6 +1822,7 @@ mod tests {
             kind,
             strength,
             observed_tokens: extract_identifier_tokens(assertion),
+            ok_value_observed: None,
         }
     }
 }
