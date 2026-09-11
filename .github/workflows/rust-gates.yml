@@ -186,8 +186,10 @@ jobs:
           # limited_partial_scope.
           RIPR_PARTIAL_DIFF_LINE_BUDGET: "5500"
           # Large analyzer PRs need more than the 120s default for the
-          # evidence producer's ripr check subprocess.
-          RIPR_PR_EVIDENCE_TIMEOUT_SECS: "600"
+          # evidence producer's ripr check subprocess; #3709's 5,104-line
+          # diff measured ~3,100s locally, so 1800s bounds the CI envelope
+          # (raise further only with a measured local run).
+          RIPR_PR_EVIDENCE_TIMEOUT_SECS: "1800"
         run: |
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA" --check
