@@ -13,10 +13,13 @@
 //! would open a string that never closes on the same line and cascade
 //! masking to the end of the body. The opening quote is recognized with
 //! a bounded lookahead for its closing quote, which keeps lifetime
-//! apostrophes (`'static`, `'a`) in code; plain strings and character
-//! literals additionally close defensively at a raw newline so a
-//! malformed line cannot cascade past its own line, while raw strings
-//! legitimately span lines and keep masking across them.
+//! apostrophes (`'static`, `'a`) in code. Plain strings and raw strings
+//! legitimately span lines and keep masking across newlines (#3728
+//! round-5 review, devin); an unterminated plain-string quote therefore
+//! masks the remainder of the body — the fail-closed direction (evidence
+//! is dropped, never fabricated), and the input contract is Rust source,
+//! where an unterminated quote is malformed (#3728 round-6 review).
+//! Character literals stay bounded by their lookahead close.
 
 /// The masking states. `RawStr` carries the opening hash count.
 #[derive(Clone, Copy, PartialEq, Eq)]
