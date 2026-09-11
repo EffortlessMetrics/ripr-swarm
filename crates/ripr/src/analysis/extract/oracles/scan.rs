@@ -474,7 +474,9 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
             }
             pinned = true;
         }
-        if downcast_invocation(body).is_some() {
+        if downcast_invocation(body)
+            .is_some_and(|invocation| downcast_statement_is_observed(body, &invocation))
+        {
             pinned = true;
         }
         if !pinned {
@@ -485,10 +487,10 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
         return None;
     }
     // Concrete type pin: a downcast to a named error type without a variant.
-    let downcast_pin = shape
-        .err_bodies
-        .iter()
-        .find_map(|body| downcast_invocation(body));
+    let downcast_pin = shape.err_bodies.iter().find_map(|body| {
+        downcast_invocation(body)
+            .filter(|invocation| downcast_statement_is_observed(body, invocation))
+    });
     let (pin_text, strength) = if let Some(pin) = variant_pin {
         (pin, OracleStrength::Strong)
     } else if let Some(pin) = downcast_pin {
@@ -877,6 +879,82 @@ fn slice_after_first_top_level_comma(text: &str) -> Option<String> {
         return None;
     }
     Some(text[comma + 1..close].trim().to_string())
+}
+
+/// A downcast counts as a pin only when its own statement OBSERVES the
+/// result: a boolean inspection (`is_ok`/`is_err`/`is_some`/`is_none`), a
+/// `matches!`/`assert*!` wrapper, or an equality comparison. A downcast
+/// whose result is discarded (`let _ = ..downcast::<T>()..;`) computes
+/// without discriminating, so it pins nothing (#3731 review round 3).
+fn downcast_statement_is_observed(body: &str, invocation: &str) -> bool {
+    let Some(relative) = body.find(invocation) else {
+        return false;
+    };
+    let start = relative;
+    // Statement window: from the invocation back to the previous depth-0
+    // `;`/`{`/`}` and forward to the next depth-0 `;`.
+    let mut window_start = 0usize;
+    let mut depth = 0i32;
+    for (index, character) in body[..start].char_indices().rev() {
+        match character {
+            ';' if depth == 0 => {
+                window_start = index + 1;
+                break;
+            }
+            '{' | '}' if depth == 0 => {
+                window_start = index + 1;
+                break;
+            }
+            ')' => depth += 1,
+            '(' => depth -= 1,
+            _ => {}
+        }
+        if index == 0 {
+            window_start = 0;
+        }
+    }
+    let mut window_end = body.len();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, character) in body[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => in_string = true,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ';' if depth == 0 => {
+                window_end = start + index + 1;
+                break;
+            }
+            _ => {}
+        }
+    }
+    let statement = &body[window_start..window_end];
+    const OBSERVERS: [&str; 10] = [
+        ".is_ok()",
+        ".is_err()",
+        ".is_some()",
+        ".is_none()",
+        "matches!(",
+        "assert!(",
+        "assert_eq!(",
+        "assert_ne!(",
+        "== ",
+        "!= ",
+    ];
+    OBSERVERS
+        .iter()
+        .any(|observer| statement.contains(observer))
 }
 
 /// The `.downcast[_ref|_mut]::<Type>()` invocation text in a (masked) body,
@@ -1567,6 +1645,32 @@ fn checks_error_type() {
         assert_eq!(scan.oracles[0].kind, OracleKind::GuardedResultMatch);
         assert_eq!(scan.oracles[0].strength, OracleStrength::Medium);
         assert!(scan.oracles[0].text.contains(".downcast_ref::<ParseError>"));
+    }
+
+    // #3731 review round 3 (devin): a downcast whose result is discarded
+    // computes without discriminating — the arm must OBSERVE the cast for
+    // it to pin. Pre-fix, `let _ = ..downcast::<T>()..;` granted the pin
+    // and the arm's terminating panic produced a Medium oracle.
+    #[test]
+    fn discarded_downcast_does_not_pin() {
+        let body = r#"
+#[test]
+fn swallows_with_discarded_cast() {
+    match parse(input) {
+        Ok(value) => { assert_eq!(value, 1); }
+        Err(error) => {
+            let _ = error.downcast_ref::<ParseError>();
+            panic!("any error surfaced: {error}");
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "a discarded downcast must not pin: {:?}",
+            scan.oracles
+        );
     }
 
     #[test]

@@ -103,7 +103,11 @@ the #13162 `expect_response` comparison shape.
     proper, the pattern argument of a `matches!`/`assert_matches!` in
     the arm body or guard, or a guard equality `==`/`!=` against a
     variant path) ranks `strong`;
-  - a concrete `.downcast[_ref|_mut]::<Type>()` pin ranks `medium`.
+  - a concrete `.downcast[_ref|_mut]::<Type>()` pin ranks `medium`, and
+    only when the arm's own statement OBSERVES the cast (boolean
+    inspection, `matches!`/`assert*!`, equality, or `.expect()`); a
+    discarded cast (`let _ = ..downcast::<T>()..;`) computes without
+    discriminating and pins nothing (#3731 review round 3).
   Every Err arm must pin: one pinned arm beside an unpinned escape arm
   is not an exact identity. Wildcard `Err(_)` arms, opaque predicates,
   and message-only variant mentions never pin: exactness is not inferred
