@@ -38,7 +38,7 @@ pub fn expect_response(
     let mut text = String::new();
     reader.read_to_string(&mut text)?;
     let trimmed = text.trim();
-    if trimmed != Some(expected_id.to_string()).as_str() {
+    if trimmed != expected_id {
         return Err(Box::new(ParseError::InvalidData {
             reason: format!("id mismatch {trimmed}"),
         }));

@@ -8952,6 +8952,8 @@ fixtures = [
   "fixtures/guarded_result_match_positive",
   "fixtures/guarded_result_match_fail_closed",
   "fixtures/guarded_result_match_swallowed",
+  "fixtures/guarded_result_match_conditional_failure",
+  "fixtures/guarded_result_match_sibling_variant",
 ]
 code = [
   "crates/ripr/src/analysis/extract/oracles/scan.rs",

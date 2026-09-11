@@ -1,6 +1,6 @@
 # Fixture: guarded_result_match_positive
 
-Spec: RIPR-SPEC-0154
+Spec: RIPR-SPEC-0175
 
 ## Given
 

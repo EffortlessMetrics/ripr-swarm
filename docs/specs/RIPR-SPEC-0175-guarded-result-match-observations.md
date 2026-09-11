@@ -80,34 +80,59 @@ the #13162 `expect_response` comparison shape.
   when every Err arm both terminates and carries a recognized
   discriminator. Terminating means, under a bounded depth-0 statement
   grammar (the masked arm body splits into top-level statements), that at
-  least one depth-0 statement is unconditionally diverging — a statement
-  whose whole form is a `panic!`/`unreachable!`/`unimplemented!`/`todo!`/
-  `bail!` invocation, a `return ..` statement, a `process::exit(..)`
-  statement, or the body-predicate failure form (a depth-0 `if` whose
-  condition carries the negated changed-error pin — a `!matches!` variant
-  pattern, a `!=`-against-variant equality, or a
-  `.downcast::<T>()..is_none()` test — and whose block diverges) — or a
-  guarded accept arm (`Err(e) if <pin> => {}`): the guard must carry the
-  pin, the body must be trivial, and every catch-all arm must fail
-  loudly, so a guard miss routes to an observed failure. Markers merely
-  nested inside `if`/`match`/closure blocks, `.unwrap()`/`.expect()`
-  statements, `assert!` forms, and conditional failures never terminate:
-  an arm that can return normally swallows the error, and crediting it
-  would fabricate a discriminator. Residual (documented under-credit): a
-  bare `if error != Type::Variant { panic!(..) }` body terminates but
-  does not pin — the pin authority does not read body inequalities as
-  exact-variant identity. An arm that swallows the error, and a routing
-  target that stays silent, never credit.
+  least one depth-0 statement is unconditionally diverging. The accepted
+  whole-statement forms are exactly:
+  - a statement whose whole form is a `panic!`/`unreachable!`/
+    `unimplemented!`/`todo!`/`bail!` invocation (optionally
+    `;`-terminated);
+  - a `return Err(..)` statement — in a Result-returning test the Err
+    return IS the test failing. A bare `return`, a successful
+    `return Ok(..)` / `return ()`, and any other returned value are NOT
+    terminal (#3731 review: successful exits are not loud failures);
+  - a `process::exit(..)`/`std::process::exit(..)` statement whose
+    argument is a NONZERO integer literal — `exit(0)` reports success and
+    a non-literal argument is not statically a failure, so both are NOT
+    terminal (fail-closed);
+  - the body-predicate failure form: a depth-0 `if` whose condition
+    carries the negated changed-error pin (a `!matches!` variant pattern,
+    a `!=`-against-variant equality, or a `.downcast::<T>()..is_none()`
+    test) and whose block diverges under this same grammar; or
+  - a guarded accept arm (`Err(e) if <pin> => {}`): the guard must carry
+    the pin, the body must be trivial, and every catch-all arm must fail
+    loudly, so a guard miss routes to an observed failure.
+  Markers merely nested inside `if`/`match`/closure blocks, `.unwrap()`/
+  `.expect()` statements, `assert!` forms, and conditional failures never
+  terminate — and those same shapes are neither terminal nor pinning: an
+  arm that can return normally swallows the error, and crediting it would
+  fabricate a discriminator. Residual (documented under-credit): a bare
+  `if error != Type::Variant { panic!(..) }` body terminates but does not
+  pin — the pin authority does not read body inequalities as exact-variant
+  identity. An arm that swallows the error, and a routing target that
+  stays silent, never credit.
   Discriminators, strongest first:
   - an exact error-variant pin in binding position (the arm pattern
     proper, the pattern argument of a `matches!`/`assert_matches!` in
     the arm body or guard, or a guard equality `==`/`!=` against a
     variant path) ranks `strong`;
   - a concrete `.downcast[_ref|_mut]::<Type>()` pin ranks `medium`, and
-    only when the arm's own statement OBSERVES the cast (boolean
-    inspection, `matches!`/`assert*!`, equality, or `.expect()`); a
-    discarded cast (`let _ = ..downcast::<T>()..;`) computes without
-    discriminating and pins nothing (#3731 review round 3).
+    only when the cast's OWN result is observed (#3731 review round 4:
+    the observer must bind to the invocation, not to any token in the
+    statement). Observation means the text immediately after the
+    invocation's call-closing paren starts a boolean inspection
+    (`.is_ok()`, `.is_err()`, `.is_some()`, `.is_none()`) or an observing
+    unwrap (`.expect(`, `.unwrap(` — both panic on the wrong type, so
+    they observe by construction), or the statement wraps the invocation
+    in a whole-word `matches!`/`assert!`/`assert_eq!`/`assert_ne!`
+    (whole-word, so `debug_assert!(` and `assert_matches!(` do not read
+    as wrappers). `.map(`/`.map_err(` deliberately do NOT observe: they
+    convert without inspecting. A discard binding (`let _ =` /
+    `let _: Type =` before the invocation) observes nothing by
+    construction. ALL downcast invocations in the arm participate: a
+    discarded first cast no longer hides a later observed one, and the
+    first OBSERVED cast supplies the pin text. Residual (documented
+    under-credit): a cast whose result flows into a variable that a
+    LATER statement observes is not credited — parser-backed observation
+    rides #3727.
   Every Err arm must pin: one pinned arm beside an unpinned escape arm
   is not an exact identity. Wildcard `Err(_)` arms, opaque predicates,
   and message-only variant mentions never pin: exactness is not inferred
@@ -122,22 +147,37 @@ the #13162 `expect_response` comparison shape.
 - In reveal classification, the fact confirms observation for
   `error_path` and `return_value` probes whose changed owner's bare name
   is the scrutinee callee, without any changed-line token overlap, under
-  two fail-closed gates (#3731 review): the oracle text must embed a
+  three fail-closed gates (#3731 review): the oracle text must embed a
   BARE one-segment scrutinee (`match <owner>(..)` — a qualified path's
   identity is unresolvable at name level, so a qualified same-named
-  callee never confirms), and when the changed expression constructs an
+  callee never confirms); when the changed expression constructs an
   exact error variant, the guarded pin must name that exact variant — a
   sibling-variant or type-only guard leaves the observation
   `observation_unverified`, and the shared enum-qualifier token is not a
-  specificity signal. The fact's text embeds the scrutinee callee, so
-  the binding is same-entity by name. Effect families (side effect, call
-  deletion) and families whose changed behavior need not flow through
-  the matched result keep their existing observers. Wrong-owner facts
-  stay non-confirming; their only association remains the pre-existing
-  generic (weak) rules. In repo-mode grading, the guarded oracle
-  kind-matches error and return-value seams and
-  `oracle_discriminates_seam` applies the same exact-variant rule: a
-  pin that names a sibling variant or no variant does not discriminate.
+  specificity signal; and the related test's file must not import the
+  owner callee's bare name from a FOREIGN path — a file-level `use`
+  whose first path segment is neither `crate`/`self`/`super` nor one of
+  the analyzed workspace's own package names makes the bare binding
+  ambiguous (`use other_crate::expect_response;` defeats; the normal
+  own-crate integration-test binding `use this_crate::expect_response;`
+  does not, and an `as` alias binds the alias, not the name). The
+  import scan is bounded and lexical: globs (`use p::*;`), re-export
+  chains, and workspace-member manifests are not resolved — the residual
+  ambiguity they can hide is documented under-credit/over-credit risk
+  that parser-backed import resolution retires (#3727). The fact's text
+  embeds the scrutinee callee, so the binding is same-entity by name.
+  Effect families (side effect, call deletion) and families whose changed
+  behavior need not flow through the matched result keep their existing
+  observers. Wrong-owner facts stay non-confirming; their only
+  association remains the pre-existing generic (weak) rules. In
+  repo-mode grading, the guarded oracle kind-matches error and
+  return-value seams and `oracle_discriminates_seam` applies the
+  exact-variant rule plus a CALLEE-IDENTITY gate (#3731 review round 4):
+  the synthesized text's scrutinee path (extracted after `match `, the
+  same terminal-segment way the diff path is) must equal the seam's owner
+  terminal name — a guarded match over a different callee observes
+  someone else's result and never discriminates, no matter which variant
+  it pins; an unrecognizable scrutinee fails closed.
 - Strength maps through the existing stage authority: `strong` credits
   discrimination (`exposed` when reach, infection, and propagation also
   hold); `medium` keeps the seam below `exposed` with observation
@@ -197,15 +237,25 @@ the #13162 `expect_response` comparison shape.
   text isolation, multi-arm unpinned rejection, message-only diagnostics,
   non-direct scrutinees, shadow defeat, comment/string immunity,
   conditional-panic / conditional-return / unrelated-unwrap /
-  closure-nested non-termination, negated-pin condition termination,
-  first-comma `matches!` pattern slices, bare-only shadow scoping.
+  closure-nested non-termination, successful exits (`return Ok(())`,
+  bare `return`, `return ()`, `exit(0)`, non-literal exit) never
+  terminating while `return Err(..)` and nonzero exits stay terminal,
+  observer-binding (another value's observer, whole-word wrapper names,
+  `.map`/`.map_err` conversions, discard-with-inspection), all-
+  invocation participation (a later observed cast pins after a discarded
+  first cast), `.expect(` observation, adversarial statement windows
+  (closure arguments, nested brackets, string-embedded observer text),
+  negated-pin condition termination, first-comma `matches!` pattern
+  slices, bare-only shadow scoping.
 - In-crate reveal tests: owner-bound confirmation without token overlap,
   wrong-owner non-confirmation, type-pin weakness, effect-family refusal,
   sibling-variant non-confirmation with its exact-variant positive
-  control, qualified-scrutinee non-confirmation.
+  control, qualified-scrutinee non-confirmation, foreign same-name import
+  defeat with its no-import/own-crate-import/aliased-import controls.
 - Repo-grading tests: guarded-match kind matching for error and
   return-value seams, exact-pin discrimination with sibling/type-only
-  rejection, exemplar nomination for the new kind.
+  rejection, wrong-callee non-discrimination with its own-callee and
+  qualified-scrutinee controls, exemplar nomination for the new kind.
 - Parser-path test: exactly one guarded-match oracle for the routing
   form and no mock-expectation duplicate through
   `extract_parser_oracles`.
@@ -226,7 +276,11 @@ the #13162 `expect_response` comparison shape.
   mentioning the variant; a guarded match pinning a sibling variant of
   the changed error; a qualified scrutinee sharing the owner's bare name;
   an Err arm whose panic fires only under an unrelated condition; an Err
-  arm whose only failure action is an unrelated `.unwrap()`.
+  arm whose only failure action is an unrelated `.unwrap()`; an Err arm
+  that ends in a bare `return`, `return Ok(())`, or `exit(0)`; a guard
+  whose downcast pin is discarded or observed only through another
+  value's `.is_ok()` or a `.map_err` conversion; a related test file that
+  imports the owner's bare name from a foreign crate.
 
 ## Test Mapping
 
@@ -256,8 +310,17 @@ the #13162 `expect_response` comparison shape.
   (`test_body_shadows_callee`, moved from `classify/related_tests.rs`).
 - `crates/ripr/src/analysis/syntax/ra.rs` — parser-path ingestion and
   statement-joiner suppression.
-- `crates/ripr/src/analysis/classify/reveal.rs` — `owner_callee` context
-  and the producer-owned confirmation.
+- `crates/ripr/src/analysis/classify/reveal.rs` — `owner_callee` context,
+  the producer-owned confirmation, and
+  `file_imports_foreign_callee_name` (the F11 import-defeat scanner,
+  sharing the #3619 file-level `use` extraction).
+- `crates/ripr/src/analysis/facts/build.rs` — `package_names` from the
+  root manifest, feeding the own-crate side of the import gate.
+- `crates/ripr/src/analysis/classifier/evidence.rs` — the caller-supplied
+  per-test defeat closure threading `FileFacts.source`.
+- `crates/ripr/src/analysis/test_grip_evidence.rs` —
+  `guarded_result_oracle_matches_seam_variant` (variant comparison plus
+  the scrutinee/owner callee-identity gate).
 - `crates/ripr/src/domain/evidence.rs` — `OracleKind::GuardedResultMatch`.
 - `crates/ripr/src/analysis/seam_cache.rs` — cache generation bumps:
   file-fact 1.0 -> 1.1 for the oracle kind and statement suppression;
@@ -265,9 +328,11 @@ the #13162 `expect_response` comparison shape.
   demonstrably replayed the pre-routing classification on a real
   fixture; 1.2 -> 1.3 for the #3731 review grammar fixes (bounded
   depth-0 terminal arms, first-comma `matches!` slices, bare-only shadow
-  scoping); classified `CACHE_SCHEMA_VERSION` 1.6 -> 1.7, sharded
-  0.12 -> 0.13, and compact 0.13 -> 0.14 so warm classified envelopes
-  derived from pre-fix oracle facts cannot serve stale discrimination.
+  scoping); 1.3 -> 1.4 for the #3731 review round-4 fixes (successful
+  exits, observed-cast pins); classified `CACHE_SCHEMA_VERSION` 1.6 ->
+  1.7 -> 1.8, sharded 0.12 -> 0.13 -> 0.14, and compact 0.13 -> 0.14 ->
+  0.15 so warm classified envelopes derived from pre-fix oracle facts
+  cannot serve stale discrimination.
 
 ## Metrics
 
