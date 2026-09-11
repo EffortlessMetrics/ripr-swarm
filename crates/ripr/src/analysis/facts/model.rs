@@ -705,6 +705,16 @@ pub struct OracleFact {
     pub kind: OracleKind,
     pub strength: OracleStrength,
     pub observed_tokens: Vec<String>,
+    /// #3731 observation authority: whether the guarded Result match's Ok
+    /// arm(s) observe the unwrapped success value, decided over the Ok-arm
+    /// bodies at extraction time (the synthesized oracle text keeps its
+    /// `Ok(..) => ..` template, so this decision cannot be re-derived from
+    /// the text). `None` when the fact is not a guarded Result match;
+    /// `Some(false)` covers the guarded-routing form (no Ok arm — the
+    /// success value flows into a trivial catch-all) and payload-ignoring
+    /// Ok arms (`Ok(_) => {}`), so a return-value probe's confirmation is
+    /// refused (fail closed, under-credit).
+    pub ok_value_observed: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

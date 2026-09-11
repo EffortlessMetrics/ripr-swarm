@@ -151,7 +151,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// the reveal-side owner binding is defeated by a same-named function in
 /// the test's own package. Old classified entries would serve
 /// dead-computation and escape-path over-credits for warm workspaces.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.10";
+/// `1.10` -> `1.11`: the guarded facts gain the Ok-arm observation
+/// decision (RIPR-SPEC-0175) and the reveal/repo confirmation gates
+/// require it for success-payload return-value probes and seams — the
+/// routing form and payload-ignoring Ok arms stop confirming. Old
+/// classified entries would serve stale guarded discrimination for warm
+/// workspaces.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.11";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -185,7 +191,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.10";
 /// `0.15` -> `0.16`: the #3731 review round-6 fixes change the guarded
 /// facts and gates again — same semantic transition as the outer
 /// classified-seam cache.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.16";
+/// `0.16` -> `0.17`: the guarded facts gain the Ok-arm observation
+/// decision (RIPR-SPEC-0175) — same semantic transition as the outer
+/// classified-seam cache.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.17";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -225,7 +234,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.16";
 /// `0.16` -> `0.17`: the #3731 review round-6 fixes change the guarded
 /// facts and gates again — same semantic transition as the outer
 /// classified-seam cache.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.17";
+/// `0.17` -> `0.18`: the guarded facts gain the Ok-arm observation
+/// decision (RIPR-SPEC-0175) — same semantic transition as the outer
+/// classified-seam cache.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.18";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -301,6 +313,13 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// truncated individually while the joined pin list keeps its full length —
 /// so a warm pre-fix hit would serve dead-computation pins, escape-path
 /// arms, and overall-truncated pin lists as live facts.
+/// `1.6` -> `1.7`: the guarded facts gain the Ok-arm observation decision
+/// (RIPR-SPEC-0175): Ok-arm bodies are sliced at extraction and the fact
+/// carries whether they observe the unwrapped success value, so a warm
+/// pre-bump hit would serve routing-form and payload-ignoring facts
+/// WITHOUT the decision — return-value confirmations would read the
+/// missing decision as unobserved and silently under-credit (or, worse,
+/// a future default flip would over-credit) — as live facts.
 ///
 /// Still no bump for #3603/#3608/#3636 themselves: per-file parser
 /// facts are unchanged by the harness registry — it applies
@@ -308,7 +327,7 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// build against the current manifests, and the #3636 reachability
 /// authority runs inside that re-application — so a warm hit cannot
 /// bypass either validation or reachability classification.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.6";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.7";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2756,7 +2775,11 @@ mod tests {
         // untruncated join), so a warm pre-fix 1.5 hit would serve
         // dead-computation pins, escape-path arms, and overall-truncated
         // pin lists as live facts.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.6");
+        // 1.6 -> 1.7: the guarded facts gain the Ok-arm observation
+        // decision (RIPR-SPEC-0175), so a warm pre-bump hit would serve
+        // routing-form and payload-ignoring facts without the decision as
+        // live facts.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.7");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -2773,12 +2796,15 @@ mod tests {
         // own-crate names, divergence-participating body pins, escape-free
         // if-forms, cross-package same-name defeats), so classified seams
         // derived from pre-fix oracle facts must miss.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.10");
-        // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17: same #3731
-        // semantic transition as the outer classified-seam cache, for the
-        // sharded and compact envelopes.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.16");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.17");
+        // 1.10 -> 1.11: the guarded facts gain the Ok-arm observation
+        // decision (RIPR-SPEC-0175) and the confirmation gates require it
+        // for success-payload return-value probes and seams.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.11");
+        // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+        // #3731 semantic transition as the outer classified-seam cache,
+        // for the sharded and compact envelopes.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.17");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.18");
     }
 
     #[test]

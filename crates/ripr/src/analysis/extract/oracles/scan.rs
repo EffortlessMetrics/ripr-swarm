@@ -49,6 +49,7 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
                 kind: classification.kind,
                 strength: classification.strength,
                 observed_tokens,
+                ok_value_observed: None,
             });
         } else if trimmed.starts_with("if ") || trimmed.starts_with("if(") {
             // #3284: a terminal `if <cond> { return Err(...) }` guard is
@@ -216,6 +217,9 @@ struct GuardedMatchShape {
     callee: String,
     /// Whether an `Ok(`-headed arm exists (classic form vs pure routing).
     has_ok_arm: bool,
+    /// Trimmed Ok-arm bodies, one per Ok arm: the observation surface the
+    /// fact's `ok_value_observed` decision reads (#3731).
+    ok_bodies: Vec<String>,
     /// Err-arm pattern slices, including a trailing `if <guard>` when the
     /// arm carries one.
     err_patterns: Vec<String>,
@@ -312,10 +316,11 @@ fn parse_guarded_result_match(rest: &str) -> Option<GuardedMatchShape> {
         }
         cursor = body_end;
     }
-    let ok_arm_count = arms
+    let ok_arms: Vec<(String, String)> = arms
         .iter()
         .filter(|(pattern, _)| pattern.starts_with("Ok("))
-        .count();
+        .cloned()
+        .collect();
     let err_arms: Vec<(String, String)> = arms
         .iter()
         .filter(|(pattern, _)| pattern.starts_with("Err("))
@@ -326,13 +331,14 @@ fn parse_guarded_result_match(rest: &str) -> Option<GuardedMatchShape> {
         .filter(|(pattern, _)| !pattern.starts_with("Ok(") && !pattern.starts_with("Err("))
         .map(|(_, body)| body.clone())
         .collect();
-    if err_arms.is_empty() || (ok_arm_count == 0 && catch_all_bodies.is_empty()) {
+    if err_arms.is_empty() || (ok_arms.is_empty() && catch_all_bodies.is_empty()) {
         return None;
     }
     Some(GuardedMatchShape {
         path: path.to_string(),
         callee,
-        has_ok_arm: ok_arm_count > 0,
+        has_ok_arm: !ok_arms.is_empty(),
+        ok_bodies: ok_arms.iter().map(|(_, body)| body.clone()).collect(),
         err_patterns: err_arms
             .iter()
             .map(|(pattern, _)| pattern.clone())
@@ -575,7 +581,39 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
         kind: OracleKind::GuardedResultMatch,
         strength,
         text,
+        ok_value_observed: Some(ok_arms_observe_value(&shape.ok_bodies)),
     })
+}
+
+/// Whether any Ok arm of a guarded Result match observes the unwrapped
+/// success value, under the bounded containment grammar (#3731 observation
+/// authority, RIPR-SPEC-0175): an assertion form (`assert`, covering
+/// `assert!`/`assert_eq!`/`assert_ne!`/`assert_matches!`), a `matches!`
+/// invocation, an equality/inequality, or an unwrap-family inspection
+/// (`.is_ok()`, `.unwrap(`, `.expect(`) anywhere in an Ok-arm body counts.
+/// The bodies come from the masked source, so a string- or comment-embedded
+/// marker never satisfies the rule. Bounded residuals, documented as
+/// under-credit/over-credit edges of the lexical rule: (a) a payload
+/// observed only OUTSIDE the arm — the match expression's own `let` binding
+/// asserted in a later statement — is invisible here, so the fact reports
+/// unobserved and the confirmation fails closed (parser-backed arm
+/// observation rides #3727); (b) an equality on a value OTHER than the
+/// unwrapped payload can satisfy the containment rule, because operand
+/// resolution is exactly what the lexical view cannot do — the guard is
+/// deliberately coarse and a binding-flow refinement is future work.
+fn ok_arms_observe_value(ok_bodies: &[String]) -> bool {
+    const OBSERVER_MARKERS: [&str; 7] = [
+        "assert",
+        "matches!(",
+        "==",
+        "!=",
+        ".is_ok()",
+        ".unwrap(",
+        ".expect(",
+    ];
+    ok_bodies
+        .iter()
+        .any(|body| OBSERVER_MARKERS.iter().any(|marker| body.contains(marker)))
 }
 
 /// Split an arm's pattern slice into `(pattern proper, guard)`: the first
@@ -1720,6 +1758,7 @@ fn peeked_err_return_guard_oracle(
         kind: classification.kind,
         strength: classification.strength,
         observed_tokens,
+        ok_value_observed: None,
     })
 }
 
@@ -1742,6 +1781,7 @@ where
         kind: classification.kind,
         strength: classification.strength,
         observed_tokens,
+        ok_value_observed: None,
     })
 }
 
@@ -2011,6 +2051,7 @@ pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec
             kind: classification.kind,
             strength: classification.strength,
             observed_tokens: extract_identifier_tokens(&statement),
+            ok_value_observed: None,
         });
     }
     out
@@ -2307,6 +2348,9 @@ fn validates_ready_response() {
             scan.match_start_lines.contains(&5),
             "the match start line is suppressed for the generic joiners"
         );
+        // RIPR-SPEC-0175: the Ok arm asserts the unwrapped response, so the
+        // fact reports the success value as observed.
+        assert_eq!(fact.ok_value_observed, Some(true));
     }
 
     #[test]
@@ -2616,6 +2660,110 @@ fn fixture_requires_exact_response_identity() {
         assert!(
             scan.match_start_lines.contains(&4),
             "the routing match start line is suppressed for the generic joiners"
+        );
+        // RIPR-SPEC-0175 observation authority: with no Ok arm the success
+        // value flows into the catch-all unobserved, so the fact reports
+        // the decision the reveal/repo gates read for return-value seams.
+        assert_eq!(
+            fact.ok_value_observed,
+            Some(false),
+            "a routing form never observes the success value"
+        );
+    }
+
+    // --- #3731 observation authority (RIPR-SPEC-0175): Ok-arm observation ---
+
+    /// A payload-ignoring Ok arm (`Ok(_) => {}`) still lets the oracle
+    /// exist (the Err guard is the error-side discriminator), but the fact
+    /// reports the success value as unobserved: a test that never looks at
+    /// the Ok payload cannot discriminate a change to it.
+    #[test]
+    fn payload_ignoring_ok_arm_reports_unobserved_ok_value() {
+        let body = r#"
+#[test]
+fn accepts_any_payload() {
+    match parse(input) {
+        Ok(_) => {}
+        Err(ParseError::InvalidData { .. }) => panic!("invalid data"),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(scan.oracles.len(), 1, "got {:?}", scan.oracles);
+        assert_eq!(scan.oracles[0].kind, OracleKind::GuardedResultMatch);
+        assert_eq!(
+            scan.oracles[0].ok_value_observed,
+            Some(false),
+            "an Ok arm that ignores the payload observes nothing"
+        );
+    }
+
+    /// An Ok arm asserting the unwrapped value reports the observation.
+    #[test]
+    fn observing_ok_arm_reports_observed_ok_value() {
+        let body = r#"
+#[test]
+fn asserts_the_payload() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 3),
+        Err(ParseError::InvalidData { .. }) => panic!("invalid data"),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(scan.oracles.len(), 1, "got {:?}", scan.oracles);
+        assert_eq!(scan.oracles[0].ok_value_observed, Some(true));
+    }
+
+    /// The observation decision reads the MASKED arm bodies: an assertion
+    /// marker inside a string or comment never counts as observing.
+    #[test]
+    fn string_or_comment_markers_never_observe_the_ok_value() {
+        let string_marker = r#"
+#[test]
+fn mentions_but_never_observes() {
+    match parse(input) {
+        Ok(value) => {
+            let label = "assert nothing";
+            let _ = (value, label);
+        }
+        Err(ParseError::InvalidData { .. }) => panic!("invalid data"),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(string_marker, 1);
+        assert_eq!(scan.oracles.len(), 1, "got {:?}", scan.oracles);
+        assert_eq!(
+            scan.oracles[0].ok_value_observed,
+            Some(false),
+            "a string-embedded marker is not an observation"
+        );
+    }
+
+    /// Bounded-grammar residual, pinned so the boundary stays visible: the
+    /// decision reads ONLY the Ok-arm bodies, so a payload that flows out
+    /// through an assignment and is asserted AFTER the match is not
+    /// credited here (under-credit residual; parser-backed arm observation
+    /// rides #3727).
+    #[test]
+    fn observation_after_the_match_is_outside_the_bounded_grammar() {
+        let body = r#"
+#[test]
+fn observes_outside_the_arm() {
+    let parsed;
+    match parse(input) {
+        Ok(value) => parsed = value,
+        Err(ParseError::InvalidData { .. }) => panic!("invalid data"),
+    }
+    assert_eq!(parsed, 3);
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(scan.oracles.len(), 1, "got {:?}", scan.oracles);
+        assert_eq!(
+            scan.oracles[0].ok_value_observed,
+            Some(false),
+            "an assertion after the match is invisible to the arm-body rule"
         );
     }
 

@@ -185,10 +185,27 @@ the #13162 `expect_response` comparison shape.
   the defeat does not apply to it; its owner confirmation stays
   unverified downstream (#3727 tracks qualified-path identity
   resolution).
+- The Ok-arm bodies are sliced at extraction time and the fact carries
+  whether they OBSERVE the unwrapped success value (`ok_value_observed`;
+  #3731 observation authority): the decision is true when any Ok-arm body
+  contains an assertion form (`assert`, covering
+  `assert!`/`assert_eq!`/`assert_ne!`/`assert_matches!`), a `matches!`
+  invocation, an equality/inequality, or an unwrap-family inspection
+  (`.is_ok()`, `.unwrap(`, `.expect(`) — over the MASKED bodies, so a
+  string- or comment-embedded marker never counts. The synthesized text
+  keeps its `Ok(..) => ..` template (output-contract stability), so the
+  decision rides the fact and cannot be re-derived from the text.
+  Bounded residuals, both documented: a payload observed only OUTSIDE the
+  arm — an assignment flowing out of the arm, asserted in a later
+  statement — is invisible to the arm-body rule, so the fact reports
+  unobserved and the confirmation fails closed (parser-backed arm
+  observation rides #3727); an equality on a value OTHER than the
+  unwrapped payload can satisfy the containment rule, because operand
+  resolution is exactly what the lexical view cannot do.
 - In reveal classification, the fact confirms observation for
   `error_path` and `return_value` probes whose changed owner's bare name
   is the scrutinee callee, without any changed-line token overlap, under
-  four fail-closed gates (#3731 review): the oracle text must embed a
+  five fail-closed gates (#3731 review): the oracle text must embed a
   BARE one-segment scrutinee (`match <owner>(..)` — a qualified path's
   identity is unresolvable at name level, so a qualified same-named
   callee never confirms); when the changed expression constructs an
@@ -201,13 +218,23 @@ the #13162 `expect_response` comparison shape.
   the analyzed crate's own names makes the bare binding
   ambiguous (`use other_crate::expect_response;` defeats; the normal
   own-crate integration-test binding `use this_crate::expect_response;`
-  does not, and an `as` alias binds the alias, not the name); and the
+  does not, and an `as` alias binds the alias, not the name); the
   test's own package must not define a function with the callee's bare
   name while the changed owner lives in another package (#3731 review:
   index-backed through the workspace's indexed functions and the shared
   package-scope authority — the bare call in that test may bind the
   local definition, so the confirmation is refused; both package scopes
-  must resolve, and an unscopable side keeps today's behavior). The own
+  must resolve, and an unscopable side keeps today's behavior); and —
+  for a return-value probe whose changed value is the SUCCESS payload
+  (no exact Err construction) — the match's Ok arm must observe the
+  unwrapped value (#3731 observation authority): a guarded-routing form
+  with no Ok arm (the success value flows into a trivial catch-all) and
+  a payload-ignoring `Ok(_) => ..` arm never observe a changed Ok value,
+  so those confirmations are refused (fail closed, under-credit). A
+  return-value probe on an exact Err construction keeps the Err-guard
+  discriminator — the pin gate names the changed variant — the same
+  principle that leaves ErrorPath probes independent of Ok-arm
+  observation. The own
   names are the root manifest's `[package] name` plus its `[lib] name`
   target when declared (#3731 review: integration tests import the lib
   target), each admitted in raw and crate-identifier form — hyphens
@@ -238,6 +265,11 @@ the #13162 `expect_response` comparison shape.
   token-coincidence family — so a guarded match over a different callee
   observes someone else's result and never discriminates, no matter which
   variant it pins; an unrecognizable or qualified scrutinee fails closed.
+  A return-value seam whose changed value is the SUCCESS payload also
+  requires the fact's observing-Ok-arm decision (the same fail-closed
+  rule as the reveal side); an `ErrorVariant` seam and a return-value
+  seam on an exact Err construction are unchanged — the Err guard is the
+  discriminator there.
 - Strength maps through the existing stage authority: `strong` credits
   discrimination (`exposed` when reach, infection, and propagation also
   hold); `medium` keeps the seam below `exposed` with observation
@@ -311,20 +343,30 @@ the #13162 `expect_response` comparison shape.
   pinning while a pin the decisive statement consumes (or a pin inside a
   diverging if's condition) stays credited, successful returns beside or
   ahead of the panic inside a body-predicate if-form disqualifying the
-  form and its pin while an all-diverging branch stays terminal, and
-  per-pin truncation controls (two long pins both surviving the untruncated
-  join, one over-cap pin truncating alone).
+  form and its pin while an all-diverging branch stays terminal, per-pin
+  truncation controls (two long pins both surviving the untruncated
+  join, one over-cap pin truncating alone), and the Ok-arm observation
+  decision (a routing form and a payload-ignoring `Ok(_) => {}` arm
+  report the success value unobserved, an asserting Ok arm reports it
+  observed, a string-embedded marker never observes, and a payload
+  asserted only after the match stays outside the bounded rule).
 - In-crate reveal tests: owner-bound confirmation without token overlap,
   wrong-owner non-confirmation, type-pin weakness, effect-family refusal,
   sibling-variant non-confirmation with its exact-variant positive
   control, qualified-scrutinee non-confirmation, foreign same-name import
   defeat with its no-import/own-crate-import/aliased-import controls,
   cross-package same-name-function defeat with its same-package and
-  unscopable-path positive controls.
+  unscopable-path positive controls, and the Ok-arm observation gate for
+  success-payload return-value probes (routing-form and
+  payload-ignoring-arm non-confirmation, observing-arm confirmation,
+  ErrorPath and Err-construction independence controls).
 - Repo-grading tests: guarded-match kind matching for error and
   return-value seams, exact-pin discrimination with sibling/type-only
   rejection, wrong-callee non-discrimination with its own-callee and
-  qualified-scrutinee controls, exemplar nomination for the new kind.
+  qualified-scrutinee controls, exemplar nomination for the new kind, and
+  the observing-Ok-arm requirement for success-payload return-value seams
+  (routing-form and payload-ignoring rejection, missing-decision fail
+  closed, observing-arm and Err-construction controls).
 - Parser-path test: exactly one guarded-match oracle for the routing
   form and no mock-expectation duplicate through
   `extract_parser_oracles`.
@@ -336,7 +378,14 @@ the #13162 `expect_response` comparison shape.
   and propagation hold.
 - Accept: the guarded-routing form — `Err(error) if error.kind() ==
   io::ErrorKind::InvalidData => {}` routed by `result => bail!(..)` with
-  no `Ok` arm — credits through the guard's equality pin.
+  no `Ok` arm — credits through the guard's equality pin for an
+  error-path seam (and for a return-value seam on an exact Err
+  construction, whose pin names the changed variant).
+- Accept: a return-value probe whose changed value is the success
+  payload confirms only when the Ok arm observes the unwrapped value
+  (`Ok(v) => assert_eq!(v, 3)`); a routing form with no Ok arm, or a
+  payload-ignoring `Ok(_) => {}` arm, never confirms it — the finding
+  keeps its `observation_unverified` weakness.
 - Accept: a downcast-only Err guard credits observation and names the type
   pin, but the seam stays below `exposed`.
 - Reject: the same match naming a different callee; a `let`-bound result
@@ -353,7 +402,9 @@ the #13162 `expect_response` comparison shape.
   value's `.is_ok()` or a `.map_err` conversion; a related test file that
   imports the owner's bare name from a foreign crate; a related test
   whose own package defines the owner callee's bare name while the owner
-  lives in another package.
+  lives in another package; a guarded match whose Ok arm ignores the
+  payload (or has no Ok arm at all) offered as the discriminator for a
+  changed success value.
 
 ## Test Mapping
 
@@ -378,16 +429,22 @@ the #13162 `expect_response` comparison shape.
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/extract/oracles/scan.rs` —
-  `guarded_result_match_scan` and the arm/discriminator grammar.
+  `guarded_result_match_scan` and the arm/discriminator grammar, plus the
+  Ok-arm body slicing and the `ok_arms_observe_value` containment rule
+  behind the fact's `ok_value_observed` decision.
 - `crates/ripr/src/analysis/extract/calls.rs` — reused shadow authority
   (`test_body_shadows_callee`, moved from `classify/related_tests.rs`).
 - `crates/ripr/src/analysis/syntax/ra.rs` — parser-path ingestion and
   statement-joiner suppression.
 - `crates/ripr/src/analysis/classify/reveal.rs` — `owner_callee` context,
-  the producer-owned confirmation, and
+  the producer-owned confirmation (including the Ok-arm observation gate
+  for success-payload return-value probes), and
   `file_imports_foreign_callee_name` (the F11/F22 import-defeat scanner,
   a bounded lexical `use` scan over the masked file source at any brace
   depth).
+- `crates/ripr/src/analysis/facts/model.rs` — the `OracleFact` fact gains
+  `ok_value_observed` (the guarded-match Ok-arm observation decision;
+  `None` for every other oracle kind).
 - `crates/ripr/src/analysis/facts/build.rs` — `package_names` from the
   root manifest (the `[package] name` plus the `[lib] name` target, each
   in raw and crate-identifier form), feeding the own-crate side of the
@@ -399,7 +456,8 @@ the #13162 `expect_response` comparison shape.
   review).
 - `crates/ripr/src/analysis/test_grip_evidence.rs` —
   `guarded_result_oracle_matches_seam_variant` (variant comparison plus
-  the scrutinee/owner callee-identity gate).
+  the scrutinee/owner callee-identity gate plus the observing-Ok-arm
+  requirement for success-payload return-value seams).
 - `crates/ripr/src/domain/evidence.rs` — `OracleKind::GuardedResultMatch`.
 - `crates/ripr/src/analysis/seam_cache.rs` — cache generation bumps:
   file-fact 1.0 -> 1.1 for the oracle kind and statement suppression;
@@ -413,12 +471,16 @@ the #13162 `expect_response` comparison shape.
   termination, every-arm pin collection); 1.5 -> 1.6 for the #3731
   review round-6 fixes (divergence-participating body pins, escape-free
   if-form termination, per-pin truncation with an untruncated join);
-  classified `CACHE_SCHEMA_VERSION` 1.6 -> 1.7 -> 1.8 -> 1.9 -> 1.10,
-  sharded 0.12 -> 0.13 -> 0.14 -> 0.15 -> 0.16, and compact 0.13 -> 0.14
-  -> 0.15 -> 0.16 -> 0.17 (the last steps for the round-4 through
-  round-6 fixes, including the bare-only repo scrutinee gate, the
-  nested-import defeat, the lib-target own-crate names, and the
-  cross-package same-name defeat) so warm classified envelopes derived
+  1.6 -> 1.7 for the Ok-arm observation decision (Ok-arm bodies sliced
+  at extraction and the fact carries whether they observe the unwrapped
+  success value); classified `CACHE_SCHEMA_VERSION` 1.6 -> 1.7 -> 1.8
+  -> 1.9 -> 1.10 -> 1.11, sharded 0.12 -> 0.13 -> 0.14 -> 0.15 -> 0.16
+  -> 0.17, and compact 0.13 -> 0.14 -> 0.15 -> 0.16 -> 0.17 -> 0.18
+  (the second-to-last steps for the round-4 through round-6 fixes,
+  including the bare-only repo scrutinee gate, the nested-import defeat,
+  the lib-target own-crate names, and the cross-package same-name
+  defeat, and the last steps for the Ok-arm observation decision and its
+  reveal/repo confirmation gates) so warm classified envelopes derived
   from pre-fix oracle facts cannot serve stale discrimination.
 
 ## Metrics

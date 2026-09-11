@@ -2136,6 +2136,7 @@ assert_eq!(input.amount, 100);"#
             line: 11,
             text: assertion.to_string(),
             observed_tokens: Vec::new(),
+            ok_value_observed: None,
         }
     }
 

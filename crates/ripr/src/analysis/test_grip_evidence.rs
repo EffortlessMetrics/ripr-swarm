@@ -1497,8 +1497,13 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
         // #3731 review: a guarded Result match discriminates only when its
         // exact pin names the seam's changed variant — the same rule as the
         // reveal-side confirmation gate. A sibling-variant or type-only pin
-        // never discriminates.
-        return guarded_result_oracle_matches_seam_variant(seam, &oracle.text);
+        // never discriminates. The fact's Ok-arm observation decision rides
+        // along for success-payload return-value seams (RIPR-SPEC-0175).
+        return guarded_result_oracle_matches_seam_variant(
+            seam,
+            &oracle.text,
+            oracle.ok_value_observed,
+        );
     }
     if seam.kind() != SeamKind::ErrorVariant {
         return true;
@@ -1575,8 +1580,18 @@ fn guarded_oracle_variant_pins(oracle_text: &str) -> Vec<String> {
 /// - A `ReturnValue` seam compares pins only when its changed expression
 ///   constructs an exact `Err(Type::Variant)` (the repo-mode analog of
 ///   the reveal-side `error_construction_variant` gate); without one, the
-///   kind match is the discriminator.
-fn guarded_result_oracle_matches_seam_variant(seam: &RepoSeam, oracle_text: &str) -> bool {
+///   seam's changed value is the SUCCESS payload and the oracle must
+///   report an observing Ok arm (RIPR-SPEC-0175): the routing form (no Ok
+///   arm) and a payload-ignoring `Ok(_) => ..` arm never observe a changed
+///   Ok value, so they do not discriminate (fail closed, under-credit).
+///   The error-side comparisons (an `ErrorVariant` seam, and a
+///   `ReturnValue` seam on an exact Err construction) are unchanged — the
+///   Err guard is the discriminator there.
+fn guarded_result_oracle_matches_seam_variant(
+    seam: &RepoSeam,
+    oracle_text: &str,
+    ok_value_observed: Option<bool>,
+) -> bool {
     use super::classify::{enum_variant_values, exact_error_variant};
     use crate::analysis::seams::RequiredDiscriminator;
 
@@ -1612,7 +1627,10 @@ fn guarded_result_oracle_matches_seam_variant(seam: &RepoSeam, oracle_text: &str
                 pins.iter().any(|pin| pin == &seam_variant)
                     && tuple_variant_payload_oracle_matches_seam(seam, oracle_text)
             }
-            None => true,
+            // The seam's changed value is the SUCCESS payload: the oracle
+            // must report an observing Ok arm (RIPR-SPEC-0175) — `None`
+            // (not a guarded fact) and `Some(false)` both fail closed.
+            None => ok_value_observed == Some(true),
         },
     }
 }

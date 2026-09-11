@@ -456,17 +456,23 @@ fn guarded_oracle_names_bare_callee(text: &str, callee: &str) -> bool {
 /// `wrapper_error_binding_unresolved` limitation.
 ///
 /// A `GuardedResultMatch` assertion confirms a probe only through the
-/// producer-owned binding, under four #3731 fail-closed gates: the
+/// producer-owned binding, under five #3731 fail-closed gates: the
 /// synthesized text must embed a BARE one-segment scrutinee
 /// (`match <owner>(..)` — a qualified path's identity is unresolvable
 /// here, #3727), when the changed expression constructs an exact
 /// error variant the guarded pin must name that exact variant, the
 /// related test's file must not import the owner callee's bare name from
 /// a FOREIGN path (a same-name import makes the bare binding ambiguous —
-/// see `file_imports_foreign_callee_name`), and the test's own package
+/// see `file_imports_foreign_callee_name`), the test's own package
 /// must not define a same-named function while the changed owner lives in
 /// another package (a bare call may bind the test package's own function —
-/// the cross-package ambiguity gate). For a variant-carrying probe
+/// the cross-package ambiguity gate), and — for a return-value probe whose
+/// changed value is the SUCCESS payload — the match's Ok arm must observe
+/// the unwrapped value (RIPR-SPEC-0175; the fact's extraction-time
+/// `ok_value_observed` decision): a routing form with no Ok arm and a
+/// payload-ignoring `Ok(_) => ..` arm never observe a changed Ok value, so
+/// those confirmations are refused (fail closed, under-credit). For a
+/// variant-carrying probe
 /// the qualifier token is not a specificity signal, so the guarded
 /// oracle's `has_token_match` is exactly the variant-gated owner binding.
 fn assertion_matches_probe_detail_with_literals(
@@ -527,6 +533,19 @@ fn assertion_matches_probe_detail_with_literals(
     //   package's own functions; a bare `match <callee>(..)` scrutinee in
     //   that test may bind the local definition instead of the owner, so
     //   the confirmation is refused (fail-closed under-credit).
+    // - Ok-arm observation for success-payload return-value probes
+    //   (RIPR-SPEC-0175). A return-value probe whose changed expression
+    //   does NOT construct an exact error variant is a probe on the
+    //   owner's returned success value: it is discriminated only when the
+    //   match's Ok arm observes the unwrapped value. The routing form (no
+    //   Ok arm — the success value flows into a trivial catch-all) and a
+    //   payload-ignoring `Ok(_) => ..` arm never observe a changed Ok
+    //   value, so the confirmation is refused (fail closed, under-credit;
+    //   the extraction-time `ok_value_observed` decision rides the fact).
+    //   A return-value probe on an exact Err construction keeps the
+    //   Err-guard discriminator — the pin gate above names the changed
+    //   variant — the same principle that leaves ErrorPath probes
+    //   unchanged here.
     let producer_owned_result = owner_callee.is_some_and(|owner| {
         matches!(assertion.kind, OracleKind::GuardedResultMatch)
             && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::ReturnValue)
@@ -535,6 +554,9 @@ fn assertion_matches_probe_detail_with_literals(
             && guarded_oracle_names_bare_callee(&assertion.text, owner)
             && error_construction_variant
                 .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant))
+            && (matches!(family, ProbeFamily::ErrorPath)
+                || error_construction_variant.is_some()
+                || assertion.ok_value_observed == Some(true))
     });
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
@@ -2237,6 +2259,21 @@ return Err(\"typed pin\".into());
             kind,
             strength,
             observed_tokens: extract_identifier_tokens(text),
+            ok_value_observed: None,
+        }
+    }
+
+    /// A guarded Result-match oracle fact with an explicit Ok-arm
+    /// observation decision, mirroring what the extraction-side scanner
+    /// threads into the fact (#3731 observation authority).
+    fn guarded_oracle(text: &str, strength: OracleStrength, ok_value_observed: bool) -> OracleFact {
+        OracleFact {
+            line: 2,
+            text: text.to_string(),
+            kind: OracleKind::GuardedResultMatch,
+            strength,
+            observed_tokens: extract_identifier_tokens(text),
+            ok_value_observed: Some(ok_value_observed),
         }
     }
 
@@ -2253,10 +2290,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions(
             "validates_ready_response",
-            vec![oracle(
+            vec![guarded_oracle(
                 "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
-                OracleKind::GuardedResultMatch,
                 OracleStrength::Strong,
+                true,
             )],
         );
         let (observe, discriminate, related) =
@@ -2285,10 +2322,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions(
             "guards_a_different_helper",
-            vec![oracle(
+            vec![guarded_oracle(
                 "match other_helper(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
-                OracleKind::GuardedResultMatch,
                 OracleStrength::Strong,
+                true,
             )],
         );
         let (_, discriminate, related) =
@@ -2313,10 +2350,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions(
             "checks_error_type",
-            vec![oracle(
+            vec![guarded_oracle(
                 "match expect_response(..) { Ok(..) => .., Err(..) => .downcast_ref::<ParseError> }",
-                OracleKind::GuardedResultMatch,
                 OracleStrength::Medium,
+                true,
             )],
         );
         let (observe, discriminate, _) =
@@ -2341,10 +2378,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions(
             "guards_result",
-            vec![oracle(
+            vec![guarded_oracle(
                 "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
-                OracleKind::GuardedResultMatch,
                 OracleStrength::Strong,
+                true,
             )],
         );
         let (_, discriminate, _) =
@@ -2371,10 +2408,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions(
             "pins_a_sibling_variant",
-            vec![oracle(
+            vec![guarded_oracle(
                 "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::UnexpectedEof }",
-                OracleKind::GuardedResultMatch,
                 OracleStrength::Strong,
+                true,
             )],
         );
         let (observe, discriminate, related) =
@@ -2409,10 +2446,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions(
             "pins_the_exact_variant",
-            vec![oracle(
+            vec![guarded_oracle(
                 "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }",
-                OracleKind::GuardedResultMatch,
                 OracleStrength::Strong,
+                true,
             )],
         );
         let (_, discriminate, _) =
@@ -2438,10 +2475,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions(
             "guards_a_qualified_same_named_callee",
-            vec![oracle(
+            vec![guarded_oracle(
                 "match other_crate::expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
-                OracleKind::GuardedResultMatch,
                 OracleStrength::Strong,
+                true,
             )],
         );
         let (_, discriminate, _) =
@@ -2455,6 +2492,164 @@ return Err(\"typed pin\".into());
         assert!(
             discriminate.summary.contains("observation_unverified"),
             "the qualified-path observation stays unverified: {discriminate:?}"
+        );
+    }
+
+    // --- #3731 observation authority (RIPR-SPEC-0175): Ok-arm observation ---
+
+    /// A return-value probe whose changed value is the SUCCESS payload is
+    /// not confirmed by a guarded-routing match with no Ok arm: the success
+    /// value flows into a trivial catch-all, so the test never observes a
+    /// change to it and the fact reports `ok_value_observed: Some(false)`.
+    #[test]
+    fn return_value_probe_routing_form_without_ok_arm_stays_unconfirmed() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "Ok(build_response(expected_id, trimmed.trim()))",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "routes_the_result",
+            vec![guarded_oracle(
+                "match expect_response(..) { Err(..) => ParseError::InvalidData, _ => .. }",
+                OracleStrength::Strong,
+                false,
+            )],
+        );
+        let (_, discriminate, related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a routing form never observes the Ok payload: {discriminate:?}"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "the unobserved success value stays unverified: {discriminate:?}"
+        );
+        assert_eq!(
+            related.len(),
+            1,
+            "association survives; confirmation does not"
+        );
+    }
+
+    /// A payload-ignoring Ok arm (`Ok(_) => {}`) does not confirm a
+    /// success-payload return-value probe either: the synthesized text
+    /// keeps its `Ok(..) => ..` template (output-contract stability), so
+    /// the unobserving decision rides the fact's `ok_value_observed`.
+    #[test]
+    fn return_value_probe_payload_ignoring_ok_arm_stays_unconfirmed() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "Ok(build_response(expected_id, trimmed.trim()))",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "ignores_the_payload",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }",
+                OracleStrength::Strong,
+                false,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "an Ok arm that ignores the payload never discriminates it: {discriminate:?}"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "the ignored payload stays unverified: {discriminate:?}"
+        );
+    }
+
+    /// Positive control: the same probe against an OBSERVING Ok arm
+    /// (`Ok(v) => assert_eq!(v, 3)`) confirms through the producer-owned
+    /// binding — the fact reports `ok_value_observed: Some(true)`.
+    #[test]
+    fn return_value_probe_observing_ok_arm_confirms() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "Ok(build_response(expected_id, trimmed.trim()))",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "asserts_the_payload",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }",
+                OracleStrength::Strong,
+                true,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "an observing Ok arm discriminates the success payload: {discriminate:?}"
+        );
+    }
+
+    /// ErrorPath probes keep the existing behavior: the Err guard is the
+    /// discriminator there, so a non-observing Ok arm never blocks the
+    /// variant-gated confirmation.
+    #[test]
+    fn error_path_probe_is_independent_of_ok_arm_observation() {
+        let probe = owned_probe(
+            ProbeFamily::ErrorPath,
+            "return Err(ParseError::InvalidData);",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "pins_the_error_variant",
+            vec![guarded_oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }",
+                OracleStrength::Strong,
+                false,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "the Err guard discriminates regardless of the Ok arm: {discriminate:?}"
+        );
+    }
+
+    /// A return-value probe on an exact Err CONSTRUCTION also keeps the
+    /// Err-guard discriminator (the pin names the changed variant): the
+    /// Ok-arm observation requirement applies only to success-payload
+    /// probes — the shape the guarded-routing positive fixture pins.
+    #[test]
+    fn return_value_probe_on_err_construction_is_independent_of_ok_arm_observation() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "return Err(ParseError::InvalidData);",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "routes_the_error",
+            vec![guarded_oracle(
+                "match expect_response(..) { Err(..) => ParseError::InvalidData, _ => .. }",
+                OracleStrength::Strong,
+                false,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "the exact-variant pin discriminates the Err construction: {discriminate:?}"
         );
     }
 
@@ -2473,10 +2668,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions(
             "guards_an_imported_same_named_callee",
-            vec![oracle(
+            vec![guarded_oracle(
                 "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
-                OracleKind::GuardedResultMatch,
                 OracleStrength::Strong,
+                true,
             )],
         );
         let test_source = "use other_crate::expect_response;\n";
@@ -2512,10 +2707,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions(
             "guards_the_owner_directly",
-            vec![oracle(
+            vec![guarded_oracle(
                 "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
-                OracleKind::GuardedResultMatch,
                 OracleStrength::Strong,
+                true,
             )],
         );
         let without_import = "";
@@ -2566,10 +2761,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions(
             "guards_the_owner_with_an_unrelated_alias_import",
-            vec![oracle(
+            vec![guarded_oracle(
                 "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
-                OracleKind::GuardedResultMatch,
                 OracleStrength::Strong,
+                true,
             )],
         );
         let aliased_import = "use other_crate::expect_response as respond;\n";
@@ -2602,10 +2797,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions(
             "guards_an_imported_same_named_callee_from_a_test_module",
-            vec![oracle(
+            vec![guarded_oracle(
                 "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
-                OracleKind::GuardedResultMatch,
                 OracleStrength::Strong,
+                true,
             )],
         );
         let test_source = "mod tests {\n    use other_crate::expect_response;\n\n    #[test]\n    fn guards_the_result() {}\n}\n";
@@ -2710,10 +2905,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions(
             "guards_a_same_named_local_function",
-            vec![oracle(
+            vec![guarded_oracle(
                 "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
-                OracleKind::GuardedResultMatch,
                 OracleStrength::Strong,
+                true,
             )],
         );
         let (_, defeated, _) = reveal_evidence_with_expression(

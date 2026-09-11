@@ -12575,6 +12575,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                     strength: OracleStrength::Strong,
                     text: "assert_eq!(case_at_threshold(), 90)".to_string(),
                     observed_tokens: Vec::new(),
+                    ok_value_observed: None,
                 }],
                 literals: Vec::new(),
                 attrs: Vec::new(),
@@ -12680,6 +12681,7 @@ fn guarded_result_match_discrimination_follows_the_exact_variant() -> Result<(),
             kind: OracleKind::GuardedResultMatch,
             strength,
             observed_tokens: crate::analysis::rust_index::extract_identifier_tokens(text),
+            ok_value_observed: Some(true),
         }
     }
 
@@ -12757,6 +12759,7 @@ fn guarded_result_match_on_return_value_seam_compares_the_changed_variant() -> R
             kind: OracleKind::GuardedResultMatch,
             strength: OracleStrength::Strong,
             observed_tokens: crate::analysis::rust_index::extract_identifier_tokens(text),
+            ok_value_observed: Some(true),
         }
     }
 
@@ -12801,6 +12804,74 @@ fn guarded_result_match_on_return_value_seam_compares_the_changed_variant() -> R
     Ok(())
 }
 
+// RIPR-SPEC-0175 observation authority: a return-value seam whose changed
+// value is the SUCCESS payload is discriminated only when the guarded
+// oracle reports an observing Ok arm — the routing form (no Ok arm) and a
+// payload-ignoring `Ok(_) => ..` arm never observe a changed Ok value, so
+// they stop discriminating (fail closed, under-credit). Error-side
+// comparisons (an ErrorVariant seam, and a ReturnValue seam on an exact Err
+// construction) are unchanged.
+#[test]
+fn guarded_result_match_on_success_payload_return_value_seam_requires_ok_observation()
+-> Result<(), String> {
+    use crate::analysis::facts::OracleFact;
+    use crate::domain::OracleStrength;
+
+    fn guarded_oracle(text: &str, ok_value_observed: Option<bool>) -> OracleFact {
+        OracleFact {
+            line: 3,
+            text: text.to_string(),
+            kind: OracleKind::GuardedResultMatch,
+            strength: OracleStrength::Strong,
+            observed_tokens: crate::analysis::rust_index::extract_identifier_tokens(text),
+            ok_value_observed,
+        }
+    }
+
+    fn return_seam(expression: &str) -> RepoSeam {
+        RepoSeam::new(
+            std::path::PathBuf::from("src/lib.rs"),
+            "src/lib.rs::parse",
+            SeamKind::ReturnValue,
+            7,
+            14,
+            expression.to_string(),
+            RequiredDiscriminator::ReturnValue {
+                description: expression.to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        )
+    }
+
+    let seam = return_seam("value + 1");
+    let routing_form = "match parse(..) { Err(..) => ParseError::InvalidData, _ => .. }";
+    let payload_ignoring = "match parse(..) { Ok(..) => .., Err(..) => ParseError::UnexpectedEof }";
+    assert!(
+        !oracle_discriminates_seam(&seam, &guarded_oracle(routing_form, Some(false))),
+        "a routing form never observes the changed success value"
+    );
+    assert!(
+        !oracle_discriminates_seam(&seam, &guarded_oracle(payload_ignoring, Some(false))),
+        "an Ok arm that ignores the payload never discriminates it"
+    );
+    assert!(
+        !oracle_discriminates_seam(&seam, &guarded_oracle(payload_ignoring, None)),
+        "a missing observation decision fails closed"
+    );
+    assert!(
+        oracle_discriminates_seam(&seam, &guarded_oracle(payload_ignoring, Some(true))),
+        "an observing Ok arm discriminates the success payload"
+    );
+    // The error side is unchanged: a ReturnValue seam on an exact Err
+    // construction keeps the pin comparison regardless of the Ok arm.
+    let err_seam = return_seam("return Err(ParseError::InvalidData);");
+    assert!(oracle_discriminates_seam(
+        &err_seam,
+        &guarded_oracle(routing_form, Some(false))
+    ));
+    Ok(())
+}
+
 // #3731 review round 4: repo discrimination requires CALLEE identity — a
 // guarded match whose scrutinee calls a different function observes someone
 // else's result, so it never discriminates the seam even when it pins the
@@ -12818,6 +12889,7 @@ fn wrong_callee_guarded_oracle_does_not_discriminate_the_seam() -> Result<(), St
             kind: OracleKind::GuardedResultMatch,
             strength: OracleStrength::Strong,
             observed_tokens: crate::analysis::rust_index::extract_identifier_tokens(text),
+            ok_value_observed: Some(true),
         }
     }
 

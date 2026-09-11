@@ -210,6 +210,7 @@ mod tests {
             kind: OracleKind::GuardedResultMatch,
             strength: OracleStrength::Strong,
             observed_tokens: extract_identifier_tokens(text),
+            ok_value_observed: Some(true),
         }
     }
 

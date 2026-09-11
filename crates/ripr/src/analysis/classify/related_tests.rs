@@ -3160,6 +3160,7 @@ try_parse_summary(raw).map_err(Into::into)"
             kind,
             strength,
             observed_tokens: extract_identifier_tokens(assertion),
+            ok_value_observed: None,
         }
     }
 

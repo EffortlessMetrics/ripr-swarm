@@ -1017,6 +1017,7 @@ fn extract_parser_oracles(
             strength: classification.strength,
             observed_tokens: extract_identifier_tokens(&assertion_text),
             text: assertion_text,
+            ok_value_observed: None,
         });
     }
 
@@ -1045,6 +1046,7 @@ fn extract_parser_oracles(
             strength: OracleStrength::Smoke,
             observed_tokens: extract_identifier_tokens(&text),
             text,
+            ok_value_observed: None,
         });
     }
 
