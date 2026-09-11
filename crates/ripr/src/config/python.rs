@@ -77,6 +77,30 @@ pub(crate) fn is_python_dir_pruned_from_repo_discovery(name: &str) -> bool {
     PYTHON_EXCLUDED_DIRS.contains(&name)
 }
 
+/// Path-level form of [`is_python_excluded_dir_everywhere`] (#3672): true
+/// when ANY component of `path` is a member of [`PYTHON_EXCLUDED_DIRS`] or
+/// equals [`PYTHON_VENDOR_DIR`].
+///
+/// Diff-mode production inputs exclude these subtrees entirely, consistent
+/// with the workspace-collection exclusion: the diff workspace walk prunes
+/// them at directory granularity, so a changed file under one of them can
+/// never be backed by workspace facts. Diff analysis consults this authority
+/// before counting a changed subject, the same way it consults the
+/// generated-name authority — otherwise the report denominator counts a
+/// file the adapter cannot inspect.
+///
+/// As with the generated-name path authority, a component that cannot be
+/// read as UTF-8 is never compared against the UTF-8 table literals and is
+/// therefore not excluded by this predicate.
+pub(crate) fn is_detectable_excluded_python_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(is_python_excluded_dir_everywhere)
+    })
+}
+
 pub(crate) fn detect_python_project(root: &Path) -> bool {
     PYTHON_PROJECT_MARKERS
         .iter()
@@ -298,6 +322,40 @@ mod tests {
         for dir in ["src", "tests", "pkg"] {
             assert!(!is_python_excluded_dir_everywhere(dir));
             assert!(!is_python_dir_pruned_from_repo_discovery(dir));
+        }
+    }
+
+    #[test]
+    fn excluded_path_authority_matches_any_path_component() {
+        for path in [
+            "vendor/dep.py",
+            "src/vendor/dep.py",
+            ".venv/x.py",
+            "nested/.venv/x.py",
+            "dist/pkg/mod.py",
+            "build/obj/mod.py",
+            "__pycache__/mod.py",
+        ] {
+            assert!(
+                is_detectable_excluded_python_path(Path::new(path)),
+                "{path} lies under an excluded component"
+            );
+        }
+        for path in [
+            // Ordinary project paths are not excluded.
+            "src/mod.py",
+            "tests/test_mod.py",
+            // Near-misses are exact-component, not substring: `vendored`,
+            // `environment`, and `envs` are not the `vendor` / `env`
+            // families.
+            "vendored/mod.py",
+            "environment/mod.py",
+            "src/envs/mod.py",
+        ] {
+            assert!(
+                !is_detectable_excluded_python_path(Path::new(path)),
+                "{path} has no excluded component"
+            );
         }
     }
 

@@ -23,7 +23,9 @@ use super::super::{
     AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
 };
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
-use crate::config::{OraclePolicy, is_detectable_generated_python_path};
+use crate::config::{
+    OraclePolicy, is_detectable_excluded_python_path, is_detectable_generated_python_path,
+};
 #[cfg(test)]
 use crate::domain::{
     DeltaKind, FlowSinkKind, LanguageId as DomainLanguageId, LanguageStatus, RelatedTest,
@@ -406,8 +408,14 @@ impl LanguageAdapter for PythonAdapter {
         let mut findings: Vec<Finding> = Vec::new();
         let mut changed_count: usize = 0;
         for changed in changed_files {
+            // Excluded subtrees (vendor, environment, cache, build output)
+            // are skipped BEFORE counting (#3672): the diff workspace walk
+            // prunes them, so no workspace facts can back a changed file
+            // under one and no findings can ever be emitted for it. Counting
+            // it would put an uninspected file in the report denominator.
             if !self.accepts_path(&changed.path)
                 || is_detectable_generated_python_path(&changed.path)
+                || is_detectable_excluded_python_path(&changed.path)
             {
                 continue;
             }

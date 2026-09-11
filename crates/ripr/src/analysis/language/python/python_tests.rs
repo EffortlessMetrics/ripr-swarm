@@ -1849,6 +1849,176 @@ fn vendor_only_tree_neither_enables_python_nor_enters_diff_inputs() -> Result<()
 }
 
 #[test]
+fn analyze_diff_does_not_count_vendor_subtree_changes() -> Result<(), String> {
+    // #3672 follow-up: `vendor` is pruned from the diff-mode workspace walk,
+    // so no workspace facts can back a changed vendored file and no findings
+    // can ever be emitted for it. Diff analysis must skip it BEFORE counting
+    // (same treatment as generated names), or the report denominator counts
+    // an uninspected file as a handled changed subject.
+    let root = unique_tempdir("analyze-diff-vendor-count")?;
+    let vendor_rel = PathBuf::from("vendor/dep.py");
+    write_file(
+        &root.join(&vendor_rel),
+        "def encode_status(status):\n    return {'status': status, 'version': 2}\n",
+    )?;
+
+    let adapter = PythonAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: vendor_rel,
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    return {'status': status, 'version': 2}".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+
+    if result.changed_files != 0 {
+        return Err(format!(
+            "expected vendored Python change to be excluded from changed files, got {}",
+            result.changed_files
+        ));
+    }
+    if !result.findings.is_empty() {
+        return Err(format!(
+            "expected vendored Python change to emit no preview findings, got {}",
+            result.findings.len()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_does_not_count_environment_subtree_changes() -> Result<(), String> {
+    // Same denominator rule as the vendor case (#3672): `.venv` is an
+    // environment subtree excluded from the diff-mode workspace walk, so a
+    // changed file under it must not be counted as a handled changed subject.
+    let root = unique_tempdir("analyze-diff-venv-count")?;
+    let venv_rel = PathBuf::from(".venv/x.py");
+    write_file(
+        &root.join(&venv_rel),
+        "def encode_status(status):\n    return {'status': status, 'version': 2}\n",
+    )?;
+
+    let adapter = PythonAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: venv_rel,
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    return {'status': status, 'version': 2}".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+
+    if result.changed_files != 0 {
+        return Err(format!(
+            "expected environment-subtree Python change to be excluded from changed files, got {}",
+            result.changed_files
+        ));
+    }
+    if !result.findings.is_empty() {
+        return Err(format!(
+            "expected environment-subtree Python change to emit no preview findings, got {}",
+            result.findings.len()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_still_counts_regular_source_changes() -> Result<(), String> {
+    // Control for the excluded-subtree skip (#3672 follow-up): a changed
+    // regular production file is still counted, proving the skip is scoped
+    // to excluded subtrees rather than suppressing the diff loop entirely.
+    let root = unique_tempdir("analyze-diff-regular-control")?;
+    let source_rel = PathBuf::from("src/x.py");
+    write_file(
+        &root.join(&source_rel),
+        "def encode_status(status):\n    return {'status': status, 'version': 2}\n",
+    )?;
+
+    let adapter = PythonAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: source_rel,
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    return {'status': status, 'version': 2}".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+
+    if result.changed_files != 1 {
+        return Err(format!(
+            "expected the regular source change to count as one changed file, got {}",
+            result.changed_files
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn related_test_matching_falls_back_to_same_stem_when_no_call() {
     let owners = extract_owners(
         Path::new("src/pricing.py"),
