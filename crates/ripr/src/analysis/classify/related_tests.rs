@@ -1,6 +1,7 @@
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
 };
+use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::seam_cache::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationReason};
@@ -410,14 +411,15 @@ pub(in crate::analysis) fn find_related_tests<'a>(
                 if !test.calls.iter().any(|call| call.name == callee) {
                     return false;
                 }
-                // Scan the comment-and-string-stripped body (the same
-                // `strip_comments_and_strings` semantics the other body
-                // scans in this file use) so a same-named definition inside
-                // a comment or string literal cannot phantom-shadow a real
-                // call (#3728 round-3 review, coderabbit + devin). Stripping
-                // preserves newlines, so body-relative shadow lines still
-                // align with `test.start_line`-relative call lines.
-                let body = strip_comments_and_strings(&test.body);
+                // Scan the comment-and-string-masked body via the shared
+                // `mask_comments_and_strings` (char literals included) so a
+                // same-named definition inside a comment, string, or char
+                // literal can neither phantom-shadow a real call nor be
+                // erased by a stray quote byte (#3728 round-3 review,
+                // coderabbit + devin round-4). Masking preserves byte
+                // layout, so body-relative shadow lines still align with
+                // `test.start_line`-relative call lines.
+                let body = mask_comments_and_strings(&test.body);
                 let fn_shadows = test_body_defines_callee_fn(&body, callee);
                 let let_shadow_line = test_body_let_shadow_line(&body, callee);
                 test.calls.iter().any(|call| {
@@ -2949,6 +2951,37 @@ let r = try_parse_summary(\"x\");",
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::SeamCalleeCall);
+    }
+
+    // #3728 round-4 review (devin): a quote character literal before the
+    // shadow definition must not blind the mask — the shared
+    // mask_comments_and_strings masks char literals wholesale, so the
+    // `fn <callee>` item still defeats the captured call. A stripper that
+    // treats the literal's quote byte as a string opener would erase the
+    // definition and fabricate the relation.
+    #[test]
+    fn given_quote_char_literal_before_shadow_fn_when_wrapper_probe_then_no_relation() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "let quote = '\"';
+fn try_parse_summary(raw: &str) -> usize { raw.len() }
+let r = try_parse_summary(\"x\");",
+                "try_parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert!(
+            related.is_empty(),
+            "a real fn shadow behind a char literal must still defeat the admit"
+        );
     }
 
     // #3714 round-2 review (coderabbit hGkkm): a binding whose name merely
