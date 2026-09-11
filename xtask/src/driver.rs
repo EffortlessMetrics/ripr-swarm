@@ -169,10 +169,10 @@ mod windows_driver {
         let mut child = Command::new(&plan.copy_path);
         child.args(args);
         child.env(DRIVER_REEXEC_ENV, DRIVER_REEXEC_VALUE);
-        let status = child.status()?;
+        let status = child.status();
         let _ = fs::remove_file(&plan.copy_path);
         let _ = fs::remove_file(&plan.stale_path);
-        Ok(exit_code_from(&status))
+        Ok(exit_code_from(&status?))
     }
 
     /// Exact exit-code propagation, with one documented fallback: when the
