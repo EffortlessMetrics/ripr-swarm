@@ -23,7 +23,7 @@ use super::super::{
     AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
 };
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
-use crate::config::OraclePolicy;
+use crate::config::{OraclePolicy, is_detectable_generated_python_path};
 #[cfg(test)]
 use crate::domain::{
     DeltaKind, FlowSinkKind, LanguageId as DomainLanguageId, LanguageStatus, RelatedTest,
@@ -123,28 +123,9 @@ mod workspace;
 #[cfg(test)]
 use workspace::visit_workspace;
 use workspace::{
-    collect_workspace_python_files, is_detectable_generated_python_file, line_is_in_ranges,
-    owner_for_changed_line, reconstruct_old_source,
+    collect_workspace_python_files, line_is_in_ranges, owner_for_changed_line,
+    reconstruct_old_source,
 };
-
-const PYTHON_WORKSPACE_EXCLUDED_DIRS: &[&str] = &[
-    ".git",
-    "target",
-    "node_modules",
-    ".ripr",
-    ".direnv",
-    "__pycache__",
-    ".venv",
-    "venv",
-    "env",
-    ".tox",
-    ".nox",
-    "site-packages",
-    ".pytest_cache",
-    ".mypy_cache",
-    "dist",
-    "build",
-];
 
 /// Python preview adapter.
 ///
@@ -426,7 +407,7 @@ impl LanguageAdapter for PythonAdapter {
         let mut changed_count: usize = 0;
         for changed in changed_files {
             if !self.accepts_path(&changed.path)
-                || is_detectable_generated_python_file(&changed.path)
+                || is_detectable_generated_python_path(&changed.path)
             {
                 continue;
             }

@@ -1740,6 +1740,12 @@ fn collect_workspace_python_files_skips_excluded_directories() -> Result<(), Str
     let included = [
         PathBuf::from("src/keep.py"),
         PathBuf::from("nested/also_keep.py"),
+        // Generated-family near-misses must keep being collected (#3672):
+        // none of them terminates a generated suffix and none carries the
+        // `generated_` prefix.
+        PathBuf::from("src/pb2.py"),
+        PathBuf::from("src/generated.py"),
+        PathBuf::from("src/regenerated_client.py"),
     ];
     let excluded = [
         PathBuf::from(".git/skip.py"),
@@ -1758,6 +1764,9 @@ fn collect_workspace_python_files_skips_excluded_directories() -> Result<(), Str
         PathBuf::from(".mypy_cache/skip.py"),
         PathBuf::from("dist/skip.py"),
         PathBuf::from("build/skip.py"),
+        // Vendored Python is not project or production source, so diff
+        // discovery prunes it too (#3672).
+        PathBuf::from("vendor/skip.py"),
         PathBuf::from("src/generated_client.py"),
         PathBuf::from("src/schema_pb2.py"),
         PathBuf::from("src/schema_pb2_grpc.py"),
@@ -1809,6 +1818,34 @@ fn collect_workspace_python_files_returns_empty_for_missing_root() {
             .unwrap_or(0)
     ));
     assert!(collect_workspace_python_files(&missing).is_empty());
+}
+
+#[test]
+fn vendor_only_tree_neither_enables_python_nor_enters_diff_inputs() -> Result<(), String> {
+    // #3672: vendored Python is not project or production source. A tree
+    // whose only Python lives under `vendor` must not enable project
+    // detection and must contribute nothing to the diff-mode workspace
+    // walk (the source of diff-mode production inputs).
+    let root = unique_tempdir("vendor-only-tree")?;
+    write_file(&root.join("vendor/dep.py"), "VALUE = 1\n")?;
+    write_file(&root.join("src/vendor/dep.py"), "VALUE = 2\n")?;
+
+    let files = collect_workspace_python_files(&root);
+    let detection_enabled = crate::config::detect_python_project(&root);
+    let cleanup = std::fs::remove_dir_all(&root);
+
+    if !files.is_empty() {
+        let _ = cleanup;
+        return Err(format!(
+            "vendor-only Python must not enter the diff workspace, got {files:?}"
+        ));
+    }
+    if detection_enabled {
+        let _ = cleanup;
+        return Err("vendor-only Python must not enable Python detection".to_string());
+    }
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    Ok(())
 }
 
 #[test]

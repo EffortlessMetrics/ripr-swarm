@@ -1,28 +1,25 @@
 //! Shared Python workspace file-role authority (#3554 PR A).
 //!
 //! One classifier answers "what is this Python file for?" for repo mode, and
-//! is structured so diff mode, doctor, and project detection can adopt it
-//! later without re-deriving roles differently (issue #3554: "A file's role
-//! must not be re-derived differently by repo mode, diff mode, doctor, and
-//! project detection"). Diff mode keeps its current per-site detection in
-//! this PR; adopting this authority there is a later, separately reviewed
-//! change.
+//! consumes the same config-owned discovery predicates (#3672) as project
+//! detection, diff workspace collection, and repo discovery, so a file's
+//! role cannot be re-derived differently by repo mode, diff mode, doctor,
+//! and project detection.
 //!
-//! Every rule reuses detection the adapter already owns:
+//! Every rule reuses the accepted config authorities:
 //!
-//! - environment/cache/vendor/build-tooling directories: the adapter's
-//!   workspace exclusion list (`PYTHON_WORKSPACE_EXCLUDED_DIRS`), plus the
-//!   `vendor` directory family the role taxonomy names;
-//! - generated source: the adapter's `is_detectable_generated_python_file`;
+//! - environment/cache/vendor/build-tooling directories: the config
+//!   excluded-directory authority `is_python_excluded_dir_everywhere`
+//!   (`PYTHON_EXCLUDED_DIRS` plus the `vendor` family);
+//! - generated source: the config generated-name authority
+//!   `is_detectable_generated_python_path`;
 //! - test-support helpers: the `conftest.py` pytest support convention;
 //! - physical tests: the shared `is_test_file` rule (`test_*.py`,
 //!   `*_test.py`, or a `tests`/`test` path component);
 //! - production: any remaining adapter-routed Python source.
 
-use super::super::{
-    LanguageAdapter, PYTHON_WORKSPACE_EXCLUDED_DIRS, PythonAdapter,
-    is_detectable_generated_python_file, is_test_file,
-};
+use super::super::{LanguageAdapter, PythonAdapter, is_test_file};
+use crate::config::{is_detectable_generated_python_path, is_python_excluded_dir_everywhere};
 use std::path::Path;
 
 /// Shared workspace role for one Python file (#3554).
@@ -82,16 +79,6 @@ pub(in crate::analysis::language::python) fn role_is_excluded_from_analysis(
     )
 }
 
-/// Whether a directory name belongs to the excluded environment family.
-///
-/// The adapter's workspace exclusion list covers virtualenvs, caches,
-/// site-packages, and build/tooling output; `vendor` is classified here as
-/// an extension so a discovered vendor tree lands in a typed excluded role
-/// instead of production.
-fn is_excluded_environment_dir(name: &str) -> bool {
-    PYTHON_WORKSPACE_EXCLUDED_DIRS.contains(&name) || name == "vendor"
-}
-
 /// Whether the file is test-support helper source (the pytest `conftest.py`
 /// convention).
 fn is_support_helper_file(path: &Path) -> bool {
@@ -99,12 +86,17 @@ fn is_support_helper_file(path: &Path) -> bool {
 }
 
 /// Whether any path component is an excluded environment directory.
+///
+/// The config excluded-directory authority covers virtualenvs, caches,
+/// site-packages, build/tooling output, and the `vendor` family, so a
+/// discovered vendor tree lands in a typed excluded role instead of
+/// production (#3672).
 fn has_excluded_environment_component(path: &Path) -> bool {
     path.components().any(|component| {
         component
             .as_os_str()
             .to_str()
-            .is_some_and(is_excluded_environment_dir)
+            .is_some_and(is_python_excluded_dir_everywhere)
     })
 }
 
@@ -129,7 +121,7 @@ pub(in crate::analysis::language::python) fn classify_python_file_role(
     if has_excluded_environment_component(path) {
         return PythonFileRole::ExcludedEnvironment;
     }
-    if is_detectable_generated_python_file(path) {
+    if is_detectable_generated_python_path(path) {
         return PythonFileRole::Generated;
     }
     if is_support_helper_file(path) {
@@ -178,6 +170,10 @@ mod tests {
         assert_eq!(role("client.generated.py"), PythonFileRole::Generated);
         assert_eq!(role("client_generated.py"), PythonFileRole::Generated);
         assert_eq!(role("generated_client.py"), PythonFileRole::Generated);
+        // Near-misses stay production (#3672): no suffix terminates on them
+        // and the `generated_` prefix does not apply.
+        assert_eq!(role("regenerated_client.py"), PythonFileRole::Production);
+        assert_eq!(role("pb2.py"), PythonFileRole::Production);
     }
 
     #[test]
@@ -208,8 +204,9 @@ mod tests {
             role(".mypy_cache/data.py"),
             PythonFileRole::ExcludedEnvironment
         );
-        // The vendor family the taxonomy names; the workspace walk does not
-        // prune it, so discovered vendor files must land in a typed role.
+        // The vendor family the config authority names; the repo discovery
+        // walk does not prune it, so discovered vendor files must land in a
+        // typed role.
         assert_eq!(role("vendor/dep.py"), PythonFileRole::ExcludedEnvironment);
     }
 
