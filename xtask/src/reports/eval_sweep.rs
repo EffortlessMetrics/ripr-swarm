@@ -70,7 +70,11 @@ fn parse_args(args: &[String]) -> Result<SweepArgs, String> {
                 parsed.timeout = Duration::from_secs(secs);
             }
             "--json-only" => parsed.json_only = true,
-            other => return Err(format!("unknown eval-sweep argument: {other}")),
+            other => {
+                return Err(format!(
+                    "unknown eval-sweep argument: {other}\nusage: cargo xtask eval-sweep [--manifest <path>] [--clone] [--checkout-root <dir>] [--repo <id>] [--timeout-secs <secs>] [--json-only] | cargo xtask eval-sweep check [--manifest <path>] [--runs <receipt>]"
+                ));
+            }
         }
         index += 1;
     }
@@ -876,6 +880,11 @@ fn render_markdown(metrics: &Metrics, runs: &[RepoRun]) -> String {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn eval_sweep(args: &[String]) -> Result<(), String> {
+    // `eval-sweep check` routes to the typed accepted-manifest/receipt
+    // validator (RIPR-SPEC-0086, #3565); anything else is the live sweep.
+    if args.first().map(String::as_str) == Some("check") {
+        return super::eval_sweep_check::run_check(&args[1..]);
+    }
     let parsed = parse_args(args)?;
     let manifest = load_manifest(&parsed.manifest)?;
 
