@@ -372,10 +372,10 @@ mod windows_driver {
         #[test]
         fn image_guard_recognizes_artifact_paths_by_file_name() {
             assert!(is_driver_artifact_image(Path::new(
-                "F:/ws/target/ripr/drivers/xtask-driver-1-2-3.exe"
+                "target/ripr/drivers/xtask-driver-1-2-3.exe"
             )));
             assert!(!is_driver_artifact_image(Path::new(
-                "F:/ws/target/debug/xtask.exe"
+                "target/debug/xtask.exe"
             )));
             assert!(!is_driver_artifact_image(Path::new("xtask.exe")));
         }
