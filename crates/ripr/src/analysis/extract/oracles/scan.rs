@@ -121,7 +121,8 @@ pub(crate) struct GuardedResultMatchScan {
 /// `arm_terminates`):
 /// - at least one depth-0 statement that is UNCONDITIONALLY diverging
 ///   (`panic!`/`unreachable!`/`unimplemented!`/`todo!`/`bail!` covering
-///   the statement, `return ..`, `process::exit(..)`), or the
+///   the statement, `return Err(..)`, `process::exit(<nonzero
+///   literal>)`), or the
 ///   body-predicate failure form (`if !matches!(.., Type::Variant ..)`,
 ///   `if error != Type::Variant`, `if downcast..is_none()` whose block
 ///   diverges), or
@@ -474,9 +475,7 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
             }
             pinned = true;
         }
-        if downcast_invocation(body)
-            .is_some_and(|invocation| downcast_statement_is_observed(body, &invocation))
-        {
+        if observed_downcast_invocation(body).is_some() {
             pinned = true;
         }
         if !pinned {
@@ -487,10 +486,12 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
         return None;
     }
     // Concrete type pin: a downcast to a named error type without a variant.
-    let downcast_pin = shape.err_bodies.iter().find_map(|body| {
-        downcast_invocation(body)
-            .filter(|invocation| downcast_statement_is_observed(body, invocation))
-    });
+    // Every downcast invocation in the body participates; the first OBSERVED
+    // one supplies the pin text (#3731 review round 4).
+    let downcast_pin = shape
+        .err_bodies
+        .iter()
+        .find_map(|body| observed_downcast_invocation(body));
     let (pin_text, strength) = if let Some(pin) = variant_pin {
         (pin, OracleStrength::Strong)
     } else if let Some(pin) = downcast_pin {
@@ -615,8 +616,13 @@ fn arm_body_is_trivial(body: &str) -> bool {
 /// - a statement whose whole form is a `panic!`/`unreachable!`/
 ///   `unimplemented!`/`todo!`/`bail!` invocation (optionally
 ///   `;`-terminated),
-/// - a `return ..` statement,
-/// - a `process::exit(..)`/`std::process::exit(..)` statement, or
+/// - a `return Err(..)` statement — in a Result-returning test the Err
+///   return IS the test failing; a bare `return`, a successful
+///   `return Ok(..)` / `return ()`, and any other returned value are NOT
+///   terminal (#3731 review: successful exits are not loud failures),
+/// - a `process::exit(..)`/`std::process::exit(..)` statement whose
+///   argument is a NONZERO integer literal (`exit(0)` and non-literal
+///   arguments are not terminal), or
 /// - the body-predicate failure form: a depth-0 `if <cond> { .. }`
 ///   statement whose condition carries the NEGATED changed-error pin and
 ///   whose block holds an unconditionally diverging statement (recursively
@@ -692,17 +698,29 @@ fn statement_diverges(statement: &str) -> bool {
     {
         return true;
     }
-    // `return ..` / `return` (a trailing `;` was already stripped; the
-    // whole-word boundary keeps `returned_x` from qualifying)
+    // #3731 review: only `return Err(..)` is a loud failure — in a
+    // Result-returning test it IS the test failing. A bare `return`, a
+    // successful `return Ok(..)` / `return ()`, and any other returned
+    // value end the arm normally and swallow the matched error, so they
+    // are not terminal (a trailing `;` was already stripped; the whole-
+    // word boundary keeps `returned_x` from qualifying).
     if statement == "return"
         || statement.starts_with("return ")
         || statement.starts_with("return\t")
     {
-        return true;
+        let value = statement["return".len()..].trim_start();
+        return value.starts_with("Err(") && invocation_covers_statement(value, "Err");
     }
-    if ["std::process::exit", "process::exit"]
-        .iter()
-        .any(|name| invocation_covers_statement(statement, name))
+    // #3731 review: `process::exit(..)` is a loud failure only when the
+    // exit code is a NONZERO integer literal — `exit(0)` reports success,
+    // and a non-literal argument is not statically a failure (fail-closed).
+    if [
+        "::std::process::exit",
+        "std::process::exit",
+        "process::exit",
+    ]
+    .iter()
+    .any(|name| nonzero_process_exit_covers_statement(statement, name))
     {
         return true;
     }
@@ -713,6 +731,42 @@ fn statement_diverges(statement: &str) -> bool {
 
 /// Whether `statement` is exactly `<name>(..)` — the invocation opens the
 /// statement and its balanced close paren is the final character.
+/// Whether `statement` is exactly `<name>(<nonzero integer literal>)` —
+/// the invocation covers the statement and its exit code is a nonzero
+/// integer literal (`1`, `2`, `-1`). `exit(0)` reports success and a
+/// non-literal argument is not statically a failure; both fail closed to
+/// non-diverging (#3731 review).
+fn nonzero_process_exit_covers_statement(statement: &str, name: &str) -> bool {
+    let Some(rest) = statement.strip_prefix(name) else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let Some(after_open) = rest.strip_prefix('(') else {
+        return false;
+    };
+    let mut depth = 1i32;
+    for (index, byte) in after_open.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    if !after_open[index + 1..].trim().is_empty() {
+                        return false;
+                    }
+                    let argument = after_open[..index].trim();
+                    let digits = argument.strip_prefix('-').unwrap_or(argument);
+                    return !digits.is_empty()
+                        && digits != "0"
+                        && digits.bytes().all(|byte| byte.is_ascii_digit());
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 fn invocation_covers_statement(statement: &str, name: &str) -> bool {
     let Some(rest) = statement.strip_prefix(name) else {
         return false;
@@ -881,88 +935,172 @@ fn slice_after_first_top_level_comma(text: &str) -> Option<String> {
     Some(text[comma + 1..close].trim().to_string())
 }
 
-/// A downcast counts as a pin only when its own statement OBSERVES the
-/// result: a boolean inspection (`is_ok`/`is_err`/`is_some`/`is_none`), a
-/// `matches!`/`assert*!` wrapper, or an equality comparison. A downcast
-/// whose result is discarded (`let _ = ..downcast::<T>()..;`) computes
-/// without discriminating, so it pins nothing (#3731 review round 3).
-fn downcast_statement_is_observed(body: &str, invocation: &str) -> bool {
-    let Some(relative) = body.find(invocation) else {
+/// A downcast counts as a pin only when its own statement OBSERVES THE
+/// CAST RESULT — the observer must bind to the invocation, not to any
+/// observer token anywhere in the statement (#3731 review round 4: a
+/// statement that observes ANOTHER value while the downcast result is
+/// discarded no longer pins). `start` is the invocation's byte offset in
+/// the (masked) body, so a repeated invocation text binds to its own
+/// occurrence. Recognized observation:
+/// - the text immediately after the invocation's call-closing paren
+///   (whitespace skipped) starts a boolean inspection (`.is_ok()`,
+///   `.is_err()`, `.is_some()`, `.is_none()`) or an observing unwrap
+///   (`.expect(`, `.unwrap(` — both panic on the wrong type, so they
+///   observe by construction);
+/// - or the statement wraps the invocation in a whole-word
+///   `matches!(`/`assert!(`/`assert_eq!(`/`assert_ne!(` macro.
+///
+/// `.map(`/`.map_err(` deliberately do NOT observe: they convert the value
+/// without inspecting it. A discard binding (`let _ =`/
+/// `let _: Type =` before the invocation) observes nothing by
+/// construction. A cast whose result flows into a variable that a LATER
+/// statement observes is under-credit (documented fail-closed residual;
+/// parser-backed observation rides #3727).
+fn downcast_statement_is_observed(body: &str, start: usize, invocation: &str) -> bool {
+    let statement_start = statement_window_start(body, start);
+    if is_discard_binding_head(&body[statement_start..start]) {
         return false;
-    };
-    let start = relative;
-    // Statement window: from the invocation back to the previous depth-0
-    // `;`/`{`/`}` and forward to the next depth-0 `;`.
+    }
+    if invocation_result_observed(body, start + invocation.len()) {
+        return true;
+    }
+    ["matches!(", "assert!(", "assert_eq!(", "assert_ne!("]
+        .iter()
+        .any(|wrapper| statement_wraps_invocation(&body[statement_start..start], wrapper))
+}
+
+/// The start of the statement containing `start`: the position after the
+/// last `;` or `}` at bracket depth zero before it. A FORWARD scan tracks
+/// the real nesting depth, so brackets or nested calls before the
+/// invocation cannot mis-slice the window (the reverse scan this replaced
+/// compared depth zero against a nested position and could swallow
+/// preceding statements — their observers must not leak into this
+/// statement's window).
+fn statement_window_start(body: &str, start: usize) -> usize {
     let mut window_start = 0usize;
     let mut depth = 0i32;
-    for (index, character) in body[..start].char_indices().rev() {
+    for (index, character) in body[..start].char_indices() {
         match character {
-            ';' if depth == 0 => {
-                window_start = index + 1;
-                break;
-            }
-            '{' | '}' if depth == 0 => {
-                window_start = index + 1;
-                break;
-            }
-            ')' => depth += 1,
-            '(' => depth -= 1,
-            _ => {}
-        }
-        if index == 0 {
-            window_start = 0;
-        }
-    }
-    let mut window_end = body.len();
-    let mut depth = 0i32;
-    let mut in_string = false;
-    let mut escaped = false;
-    for (index, character) in body[start..].char_indices() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if character == '\\' {
-                escaped = true;
-            } else if character == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match character {
-            '"' => in_string = true,
             '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            ';' if depth == 0 => {
-                window_end = start + index + 1;
-                break;
+            ')' | ']' => depth -= 1,
+            '}' => {
+                depth -= 1;
+                // A closer that lands back on depth zero ends a complete
+                // block statement: the next statement starts after it.
+                if depth == 0 {
+                    window_start = index + 1;
+                }
+            }
+            ';' if depth == 0 => window_start = index + 1,
+            _ => {}
+        }
+    }
+    window_start
+}
+
+/// Whether the text before an invocation is a discard binding head:
+/// `let _ =` or `let _: Type =`. A discard pattern drops the value, so
+/// whatever follows the invocation is never observed.
+fn is_discard_binding_head(head: &str) -> bool {
+    let Some(rest) = head.trim_start().strip_prefix("let ") else {
+        return false;
+    };
+    let Some(after_pattern) = rest.strip_prefix('_') else {
+        return false;
+    };
+    matches!(
+        after_pattern.trim_start().chars().next(),
+        Some('=') | Some(':')
+    )
+}
+
+/// Whether the invocation's own call result is inspected: the text right
+/// after the call's closing paren (whitespace skipped) must start a
+/// boolean inspection or an observing unwrap. The call parens are located
+/// after the turbofish's closing `>`; a shape without call parens fails
+/// closed.
+fn invocation_result_observed(body: &str, after_invocation: usize) -> bool {
+    let rest = body[after_invocation..].trim_start();
+    let Some(after_open) = rest.strip_prefix('(') else {
+        return false;
+    };
+    let mut depth = 1i32;
+    let mut close = None;
+    for (index, byte) in after_open.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(index);
+                    break;
+                }
             }
             _ => {}
         }
     }
-    let statement = &body[window_start..window_end];
-    const OBSERVERS: [&str; 10] = [
+    let Some(close) = close else {
+        return false;
+    };
+    let after_call = after_open[close + 1..].trim_start();
+    [
         ".is_ok()",
         ".is_err()",
         ".is_some()",
         ".is_none()",
-        "matches!(",
-        "assert!(",
-        "assert_eq!(",
-        "assert_ne!(",
-        "== ",
-        "!= ",
-    ];
-    OBSERVERS
-        .iter()
-        .any(|observer| statement.contains(observer))
+        ".expect(",
+        ".unwrap(",
+    ]
+    .iter()
+    .any(|observer| after_call.starts_with(observer))
 }
 
-/// The `.downcast[_ref|_mut]::<Type>()` invocation text in a (masked) body,
-/// through the turbofish's closing `>`.
-fn downcast_invocation(body: &str) -> Option<String> {
+/// Whether `wrapper` occurs as a whole word inside the statement window
+/// before the invocation: the character before it must not continue an
+/// identifier, so `debug_assert!(` (an assertion about ANOTHER value) does
+/// not read as `assert!(` and `assert_matches!(` does not read as
+/// `matches!(`.
+fn statement_wraps_invocation(window: &str, wrapper: &str) -> bool {
+    let mut from = 0usize;
+    while let Some(relative) = window[from..].find(wrapper) {
+        let at = from + relative;
+        if at == 0 || !is_ident_byte(window.as_bytes()[at - 1]) {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
+}
+
+/// Every `.downcast[_ref|_mut]::<Type>()` invocation in a (masked) body,
+/// in source order: the position of the leading `.` plus the invocation
+/// text through the turbofish's closing `>`. ALL invocations participate
+/// in pinning (#3731 review: a discarded first cast must not hide a later
+/// observed one).
+fn downcast_invocations(body: &str) -> Vec<(usize, String)> {
+    const NEEDLE: &str = ".downcast";
+    let mut out = Vec::new();
+    let mut from = 0usize;
+    while let Some(relative) = body[from..].find(NEEDLE) {
+        let start = from + relative;
+        match downcast_invocation_at(body, start) {
+            Some((position, text)) => {
+                out.push((position, text));
+                from = position + 1;
+            }
+            None => {
+                from = start + NEEDLE.len();
+            }
+        }
+    }
+    out
+}
+
+/// The invocation starting exactly at `start` (the leading `.`), or `None`
+/// when the text there is not a recognized turbofish downcast form.
+fn downcast_invocation_at(body: &str, start: usize) -> Option<(usize, String)> {
     for prefix in [".downcast_ref::<", ".downcast_mut::<", ".downcast::<"] {
-        if let Some(relative) = body.find(prefix) {
-            let start = relative;
+        if body[start..].starts_with(prefix) {
             let turbofish_open = start + prefix.len() - 1;
             let mut depth = 0i32;
             for (index, character) in body[turbofish_open..].char_indices() {
@@ -971,15 +1109,38 @@ fn downcast_invocation(body: &str) -> Option<String> {
                     '>' => {
                         depth -= 1;
                         if depth == 0 {
-                            return Some(body[start..turbofish_open + index + 1].to_string());
+                            let end = turbofish_open + index + 1;
+                            return Some((start, body[start..end].to_string()));
                         }
                     }
                     _ => {}
                 }
             }
+            return None;
         }
     }
     None
+}
+
+/// The first `.downcast[_ref|_mut]::<Type>()` invocation text in the body.
+/// Used by the condition gate, which only asks whether a downcast appears
+/// at all; pinning goes through [`observed_downcast_invocation`].
+fn downcast_invocation(body: &str) -> Option<String> {
+    downcast_invocations(body)
+        .into_iter()
+        .next()
+        .map(|(_, text)| text)
+}
+
+/// The first OBSERVED downcast invocation in a (masked) body, per the
+/// `downcast_statement_is_observed` rule: every invocation participates
+/// (#3731 review — a discarded first cast no longer hides a later observed
+/// one), and the first observed one supplies the pin text.
+fn observed_downcast_invocation(body: &str) -> Option<String> {
+    downcast_invocations(body)
+        .into_iter()
+        .find(|(start, invocation)| downcast_statement_is_observed(body, *start, invocation))
+        .map(|(_, invocation)| invocation)
 }
 
 /// Collapse whitespace runs to single spaces (stable fact text for
@@ -1576,8 +1737,21 @@ mod spec_0106_scan_tests {
 
 #[cfg(test)]
 mod guarded_result_match_tests {
-    use super::{guarded_result_match_scan, mask_comments_and_strings, matches_guard_patterns};
+    use super::{
+        downcast_invocations, downcast_statement_is_observed, guarded_result_match_scan,
+        mask_comments_and_strings, matches_guard_patterns, statement_window_start,
+    };
     use crate::domain::{OracleKind, OracleStrength};
+
+    /// The byte offset of the first downcast invocation in a (masked)
+    /// body, the way the scanner locates one, so the unit tests below bind
+    /// through the same position-aware rule the production path uses.
+    fn first_downcast(body: &str) -> Result<(usize, String), String> {
+        downcast_invocations(body)
+            .into_iter()
+            .next()
+            .ok_or_else(|| "test body must contain a downcast invocation".to_string())
+    }
 
     const POSITIVE: &str = r#"
 #[test]
@@ -2350,6 +2524,287 @@ fn bare_shadowed() {
             "a bare scrutinee named by a local binding stays defeated: {:?}",
             scan.oracles
         );
+    }
+
+    // --- #3731 review round 4: successful exits are not loud failures ---
+
+    /// F9: a bare `return`, a successful `return Ok(())`, and
+    /// `process::exit(0)` end the arm without failing the test, so a
+    /// pinned arm built on them stays unrecognized. Pre-fix these shapes
+    /// credited Strong.
+    #[test]
+    fn successful_exits_are_not_terminal() {
+        let cases = [
+            "return Ok(())",
+            "return",
+            "return ()",
+            "std::process::exit(0)",
+            "::std::process::exit(0)",
+            "process::exit(0)",
+            "std::process::exit(code)",
+        ];
+        for failure_action in cases {
+            let body = format!(
+                r#"
+#[test]
+fn swallows_through_successful_exit() {{
+    match parse(input) {{
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => {failure_action},
+    }}
+}}
+"#
+            );
+            let scan = guarded_result_match_scan(&body, 1);
+            assert!(
+                scan.oracles.is_empty(),
+                "a successful exit is not a loud failure: {failure_action:?} -> {:?}",
+                scan.oracles
+            );
+        }
+    }
+
+    /// F9 positive controls: `return Err(..)` fails a Result-returning
+    /// test and a nonzero `process::exit` literal is a loud failure —
+    /// both keep crediting the pinned arm.
+    #[test]
+    fn failure_returns_and_nonzero_exits_stay_terminal() {
+        let return_err = r#"
+#[test]
+fn fails_the_result_test() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => return Err(anyhow!("mismatch")),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(return_err, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        assert_eq!(scan.oracles[0].strength, OracleStrength::Strong);
+        let exit_two = r#"
+#[test]
+fn exits_failing() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => std::process::exit(2),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(exit_two, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        assert_eq!(scan.oracles[0].strength, OracleStrength::Strong);
+    }
+
+    // --- #3731 review round 4: every downcast invocation participates ---
+
+    /// F12: a discarded first cast must not hide a later OBSERVED one —
+    /// the match still pins Medium, with the observed cast's type text.
+    #[test]
+    fn later_observed_downcast_pins_after_a_discarded_first_cast() {
+        let body = r#"
+#[test]
+fn discards_then_observes() {
+    match parse(input) {
+        Ok(value) => { assert_eq!(value, 1); }
+        Err(error) => {
+            let _ = error.downcast_ref::<Alpha>();
+            if error.downcast_ref::<Beta>().is_none() {
+                panic!("wrong error type: {error}");
+            }
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        assert_eq!(scan.oracles[0].strength, OracleStrength::Medium);
+        assert!(
+            scan.oracles[0].text.contains(".downcast_ref::<Beta>"),
+            "the pin text is the observed cast, not the discarded one: {}",
+            scan.oracles[0].text
+        );
+        assert!(
+            !scan.oracles[0].text.contains("Alpha"),
+            "the discarded cast contributes no pin text: {}",
+            scan.oracles[0].text
+        );
+    }
+
+    // --- #3731 review round 4: expect/unwrap observe the cast ---
+
+    /// F13: `.expect(` on the downcast panics on the wrong type, so it
+    /// observes the cast and pins Medium. The terminal grammar is
+    /// unchanged: the arm terminates through the negated `is_none`
+    /// predicate, not through the expect.
+    #[test]
+    fn expected_downcast_observes_and_pins_medium() {
+        let body = r#"
+#[test]
+fn expects_the_parse_error_type() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(error) => {
+            if error.downcast_ref::<ParseError>().is_none() {
+                panic!("expected a parse error: {error}");
+            }
+            let parse_error = error.downcast_ref::<ParseError>().expect("parse error");
+            assert_eq!(parse_error.kind, 1);
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        assert_eq!(scan.oracles[0].strength, OracleStrength::Medium);
+        assert!(
+            scan.oracles[0].text.contains(".downcast_ref::<ParseError>"),
+            "{}",
+            scan.oracles[0].text
+        );
+    }
+
+    // --- #3731 review round 4: the observer binds to the invocation ---
+
+    /// F8: an observer for ANOTHER value does not pin the cast. The
+    /// `debug_assert!` records `other`, while the downcast result is only
+    /// formatted into the message and discarded.
+    #[test]
+    fn observer_for_another_value_does_not_pin_the_cast() -> Result<(), String> {
+        let body = r#"debug_assert!(other.is_ok(), "{:?}", e.downcast::<T>());"#;
+        let masked = mask_comments_and_strings(body);
+        let (start, invocation) = first_downcast(&masked)?;
+        assert!(
+            !downcast_statement_is_observed(&masked, start, &invocation),
+            "an observer of another value must not pin this cast"
+        );
+        Ok(())
+    }
+
+    /// F8 positive control: the same shape observing the CAST's own result
+    /// does pin.
+    #[test]
+    fn observer_of_the_cast_result_pins() -> Result<(), String> {
+        let body = r#"assert!(e.downcast::<T>().is_ok(), "wrong type");"#;
+        let masked = mask_comments_and_strings(body);
+        let (start, invocation) = first_downcast(&masked)?;
+        assert!(downcast_statement_is_observed(&masked, start, &invocation));
+        Ok(())
+    }
+
+    /// F8: `matches!`/`assert*!` wrappers observe only as whole words —
+    /// `debug_assert!(` is not `assert!(`, and `assert_matches!(` is not
+    /// `matches!(`.
+    #[test]
+    fn wrapper_prefix_names_do_not_count_as_wrappers() -> Result<(), String> {
+        let debug_assert = r#"debug_assert!(ready, "{:?}", e.downcast::<T>());"#;
+        let masked = mask_comments_and_strings(debug_assert);
+        let (start, invocation) = first_downcast(&masked)?;
+        assert!(
+            !downcast_statement_is_observed(&masked, start, &invocation),
+            "debug_assert! must not read as an assert! wrapper"
+        );
+        let assert_matches = r#"if !assert_matches!(e.downcast::<T>(), Ok(_)) { }"#;
+        let masked = mask_comments_and_strings(assert_matches);
+        let (start, invocation) = first_downcast(&masked)?;
+        assert!(
+            !downcast_statement_is_observed(&masked, start, &invocation),
+            "assert_matches! is not a whole-word matches! wrapper (its pattern \
+             pinning goes through the matches-guard authority instead)"
+        );
+        Ok(())
+    }
+
+    /// F8: `.map(`/`.map_err(` convert the cast result without inspecting
+    /// it, so they do not observe; a discard binding observes nothing even
+    /// when a boolean inspection follows the invocation.
+    #[test]
+    fn conversions_and_discard_bindings_do_not_observe() -> Result<(), String> {
+        let map_err = r#"let _ = e.downcast::<T>().map_err(|x| x.to_string())?;"#;
+        let masked = mask_comments_and_strings(map_err);
+        let (start, invocation) = first_downcast(&masked)?;
+        assert!(
+            !downcast_statement_is_observed(&masked, start, &invocation),
+            "map_err converts, it does not observe"
+        );
+        let map = r#"let width = e.downcast::<T>().map(|x| x.len()).unwrap_or(0);"#;
+        let masked = mask_comments_and_strings(map);
+        let (start, invocation) = first_downcast(&masked)?;
+        assert!(
+            !downcast_statement_is_observed(&masked, start, &invocation),
+            "map converts the cast; the later unwrap_or observes a WIDTH, not \
+             the cast result"
+        );
+        let discarded_boolean = r#"let _ = e.downcast::<T>().is_ok();"#;
+        let masked = mask_comments_and_strings(discarded_boolean);
+        let (start, invocation) = first_downcast(&masked)?;
+        assert!(
+            !downcast_statement_is_observed(&masked, start, &invocation),
+            "a discard binding observes nothing, even with .is_ok() appended"
+        );
+        Ok(())
+    }
+
+    /// F14: a downcast nested inside a closure argument keeps its own
+    /// statement window — the observer after the call close still pins,
+    /// and an unobserved closure result does not.
+    #[test]
+    fn closure_argument_windows_do_not_mis_slice() -> Result<(), String> {
+        let observed = r#"with_default(|| e.downcast::<T>().is_ok(), fallback);"#;
+        let masked = mask_comments_and_strings(observed);
+        let (start, invocation) = first_downcast(&masked)?;
+        assert!(downcast_statement_is_observed(&masked, start, &invocation));
+        let unobserved = r#"with_default(|| e.downcast::<T>(), fallback);"#;
+        let masked = mask_comments_and_strings(unobserved);
+        let (start, invocation) = first_downcast(&masked)?;
+        assert!(
+            !downcast_statement_is_observed(&masked, start, &invocation),
+            "the closure result is passed on, not inspected"
+        );
+        Ok(())
+    }
+
+    /// F14: brackets and nested calls before the invocation must not
+    /// mis-slice the window — and a PRECEDING statement's observer must
+    /// not leak into this statement's.
+    #[test]
+    fn nested_brackets_before_the_invocation_keep_the_window_honest() -> Result<(), String> {
+        let nested = r#"results[config.index].push(format!("{}", e.downcast::<T>().is_ok()));"#;
+        let masked = mask_comments_and_strings(nested);
+        let (start, invocation) = first_downcast(&masked)?;
+        assert!(downcast_statement_is_observed(&masked, start, &invocation));
+        // The statement window starts after the previous statement's `;`,
+        // so the earlier `assert!(` cannot wrap this invocation.
+        let leak = r#"assert!(ready); sink(e.downcast::<T>());"#;
+        let masked = mask_comments_and_strings(leak);
+        let (start, invocation) = first_downcast(&masked)?;
+        let window_start = statement_window_start(&masked, start);
+        assert!(
+            !masked[window_start..start].contains("assert!("),
+            "the previous statement's observer must be outside the window"
+        );
+        assert!(
+            !downcast_statement_is_observed(&masked, start, &invocation),
+            "a preceding statement's assert! must not wrap this invocation"
+        );
+        Ok(())
+    }
+
+    /// F14: a string literal containing `; .is_ok()` hides no real
+    /// statement boundary — masked string content cannot mis-slice the
+    /// window, and the cast's own observer still pins.
+    #[test]
+    fn string_literal_observer_text_before_the_cast_does_not_mis_slice() -> Result<(), String> {
+        let body = r#"log("x; .is_ok()"); e.downcast::<T>().is_ok();"#;
+        let masked = mask_comments_and_strings(body);
+        let (start, invocation) = first_downcast(&masked)?;
+        let window_start = statement_window_start(&masked, start);
+        assert!(
+            !masked[window_start..start].contains(".is_ok()"),
+            "the masked string's observer text must not leak into the window: {}",
+            &masked[window_start..start]
+        );
+        assert!(downcast_statement_is_observed(&masked, start, &invocation));
+        Ok(())
     }
 }
 
