@@ -1,7 +1,6 @@
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
 };
-use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::seam_cache::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationReason};
@@ -155,9 +154,12 @@ fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
 ///
 /// A `let` binding only shadows uses at or after its own line, so the caller
 /// defeats a captured call only when this shadow precedes it. `CallFact`
-/// carries no column, so a call on the shadow's own line (e.g. a binding
-/// initializer `let x = x(..)`) is conservatively defeated — under-credit
-/// only. Nested-block bindings still defeat following calls in this
+/// carries no column, so a call on the shadow's own line — e.g. a binding
+/// initializer `let x = x(..)`, which resolves in the preceding scope — is
+/// indistinguishable from a post-binding call on the same line and is
+/// conservatively defeated (#3728 review; under-credit only,
+/// column-precise attribution rides the same #3727 follow-up).
+/// Nested-block bindings still defeat following calls in this
 /// whole-body approximation (under-credit only: relations may be dropped,
 /// never fabricated); full lexical scopes are the parser-backed follow-up
 /// tracked on #3727.
@@ -403,12 +405,19 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         // run only after a callee-named captured call exists.
         let calls_seam_callee = !calls_owner
             && seam_callee.as_deref().is_some_and(|callee| {
+                // Lazy gate (#3728 round-3 review, gemini): the shadow scans
+                // run only after a callee-named captured call exists.
                 if !test.calls.iter().any(|call| call.name == callee) {
                     return false;
                 }
-                // Masking preserves byte layout, so the scans' line math
-                // stays exact against the original body.
-                let body = mask_comments_and_strings(&test.body);
+                // Scan the comment-and-string-stripped body (the same
+                // `strip_comments_and_strings` semantics the other body
+                // scans in this file use) so a same-named definition inside
+                // a comment or string literal cannot phantom-shadow a real
+                // call (#3728 round-3 review, coderabbit + devin). Stripping
+                // preserves newlines, so body-relative shadow lines still
+                // align with `test.start_line`-relative call lines.
+                let body = strip_comments_and_strings(&test.body);
                 let fn_shadows = test_body_defines_callee_fn(&body, callee);
                 let let_shadow_line = test_body_let_shadow_line(&body, callee);
                 test.calls.iter().any(|call| {
