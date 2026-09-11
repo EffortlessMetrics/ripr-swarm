@@ -38,6 +38,7 @@ Linked plan:
 Linked issues:
 
 - [release(py): Python usable-tier readiness checklist](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160)
+- [eval(py): validate the retained eight-repository sweep manifest and run schema](https://github.com/EffortlessMetrics/ripr-swarm/issues/3565)
 
 Linked PRs:
 
@@ -122,6 +123,52 @@ no usefulness/actionability judgement, and never affect `gate_status`.** The
 Each carries a recorded reason. Empty `repos_run` guards division (rates default
 to `0.0` crash / `1.0` stability).
 
+### Accepted-manifest and retained-receipt validation (`eval-sweep check`)
+
+`cargo xtask eval-sweep check [--manifest <path>] [--runs <receipt>]` is the
+typed semantic validator for the accepted artifacts (offline: no repository
+materialization, no RIPR execution, no lookups beyond the two artifact files):
+
+- One loader owns manifest and run-row semantics. The accepted manifest
+  (`python_eval_sweep_manifest`) must declare schema/kind/spec/tier and
+  **exactly eight** uniquely identified subjects — the canonical denominator.
+  Subject content is data-driven: any eight well-formed subjects validate, not
+  only the retained fixture bytes.
+- Retained run receipts (`python_eval_sweep_report`) validate in two owned
+  shapes. Schema `0.2` is the historical shape the sweep command writes.
+  Schema `0.3` adds the currentness identities: binary/features/config/profile/
+  input identity, materialization/detection/corpus-selection/execution states,
+  the `complete`/`partial`/`parse-failed`/`timed-out`/`crashed`/`unsupported`/
+  `tempfail`/`stale` status vocabulary, raw/output/evidence digests,
+  repeat-run comparison identity, and a sha256 manifest-digest binding.
+- Fail closed (nonzero exit, diagnostic names subject/field/reason plus the
+  deterministic rerun command) on: duplicate or missing subjects, a changed
+  denominator, receipt rows contradicting the manifest pins, unsafe
+  (non-portable, absolute, or secret-bearing) paths and URLs, unknown state
+  vocabulary, contradictory status (e.g. `complete` with an execution state
+  that did not run, or stable gap IDs listed as unstable), malformed digests,
+  a stale manifest digest (receipt bound to different manifest bytes), and
+  hand-edited aggregates that disagree with the derived rows (denominator,
+  outcome counts, stability counts, runtime aggregates, rates, distributions,
+  gate status).
+- Failed, unavailable, timeout, parse-failed, unsupported, partial, and stale
+  rows remain selected: they are valid rows and stay in the denominator. A row
+  that did not run must carry no analysis counts, and `repos_run == 0` gates to
+  `not_run` — never a vacuous `pass`, and a `pass` claim requires per-row
+  stability evidence and zero crashes.
+- Missing identities are typed `incomplete` with a per-field disclosure; they
+  are not invented and not errors (the retained manifest carries no
+  provenance/retention/snapshot identities by design, and historical 0.2 rows
+  carry no currentness fields). Validation never upgrades or rewrites a
+  historical receipt. A recorded `alignment_counts` object must keep `absent`
+  (field not emitted) distinct from `unknown` (emitted value).
+- Exit contract: exit 0 when every present artifact is structurally valid —
+  including when identities are disclosed `incomplete` or no receipt is
+  supplied (`not_run`); nonzero on any fail-closed violation. The verdict
+  vocabulary is `valid` / `incomplete` / `not_run`: a structural
+  currentness-readiness verdict, never a robustness or adequacy claim. The
+  check writes `eval-sweep-check.{json,md}` only.
+
 ### Policy boundary (load-bearing)
 
 - `--clone` is **opt-in and off the default CI path.** No `.github/workflows`
@@ -142,6 +189,17 @@ to `0.0` crash / `1.0` stability).
   comparison flags an injected instability; metrics arithmetic with empty-set
   guards; deterministic JSON/markdown report rendering.
 - A golden of the rendered report from a fixed in-memory run vector.
+- The `eval-sweep check` validator tests (`python_eval_sweep` module): an
+  alternate valid eight-subject manifest in a temp directory proves the
+  validator is data-driven; each fail-closed shape (duplicate/missing/unknown
+  subjects, changed denominator, non-https or credential-bearing URLs,
+  absolute and secret-bearing paths, unknown shape tags, malformed SHAs,
+  unknown outcome/status/state values, contradictory status, stale and
+  malformed digests, hand-edited aggregates, vacuous pass, pass without
+  stability evidence, merged absent/unknown distributions) fails with a
+  subject/field/reason diagnostic and the rerun command; missing identities
+  are typed incomplete; a zero-run receipt gates `not_run`; the historical 0.2
+  receipt validates with disclosed incompletes and is never rewritten.
 
 ## Non-Goals
 
@@ -191,6 +249,22 @@ repos_total = 3, repos_run = 0 (all skipped_missing_checkout)
   ->  gate_status = "not_run"  (never a vacuous "pass")
 ```
 
+### Accepted validation without a retained receipt
+
+```text
+cargo xtask eval-sweep check
+  ->  manifest valid (8 subjects), receipt dimension "not_run",
+      missing identities disclosed as incomplete  ->  exit 0 (not a pass)
+```
+
+### A hand-edited aggregate fails closed
+
+```text
+receipt rows derive repos_run = 8 but the summary claims 7
+  ->  exit nonzero, diagnostic: subject=<receipt> field=`summary.repos_run`:
+      hand-edited aggregate ... (rerun: cargo xtask eval-sweep check)
+```
+
 ## Test Mapping
 
 - `eval_sweep::manifest_load_rejects_invalid` -> manifest validation contract.
@@ -208,16 +282,44 @@ repos_total = 3, repos_run = 0 (all skipped_missing_checkout)
   captured failure-exit boundary through the real run path.
 - `eval_sweep::rendered_report_matches_golden_from_fixed_run_vector` ->
   byte-exact JSON/Markdown rendering from the fixed two-run vector.
+- `eval_sweep_check::python_eval_sweep::accepts_alternate_valid_manifest_not_fixture_bytes`
+  -> data-driven eight-subject acceptance (#3565).
+- `eval_sweep_check::python_eval_sweep::check_artifacts_passes_on_alternate_manifest_in_temp_dir`
+  -> end-to-end offline check on an alternate temp-dir manifest.
+- `eval_sweep_check::python_eval_sweep::rejects_manifest_with_seven_subjects_changed_denominator`
+  -> exactly-eight canonical denominator.
+- `eval_sweep_check::python_eval_sweep::receipt_rejects_unknown_subject_and_missing_subject`
+  -> subject-coverage fail-closed family (with the duplicate-row sibling).
+- `eval_sweep_check::python_eval_sweep::receipt_rejects_hand_edited_aggregates`
+  -> row/aggregate denominator agreement.
+- `eval_sweep_check::python_eval_sweep::receipt_rejects_vacuous_pass_and_accepts_not_run`
+  -> `repos_run == 0` is `not_run`, never a vacuous pass.
+- `eval_sweep_check::python_eval_sweep::current_receipt_all_eight_statuses_validate_and_stay_selected`
+  -> the full status vocabulary remains selected (denominator-preserving).
+- `eval_sweep_check::python_eval_sweep::current_receipt_rejects_contradictory_status_pairs`
+  -> contradictory status fail-closed family.
+- `eval_sweep_check::python_eval_sweep::receipt_rejects_stale_manifest_digest`
+  -> stale digest binding fail-closed.
+- `eval_sweep_check::python_eval_sweep::receipt_keeps_absent_distinct_from_unknown_distributions`
+  -> `absent` remains distinct from emitted `unknown`.
+- `eval_sweep_check::python_eval_sweep::historical_receipt_validates_incomplete_without_rewrite`
+  -> historical receipts stay historical; missing identities type incomplete.
+- `eval_sweep_check::python_eval_sweep::receipt_rejects_absolute_and_secret_bearing_paths`
+  (with `rejects_non_https_and_credential_urls` and
+  `current_receipt_rejects_malformed_digests_and_paths`) -> portable-path,
+  no-secret, and digest-format fail-closed family.
 
 ## Implementation Mapping
 
 | Concern | Code |
 | --- | --- |
 | Command logic (arg parse, manifest load, run orchestration, classify, metrics, render) | `xtask/src/reports/eval_sweep.rs` |
+| Accepted-manifest and retained-receipt validator (`eval-sweep check`) | `xtask/src/reports/eval_sweep_check.rs` |
 | Subcommand registration | `xtask/src/command.rs`, `xtask/src/dispatch.rs`, `xtask/src/reports/mod.rs` |
 | Subprocess helpers (build, clone, `ripr check`) | `xtask/src/run.rs` (`run`, `run_with_envs`, `capture_output_with_timeout`) |
 | Pinned manifest + synthetic diff | `fixtures/python-eval-sweep/manifest.json`, `fixtures/python-eval-sweep/synthetic-diff.diff` |
 | Rendered report | `target/ripr/reports/eval-sweep.{json,md}` |
+| Check verdict report | `target/ripr/reports/eval-sweep-check.{json,md}` |
 
 ## Metrics
 
