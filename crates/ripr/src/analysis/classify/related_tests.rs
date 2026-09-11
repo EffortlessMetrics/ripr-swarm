@@ -153,6 +153,11 @@ fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
 /// bindings still defeat following calls in this whole-body approximation
 /// (under-credit only: relations may be dropped, never fabricated); full
 /// lexical scopes are the parser-backed follow-up tracked on #3727.
+/// Same-line initializer calls (`let x = callee();`) are defeated too:
+/// `CallFact` carries lines only, so an initializer — which resolves in
+/// the preceding scope — is indistinguishable from a post-binding call on
+/// the same line (#3728 review; under-credit only, column-precise
+/// attribution rides the same #3727 follow-up).
 fn test_body_let_shadow_line(body: &str, callee: &str) -> Option<usize> {
     if callee.is_empty() {
         return None;
@@ -388,8 +393,14 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         // and defeat every call in the body.
         let calls_seam_callee = !calls_owner
             && seam_callee.as_deref().is_some_and(|callee| {
-                let fn_shadows = test_body_defines_callee_fn(&test.body, callee);
-                let let_shadow_line = test_body_let_shadow_line(&test.body, callee);
+                // #3728 review: scan the comment-and-string-stripped body so
+                // a same-named definition inside a comment or string literal
+                // cannot phantom-shadow a real call. The mask preserves
+                // newlines, so body-relative shadow lines still align with
+                // `test.start_line`-relative call lines.
+                let shadow_scan_body = strip_comments_and_strings(&test.body);
+                let fn_shadows = test_body_defines_callee_fn(&shadow_scan_body, callee);
+                let let_shadow_line = test_body_let_shadow_line(&shadow_scan_body, callee);
                 test.calls.iter().any(|call| {
                     if call.name != callee {
                         return false;
@@ -2857,6 +2868,35 @@ let r = try_parse_summary;",
             "try_parse_summary",
         );
         summary.calls[0].line = 1;
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![summary],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::SeamCalleeCall);
+    }
+
+    // #3728 review (devin bug, coderabbit): a same-named definition inside
+    // a comment or string literal is not a shadow — the shadow scan runs on
+    // the comment-and-string-stripped body, so the real call below keeps
+    // its `SeamCalleeCall` relation. Scanning the raw body would
+    // phantom-defeat it (`fn` in the comment defeats every call; `let` in
+    // the string defeats following calls).
+    #[test]
+    fn given_shadow_text_inside_comment_and_string_when_wrapper_probe_then_relation_survives() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let mut summary = test_with_call(
+            "tests/utils.rs",
+            "misc_edge_case",
+            "// fn try_parse_summary() {}\nlet note = \"let try_parse_summary = 0\";\nlet r = try_parse_summary();",
+            "try_parse_summary",
+        );
+        summary.calls[0].line = 3;
         let index = RustIndex {
             functions: vec![function("src/lib.rs", "parse_summary")],
             tests: vec![summary],
