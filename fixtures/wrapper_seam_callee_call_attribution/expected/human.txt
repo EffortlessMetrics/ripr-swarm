@@ -18,9 +18,9 @@ Start here:
   Related test: tests/attribution.rs:4 observes_callee_outcome
   Next step: Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing e…
   Evidence:
-    - reach yes: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): observes_callee_outcome
+    - reach yes: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): calls_callee_before_shadow_binding, observes_callee_outcome
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 6 more evidence line(s) hidden
+    - 8 more evidence line(s) hidden
 
 Next: drill into the top finding:
   ripr explain --root fixtures/wrapper_seam_callee_call_attribution/input --diff fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast probe:src_lib.rs:error_path:463e8297

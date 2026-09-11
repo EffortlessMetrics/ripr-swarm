@@ -15,11 +15,15 @@ weakly related (`seam_callee_call`, medium) instead of being dropped at
 ## Given
 
 A wrapper error seam (`parse_summary(raw).map_err(|error| error.to_string().into())`
-over the typed callee `try_parse_summary`), with two integration tests:
+over the typed callee `try_parse_summary`), with three integration tests:
 
 - a generically-named test (`observes_callee_outcome`) whose body calls only
   the seam's converted callee (`try_parse_summary("abc")`) — no owner call,
   no owner or probe-token affinity in its name;
+- a positional-defeat witness (`calls_callee_before_shadow_binding`,
+  #3728): its captured call precedes a same-named `let` binding later in
+  the body, so the binding shadows only subsequent uses and the relation
+  survives — the whole-body defeat this refinement replaced dropped it;
 - an unrelated-named test (`unrelated_scope_has_no_call`) that calls nothing
   related to the seam.
 
@@ -46,12 +50,15 @@ ripr check --root fixtures/wrapper_seam_callee_call_attribution/input \
 
 ## Then
 
-The generically-named callee-calling test is related with
+The generically-named callee-calling tests are related with
 `relation_reason: seam_callee_call` (captured `CallFact` name match on the
-converted callee, confidence medium) and the seam classifies
-`weakly_exposed` — the relation is weak: no exact-variant credit is claimed
-for the wrapper conversion (`wrapper_error_binding_unresolved` stays the
-honest outcome for the conversion's variant identity per #3700).
+converted callee, confidence medium) — including
+`calls_callee_before_shadow_binding`, whose captured call precedes the
+body's same-named `let` binding (#3728 positional shadow defeat) — and the
+seam classifies `weakly_exposed` — the relation is weak: no exact-variant
+credit is claimed for the wrapper conversion
+(`wrapper_error_binding_unresolved` stays the honest outcome for the
+conversion's variant identity per #3700).
 
 The unrelated-named test produces no related-test entry: a name that shares
 nothing with the probe and calls nothing the seam touches establishes no
@@ -65,5 +72,7 @@ relation.
   the relation is weak; variant identity for wrapper conversions remains
   the typed `wrapper_error_binding_unresolved` limitation (#3700).
 - Relate tests whose bodies define or bind a same-named local (`fn <callee>`
-  / `let <callee> =` shadow defeat).
+  defeats every call — fn items hoist; `let <callee> =` defeats captured
+  calls at or after the binding's line). Shadow-shaped text inside comments
+  or string literals defeats nothing (#3728 masked scans).
 - Use mutation-runtime outcome vocabulary reserved for real mutation execution.
