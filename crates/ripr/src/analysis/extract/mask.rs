@@ -212,9 +212,12 @@ pub(crate) fn mask_comments_and_strings(text: &str) -> String {
                     continue;
                 }
                 if byte == b'\n' {
-                    // Valid plain strings never contain a raw newline;
-                    // closing here keeps a malformed line from cascading.
-                    state = MaskState::Code;
+                    // Ordinary Rust string literals may span lines; stay in
+                    // `Str` and keep the newline so masked output preserves
+                    // the line layout of the string's contents, matching
+                    // `RawStr`. (#3728 round-5 review, devin: closing the
+                    // state here exposed multiline-string contents as code
+                    // downstream — the phantom-shadow direction.)
                     out.push(b'\n');
                 } else {
                     out.push(b' ');
@@ -275,6 +278,19 @@ mod tests {
         let masked = mask_comments_and_strings(text);
         assert!(masked.contains("first(),"), "{masked}");
         assert!(masked.contains("second(),"), "{masked}");
+    }
+
+    #[test]
+    fn multiline_plain_strings_stay_masked_across_newlines() {
+        // #3728 round-5 review (devin): ordinary Rust string literals may
+        // span lines; the masker used to close `Str` at every newline and
+        // exposed the string's continuation lines as code, so shadow- or
+        // call-shaped string text could impersonate live source.
+        let text = "let note = \"first\nfn phantom_shape();\";\nlive_call();";
+        let masked = mask_comments_and_strings(text);
+        assert!(!masked.contains("phantom_shape"), "{masked}");
+        assert!(masked.contains("live_call();"), "{masked}");
+        assert_eq!(masked.lines().count(), text.lines().count());
     }
 
     #[test]

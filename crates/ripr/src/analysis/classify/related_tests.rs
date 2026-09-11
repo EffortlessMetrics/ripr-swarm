@@ -179,9 +179,14 @@ fn test_body_let_shadow_line(body: &str, callee: &str) -> Option<usize> {
             continue;
         }
         // The binding pattern runs from the `let` to the initializer's
-        // `=` (depth zero, string-aware): `let mut x = ..`,
+        // `=` (depth zero): `let mut x = ..`,
         // `let ref x = ..`, `let x: T = ..`, and
-        // `let (a, x) = ..` are all covered by the pattern region.
+        // `let (a, x) = ..` are all covered by the pattern region. A
+        // depth-zero `;` first means this declaration has no initializer
+        // (`let flag;`): the scan must stop there rather than borrow a
+        // LATER binding's `=`, which would move the reported shadow line
+        // earlier and defeat calls between the two declarations
+        // (#3728 round-5 review, devin).
         let region = &body[start + "let ".len()..];
         let bytes = region.as_bytes();
         let mut depth = 0isize;
@@ -203,6 +208,7 @@ fn test_body_let_shadow_line(body: &str, callee: &str) -> Option<usize> {
                 b'"' => in_string = true,
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => depth -= 1,
+                b';' if depth == 0 => break,
                 b'=' if depth == 0 => {
                     pattern_end = Some(offset);
                     break;
@@ -2982,6 +2988,67 @@ let r = try_parse_summary(\"x\");",
             related.is_empty(),
             "a real fn shadow behind a char literal must still defeat the admit"
         );
+    }
+
+    // #3728 round-5 review (devin): an initializer-less declaration must
+    // not borrow a later binding's `=` — the pattern scan stops at the
+    // declaration's own depth-zero `;`, so a captured call between the two
+    // declarations keeps its relation. Pre-fix, `let flag;` reported the
+    // LATER `let <callee> = ..` shadow line as its own and defeated the
+    // call in between.
+    #[test]
+    fn given_initializer_less_declaration_between_calls_when_wrapper_probe_then_relation_survives()
+    {
+        let owner = function("src/lib.rs", "parse_summary");
+        let mut summary = test_with_call(
+            "tests/utils.rs",
+            "misc_edge_case",
+            "try_parse_summary(\"setup\");
+let flag;
+try_parse_summary(\"real\");
+let try_parse_summary = build();",
+            "try_parse_summary",
+        );
+        // The captured call sits between the initializer-less declaration
+        // (body line 1) and the real same-named binding (body line 3).
+        summary.calls[0].line = 3;
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![summary],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::SeamCalleeCall);
+    }
+
+    // #3728 round-5 review (devin): ordinary strings may span lines; the
+    // shared masker keeps `Str` state across the newline, so shadow-shaped
+    // string text on a continuation line cannot impersonate a local fn.
+    #[test]
+    fn given_shadow_shape_in_multiline_string_when_wrapper_probe_then_relation_survives() {
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "parse_summary")],
+            tests: vec![test_with_call(
+                "tests/utils.rs",
+                "misc_edge_case",
+                "let note = \"first
+fn try_parse_summary()\";
+let r = try_parse_summary(\"x\");",
+                "try_parse_summary",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::SeamCalleeCall);
     }
 
     // #3714 round-2 review (coderabbit hGkkm): a binding whose name merely
