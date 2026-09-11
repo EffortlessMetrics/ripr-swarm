@@ -373,6 +373,17 @@ struct RevealMatchContext<'a> {
     owner_callee: Option<&'a str>,
 }
 
+/// The bare-scrutinee convention of the synthesized guarded-Result-match
+/// oracle text (extract::oracles::scan): the scrutinee path is embedded
+/// directly after `match `, so a BARE one-segment scrutinee appears as
+/// `match <callee>(`. A qualified scrutinee (`match helpers::parse(..)`)
+/// never contains that substring — reveal cannot resolve a qualified path
+/// to the probe owner's identity, so its confirmation stays unverified
+/// (#3731 review; identity resolution tracked on #3727).
+fn guarded_oracle_names_bare_callee(text: &str, callee: &str) -> bool {
+    text.contains(&format!("match {callee}("))
+}
+
 /// Returns `(matched, has_token_match)`.
 ///
 /// `matched` is true when the assertion should be associated with this probe
@@ -411,6 +422,16 @@ struct RevealMatchContext<'a> {
 /// `map_err` conversion is not statically establishable, so the seam stays
 /// below `exposed` and carries the typed
 /// `wrapper_error_binding_unresolved` limitation.
+///
+/// A `GuardedResultMatch` assertion confirms a probe only through the
+/// producer-owned binding, under two #3731 fail-closed gates: the
+/// synthesized text must embed a BARE one-segment scrutinee
+/// (`match <owner>(..)` — a qualified path's identity is unresolvable
+/// here, #3727), and when the changed expression constructs an exact
+/// error variant the guarded pin must name that exact variant. For a
+/// variant-carrying probe the qualifier token is not a specificity
+/// signal, so the guarded oracle's `has_token_match` is exactly the
+/// variant-gated owner binding.
 fn assertion_matches_probe_detail_with_literals(
     context: &RevealMatchContext,
     assertion: &OracleFact,
@@ -441,10 +462,26 @@ fn assertion_matches_probe_detail_with_literals(
     // and only the result-defined families (ErrorPath, ReturnValue) credit:
     // a changed effect or call inside the owner need not flow through the
     // matched result, so those families keep their existing observers.
+    //
+    // #3731 review, two fail-closed gates on the owner shortcut:
+    // - BARE scrutinee only. The synthesized text embeds the scrutinee path
+    //   after `match `, so a one-segment scrutinee reads `match <callee>(`;
+    //   a qualified path (`match helpers::parse(..)`) names an entity this
+    //   lexical view cannot resolve to the probe owner (an imported or
+    //   re-exported same-named callee is exactly the token-coincidence
+    //   family), so its observation stays unverified. Qualified-path
+    //   identity resolution is the #3727 follow-up.
+    // - Exact variant when the changed expression constructs one. A probe
+    //   with an `error_construction_variant` is confirmed only when the
+    //   guarded oracle's pin names that exact variant; a sibling-variant
+    //   (or type-only) guard does not observe the changed error
+    //   (RIPR-SPEC-0106 Part B, mirrored from the ExactErrorVariant gate).
     let producer_owned_result = owner_callee.is_some_and(|owner| {
         matches!(assertion.kind, OracleKind::GuardedResultMatch)
             && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::ReturnValue)
-            && contains_as_whole_word(&assertion.text, owner)
+            && guarded_oracle_names_bare_callee(&assertion.text, owner)
+            && error_construction_variant
+                .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant))
     });
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
@@ -461,6 +498,16 @@ fn assertion_matches_probe_detail_with_literals(
     } else if wrapper_seam {
         // A #3700 wrapper error seam stays unconfirmable: see above.
         false
+    } else if matches!(assertion.kind, OracleKind::GuardedResultMatch)
+        && error_construction_variant.is_some()
+    {
+        // Mirror of the ExactErrorVariant gate (#3731 review): for a
+        // variant-carrying probe, a guarded Result match confirms only
+        // through the variant-gated owner binding above. The shared
+        // enum-qualifier token (`ParseError` in `Err(ParseError::..)`) is
+        // not a specificity signal — a guard pinning a sibling variant of
+        // the same error type would otherwise clear the unverified flag.
+        producer_owned_result
     } else {
         token_match || effect_literal_match || producer_owned_result
     };
@@ -2050,6 +2097,107 @@ return Err(\"typed pin\".into());
             discriminate.state,
             StageState::Yes,
             "effect families keep their own observers: {discriminate:?}"
+        );
+    }
+
+    /// #3731 review: a guarded match pinning a SIBLING variant does not
+    /// confirm a probe whose changed expression constructs the exact
+    /// variant — the shared enum-qualifier token is not a specificity
+    /// signal, so the seam stays weakly exposed with an unverified
+    /// observation.
+    #[test]
+    fn guarded_result_match_sibling_variant_does_not_confirm() {
+        let probe = owned_probe(
+            ProbeFamily::ErrorPath,
+            "return Err(ParseError::InvalidData);",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "pins_a_sibling_variant",
+            vec![oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::UnexpectedEof }",
+                OracleKind::GuardedResultMatch,
+                OracleStrength::Strong,
+            )],
+        );
+        let (observe, discriminate, related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(observe.state, StageState::Yes, "the guard still observes");
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a sibling-variant guard must not read exposed: {discriminate:?}"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "the sibling variant leaves observation unverified: {discriminate:?}"
+        );
+        assert_eq!(
+            related.len(),
+            1,
+            "association survives; confirmation does not"
+        );
+    }
+
+    /// Positive control for the sibling gate: the SAME guarded match
+    /// pinning the exact changed variant does confirm, through the
+    /// variant-gated owner binding.
+    #[test]
+    fn guarded_result_match_exact_variant_on_owner_confirms() {
+        let probe = owned_probe(
+            ProbeFamily::ErrorPath,
+            "return Err(ParseError::InvalidData);",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "pins_the_exact_variant",
+            vec![oracle(
+                "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }",
+                OracleKind::GuardedResultMatch,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "the exact-variant guard must confirm: {discriminate:?}"
+        );
+    }
+
+    /// #3731 review: a qualified scrutinee sharing the owner's bare name
+    /// (`other_crate::expect_response`) never confirms the local owner —
+    /// reveal cannot resolve the qualified path's identity, so the
+    /// observation stays unverified.
+    #[test]
+    fn guarded_result_match_on_qualified_scrutinee_stays_unverified() {
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "if trimmed != Some(expected_id.trim()).as_str() {",
+            "expect_response",
+        );
+        let test = test_with_assertions(
+            "guards_a_qualified_same_named_callee",
+            vec![oracle(
+                "match other_crate::expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
+                OracleKind::GuardedResultMatch,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "a qualified scrutinee must not bind the owner: {discriminate:?}"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "the qualified-path observation stays unverified: {discriminate:?}"
         );
     }
 

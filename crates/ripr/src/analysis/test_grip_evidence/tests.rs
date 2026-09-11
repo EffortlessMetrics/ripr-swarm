@@ -12574,16 +12574,25 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
 }
 
 // RIPR-SPEC-0103 fixture 5: parity table for oracle_kind_matches_seam_kind.
-// ErrorVariant accepts ONLY ExactErrorVariant; rejects all value/mock oracles.
-// Value seams accept ExactValue/WholeObjectEquality/Snapshot/RelationalCheck.
+// ErrorVariant accepts ExactErrorVariant and, since #3731, GuardedResultMatch
+// (whose exact-variant comparison happens in oracle_discriminates_seam);
+// it rejects all value/mock oracles.
+// Value seams accept ExactValue/WholeObjectEquality/Snapshot/RelationalCheck
+// (and, since #3731, ReturnValue also accepts GuardedResultMatch).
 // SideEffect/CallPresence accept ONLY MockExpectation.
 #[test]
-fn oracle_kind_matches_seam_kind_error_variant_accepts_only_exact_error_variant() {
+fn oracle_kind_matches_seam_kind_error_variant_accepts_exact_and_guarded_result() {
     use crate::domain::OracleKind;
     // ErrorVariant + ExactErrorVariant → true
     assert!(
         oracle_kind_matches_seam_kind(SeamKind::ErrorVariant, &OracleKind::ExactErrorVariant),
         "ErrorVariant must accept ExactErrorVariant"
+    );
+    // #3731: ErrorVariant + GuardedResultMatch → true (discrimination is
+    // variant-gated in oracle_discriminates_seam)
+    assert!(
+        oracle_kind_matches_seam_kind(SeamKind::ErrorVariant, &OracleKind::GuardedResultMatch),
+        "ErrorVariant must accept GuardedResultMatch"
     );
     // ErrorVariant rejects all other kinds
     for rejected in [
@@ -12600,6 +12609,169 @@ fn oracle_kind_matches_seam_kind_error_variant_accepts_only_exact_error_variant(
             "ErrorVariant must reject {rejected:?}"
         );
     }
+}
+
+// #3731: a guarded Result match kind-matches return-value and error seams.
+#[test]
+fn oracle_kind_matches_seam_kind_guarded_result_matches_result_defined_seams() {
+    use crate::domain::OracleKind;
+    assert!(
+        oracle_kind_matches_seam_kind(SeamKind::ReturnValue, &OracleKind::GuardedResultMatch),
+        "ReturnValue must accept GuardedResultMatch"
+    );
+    assert!(
+        oracle_kind_matches_seam_kind(SeamKind::ErrorVariant, &OracleKind::GuardedResultMatch),
+        "ErrorVariant must accept GuardedResultMatch"
+    );
+    for other_seam in [
+        SeamKind::PredicateBoundary,
+        SeamKind::MatchArm,
+        SeamKind::FieldConstruction,
+        SeamKind::SideEffect,
+        SeamKind::CallPresence,
+    ] {
+        assert!(
+            !oracle_kind_matches_seam_kind(other_seam, &OracleKind::GuardedResultMatch),
+            "{other_seam:?} must reject GuardedResultMatch"
+        );
+    }
+}
+
+// #3731: guarded-match discrimination on repo seams — the exact pin credits,
+// a sibling or type-only pin does not, and a return-value seam without an
+// Err-construction change credits through the kind match.
+#[test]
+fn guarded_result_match_discrimination_follows_the_exact_variant() -> Result<(), String> {
+    use crate::analysis::facts::OracleFact;
+    use crate::analysis::seams::RequiredDiscriminator;
+    use crate::domain::OracleStrength;
+
+    fn guarded_oracle(text: &str, strength: OracleStrength) -> OracleFact {
+        OracleFact {
+            line: 3,
+            text: text.to_string(),
+            kind: OracleKind::GuardedResultMatch,
+            strength,
+            observed_tokens: crate::analysis::rust_index::extract_identifier_tokens(text),
+        }
+    }
+
+    fn error_seam_with(variant: &str, expression: &str) -> RepoSeam {
+        RepoSeam::new(
+            std::path::PathBuf::from("src/lib.rs"),
+            "src/lib.rs::parse",
+            SeamKind::ErrorVariant,
+            7,
+            14,
+            expression.to_string(),
+            RequiredDiscriminator::ErrorVariant {
+                variant: variant.to_string(),
+            },
+            ExpectedSink::ErrorChannel,
+        )
+    }
+
+    // Matching pin credits discrimination.
+    let seam = error_seam_with(
+        "ParseError::InvalidData",
+        "return Err(ParseError::InvalidData);",
+    );
+    let matching = guarded_oracle(
+        "match parse(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }",
+        OracleStrength::Strong,
+    );
+    assert!(
+        oracle_discriminates_seam(&seam, &matching),
+        "the exact-variant guarded pin must discriminate: {}",
+        matching.text
+    );
+    // Sibling pin does not.
+    let sibling = guarded_oracle(
+        "match parse(..) { Ok(..) => .., Err(..) => ParseError::UnexpectedEof }",
+        OracleStrength::Strong,
+    );
+    assert!(
+        !oracle_discriminates_seam(&seam, &sibling),
+        "a sibling-variant guarded pin must not discriminate: {}",
+        sibling.text
+    );
+    // Type-only (medium) pin does not.
+    let type_only = guarded_oracle(
+        "match parse(..) { Ok(..) => .., Err(..) => .downcast_ref::<ParseError> }",
+        OracleStrength::Medium,
+    );
+    assert!(
+        !oracle_discriminates_seam(&seam, &type_only),
+        "a type-only guarded pin must not discriminate an exact-variant seam: {}",
+        type_only.text
+    );
+    // Routing form with the exact pin credits.
+    let routing = guarded_oracle(
+        "match parse(..) { Err(..) => ParseError::InvalidData, _ => .. }",
+        OracleStrength::Strong,
+    );
+    assert!(
+        oracle_discriminates_seam(&seam, &routing),
+        "the routing form's exact pin must discriminate: {}",
+        routing.text
+    );
+    Ok(())
+}
+
+#[test]
+fn guarded_result_match_on_return_value_seam_compares_the_changed_variant() -> Result<(), String> {
+    use crate::analysis::facts::OracleFact;
+    use crate::domain::OracleStrength;
+
+    fn guarded_oracle(text: &str) -> OracleFact {
+        OracleFact {
+            line: 3,
+            text: text.to_string(),
+            kind: OracleKind::GuardedResultMatch,
+            strength: OracleStrength::Strong,
+            observed_tokens: crate::analysis::rust_index::extract_identifier_tokens(text),
+        }
+    }
+
+    fn return_seam(expression: &str) -> RepoSeam {
+        RepoSeam::new(
+            std::path::PathBuf::from("src/lib.rs"),
+            "src/lib.rs::parse",
+            SeamKind::ReturnValue,
+            7,
+            14,
+            expression.to_string(),
+            RequiredDiscriminator::ReturnValue {
+                description: expression.to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        )
+    }
+
+    // A return-value seam whose changed expression constructs an exact
+    // variant: the guarded pin must name it exactly.
+    let variant_seam = return_seam("return Err(ParseError::InvalidData);");
+    assert!(oracle_discriminates_seam(
+        &variant_seam,
+        &guarded_oracle("match parse(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }")
+    ));
+    assert!(
+        !oracle_discriminates_seam(
+            &variant_seam,
+            &guarded_oracle(
+                "match parse(..) { Ok(..) => .., Err(..) => ParseError::UnexpectedEof }"
+            )
+        ),
+        "a sibling-variant guard must not discriminate the changed variant"
+    );
+    // Without an Err-construction change, the kind match is the
+    // discriminator (same rule as the reveal-side `is_none_or` gate).
+    let plain_seam = return_seam("value + 1");
+    assert!(oracle_discriminates_seam(
+        &plain_seam,
+        &guarded_oracle("match parse(..) { Ok(..) => .., Err(..) => ParseError::UnexpectedEof }")
+    ));
+    Ok(())
 }
 
 #[test]

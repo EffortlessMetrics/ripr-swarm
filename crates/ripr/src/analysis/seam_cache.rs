@@ -122,7 +122,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// discloses unresolved reachability, changing the test inventory
 /// classified seams derive from for registered-harness workspaces. Old
 /// classified entries would serve dead-construction over-credits.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.6";
+/// `1.6` -> `1.7`: the guarded-Result-match review fixes (#3731) change
+/// which guarded oracles exist and what their facts pin — the terminal
+/// arm grammar, the first-comma `matches!` pattern slice, the bare-scrutinee
+/// shadow gate, and the reveal-side variant/bare confirmation gates. Old
+/// classified entries would serve conditional-failure over-credits and
+/// stale guarded discrimination for warm workspaces.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.7";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -144,7 +150,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.6";
 /// `0.11` -> `0.12`: #3636 excludes unreachable harness trial
 /// constructions from the executable-test denominator, changing the
 /// facts sharded entries derive from.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.12";
+/// `0.12` -> `0.13`: the guarded-Result-match review fixes (#3731) change
+/// the oracle facts and confirmation gates sharded entries derive from —
+/// same semantic transition as the outer classified-seam cache.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.13";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -171,7 +180,11 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.12";
 /// `0.12` -> `0.13`: #3636 excludes unreachable harness trial
 /// constructions from the executable-test denominator, changing the
 /// facts the compact classified-seam entries derive from.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.13";
+/// `0.13` -> `0.14`: the guarded-Result-match review fixes (#3731) change
+/// the oracle facts and confirmation gates the compact classified-seam
+/// entries derive from — same semantic transition as the outer
+/// classified-seam cache.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.14";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -220,6 +233,12 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// and nested block), string contents, and character literals before
 /// scanning (#3633 review). Warm per-file facts from before the change
 /// would serve comment-derived calls and numbers as live evidence.
+/// `1.1` -> `1.2` through `1.2` -> `1.3`: the guarded-Result-match
+/// grammar changed twice more within the same unreleased cycle (#3731
+/// review): the terminal-arm grammar became a bounded depth-0 statement
+/// grammar and the `matches!` pattern slice takes the first top-level
+/// comma, so a warm pre-fix 1.2 hit would serve conditional-failure
+/// matches and message-sliced pins as live oracle facts.
 ///
 /// Still no bump for #3603/#3608/#3636 themselves: per-file parser
 /// facts are unchanged by the harness registry — it applies
@@ -227,7 +246,7 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// build against the current manifests, and the #3636 reachability
 /// authority runs inside that re-application — so a warm hit cannot
 /// bypass either validation or reachability classification.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.2";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.3";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2653,71 +2672,78 @@ mod tests {
         // 1.1 hit demonstrably replays the pre-routing classification
         // (observed on a real fixture during #3709), so the generation
         // moves again.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.2");
+        // 1.2 -> 1.3: the #3731 review fixes changed the guarded grammar
+        // again (bounded depth-0 terminal-arm grammar, first-comma
+        // `matches!` pattern slice, bare-scrutinee shadow gate), so a
+        // warm pre-fix 1.2 hit would serve conditional-failure matches
+        // and message-sliced pins as live oracle facts.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.3");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
         // unreachable harness trial constructions from the
         // executable-test denominator.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.6");
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.12");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.13");
+        // 1.6 -> 1.7: the #3731 review fixes change which guarded oracles
+        // exist and what they confirm (terminal grammar, first-comma
+        // slice, bare-scrutinee and exact-variant confirmation gates), so
+        // classified seams derived from pre-fix oracle facts must miss.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.7");
+        // 0.12 -> 0.13 / 0.13 -> 0.14: same #3731 semantic transition as
+        // the outer classified-seam cache, for the sharded and compact
+        // envelopes.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.13");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.14");
     }
 
     #[test]
-    fn previous_generation_classified_seam_envelope_with_identical_identity_is_a_miss()
-    -> Result<(), String> {
-        // #3603: trial subjects gained helper-callback one-level body
-        // evidence and method unwrap/expect smoke oracles. #3636: the
-        // reachability authority excludes unreachable trial
-        // constructions from the executable-test denominator. An
-        // envelope seeded under the previous classified-seam generation
-        // must not satisfy the current generation's key, even with
-        // identical identity fields.
-        let dir = isolated_dir("gen-classified-seam");
+    fn file_fact_generation_before_the_guarded_grammar_fixes_is_a_miss() -> Result<(), String> {
+        // #3731 review (warm caches hide guarded evidence): the guarded
+        // grammar fixes change which oracle facts extraction emits
+        // (bounded depth-0 terminal arms, first-comma `matches!` slices).
+        // An envelope seeded under the pre-fix 1.2 generation must miss
+        // the current generation's key with identical identity fields, so
+        // a warm hit cannot replay conditional-failure matches and
+        // message-sliced pins as live evidence.
+        let dir = isolated_dir("gen-guarded-fix-facts");
         let _ = std::fs::remove_dir_all(&dir);
-        let cache = RepoSeamFactCache::at_dir(dir.clone());
-        let seams = vec![sample_classified()];
-        let previous_key = RepoSeamCacheKey {
-            // The previous generation that must miss: the #3634-era 1.5
-            // key, one step behind the current #3636-era 1.6 generation.
-            schema_version: "1.5".to_string(),
+        let cache = RepoFileFactCache::at_dir(dir.clone());
+        let file = Path::new("src/guarded.rs");
+        let content = "fn t() {
+    match parse(input) {
+        Ok(v) => {}
+        Err(e) => panic!(\"{e}\")
+    }
+}
+"
+        .as_bytes()
+        .to_vec();
+        let previous_key = RepoFileFactCacheKey {
+            schema_version: "1.2".to_string(),
             analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
-            workspace_root_hash: hash_str("workspace"),
-            files_content_hash: hash_str("files"),
-            cfg_features_hash: hash_str(""),
-            config_hash: hash_str(""),
-            test_intent_hash: hash_str(""),
-            suppressions_hash: hash_str(""),
-            workspace_manifests_hash: hash_str("manifests"),
-            lockfile_hash: hash_str("lock"),
-            toolchain_hash: hash_str("toolchain"),
-            seam_limit_key: "unlimited".to_string(),
+            file_path: file.to_path_buf(),
+            // Production derives this field via `hash_bytes`, so the seed
+            // must too: the only difference from the current key is then
+            // the schema generation, making the miss prove the boundary.
+            content_hash: hash_bytes(&content),
         };
-        cache.store_classified_seams_with_limit(&previous_key, &seams, None, usize::MAX)?;
-        assert!(
-            cache.entry_path(&previous_key).exists(),
-            "seed sanity: previous-generation envelope stored"
-        );
+        cache.store_file_facts(&previous_key, &FileFacts::default())?;
+        assert!(cache.entry_path(&previous_key).exists());
 
         // The current generation's key with identical identity must miss.
-        let current_key = RepoSeamCacheKey {
-            schema_version: CACHE_SCHEMA_VERSION.to_string(),
-            ..previous_key.clone()
-        };
+        let current_key = RepoFileFactCacheKey::new(file, &content);
         assert_ne!(previous_key.schema_version, current_key.schema_version);
-        match cache.load_classified_seams(&current_key) {
+        match cache.load_file_facts(&current_key) {
             CacheLoad::Miss => {}
             other => {
                 return Err(format!(
-                    "expected Miss across the classified-seam generation transition, got {other:?}"
+                    "expected Miss across the #3731 file-fact generation transition, got {other:?}"
                 ));
             }
         }
         // Seed sanity: the previous key still reads its own envelope; it
         // is only reachable by a key current code never constructs.
-        match cache.load_classified_seams(&previous_key) {
-            CacheLoad::Hit((stored, _)) => assert_eq!(stored.len(), 1),
+        match cache.load_file_facts(&previous_key) {
+            CacheLoad::Hit(_) => {}
             other => {
                 return Err(format!(
                     "seed sanity: previous key should read its own envelope, got {other:?}"

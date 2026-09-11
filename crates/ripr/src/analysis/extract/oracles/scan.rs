@@ -117,12 +117,20 @@ pub(crate) struct GuardedResultMatchScan {
 /// `Err(e) if <pin> => {}, rest => <loud failure>` with no `Ok` arm, as in
 /// the historical `expect_response` harness). An oracle fact is emitted
 /// only when every Err arm carries a recognized discriminator AND is
-/// terminal:
-/// - a loud failure body (`panic!`, `assert!`, `bail!`, `return`,
-///   re-raise, unwrap/expect), or
+/// terminal under the bounded depth-0 statement grammar (see
+/// `arm_terminates`):
+/// - at least one depth-0 statement that is UNCONDITIONALLY diverging
+///   (`panic!`/`unreachable!`/`unimplemented!`/`todo!`/`bail!` covering
+///   the statement, `return ..`, `process::exit(..)`), or the
+///   body-predicate failure form (`if !matches!(.., Type::Variant ..)`,
+///   `if error != Type::Variant`, `if downcast..is_none()` whose block
+///   diverges), or
 /// - a guarded accept body (`Err(e) if <pin> => {}`): the guard must carry
 ///   the pin, the body must be trivial, and every catch-all arm must fail
 ///   loudly, so a guard miss routes to an observed failure.
+///
+/// Markers merely NESTED in `if`/`match`/closure blocks, `.unwrap()`/
+/// `.expect()` statements, and conditional failures never terminate.
 ///
 /// Recognized discriminators: an exact error-variant pin in binding
 /// position (the arm pattern proper, a `matches!`/`assert_matches!` guard
@@ -133,9 +141,12 @@ pub(crate) struct GuardedResultMatchScan {
 /// meaning.
 ///
 /// A same-named local `fn` or `let` binding in the test body defeats the
-/// oracle (shared #3714 shadow authority): a shadowed name is not the
-/// resolved callee, and crediting it would be exactly the token-coincidence
-/// false-`exposed` family.
+/// oracle for a BARE one-segment scrutinee (shared #3714 shadow
+/// authority): a shadowed name is not the resolved callee, and crediting
+/// it would be exactly the token-coincidence false-`exposed` family. A
+/// qualified scrutinee (`helpers::parse`) cannot be shadowed by a local
+/// binding and skips the defeat; its owner confirmation stays unverified
+/// downstream (#3727 tracks qualified-path identity resolution).
 pub(crate) fn guarded_result_match_scan(body: &str, start_line: usize) -> GuardedResultMatchScan {
     // Comments and string contents are erased before scanning so a
     // commented-out match, or an arm body mentioning `panic!` inside a
@@ -172,7 +183,16 @@ pub(crate) fn guarded_result_match_scan(body: &str, start_line: usize) -> Guarde
         // bind a local binding's result to the owner's seam. The masked
         // body keeps the check string/comment-safe; the match's own
         // body-relative line is the use site for the positional let rule.
-        if body_shadows_callee_at_line(&masked, &match_shape.callee, offset) {
+        // The defeat applies only to a BARE one-segment scrutinee: local
+        // bindings cannot shadow an explicitly qualified path
+        // (`let parse = ..` never shadows `helpers::parse`), so a shadow
+        // check on the final segment would drop real evidence (#3731
+        // review). Qualified-path identity resolution — including
+        // imported same-named callees — stays unresolvable here and is the
+        // #3727 follow-up; reveal keeps those observations unverified.
+        if match_shape.path == match_shape.callee
+            && body_shadows_callee_at_line(&masked, &match_shape.callee, offset)
+        {
             continue;
         }
         scan.oracles.push(oracle);
@@ -584,48 +604,230 @@ fn arm_body_is_trivial(body: &str) -> bool {
     matches!(body.trim(), "" | "{}")
 }
 
-/// Whether a (masked) Err-arm body ends the failure loudly: a panic,
-/// assertion, `bail!`, `return`, `Err(` re-raise, or unwrap/expect. An arm
-/// that swallows the error (`Err(e) => {}`, logging only) is a no-op
-/// failure arm and never credits (#3709).
+/// Whether a (masked) Err-arm or catch-all body terminates the failure
+/// loudly (#3731 review: bounded depth-0 statement grammar, replacing
+/// substring containment). The body is split into top-level statements
+/// (balanced delimiters; string/comment content is already masked), and
+/// the arm counts as terminal only when at least one depth-0 statement is
+/// UNCONDITIONALLY diverging:
+/// - a statement whose whole form is a `panic!`/`unreachable!`/
+///   `unimplemented!`/`todo!`/`bail!` invocation (optionally
+///   `;`-terminated),
+/// - a `return ..` statement,
+/// - a `process::exit(..)`/`std::process::exit(..)` statement, or
+/// - the body-predicate failure form: a depth-0 `if <cond> { .. }`
+///   statement whose condition carries the NEGATED changed-error pin and
+///   whose block holds an unconditionally diverging statement (recursively
+///   under the same grammar) — see `condition_pins_changed_error`.
+///
+/// Explicitly NOT accepted: failure markers nested inside `if`/`match`/
+/// closure blocks of an unpinned statement (depth > 0 — a conditional
+/// `panic!` fires only when its unrelated condition holds), `.unwrap()`/
+/// `.expect()` statements (the unwrapped value may be unrelated to the
+/// matched error), and `assert!` forms (condition-dependent divergence).
+/// Those shapes keep the match unrecognized: an arm that can return
+/// normally swallows the error, and crediting it would fabricate a strong
+/// discriminator (fail-closed under-credit).
 fn arm_terminates(body: &str) -> bool {
-    [
-        "panic!(",
-        "assert!",
-        "unreachable!(",
-        "todo!(",
-        "unimplemented!(",
-        "bail!(",
-        ".unwrap(",
-        ".expect(",
-        "Err(",
-    ]
-    .iter()
-    .any(|marker| body.contains(marker))
-        || contains_whole_word(body, "return")
+    top_level_statements(body)
+        .iter()
+        .any(|statement| statement_diverges(statement))
 }
 
-/// Whole-word containment for a keyword (identifier boundaries only).
-fn contains_whole_word(text: &str, word: &str) -> bool {
-    let mut search = 0usize;
-    while let Some(relative) = text[search..].find(word) {
-        let start = search + relative;
-        let end = start + word.len();
-        let before_ok = start == 0
-            || !text[..start]
-                .chars()
-                .next_back()
-                .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_');
-        let after_ok = text[end..]
-            .chars()
-            .next()
-            .is_none_or(|character| !(character.is_ascii_alphanumeric() || character == '_'));
-        if before_ok && after_ok {
-            return true;
+/// The top-level (depth-0) statements of a (masked) body: split on `;` at
+/// delimiter depth zero. Masked strings and comments cannot contribute
+/// delimiters, and balanced braces keep block-internal `;` below depth
+/// zero, so each slice is one statement (possibly empty).
+fn top_level_statements(body: &str) -> Vec<&str> {
+    let mut statements = Vec::new();
+    let bytes = body.as_bytes();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (index, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b';' if depth == 0 => {
+                statements.push(&body[start..index]);
+                start = index + 1;
+            }
+            _ => {}
         }
-        search = start + 1;
+    }
+    let tail = &body[start..];
+    if !tail.trim().is_empty() {
+        statements.push(tail);
+    }
+    statements
+}
+
+/// Whether one (masked) top-level statement is UNCONDITIONALLY diverging
+/// under the bounded grammar documented on [`arm_terminates`].
+fn statement_diverges(statement: &str) -> bool {
+    let statement = statement.trim();
+    // A segment wrapped in one balanced brace pair — the brace-wrapped arm
+    // body block, or a bare nested block statement — diverges exactly when
+    // one of its own top-level statements does. (`balanced_block` treats
+    // the first byte as the opener, so the leading `{` is required here;
+    // blocks that do not span the whole segment, like an `if` statement's
+    // own block, fall through to the forms below.)
+    if statement.starts_with('{')
+        && let Some(inner) = balanced_block(statement)
+        && statement.len() == inner.len() + 2
+    {
+        return top_level_statements(inner)
+            .iter()
+            .any(|nested| statement_diverges(nested));
+    }
+    let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
+    if statement.is_empty() {
+        return false;
+    }
+    // An unconditional diverging macro covering the whole statement.
+    if ["panic!", "unreachable!", "unimplemented!", "todo!", "bail!"]
+        .iter()
+        .any(|name| invocation_covers_statement(statement, name))
+    {
+        return true;
+    }
+    // `return ..` / `return` (a trailing `;` was already stripped; the
+    // whole-word boundary keeps `returned_x` from qualifying)
+    if statement == "return"
+        || statement.starts_with("return ")
+        || statement.starts_with("return\t")
+    {
+        return true;
+    }
+    if ["std::process::exit", "process::exit"]
+        .iter()
+        .any(|name| invocation_covers_statement(statement, name))
+    {
+        return true;
+    }
+    // The body-predicate failure form: the if statement IS the
+    // discriminator (diverge exactly when the error misses the pin).
+    if_statement_diverges(statement)
+}
+
+/// Whether `statement` is exactly `<name>(..)` — the invocation opens the
+/// statement and its balanced close paren is the final character.
+fn invocation_covers_statement(statement: &str, name: &str) -> bool {
+    let Some(rest) = statement.strip_prefix(name) else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let Some(after_open) = rest.strip_prefix('(') else {
+        return false;
+    };
+    let mut depth = 1i32;
+    for (index, byte) in after_open.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return after_open[index + 1..].trim().is_empty();
+                }
+            }
+            _ => {}
+        }
     }
     false
+}
+
+/// The depth-0 `if <cond> { .. }` form of the body-predicate failure
+/// grammar: the condition carries the NEGATED changed-error pin and the
+/// block diverges, so a guard miss is observed. An `else` tail does not
+/// disqualify: the pin-miss branch is the observed route.
+fn if_statement_diverges(statement: &str) -> bool {
+    let Some(rest) = statement.strip_prefix("if") else {
+        return false;
+    };
+    if rest
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return false;
+    }
+    let rest = rest.trim_start();
+    let mut depth = 0i32;
+    let mut brace = None;
+    for (index, character) in rest.char_indices() {
+        match character {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            '{' if depth == 0 => {
+                brace = Some(index);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let Some(brace) = brace else {
+        return false;
+    };
+    let condition = rest[..brace].trim();
+    let Some(block) = balanced_block(&rest[brace..]) else {
+        return false;
+    };
+    condition_pins_changed_error(condition)
+        && top_level_statements(block)
+            .iter()
+            .any(|statement| statement_diverges(statement))
+}
+
+/// Whether a depth-0 `if` condition carries the NEGATED changed-error pin:
+/// the statement diverges exactly when the matched result's error is NOT
+/// the pinned identity. Recognized forms:
+/// - `!matches!(.., Type::Variant ..)` / `!assert_matches!(..)`,
+/// - a depth-0 `!=` whose right-hand side is a variant path,
+/// - a `.downcast[_ref|_mut]::<T>()` invocation tested with `.is_none()`.
+///
+/// A positive-form (`if matches!(.., V) { panic!() }`) or opaque
+/// condition (`if diagnostics_enabled() { panic!() }`) never qualifies:
+/// the divergence would key on an unrelated switch or fire on the pin
+/// itself, not on a miss of the changed error (fail-closed under-credit).
+fn condition_pins_changed_error(condition: &str) -> bool {
+    for prefix in ["assert_matches!(", "matches!("] {
+        let mut from = 0usize;
+        while let Some(relative) = condition[from..].find(prefix) {
+            let name_start = from + relative;
+            let open = name_start + prefix.len() - 1;
+            let negated = condition[..name_start].trim_end().ends_with('!');
+            if negated
+                && let Some(pattern) = slice_after_first_top_level_comma(&condition[open..])
+                && contains_named_enum_variant(&pattern)
+            {
+                return true;
+            }
+            from = open + 1;
+        }
+    }
+    let bytes = condition.as_bytes();
+    let mut depth = 0i32;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'!' if depth == 0 && bytes.get(index + 1) == Some(&b'=') => {
+                let rhs = condition[index + 2..].trim_start();
+                let token: String = rhs
+                    .chars()
+                    .take_while(|character| {
+                        character.is_ascii_alphanumeric() || *character == '_' || *character == ':'
+                    })
+                    .collect();
+                if is_variant_path(&token) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    downcast_invocation(condition).is_some() && condition.contains(".is_none()")
 }
 
 /// The pattern arguments of every `matches!`/`assert_matches!` guard in a
@@ -661,7 +863,11 @@ fn slice_after_first_top_level_comma(text: &str) -> Option<String> {
                     break;
                 }
             }
-            ',' if depth == 1 => comma = Some(index),
+            // The FIRST top-level comma ends the scrutinee expression; a
+            // later one (e.g. `assert_matches!(expr, Pattern, "message")`)
+            // belongs to a further argument, and slicing after it would
+            // return the message instead of the pattern (#3731 review).
+            ',' if depth == 1 && comma.is_none() => comma = Some(index),
             _ => {}
         }
     }
@@ -1292,7 +1498,7 @@ mod spec_0106_scan_tests {
 
 #[cfg(test)]
 mod guarded_result_match_tests {
-    use super::guarded_result_match_scan;
+    use super::{guarded_result_match_scan, mask_comments_and_strings, matches_guard_patterns};
     use crate::domain::{OracleKind, OracleStrength};
 
     const POSITIVE: &str = r#"
@@ -1723,6 +1929,321 @@ fn one_pin_one_wildcard() {
         assert!(
             scan.oracles.is_empty(),
             "an unpinned (wildcard-headed) Err arm blocks the oracle: {:?}",
+            scan.oracles
+        );
+    }
+
+    // --- #3731 review: first top-level comma ends the matches! scrutinee ---
+
+    /// F1: `assert_matches!(expr, Pattern, "message")` — the pattern slice
+    /// must start at the FIRST post-comma argument, not the message. (The
+    /// scanner double-scans the `matches!(` substring inside
+    /// `assert_matches!(`, so both candidates carry the pattern; every
+    /// slice must start at the pattern, never at the message.)
+    #[test]
+    fn assert_matches_pattern_slice_starts_after_the_first_top_level_comma() {
+        let body = r#"assert_matches!(expr, ParseError::InvalidData, "custom message")"#;
+        let masked = mask_comments_and_strings(body);
+        let patterns = matches_guard_patterns(&masked);
+        assert!(!patterns.is_empty(), "{patterns:?}");
+        for pattern in &patterns {
+            assert!(
+                pattern.starts_with("ParseError::InvalidData"),
+                "the pattern slice must start at the pattern, not the message: {patterns:?}"
+            );
+        }
+    }
+
+    /// F1 end-to-end: a three-argument `assert_matches!` in the Err body
+    /// still pins the variant and credits the strong oracle.
+    #[test]
+    fn three_argument_assert_matches_body_still_pins_the_variant() {
+        let body = r#"
+#[test]
+fn three_arg_body() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(error) => {
+            if !assert_matches!(
+                error.downcast_ref::<ParseError>(),
+                Some(ParseError::InvalidData),
+                "custom message"
+            ) {
+                panic!("invalid data");
+            }
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        assert_eq!(scan.oracles[0].strength, OracleStrength::Strong);
+        assert!(
+            scan.oracles[0].text.contains("ParseError::InvalidData"),
+            "the variant pin survives the extra message argument: {}",
+            scan.oracles[0].text
+        );
+    }
+
+    // --- #3731 review: bounded depth-0 terminal-statement grammar ---
+
+    /// F4: a `panic!` nested behind an unrelated condition never makes the
+    /// arm terminal — even a pinned arm stays unrecognized (fail-closed).
+    #[test]
+    fn conditional_panic_err_arm_is_not_terminal() {
+        let body = r#"
+#[test]
+fn conditional_panic() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => {
+            if diagnostics_enabled() {
+                panic!("debug");
+            }
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "a conditional panic swallows the error when diagnostics are off: {:?}",
+            scan.oracles
+        );
+    }
+
+    /// F4: a conditional `return` is equally non-terminal.
+    #[test]
+    fn conditional_return_err_arm_is_not_terminal() {
+        let body = r#"
+#[test]
+fn conditional_return() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => {
+            if retriable() {
+                return;
+            }
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "a conditional return lets the arm fall through: {:?}",
+            scan.oracles
+        );
+    }
+
+    /// F4: an `.unwrap()` on an unrelated value is not a failure action.
+    #[test]
+    fn unrelated_unwrap_err_arm_is_not_terminal() {
+        let body = r#"
+#[test]
+fn unrelated_unwrap() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => {
+            config.unwrap();
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "an unrelated unwrap must not read as a loud failure: {:?}",
+            scan.oracles
+        );
+    }
+
+    /// F4: a `panic!` inside a nested closure block is not a depth-0
+    /// failure action.
+    #[test]
+    fn nested_closure_panic_err_arm_is_not_terminal() {
+        let body = r#"
+#[test]
+fn nested_closure() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => {
+            let loud = || panic!("x");
+            loud();
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "closure-nested panic markers never terminate the arm: {:?}",
+            scan.oracles
+        );
+    }
+
+    /// F4: an expression statement that IS the diverging macro terminates;
+    /// a trailing `;` and sibling statements change nothing.
+    #[test]
+    fn unconditional_failure_statements_terminate() {
+        let bare_panic = r#"
+#[test]
+fn bare_panic() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => panic!("invalid data"),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(bare_panic, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        let semicolon_panic = r#"
+#[test]
+fn semicolon_panic() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => panic!("invalid data");
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(semicolon_panic, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        let bail_after_log = r#"
+#[test]
+fn bail_after_log() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => {
+            log(err);
+            bail!("bad")
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(bail_after_log, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        let process_exit = r#"
+#[test]
+fn exits_process() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => std::process::exit(1),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(process_exit, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+    }
+
+    /// F4: the body-predicate failure form with a `!matches!` condition
+    /// stays terminal — the negated pin condition IS the discriminator
+    /// (the fixture-positive shape, also credited through the body
+    /// `matches!` pin).
+    #[test]
+    fn negated_matches_condition_with_panic_body_stays_terminal() {
+        let body = r#"
+#[test]
+fn pin_conditioned_panic() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(error) => {
+            if !matches!(
+                error.downcast_ref::<ParseError>(),
+                Some(ParseError::InvalidData)
+            ) {
+                panic!("unexpected error: {error}");
+            }
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(scan.oracles.len(), 1, "{:?}", scan.oracles);
+        assert_eq!(scan.oracles[0].strength, OracleStrength::Strong);
+    }
+
+    /// F4 residual (fail-closed under-credit, documented): a bare
+    /// `if error != Type::Variant { panic!(..) }` body terminates under
+    /// the depth-0 grammar, but the pin authority reads only the arm
+    /// pattern, `matches!`-family patterns, arm-guard equalities, and
+    /// downcasts as exact pins — a body inequality is not one, so the
+    /// shape stays unrecognized rather than guessing an exact variant
+    /// from an inequality. Extending the pin authority to body
+    /// inequality forms is future work, not part of this fix.
+    #[test]
+    fn bare_inequality_condition_terminates_but_does_not_pin() {
+        let body = r#"
+#[test]
+fn inequality_conditioned_panic() {
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(error) => {
+            if error.kind() != io::ErrorKind::InvalidData {
+                panic!("unexpected kind: {error}");
+            }
+        }
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "a body inequality never establishes an exact variant pin: {:?}",
+            scan.oracles
+        );
+        assert!(
+            !scan.match_start_lines.is_empty(),
+            "the shape is still owned (suppressed) by the scanner"
+        );
+    }
+
+    // --- #3731 review: the shadow defeat applies only to bare scrutinees ---
+
+    /// F7: a qualified scrutinee is not shadowed by a same-named local
+    /// binding — `let parse = ..` never shadows `real_helpers::parse`.
+    #[test]
+    fn qualified_scrutinee_with_same_named_local_binding_still_credits() {
+        let body = r#"
+#[test]
+fn qualified_not_shadowed() {
+    let parse = fake_parse;
+    match real_helpers::parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => panic!("invalid data"),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert_eq!(
+            scan.oracles.len(),
+            1,
+            "a local binding cannot shadow a qualified path: {:?}",
+            scan.oracles
+        );
+        assert!(
+            scan.oracles[0]
+                .text
+                .contains("match real_helpers::parse(..)")
+        );
+    }
+
+    /// F7 control: the same local binding still defeats a BARE scrutinee.
+    #[test]
+    fn bare_scrutinee_with_same_named_local_binding_is_defeated() {
+        let body = r#"
+#[test]
+fn bare_shadowed() {
+    let parse = fake_parse;
+    match parse(input) {
+        Ok(value) => assert_eq!(value, 1),
+        Err(ParseError::InvalidData) => panic!("invalid data"),
+    }
+}
+"#;
+        let scan = guarded_result_match_scan(body, 1);
+        assert!(
+            scan.oracles.is_empty(),
+            "a bare scrutinee named by a local binding stays defeated: {:?}",
             scan.oracles
         );
     }
