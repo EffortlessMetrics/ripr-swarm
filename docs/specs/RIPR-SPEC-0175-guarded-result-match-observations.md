@@ -26,6 +26,7 @@ Support-tier impact:
 - No tier change. The admit widens which test-body shapes produce oracle
   facts for an already-analyzed probe; it adds no runtime evidence, no
   harness execution, and no new analysis surface.
+  [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
 Policy impact:
 
