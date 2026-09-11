@@ -1,4 +1,4 @@
-use guarded_result_match_positive_fixture::{ParseError, expect_ready};
+use guarded_result_match_positive::{ParseError, expect_ready};
 
 #[test]
 fn rejects_unready_kind_with_exact_error_routing() {

@@ -1507,6 +1507,26 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
     error_variant_oracle_matches_seam_variant(seam, &oracle.text)
 }
 
+/// The scrutinee callee's terminal name embedded in a synthesized
+/// guarded-Result-match oracle text (`match <path>(..) { .. }`): the final
+/// `::` segment of the plain path before the call marker, extracted the
+/// same way the diff-side owner path is. `None` when the text does not
+/// embed a recognizable plain-path scrutinee (#3731 review round 4).
+fn guarded_oracle_scrutinee_callee(oracle_text: &str) -> Option<&str> {
+    let rest = oracle_text.strip_prefix("match ")?;
+    let open = rest.find("(..)")?;
+    let path = rest[..open].trim();
+    let plain = !path.is_empty()
+        && path.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == ':'
+        })
+        && path.split("::").all(|segment| !segment.is_empty());
+    if !plain {
+        return None;
+    }
+    path.rsplit("::").next()
+}
+
 /// The variant pin carried by a synthesized guarded-Result-match oracle
 /// text (`... Err(..) => Some(ParseError::InvalidData { .. }) }`): the
 /// slice after the `Err(..) =>` template marker — cut before the
@@ -1531,6 +1551,13 @@ fn guarded_oracle_variant_pins(oracle_text: &str) -> Vec<String> {
 /// Variant comparison for a `GuardedResultMatch` oracle against an
 /// ErrorVariant or ReturnValue seam (#3731 review).
 ///
+/// Callee identity gates everything (#3731 review round 4): the
+/// synthesized text embeds the scrutinee path after `match `, and a
+/// guarded match over a DIFFERENT callee observes someone else's result no
+/// matter which variant it pins. The scrutinee path's terminal segment
+/// must equal the seam's owner terminal name; an unrecognizable scrutinee
+/// fails closed.
+///
 /// - An `ErrorVariant` seam compares the pin against the producer-owned
 ///   exact variant identity. A payload-shaped identity (constructor or
 ///   string payloads) fails closed: the synthesized pin masks string
@@ -1543,6 +1570,12 @@ fn guarded_result_oracle_matches_seam_variant(seam: &RepoSeam, oracle_text: &str
     use super::classify::{enum_variant_values, exact_error_variant};
     use crate::analysis::seams::RequiredDiscriminator;
 
+    let Some(owner_terminal) = seam.owner().rsplit("::").next() else {
+        return false;
+    };
+    if guarded_oracle_scrutinee_callee(oracle_text) != Some(owner_terminal) {
+        return false;
+    }
     let pins = guarded_oracle_variant_pins(oracle_text);
     if pins.is_empty() {
         return false;

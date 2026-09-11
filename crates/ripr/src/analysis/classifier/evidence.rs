@@ -1,7 +1,7 @@
 use crate::analysis::classify::{
     ProbeContext, PropagationWitnessV1, activation_evidence, classify, confidence_score,
-    current_path_witness, infection_evidence, local_flow_sinks, propagation_evidence_with_witness,
-    reach_evidence, reveal_evidence_with_expression,
+    current_path_witness, file_imports_foreign_callee_name, infection_evidence, local_flow_sinks,
+    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
 };
 use crate::domain::*;
 
@@ -50,6 +50,18 @@ impl ClassifiedProbeEvidence {
             context.probe,
             reveal_expression,
             &context.related_tests,
+            // #3731 review (F11): the related test's file source is
+            // reachable here, so the caller computes the same-name-import
+            // defeat per test instead of restructuring the reveal inputs.
+            &|test, callee| {
+                context.index.files.get(&test.file).is_some_and(|facts| {
+                    file_imports_foreign_callee_name(
+                        &facts.source,
+                        callee,
+                        &context.index.package_names,
+                    )
+                })
+            },
         );
 
         let ripr = RiprEvidence {

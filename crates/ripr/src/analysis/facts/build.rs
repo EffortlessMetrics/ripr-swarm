@@ -136,6 +136,7 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
     }
     super::includes::resolve_repository_local_includes(root, &mut index);
     index.workspace_authority = Some(WorkspaceRootAuthority::from_index(root, &index.files));
+    index.package_names = manifest_package_names(root);
     Ok(CachedRustIndex {
         index,
         file_fact_cache: stats,
@@ -177,7 +178,36 @@ fn build_index_with_adapters(
     }
     super::includes::resolve_repository_local_includes(root, &mut index);
     index.workspace_authority = Some(WorkspaceRootAuthority::from_index(root, &index.files));
+    index.package_names = manifest_package_names(root);
     Ok(index)
+}
+
+/// The `[package] name` of the analyzed root manifest, when it declares
+/// one. Root manifest only: member manifests are not resolved here, so
+/// multi-crate workspaces leave member-crate names unlisted and the
+/// same-name-import gate treats member imports as foreign (fail-closed
+/// under-credit; see `RustIndex.package_names`). A missing or unparseable
+/// manifest yields an empty set, never an error: the gate only ever
+/// under-credits.
+fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+        return names;
+    };
+    // A manifest is a TOML document (a table), not a standalone value:
+    // `toml::Value::from_str` would reject the `[package]` header.
+    let Ok(value) = text.parse::<toml::Table>() else {
+        return names;
+    };
+    if let Some(name) = value
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(toml::Value::as_str)
+    {
+        eprintln!("DEBUG package_names root={} name={}", root.display(), name);
+        names.insert(name.to_string());
+    }
+    names
 }
 
 fn summarize_loaded_file(

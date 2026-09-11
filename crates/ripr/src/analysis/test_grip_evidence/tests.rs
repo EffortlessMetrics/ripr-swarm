@@ -12774,6 +12774,81 @@ fn guarded_result_match_on_return_value_seam_compares_the_changed_variant() -> R
     Ok(())
 }
 
+// #3731 review round 4: repo discrimination requires CALLEE identity — a
+// guarded match whose scrutinee calls a different function observes someone
+// else's result, so it never discriminates the seam even when it pins the
+// exact same variant.
+#[test]
+fn wrong_callee_guarded_oracle_does_not_discriminate_the_seam() -> Result<(), String> {
+    use crate::analysis::facts::OracleFact;
+    use crate::analysis::seams::RequiredDiscriminator;
+    use crate::domain::OracleStrength;
+
+    fn guarded_oracle(text: &str) -> OracleFact {
+        OracleFact {
+            line: 3,
+            text: text.to_string(),
+            kind: OracleKind::GuardedResultMatch,
+            strength: OracleStrength::Strong,
+            observed_tokens: crate::analysis::rust_index::extract_identifier_tokens(text),
+        }
+    }
+
+    let seam = RepoSeam::new(
+        std::path::PathBuf::from("src/lib.rs"),
+        "src/lib.rs::expect_response",
+        SeamKind::ErrorVariant,
+        7,
+        14,
+        "return Err(ParseError::InvalidData);".to_string(),
+        RequiredDiscriminator::ErrorVariant {
+            variant: "ParseError::InvalidData".to_string(),
+        },
+        ExpectedSink::ErrorChannel,
+    );
+
+    // Wrong callee, exact same variant pin: no discrimination credit.
+    let wrong_callee = guarded_oracle(
+        "match other_callee(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }",
+    );
+    assert!(
+        !oracle_discriminates_seam(&seam, &wrong_callee),
+        "a guarded match over a different callee must not discriminate the seam: {}",
+        wrong_callee.text
+    );
+
+    // Positive control: the same pin over the seam's own callee credits.
+    let own_callee = guarded_oracle(
+        "match expect_response(..) { Ok(..) => .., Err(..) => ParseError::InvalidData }",
+    );
+    assert!(
+        oracle_discriminates_seam(&seam, &own_callee),
+        "the seam's own callee with the exact pin must discriminate: {}",
+        own_callee.text
+    );
+
+    // A qualified scrutinee shares the owner's terminal name and keeps the
+    // identity binding (the terminal-segment rule matches the diff path).
+    let qualified = guarded_oracle(
+        "match helpers::expect_response(..) { Err(..) => ParseError::InvalidData, _ => .. }",
+    );
+    assert!(
+        oracle_discriminates_seam(&seam, &qualified),
+        "a qualified scrutinee with the owner's terminal name binds the seam: {}",
+        qualified.text
+    );
+
+    // A text without a recognizable plain-path scrutinee fails closed.
+    let unrecognizable =
+        guarded_oracle("match { Ok(..) => .., Err(..) => ParseError::InvalidData }");
+    assert!(
+        !oracle_discriminates_seam(&seam, &unrecognizable),
+        "an unrecognizable scrutinee must not discriminate: {}",
+        unrecognizable.text
+    );
+    Ok(())
+}
+
 #[test]
 fn oracle_kind_matches_seam_kind_value_seams_accept_exact_value() {
     use crate::domain::OracleKind;

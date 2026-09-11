@@ -622,7 +622,7 @@ fn has_callable_forward_dependency(
 /// invisible to tests outside that module, so nested text is dropped
 /// rather than credited (#3619 review). Brace lists inside a `use`
 /// statement are kept: their braces do not change the statement's depth.
-fn file_level_use_text(stripped: &str) -> String {
+pub(in crate::analysis) fn file_level_use_text(stripped: &str) -> String {
     let chars: Vec<char> = stripped.chars().collect();
     let mut depth_at = vec![0usize; chars.len() + 1];
     let mut depth = 0usize;
