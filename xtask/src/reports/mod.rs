@@ -7,6 +7,7 @@ mod ci_budget;
 mod dogfood;
 mod eval_sweep;
 mod eval_sweep_check;
+mod eval_sweep_refresh;
 mod first_pr;
 mod fixtures;
 mod impacted_evidence;

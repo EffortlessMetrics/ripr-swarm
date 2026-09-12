@@ -293,7 +293,7 @@ const SECRET_TRIPWIRES: [&str; 18] = [
 /// One non-failing disclosure: an identity that is absent (typed `incomplete`,
 /// never invented) or otherwise not currently established.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Diagnostic {
+pub(crate) struct Diagnostic {
     subject: String,
     field: String,
     reason: String,
@@ -327,14 +327,14 @@ fn fail(subject: &str, field: &str, reason: impl std::fmt::Display) -> String {
 /// `incomplete` identities disclosed in full); fail-closed violations exit
 /// nonzero. None of these is a robustness or adequacy claim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Verdict {
+pub(crate) enum Verdict {
     Valid,
     Incomplete,
     NotRun,
 }
 
 impl Verdict {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Verdict::Valid => "valid",
             Verdict::Incomplete => "incomplete",
@@ -389,8 +389,9 @@ fn parse_check_args(args: &[String]) -> Result<CheckArgs, String> {
 
 /// Reads a file and parses it as JSON with duplicate-key rejection (structural
 /// rot fails at load). Returns the parsed value and the sha256 hex of the raw
-/// bytes (used for the manifest-digest binding).
-fn load_strict_json(display: &str) -> Result<(Value, String), String> {
+/// bytes (used for the manifest-digest binding). Shared with the refresh route
+/// (#3566), which consumes the same strict loader instead of re-parsing.
+pub(crate) fn load_strict_json(display: &str) -> Result<(Value, String), String> {
     let bytes = std::fs::read(display)
         .map_err(|error| fail(display, "file", format!("failed to read: {error}")))?;
     let text = String::from_utf8(bytes)
@@ -400,7 +401,9 @@ fn load_strict_json(display: &str) -> Result<(Value, String), String> {
     Ok((value, sha256_hex(text.as_bytes())))
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+/// sha256 hex of the exact bytes; shared with the refresh route (#3566) so
+/// both surfaces define the digest once.
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::Digest;
     let digest = sha2::Sha256::digest(bytes);
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -737,6 +740,46 @@ fn check_git_sha(subject: &str, field: &str, sha: &str) -> Result<(), String> {
     }
 }
 
+/// Subject ids become filesystem path components — the candidate subject dirs
+/// and the raw/cache dirs the refresh route (#3566) derives from them — so
+/// they must be safe identifiers: at most 64 characters, limited to
+/// `[A-Za-z0-9._-]`, and never starting with `.` (which also bars `.`/`..`
+/// and hidden components). The character set bars `/` and `\\`, so a hostile
+/// id like `../../outside` fails here as a named diagnostic instead of
+/// escaping candidate storage downstream.
+const SUBJECT_ID_MAX_LENGTH: usize = 64;
+
+fn check_subject_id(id: &str) -> Result<(), String> {
+    if id.len() > SUBJECT_ID_MAX_LENGTH {
+        return Err(fail(
+            id,
+            "id",
+            format!(
+                "subject id must be at most {SUBJECT_ID_MAX_LENGTH} characters, got {}",
+                id.len()
+            ),
+        ));
+    }
+    if id.starts_with('.') {
+        return Err(fail(
+            id,
+            "id",
+            "subject id must not start with `.`: hidden or relative path components are not safe identifiers",
+        ));
+    }
+    if !id
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'_' || byte == b'-')
+    {
+        return Err(fail(
+            id,
+            "id",
+            "subject id must use only `[A-Za-z0-9._-]`: path separators, whitespace, and other characters are not safe identifiers",
+        ));
+    }
+    Ok(())
+}
+
 fn known_value_or_fail(
     subject: &str,
     field: &str,
@@ -764,35 +807,42 @@ fn known_value_or_fail(
 
 /// One accepted subject: the immutable identity the denominator is built from.
 /// The optional identity fields carry the manifest-side values receipt rows
-/// bind against (`None` = not recorded, typed incomplete).
+/// bind against (`None` = not recorded, typed incomplete). Fields are shared
+/// with the refresh route (#3566), which consumes the validated subjects
+/// without re-parsing the manifest.
 #[derive(Debug, Clone)]
-struct AcceptedSubject {
-    id: String,
-    url: String,
-    sha: String,
-    license: String,
-    shape: String,
-    tree_digest: Option<String>,
-    snapshot: Option<String>,
-    provenance: Option<String>,
-    retention_class: Option<String>,
+pub(crate) struct AcceptedSubject {
+    pub(crate) id: String,
+    pub(crate) url: String,
+    pub(crate) sha: String,
+    pub(crate) license: String,
+    pub(crate) shape: String,
+    /// The resolved synthetic-diff path (per-repo, or the manifest-level
+    /// fallback) as a portable repo-relative path. Retained so the refresh
+    /// route (#3566) consumes the resolved input identity instead of
+    /// re-parsing the manifest.
+    pub(crate) synthetic_diff: String,
+    pub(crate) tree_digest: Option<String>,
+    pub(crate) snapshot: Option<String>,
+    pub(crate) provenance: Option<String>,
+    pub(crate) retention_class: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-struct AcceptedManifest {
-    sha256: String,
-    subjects: Vec<AcceptedSubject>,
+pub(crate) struct AcceptedManifest {
+    pub(crate) sha256: String,
+    pub(crate) subjects: Vec<AcceptedSubject>,
     /// Identities the retained manifest does not carry by design; disclosed as
     /// `incomplete`, never invented.
-    incomplete: Vec<Diagnostic>,
+    pub(crate) incomplete: Vec<Diagnostic>,
 }
 
 impl AcceptedManifest {
-    fn subject(&self, id: &str) -> Option<&AcceptedSubject> {
+    pub(crate) fn subject(&self, id: &str) -> Option<&AcceptedSubject> {
         self.subjects.iter().find(|entry| entry.id == id)
     }
 
-    fn ids(&self) -> Vec<String> {
+    pub(crate) fn ids(&self) -> Vec<String> {
         self.subjects.iter().map(|entry| entry.id.clone()).collect()
     }
 }
@@ -822,7 +872,12 @@ fn synthetic_diff_at_level(
 /// Validates the accepted manifest: schema/kind/spec/tier, exactly eight
 /// unique subjects, immutable repository identity, license and shape tags,
 /// portable diff paths. Data-driven: any eight well-formed subjects pass.
-fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedManifest, String> {
+/// Shared with the refresh route (#3566): refresh consumes the validated
+/// subjects instead of re-parsing.
+pub(crate) fn validate_accepted_manifest(
+    value: &Value,
+    sha256: String,
+) -> Result<AcceptedManifest, String> {
     let top = as_object(value, "manifest", "manifest", "accepted manifest")?;
     reject_unknown_keys(top, &MANIFEST_KEYS, "manifest", "accepted manifest")?;
     for (field, expected) in [
@@ -899,13 +954,20 @@ fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedM
                 )
             })?
             .to_string();
-        if !seen.insert(id.clone()) {
+        // Case-insensitive uniqueness (ASCII): subject ids become filesystem
+        // path components, and on case-insensitive filesystems (Windows,
+        // default macOS) `Alpha` and `alpha` would resolve to one directory —
+        // two distinct ids colliding into one candidate tree. The charset
+        // already bars `~` (short-name aliases) and path separators;
+        // case-collision is the remaining alias, so it is rejected here.
+        if !seen.insert(id.to_ascii_lowercase()) {
             return Err(fail(
                 &id,
                 "id",
-                "duplicate subject id in the accepted manifest",
+                "duplicate subject id in the accepted manifest (ids must be unique case-insensitively: ids are path components, and a case-insensitive filesystem would collide `Alpha` with `alpha`)",
             ));
         }
+        check_subject_id(&id)?;
 
         let url = entry
             .get("url")
@@ -941,18 +1003,17 @@ fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedM
         // records it (#3733 review): a malformed present value fails even
         // when the other level supplies a valid fallback — only absence falls
         // through. Portable and secret-free; existence is a run-time concern,
-        // not an offline structural one.
-        let diff = match synthetic_diff_at_level(&id, entry)? {
-            Some(path) => Some(path),
-            None => top_level_diff.clone(),
-        };
-        if diff.is_none() {
-            return Err(fail(
-                &id,
-                "synthetic_diff",
-                "subject has no synthetic_diff and the manifest has no top-level fallback",
-            ));
-        }
+        // not an offline structural one. The resolved path is retained on the
+        // subject for the refresh route (#3566).
+        let diff = synthetic_diff_at_level(&id, entry)?
+            .or_else(|| top_level_diff.clone())
+            .ok_or_else(|| {
+                fail(
+                    &id,
+                    "synthetic_diff",
+                    "subject has no synthetic_diff and the manifest has no top-level fallback",
+                )
+            })?;
 
         // Optional identities (#3733 review): absent is typed incomplete; a
         // present value must be well-formed, because an explicit null, an
@@ -1005,6 +1066,7 @@ fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedM
             sha: sha.to_string(),
             license,
             shape: shape.to_string(),
+            synthetic_diff: diff,
             tree_digest,
             snapshot,
             provenance,
@@ -1145,16 +1207,18 @@ fn ratio(numerator: usize, denominator: usize) -> f64 {
     }
 }
 
-struct ReceiptCheck {
-    path: String,
-    schema_version: String,
-    denominator_selected: usize,
-    denominator_run: usize,
-    incomplete: Vec<Diagnostic>,
+/// One validated receipt: the structural facts the refresh route reports
+/// after self-validating its own candidate (#3566).
+pub(crate) struct ReceiptCheck {
+    pub(crate) path: String,
+    pub(crate) schema_version: String,
+    pub(crate) denominator_selected: usize,
+    pub(crate) denominator_run: usize,
+    pub(crate) incomplete: Vec<Diagnostic>,
 }
 
 impl ReceiptCheck {
-    fn verdict(&self) -> Verdict {
+    pub(crate) fn verdict(&self) -> Verdict {
         if self.incomplete.is_empty() {
             Verdict::Valid
         } else {
@@ -1166,7 +1230,10 @@ impl ReceiptCheck {
 /// Validates one retained run receipt against the accepted manifest.
 /// Fails closed on the issue #3565 failure families; discloses missing
 /// identities as `incomplete`. Never rewrites or upgrades the receipt.
-fn validate_run_receipt(
+/// Shared with the refresh route (#3566): refresh self-validates its own
+/// candidate receipt through this exact validator before writing it, so a
+/// produced candidate and `eval-sweep check --runs` agree by construction.
+pub(crate) fn validate_run_receipt(
     value: &Value,
     manifest_sha256: &str,
     accepted: &AcceptedManifest,
@@ -2286,7 +2353,12 @@ fn validate_row_currentness(
             "repeat-run comparison identity not recorded",
         )),
         Some(Value::Object(repeat)) => {
-            let allowed: [&str; 3] = ["comparable_with", "gap_ids_stable", "unstable_gap_ids"];
+            let allowed: [&str; 4] = [
+                "comparable_with",
+                "gap_ids_stable",
+                "unstable_gap_ids",
+                "repeat_stderr",
+            ];
             reject_unknown_keys(repeat, &allowed, id, "repeat-run identity")?;
             if opt_string(id, repeat, "comparable_with")?.is_none() {
                 return Err(fail(
@@ -2297,6 +2369,13 @@ fn validate_row_currentness(
             }
             opt_bool(id, repeat, "gap_ids_stable")?;
             opt_string_array(id, repeat, "unstable_gap_ids")?;
+            // The repeat pass's raw-stderr digest (SPEC-0086 retention): when
+            // recorded it must be a real sha256 hex digest over the retained
+            // second-pass stderr bytes under `<out>/raw/`. Optional so
+            // historical 0.3 rows stay historical.
+            if let Some(digest) = opt_string(id, repeat, "repeat_stderr")? {
+                check_sha256_digest(id, "repeat.repeat_stderr", &digest)?;
+            }
         }
         Some(_) => {
             return Err(fail(
@@ -2856,9 +2935,9 @@ fn check_distribution_equality(
 // Entry points
 // ---------------------------------------------------------------------------
 
-struct CheckOutcome {
+pub(crate) struct CheckOutcome {
     manifest_path: String,
-    accepted: AcceptedManifest,
+    pub(crate) accepted: AcceptedManifest,
     receipt: Option<ReceiptCheck>,
 }
 
@@ -2868,7 +2947,7 @@ impl CheckOutcome {
     /// manifest or the receipt discloses incomplete identities — a complete
     /// receipt never hides manifest gaps — and `valid` only when both are
     /// structurally valid with zero incompletes.
-    fn verdict(&self) -> Verdict {
+    pub(crate) fn verdict(&self) -> Verdict {
         match &self.receipt {
             None => Verdict::NotRun,
             Some(receipt) => {
@@ -2892,7 +2971,11 @@ impl CheckOutcome {
 
 /// The full offline check: load + validate the accepted manifest, then (when
 /// supplied) the retained receipt. Writes nothing; `run_check` renders.
-fn check_artifacts(manifest_path: &str, runs_path: Option<&str>) -> Result<CheckOutcome, String> {
+/// Shared with the refresh route's end-to-end symmetry tests (#3566).
+pub(crate) fn check_artifacts(
+    manifest_path: &str,
+    runs_path: Option<&str>,
+) -> Result<CheckOutcome, String> {
     let (manifest_value, manifest_sha256) = load_strict_json(manifest_path)?;
     let accepted = validate_accepted_manifest(&manifest_value, manifest_sha256)?;
 
@@ -3248,6 +3331,47 @@ mod python_eval_sweep {
         )
     }
 
+    /// Subject ids are safe identifiers: path-traversal and hidden/relative
+    /// ids fail with a named diagnostic, while the full safe charset (at the
+    /// length cap) passes. Existing valid ids (the fixture's and the
+    /// alternate manifest's) are covered by the acceptance tests and the
+    /// `eval-sweep check` gate over the canonical fixture.
+    #[test]
+    fn manifest_rejects_unsafe_subject_ids() -> Result<(), String> {
+        let swapped = |id: &str| -> Result<Value, String> {
+            let mut value = alternate_manifest();
+            let entry = value
+                .get_mut("repos")
+                .and_then(Value::as_array_mut)
+                .and_then(|repos| repos.first_mut())
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| "alternate manifest repos[0]".to_string())?;
+            entry.insert("id".to_string(), json!(id));
+            Ok(value)
+        };
+        for (bad, needle) in [
+            ("../../outside", "must not start with"),
+            ("..", "must not start with"),
+            (".hidden", "must not start with"),
+            ("a/b", "must use only"),
+            ("a\\b", "must use only"),
+            ("a b", "must use only"),
+        ] {
+            expect_fail(validate_manifest_value(&parsed(&swapped(bad)?)?), needle)?;
+        }
+        let long_id = "a".repeat(65);
+        expect_fail(
+            validate_manifest_value(&parsed(&swapped(&long_id)?)?),
+            "at most 64 characters",
+        )?;
+
+        // The full safe charset at the exact length cap passes.
+        let edge_ok = "b.x_y-9".repeat(9) + "c";
+        assert_eq!(edge_ok.len(), 64, "edge id must sit at the cap");
+        validate_manifest_value(&parsed(&swapped(&edge_ok)?)?)?;
+        Ok(())
+    }
+
     #[test]
     fn rejects_duplicate_subject_ids() -> Result<(), String> {
         let mut value = alternate_manifest();
@@ -3259,6 +3383,36 @@ mod python_eval_sweep {
         expect_fail(
             validate_manifest_value(&parsed(&value)?),
             "duplicate subject id",
+        )
+    }
+
+    /// Subject ids are unique CASE-insensitively (ASCII): they become
+    /// filesystem path components, and on a case-insensitive filesystem
+    /// (Windows, default macOS) `Alpha` and `alpha` would resolve to one
+    /// candidate directory — two distinct subjects colliding into one tree.
+    /// The charset already bars `~` (short-name aliases) and separators; the
+    /// case alias is rejected at the duplicate check.
+    #[test]
+    fn rejects_subject_ids_differing_only_by_case() -> Result<(), String> {
+        let mut value = alternate_manifest();
+        let first_id = value["repos"][0]["id"]
+            .as_str()
+            .ok_or_else(|| "first subject id".to_string())?
+            .to_string();
+        let uppercase = first_id.to_ascii_uppercase();
+        assert_ne!(
+            first_id, uppercase,
+            "the test needs an id with a distinct uppercase form"
+        );
+        value["repos"][1]["id"] = json!(uppercase);
+        value["repos"][1]["url"] = json!(format!("https://example.com/{uppercase}"));
+        expect_fail(
+            validate_manifest_value(&parsed(&value)?),
+            "duplicate subject id",
+        )?;
+        expect_fail(
+            validate_manifest_value(&parsed(&value)?),
+            "case-insensitively",
         )
     }
 
@@ -4124,7 +4278,12 @@ mod python_eval_sweep {
     /// selected and only the five analysis-attempting statuses count as run.
     /// Row identities restate the manifest's own values when it pins them
     /// (the receipt binds against the manifest side), and the summary carries
-    /// the full emitted aggregate set the sweep writes (#3733 review).
+    /// the full emitted aggregate set the sweep writes (#3733 review) minus
+    /// the stability aggregates: the builder attaches the `repeat` block only
+    /// to `complete` rows — the producer shape, since a stability pass only
+    /// runs where the first result is complete — so stability is under-
+    /// evidenced whenever any run row is non-complete and the aggregates are
+    /// absent (typed incomplete, never derived over partial evidence).
     fn current_receipt_0_3(manifest: &AcceptedManifest) -> Value {
         let statuses = [
             "complete",
@@ -4211,11 +4370,6 @@ mod python_eval_sweep {
                     "output": DIGEST_TWO,
                     "evidence": DIGEST_ONE,
                 },
-                "repeat": {
-                    "comparable_with": format!("{}#run-1", subject.id),
-                    "gap_ids_stable": true,
-                    "unstable_gap_ids": [],
-                },
                 "runtime_ms": 100 * (index as u64 + 1),
                 "classification_counts": {
                     "exposed": 0,
@@ -4246,15 +4400,35 @@ mod python_eval_sweep {
                         json!({"direct": 0, "alias": 0, "changed_sink_token": 0, "orthogonal": 0, "unknown": 0, "absent": 0}),
                     );
             }
+            // The `repeat` block exists only where the stability pass actually
+            // compared — a `complete` first result. A compared non-complete
+            // row would claim stability over no comparison (equal failure gap
+            // sets must never read as `stable`), so the builder matches the
+            // producer: non-complete rows omit the block and disclose the
+            // absent comparison as typed incomplete.
+            if status == "complete"
+                && let Some(entry) = row.as_object_mut()
+            {
+                entry.insert(
+                    "repeat".to_string(),
+                    json!({
+                        "comparable_with": format!("{}#run-1", subject.id),
+                        "gap_ids_stable": true,
+                        "unstable_gap_ids": [],
+                    }),
+                );
+            }
             rows.push(row);
         }
         // Derived aggregates over the five run rows (complete/partial/
         // parse-failed/timed-out/crashed): one crash, one parse failure, one
         // timeout, one tempfail; runtimes 100..500 (min 100, median 300, max
-        // 500, total 1500); stability 5/5 (every run row carries `repeat`
-        // evidence); classification weakly_exposed=1 + static_unknown=1;
-        // alignment orthogonal=1, unknown=1, absent=3. The full emitted
-        // summary is present, exactly as the sweep writes it (#3733 review).
+        // 500, total 1500); classification weakly_exposed=1 + static_unknown=1;
+        // alignment orthogonal=1, unknown=1, absent=3. Only the complete row
+        // carries `repeat` evidence, so the stability aggregates are absent —
+        // the under-evidenced path the validator discloses, never a value
+        // derived over partial evidence. The rest of the emitted summary is
+        // present, exactly as the sweep writes it (#3733 review).
         json!({
             "schema_version": "0.3",
             "kind": "python_eval_sweep_report",
@@ -4283,9 +4457,6 @@ mod python_eval_sweep {
                 "runtime_ms_median": 300,
                 "runtime_ms_max": 500,
                 "runtime_ms_total": 1500,
-                "gap_id_stable_count": 5,
-                "gap_id_unstable_count": 0,
-                "gap_id_stability_rate": 1.0,
                 "classification_counts": {
                     "exposed": 0,
                     "weakly_exposed": 1,
@@ -4313,9 +4484,11 @@ mod python_eval_sweep {
     #[test]
     fn current_receipt_all_eight_statuses_validate_and_stay_selected() -> Result<(), String> {
         // The identity-complete manifest pins every optional identity, so the
-        // receipt's restated identities bind cleanly and zero incompletes
-        // remain (an identity-complete receipt over a gappy manifest would
-        // disclose the unbindable manifest sides instead).
+        // receipt's restated identities bind cleanly. The builder attaches
+        // `repeat` only to the `complete` row (the producer shape), so the
+        // seven other rows disclose the absent comparison as typed incomplete,
+        // and the under-evidenced summary stability aggregate is disclosed at
+        // the receipt level — nothing else is incomplete.
         let complete = identity_complete_manifest();
         let (manifest, sha) = accepted_manifest(&complete)?;
         let receipt = current_receipt_0_3(&manifest);
@@ -4324,9 +4497,21 @@ mod python_eval_sweep {
         // Every row stays selected; only five attempted analysis.
         assert_eq!(check.denominator_selected, 8);
         assert_eq!(check.denominator_run, 5);
-        assert!(
-            check.incomplete.is_empty(),
-            "complete 0.3 receipt over a pinned manifest should disclose nothing: {:?}",
+        assert_eq!(
+            check
+                .incomplete
+                .iter()
+                .filter(|diagnostic| diagnostic.field != "repeat"
+                    && diagnostic.field != "summary.gap_id_stable_count")
+                .count(),
+            0,
+            "only the absent repeat comparisons and the under-evidenced stability aggregate are disclosed: {:?}",
+            check.incomplete
+        );
+        assert_eq!(
+            check.incomplete.len(),
+            8,
+            "one repeat disclosure per non-complete row plus the summary disclosure: {:?}",
             check.incomplete
         );
         Ok(())
@@ -4413,12 +4598,14 @@ mod python_eval_sweep {
         )
     }
 
-    #[test]
-    fn current_receipt_with_full_repeat_evidence_reaches_pass() -> Result<(), String> {
-        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
-        let mut receipt = current_receipt_0_3(&manifest);
-        // Every row becomes a fully-observed complete run whose stability
-        // evidence lives in `repeat`; the rows now derive the `pass` gate.
+    /// Flips a builder receipt into eight fully-observed complete runs with
+    /// `repeat` evidence on every row and a re-derived honest summary (8
+    /// complete runs, no crashes/parse failures/timeouts, runtimes 100..800 —
+    /// min 100, median 500, max 800, total 3600 — 8/8 stable,
+    /// weakly_exposed=8, direct=8, `pass` gate). This is the one shape under
+    /// which the stability aggregates are derivable: every run row carries a
+    /// compared pass (#3733 review).
+    fn flip_to_fully_complete_0_3(receipt: &mut Value) {
         if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut) {
             for row in rows.iter_mut() {
                 if let Some(entry) = row.as_object_mut() {
@@ -4437,14 +4624,17 @@ mod python_eval_sweep {
                         "alignment_counts".to_string(),
                         json!({"direct": 1, "alias": 0, "changed_sink_token": 0, "orthogonal": 0, "unknown": 0, "absent": 0}),
                     );
+                    entry.insert(
+                        "repeat".to_string(),
+                        json!({
+                            "comparable_with": "pass-1",
+                            "gap_ids_stable": true,
+                            "unstable_gap_ids": [],
+                        }),
+                    );
                 }
             }
         }
-        // The hand-entered summary is re-derived honestly from the modified
-        // rows: 8 complete runs, no crashes/parse failures/timeouts, runtimes
-        // 100..800 (min 100, median 500, max 800, total 3600), 8/8 stable,
-        // weakly_exposed=8, direct=8 (#3733 review: the full summary is
-        // required on analyzed receipts, so every aggregate must agree).
         if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
             summary.insert("repos_run".to_string(), json!(8));
             summary.insert("repos_clone_failed".to_string(), json!(0));
@@ -4474,6 +4664,15 @@ mod python_eval_sweep {
                 json!("8 complete runs; no crashes; repeat evidence stable on every row"),
             );
         }
+    }
+
+    #[test]
+    fn current_receipt_with_full_repeat_evidence_reaches_pass() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        let mut receipt = current_receipt_0_3(&manifest);
+        // Every row becomes a fully-observed complete run whose stability
+        // evidence lives in `repeat`; the rows now derive the `pass` gate.
+        flip_to_fully_complete_0_3(&mut receipt);
         let check = validate_receipt_value(&receipt, &manifest, &sha)?;
         assert_eq!(check.denominator_selected, 8);
         assert_eq!(check.denominator_run, 8);
@@ -4601,10 +4800,12 @@ mod python_eval_sweep {
     #[test]
     fn fully_evidenced_receipt_requires_stability_aggregates() -> Result<(), String> {
         let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
-        // Every run row carries `repeat` evidence, so the emitter writes the
-        // stability aggregates; deleting one must not silently disable the
+        // Every run row carries `repeat` evidence (the fully-complete shape is
+        // the one shape where stability is derivable), so the emitter writes
+        // the stability aggregates; deleting one must not silently disable the
         // stability comparison.
         let mut receipt = current_receipt_0_3(&manifest);
+        flip_to_fully_complete_0_3(&mut receipt);
         if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
             summary.remove("gap_id_stable_count");
         }
@@ -4864,6 +5065,7 @@ mod python_eval_sweep {
             sha: VALID_SHA_A.to_string(),
             license: "MIT".to_string(),
             shape: "pytest_library".to_string(),
+            synthetic_diff: "fixtures/python-eval-sweep/diffs/alpha.diff".to_string(),
             tree_digest: None,
             snapshot: None,
             provenance: None,
@@ -5288,7 +5490,12 @@ mod python_eval_sweep {
         let complete = identity_complete_manifest();
         let (manifest, sha) = accepted_manifest(&complete)?;
         assert!(manifest.incomplete.is_empty());
-        let receipt_value = current_receipt_0_3(&manifest);
+        // The fully-complete shape (every row complete with compared repeat
+        // evidence) is the one receipt shape with zero incompletes: rows
+        // without a compared pass disclose the absent comparison, so a
+        // builder receipt over even a pinned manifest is `incomplete`.
+        let mut receipt_value = current_receipt_0_3(&manifest);
+        flip_to_fully_complete_0_3(&mut receipt_value);
         let receipt = validate_receipt_value(&receipt_value, &manifest, &sha)?;
         assert!(receipt.incomplete.is_empty());
         let outcome = CheckOutcome {

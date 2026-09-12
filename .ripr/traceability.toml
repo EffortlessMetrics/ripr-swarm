@@ -5668,6 +5668,21 @@ tests = [
   "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::emitter_shaped_zero_run_stability_rate_discloses_instead_of_failing",
   "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::present_null_receipt_identities_fail_while_absent_discloses_incomplete",
   "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::run_status_split_pins_which_statuses_count_as_run",
+  "xtask/src/reports/eval_sweep_refresh.rs",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::refuses_without_managed_authorization",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::full_route_refuses_before_any_filesystem_work",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::authorized_route_requires_explicit_binary_and_out",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::rejects_out_overlapping_accepted_state",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::binary_path_must_name_existing_file",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::stale_materialization_keeps_subject_selected_without_counts",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::clone_failure_row_shape_is_tempfail",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::corpus_classification_counts_by_real_path_shapes",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::evidence_digest_binds_raw_stderr_and_repeat",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::deterministic_row_and_summary_assembly",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::all_eight_statuses_produce_a_validatable_receipt",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::unstable_repeat_comparison_records_the_mismatch_list",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::refresh_candidate_validates_through_eval_sweep_check",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::stale_subject_path_keeps_the_denominator_without_loss",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -5675,7 +5690,8 @@ fixtures = [
 ]
 code = [
   "xtask/src/reports/eval_sweep.rs",
-  "xtask/src/reports/eval_sweep_check.rs"
+  "xtask/src/reports/eval_sweep_check.rs",
+  "xtask/src/reports/eval_sweep_refresh.rs"
 ]
 outputs = []
 metrics = [
