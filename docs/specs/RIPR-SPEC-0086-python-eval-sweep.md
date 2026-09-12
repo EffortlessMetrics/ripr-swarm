@@ -300,7 +300,11 @@ validates and publishes.
 - **Materialization.** Per subject, the pinned tree is materialized into
   `<out>/subjects/<id>`: a prior candidate directory is reused only when
   `git rev-parse HEAD` verifies the exact pin (after a bounded detached
-  re-checkout when HEAD drifted); otherwise a local seed checkout under
+  re-checkout when HEAD drifted) AND `git status --porcelain` is empty — a
+  reused checkout carrying local modifications or untracked files cannot have
+  its content attributed to the accepted sha and is `stale`, never analyzed
+  as the pinned tree; a status command that fails is fail-closed `stale` for
+  the same reason. Otherwise a local seed checkout under
   `--checkout-root` is cloned through git's local transport (no network), and
   only then is the manifest URL cloned over the network. Every failure is a
   typed disposition that keeps the subject selected: an unverifiable or
@@ -575,6 +579,13 @@ receipt rows derive repos_run = 8 but the summary claims 7
 - `eval_sweep_refresh::python_eval_sweep_refresh::rejects_out_overlapping_accepted_state`
   -> candidate separation: accepted state (`fixtures/`, the repo root, an
   ancestor) is rejected; a dedicated directory under `target/` is accepted.
+- `eval_sweep_refresh::python_eval_sweep_refresh::symlinked_out_into_accepted_state_is_refused`
+  -> an existing `--out` symlink resolving into accepted state is refused:
+  the overlap comparison runs on canonicalized paths on both sides.
+- `eval_sweep_refresh::python_eval_sweep_refresh::dirty_reused_checkout_is_stale_not_the_pinned_tree`
+  -> a reused checkout at the pinned HEAD with a modified file is
+  dispositioned `stale`, never analyzed as the pinned tree; the full
+  denominator stays validatable.
 - `eval_sweep_refresh::python_eval_sweep_refresh::all_eight_statuses_produce_a_validatable_receipt`
   -> producer/validator symmetry over the full 0.3 status vocabulary; every
   terminal state stays selected with the exact run/non-run split.

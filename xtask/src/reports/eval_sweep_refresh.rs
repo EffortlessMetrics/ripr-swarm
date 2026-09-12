@@ -670,8 +670,10 @@ fn clone_into(
 
 /// Verifies a materialized directory: it must be a git checkout whose HEAD is
 /// exactly the pinned SHA (after a bounded detached re-checkout when HEAD
-/// drifted). Anything else is a typed `Stale`, never an analysis of
-/// unverified content.
+/// drifted) AND whose worktree is clean — local modifications or untracked
+/// files mean the content cannot be attributed to the accepted pin even when
+/// HEAD matches, so a reused-but-dirty checkout is a typed `Stale`, never an
+/// analysis of altered content.
 fn verify_materialized_dir(
     dir: &Path,
     subject: &AcceptedSubject,
@@ -687,9 +689,18 @@ fn verify_materialized_dir(
     }
     let head = git_head(dir, &subject.id);
     if head.as_deref() == Some(subject.sha.as_str()) {
-        return Materialization::Materialized {
-            dir: dir.to_path_buf(),
-            source,
+        return match git_worktree_dirty(dir, &subject.id) {
+            Some(dirty) => Materialization::Stale {
+                limitation: format!(
+                    "candidate materialization directory `{}` is at the pinned SHA `{}` but {dirty}; the pinned SHA alone does not certify altered content",
+                    dir.display(),
+                    subject.sha
+                ),
+            },
+            None => Materialization::Materialized {
+                dir: dir.to_path_buf(),
+                source,
+            },
         };
     }
     let reset = capture_output_with_timeout(
@@ -714,18 +725,64 @@ fn verify_materialized_dir(
         Err(_) => false,
     };
     if rechecked {
-        Materialization::Materialized {
-            dir: dir.to_path_buf(),
-            source,
+        return match git_worktree_dirty(dir, &subject.id) {
+            Some(dirty) => Materialization::Stale {
+                limitation: format!(
+                    "candidate materialization directory `{}` was re-checked out to the pinned SHA `{}` but {dirty}; the pinned SHA alone does not certify altered content",
+                    dir.display(),
+                    subject.sha
+                ),
+            },
+            None => Materialization::Materialized {
+                dir: dir.to_path_buf(),
+                source,
+            },
+        };
+    }
+    Materialization::Stale {
+        limitation: format!(
+            "materialization HEAD is `{}` but the accepted pin is `{}` and the pin could not be checked out",
+            head.unwrap_or_else(|| "unresolved".to_string()),
+            subject.sha
+        ),
+    }
+}
+
+/// Bounded `git status --porcelain` inside a materialized directory. Returns
+/// `None` only when the worktree is verifiably clean; ANY output (local
+/// modifications or untracked files) is `Some(reason)`. A status command that
+/// fails or times out is fail-closed `Some(reason)` too: unverifiable
+/// cleanliness is not cleanliness.
+fn git_worktree_dirty(dir: &Path, subject_id: &str) -> Option<String> {
+    let output = capture_output_with_timeout(
+        "git",
+        &[
+            "-C".to_string(),
+            dir.to_string_lossy().to_string(),
+            "status".to_string(),
+            "--porcelain".to_string(),
+        ],
+        &[],
+        Duration::from_secs(30),
+        &format!("eval-sweep refresh status for `{subject_id}`"),
+    );
+    match output {
+        Ok(result) if !result.timed_out && result.status.is_some_and(|status| status.success()) => {
+            if result.stdout.trim().is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "the checkout carries local modifications or untracked files ({} porcelain line(s): {})",
+                    result.stdout.lines().count(),
+                    first_line(&result.stdout)
+                ))
+            }
         }
-    } else {
-        Materialization::Stale {
-            limitation: format!(
-                "materialization HEAD is `{}` but the accepted pin is `{}` and the pin could not be checked out",
-                head.unwrap_or_else(|| "unresolved".to_string()),
-                subject.sha
-            ),
-        }
+        Ok(result) => Some(format!(
+            "`git status` could not be evaluated: {}",
+            first_line(&result.stderr)
+        )),
+        Err(error) => Some(format!("`git status` could not run: {error}")),
     }
 }
 
@@ -2988,6 +3045,93 @@ mod python_eval_sweep_refresh {
         if let Err(error) = &outcome {
             let _ = std::fs::remove_dir_all(&root);
             return Err(format!("stale-subject receipt must validate: {error}"));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A reused checkout whose HEAD matches the pin but whose worktree is
+    /// dirty is NOT treated as the pinned tree: the modified content cannot
+    /// be attributed to the accepted sha, so the row is `stale` while the
+    /// route still produces the full validatable denominator.
+    #[test]
+    fn dirty_reused_checkout_is_stale_not_the_pinned_tree() -> Result<(), String> {
+        let root = temp_root("dirty-reuse");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
+
+        // Eight local seeds; each seed's real HEAD becomes the manifest pin.
+        let mut pins = Vec::new();
+        for index in 0..8 {
+            let seed = root.join("seeds").join(format!("s{index}"));
+            pins.push(build_seed(&seed)?);
+        }
+        let manifest_path = write_manifest_and_diffs(&root, &pins)?;
+
+        // Pre-place s7's candidate dir as a clone of its seed at the pin —
+        // HEAD matches — then modify a tracked file, so the content diverges
+        // from the pinned tree while the HEAD identity still agrees.
+        let reused = root.join("out").join(SUBJECTS_DIR).join("s7");
+        git(&root, &["clone", "-q", "seeds/s7", "out/subjects/s7"])?;
+        std::fs::write(
+            reused.join("app.py"),
+            "def boundary(value):\n    if value >= 0:\n        return \"MODIFIED\"\n    return \"negative\"\n",
+        )
+        .map_err(|error| format!("modify reused checkout: {error}"))?;
+        let status = git(&reused, &["status", "--porcelain"])?;
+        assert!(
+            !status.trim().is_empty(),
+            "the reused checkout must be dirty before the route runs"
+        );
+
+        let binary = built_ripr_binary()?;
+        let out = root.join("out");
+        let args = vec![
+            "--manifest".to_string(),
+            manifest_path.to_string_lossy().to_string(),
+            "--ripr-bin".to_string(),
+            binary,
+            "--out".to_string(),
+            out.to_string_lossy().to_string(),
+            "--checkout-root".to_string(),
+            root.join("seeds").to_string_lossy().to_string(),
+            "--timeout-secs".to_string(),
+            "60".to_string(),
+            "--allow-network".to_string(),
+        ];
+        let run = run_refresh_with_env(&args, Some("1"));
+        if let Err(error) = &run {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!("dirty-reuse refresh must still run: {error}"));
+        }
+
+        let receipt_text = std::fs::read_to_string(out.join(RECEIPT_FILE))
+            .map_err(|error| format!("read receipt: {error}"))?;
+        let receipt: Value = serde_json::from_str(&receipt_text)
+            .map_err(|error| format!("parse receipt: {error}"))?;
+        let rows = receipt
+            .get("repos")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| "receipt rows".to_string())?;
+        assert_eq!(rows.len(), 8, "the denominator is retained");
+        let stale_row = rows
+            .iter()
+            .find(|row| row.get("id").and_then(Value::as_str) == Some("s7"))
+            .ok_or_else(|| "s7 row present".to_string())?;
+        assert_eq!(
+            stale_row.get("status").and_then(Value::as_str),
+            Some("stale"),
+            "the dirty reused checkout is dispositioned stale, never analyzed as the pinned tree: {stale_row}"
+        );
+
+        let outcome = check_artifacts(
+            manifest_path.to_string_lossy().as_ref(),
+            Some(out.join(RECEIPT_FILE).to_string_lossy().as_ref()),
+        );
+        if let Err(error) = &outcome {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!("dirty-reuse receipt must validate: {error}"));
         }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
