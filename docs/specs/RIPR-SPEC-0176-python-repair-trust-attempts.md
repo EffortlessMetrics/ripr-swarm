@@ -96,6 +96,12 @@ explicit null or a malformed value fails.
 Two digest names carry the immutability bindings; each is defined exactly
 once, here, and every other reference uses the name as defined.
 
+- serialization contract: the `selection_digest` preimage is the row JSON with
+  only `selection_digest` removed — every other field (including
+  `authority_snapshot_digest`) remains — serialized as compact UTF-8 JSON with
+  sorted object keys and serde_json default string escaping. Producers hash
+  exactly these bytes; pretty-printed or differently escaped serializations of
+  the same logical row do not validate.
 - `manifest_digest` is sha256 over the EXACT manifest file bytes — no
   canonicalization, no reserialization. This one definition covers both
   uses of the name: the envelope-level binding, where the envelope's

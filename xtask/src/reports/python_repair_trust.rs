@@ -16,7 +16,12 @@
 //!   (existing/proposed/ambiguous/unavailable/unsafe) with its path, the
 //!   selection timestamp/selector/authority-manifest digest, and an immutable
 //!   `selection_digest` — recomputed over the row's canonical content, so a
-//!   replaced or edited selected row fails closed.
+//!   replaced or edited selected row fails closed. Serialization contract:
+//!   the preimage is the selection row's compact UTF-8 JSON with sorted
+//!   object keys and serde_json's default string escaping, with ONLY the
+//!   `selection_digest` field removed (`authority_snapshot_digest` stays in
+//!   the preimage); producers must hash exactly these bytes, not
+//!   pretty-printed or differently escaped JSON.
 //! - retained **attempt envelopes** (`python_repair_trust_attempts`) bind to
 //!   the selection manifest by sha256 digest and carry the attempt lifecycle
 //!   rows. Lifecycle states are
@@ -33,7 +38,7 @@
 //! the envelope-level binding (each envelope's `manifest_digest` must equal
 //! the checker's recomputation over the presented selection-manifest bytes,
 //! so a changed manifest fails the stale-digest check) and each selection
-//! row's recorded `manifest_digest` — the same digest over the exact
+//! row's recorded `authority_snapshot_digest` — the same digest over the exact
 //! authority-snapshot bytes the row was selected from, recorded at
 //! selection time and digested as recorded, never re-read offline. It is
 //! distinct from the row's `selection_digest`: sha256 of the row's
@@ -167,7 +172,7 @@ const SELECTION_KEYS: [&str; 24] = [
     "target_state",
     "selected_at",
     "selector",
-    "manifest_digest",
+    "authority_snapshot_digest",
     "selection_digest",
 ];
 
@@ -1021,7 +1026,7 @@ fn validate_selection_row(
         "target_path",
         "selected_at",
         "selector",
-        "manifest_digest",
+        "authority_snapshot_digest",
         "selection_digest",
     ] {
         require_string(attempt_id, entry, field)?;
@@ -1054,8 +1059,10 @@ fn validate_selection_row(
     )?;
     check_sha256_digest(
         attempt_id,
-        "manifest_digest",
-        entry["manifest_digest"].as_str().unwrap_or_default(),
+        "authority_snapshot_digest",
+        entry["authority_snapshot_digest"]
+            .as_str()
+            .unwrap_or_default(),
     )?;
     known_value_or_fail(
         attempt_id,
@@ -2556,7 +2563,7 @@ mod python_repair_trust_semantics {
             "target_state": target_state,
             "selected_at": "2026-09-10T00:00:00Z",
             "selector": "campaign-selector",
-            "manifest_digest": DIGEST_TWO,
+            "authority_snapshot_digest": DIGEST_TWO,
         });
         if let Some(entry) = row.as_object_mut() {
             let digest = canonical_selection_digest(entry, attempt_id).unwrap_or_default();
@@ -3141,7 +3148,7 @@ mod python_repair_trust_semantics {
             "oracle",
             "claim_boundary",
             "selector",
-            "manifest_digest",
+            "authority_snapshot_digest",
         ] {
             let mut value = manifest_value(alternate_selections());
             if let Some(entry) = value["selections"][0].as_object_mut() {
