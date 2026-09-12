@@ -73,8 +73,8 @@ selection row carries, with a deny-unknown schema:
 - target: `target_path` (portable repo-relative) and `target_state`
   (`existing`/`proposed`/`ambiguous`/`unavailable`/`unsafe`);
 - provenance: `selected_at` (ISO-like date prefix), `selector`,
-  `manifest_digest` (the canonical manifest-level digest defined below,
-  over the exact authority-snapshot bytes the row was selected from —
+  `authority_snapshot_digest` (sha256 over the exact authority-snapshot
+  bytes the row was selected from, recorded at selection time —
   well-formed here; binding to external bytes is a selection-time concern);
 - immutability: `selection_digest` (the row-content digest defined below),
   which must equal the checker's recomputation. Any replacement or edit of
@@ -104,12 +104,13 @@ once, here, and every other reference uses the name as defined.
   the same logical row do not validate.
 - `manifest_digest` is sha256 over the EXACT manifest file bytes — no
   canonicalization, no reserialization. This one definition covers both
-  uses of the name: the envelope-level binding, where the envelope's
-  recorded value must equal the checker's recomputation over the presented
-  selection-manifest bytes (the stale-digest check), and each selection
-  row's recorded value, the same digest over the exact authority-snapshot
-  bytes the row was selected from, recorded at selection time (its bytes
-  are digested as recorded, never re-read by the offline check).
+  envelope-level binding, where the envelope's recorded value must equal
+  the checker's recomputation over the presented selection-manifest bytes
+  (the stale-digest check). Each selection row's recorded
+  `authority_snapshot_digest` is the same digest over the exact
+  authority-snapshot bytes the row was selected from, recorded at selection
+  time (its bytes are digested as recorded, never re-read by the offline
+  check); `manifest_digest` is reserved for the envelope binding alone.
 - `selection_digest` is distinct: sha256 of the row's canonical content,
   defined as the JSON serialization the checker recomputes (the row
   without its digest field, re-serialized with sorted object keys). Any
