@@ -763,10 +763,13 @@ fn clone_into(
         // "reference is not a tree" / "bad object". Every other checkout
         // failure (lazy blob fetch, network, disk, permissions, locks) is
         // infrastructure and stays `tempfail` (#3735 review round 3).
+        // The missing-pin signature can sit behind earlier warnings in the
+        // stderr stream, so classification scans the WHOLE stderr; only the
+        // first line is quoted in the diagnostic.
         let stderr = first_line(&checkout.stderr);
-        let missing_pin = stderr.contains("reference is not a tree")
-            || stderr.contains("bad object")
-            || stderr.contains("invalid reference");
+        let missing_pin = checkout.stderr.contains("reference is not a tree")
+            || checkout.stderr.contains("bad object")
+            || checkout.stderr.contains("invalid reference");
         let marker = if missing_pin {
             "pin-unavailable"
         } else {
