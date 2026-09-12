@@ -155,6 +155,10 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   the `complete`/`partial`/`parse-failed`/`timed-out`/`crashed`/`unsupported`/
   `tempfail`/`stale` status vocabulary, raw/output/evidence digests,
   repeat-run comparison identity, and a sha256 manifest-digest binding.
+  Schema `0.3` is deliberately ahead of the live `0.2` producer — no sweep
+  command writes it yet — and producer parity is expected to land with
+  #3566/#3567, so a 0.3 receipt validates here as the accepted target shape
+  before any producer emits it.
 - Fail closed (nonzero exit, diagnostic names subject/field/reason plus the
   deterministic rerun command) on: duplicate or missing subjects, a changed
   denominator, receipt rows contradicting the manifest pins, a receipt

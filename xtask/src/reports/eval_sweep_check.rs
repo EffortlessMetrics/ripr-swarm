@@ -44,7 +44,9 @@
 //!   stability value over rows lacking 0.3 `repeat` stability evidence fails;
 //!   unrecorded values are disclosed incomplete. Summary distributions must
 //!   equal the row-derived key set exactly (zero-valued buckets included;
-//!   with zero run rows the recorded keys are still vocabulary-checked), and
+//!   with zero run rows a recorded distribution must still carry the full
+//!   zero-filled key set the emitter writes — `absent` and `unknown`
+//!   included — and every recorded bucket stays at zero), and
 //!   the supplied `gate_status` must EQUAL the gate derived from the rows —
 //!   `not_run` at zero runs, `pass` only with zero crashes and full stability
 //!   evidence, `review` otherwise. Runtime totals and distribution merges use
@@ -96,7 +98,8 @@
 //!   `pass` with zero run rows fails, and a receipt-less check reports
 //!   `not_run` (which is not a pass).
 //! - `absent` stays distinct from emitted `unknown` distributions: a recorded
-//!   `alignment_counts` object must carry both keys separately.
+//!   `alignment_counts` object — row-level or summary, at zero runs included —
+//!   must carry both keys separately.
 //! - Accepted validation is offline: no repository materialization, no RIPR
 //!   execution, and no filesystem lookups beyond the two artifact files
 //!   themselves (diff-path existence is a run-time concern, not a structural
@@ -608,13 +611,49 @@ fn check_portable_path(subject: &str, field: &str, path: &str) -> Result<(), Str
     check_no_secrets(subject, field, path)
 }
 
-/// https URL with no embedded credentials and no secret tripwires.
+/// https URL with a real dotted host, no whitespace anywhere, no embedded
+/// credentials, and no secret tripwires. After the scheme check, the host
+/// (characters after `https://` up to the first `/`) must be non-empty and
+/// carry at least one `.`: a hostless (`https:///path`) or dotless
+/// (`https://host`) value has no repository host, so it is malformed — the
+/// no-dot rule is deliberate (a bare single-label host is not an accepted
+/// repository URL here), not an oversight.
 fn check_subject_url(subject: &str, field: &str, url: &str) -> Result<(), String> {
     if !url.starts_with("https://") {
         return Err(fail(
             subject,
             field,
             format!("repository url must be https, got `{url}`"),
+        ));
+    }
+    if url.chars().any(char::is_whitespace) {
+        return Err(fail(
+            subject,
+            field,
+            format!("repository url must not contain whitespace, got `{url}`"),
+        ));
+    }
+    let authority = match url.strip_prefix("https://") {
+        Some(rest) => match rest.split_once('/') {
+            Some((host, _path)) => host,
+            None => rest,
+        },
+        None => "",
+    };
+    if authority.is_empty() {
+        return Err(fail(
+            subject,
+            field,
+            format!("repository url `{url}` has no host after the scheme"),
+        ));
+    }
+    if !authority.contains('.') {
+        return Err(fail(
+            subject,
+            field,
+            format!(
+                "repository url `{url}` has no dotted host (a repository url needs a host like `example.com`)"
+            ),
         ));
     }
     if url.contains('@') {
@@ -746,6 +785,28 @@ impl AcceptedManifest {
     }
 }
 
+/// Reads a `synthetic_diff` field at one manifest level. Absent or null is
+/// `None`; a present value must be a string portable path. A malformed present
+/// value fails at the level that records it (#3733 review) — a valid value at
+/// the other level repairs ABSENCE, never malformedness.
+fn synthetic_diff_at_level(
+    owner: &str,
+    object: &serde_json::Map<String, Value>,
+) -> Result<Option<String>, String> {
+    match object.get("synthetic_diff") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(path)) => {
+            check_portable_path(owner, "synthetic_diff", path)?;
+            Ok(Some(path.clone()))
+        }
+        Some(_) => Err(fail(
+            owner,
+            "synthetic_diff",
+            "field must be a string diff path when present",
+        )),
+    }
+}
+
 /// Validates the accepted manifest: schema/kind/spec/tier, exactly eight
 /// unique subjects, immutable repository identity, license and shape tags,
 /// portable diff paths. Data-driven: any eight well-formed subjects pass.
@@ -775,9 +836,12 @@ fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedM
     }
 
     // Owned-but-unchecked top-level fields get their emitted-shape type
-    // checks: `description` is a string, `limits` an array of strings.
+    // checks: `description` is a string, `limits` an array of strings, and a
+    // present top-level `synthetic_diff` fallback is a portable path whether
+    // or not any subject needs it (#3733 review).
     opt_string("manifest", top, "description")?;
     opt_string_array("manifest", top, "limits")?;
+    let top_level_diff = synthetic_diff_at_level("manifest", top)?;
 
     let repos = value
         .get("repos")
@@ -861,21 +925,21 @@ fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedM
         known_value_or_fail(&id, "shape", shape, &KNOWN_SHAPES, "shape/layout tag")?;
 
         // Diff identity: per-repo path with the manifest-level fallback the
-        // run path resolves. Portable and secret-free; existence is a run-time
-        // concern, not an offline structural one.
-        let diff = entry
-            .get("synthetic_diff")
-            .and_then(Value::as_str)
-            .or_else(|| top.get("synthetic_diff").and_then(Value::as_str));
-        match diff {
-            Some(path) => check_portable_path(&id, "synthetic_diff", path)?,
-            None => {
-                return Err(fail(
-                    &id,
-                    "synthetic_diff",
-                    "subject has no synthetic_diff and the manifest has no top-level fallback",
-                ));
-            }
+        // run path resolves. Each present value is checked at the level that
+        // records it (#3733 review): a malformed present value fails even
+        // when the other level supplies a valid fallback — only absence falls
+        // through. Portable and secret-free; existence is a run-time concern,
+        // not an offline structural one.
+        let diff = match synthetic_diff_at_level(&id, entry)? {
+            Some(path) => Some(path),
+            None => top_level_diff.clone(),
+        };
+        if diff.is_none() {
+            return Err(fail(
+                &id,
+                "synthetic_diff",
+                "subject has no synthetic_diff and the manifest has no top-level fallback",
+            ));
         }
 
         // Optional identities (#3733 review): absent is typed incomplete; a
@@ -1663,21 +1727,34 @@ fn validate_row(
     })
 }
 
-/// 0.3 repository identity block: must restate the accepted pin when present;
-/// a partial or absent block is typed incomplete.
+/// 0.3 repository identity block: a present block must be an object — a
+/// wrong-typed block is malformed, not absent, so it fails naming the field
+/// (#3733 review); only ABSENCE discloses incomplete. A present block must
+/// restate the accepted pin when it carries url/sha; a partial block is typed
+/// incomplete.
 fn validate_row_repository(
     entry: &serde_json::Map<String, Value>,
     id: &str,
     subject: &AcceptedSubject,
     incomplete: &mut Vec<Diagnostic>,
 ) -> Result<(), String> {
-    let Some(Value::Object(repository)) = entry.get("repository") else {
-        incomplete.push(Diagnostic::new(
-            id,
-            "repository",
-            "repository identity block not recorded",
-        ));
-        return Ok(());
+    let repository = match entry.get("repository") {
+        None | Some(Value::Null) => {
+            incomplete.push(Diagnostic::new(
+                id,
+                "repository",
+                "repository identity block not recorded",
+            ));
+            return Ok(());
+        }
+        Some(Value::Object(repository)) => repository,
+        Some(_) => {
+            return Err(fail(
+                id,
+                "repository",
+                "repository identity must be an object when present",
+            ));
+        }
     };
     let allowed: [&str; 4] = ["url", "sha", "tree_digest", "snapshot"];
     reject_unknown_keys(repository, &allowed, id, "repository identity")?;
@@ -2348,7 +2425,10 @@ fn validate_summary_agreement(
                 ),
             ));
         }
-        for field in ["classification_counts", "alignment_counts"] {
+        for (field, vocabulary) in [
+            ("classification_counts", &CLASSIFICATION_VOCABULARY[..]),
+            ("alignment_counts", &ALIGNMENT_VOCABULARY[..]),
+        ] {
             if let Some(counts) = opt_distribution(display, summary, field)? {
                 for (name, count) in &counts {
                     if *count != 0 {
@@ -2357,6 +2437,22 @@ fn validate_summary_agreement(
                             &format!("summary.{field}.{name}"),
                             format!(
                                 "repos_run == 0: bucket `{name}` claims {count} but nothing ran — analysis-bearing aggregates must be zero or absent at zero runs"
+                            ),
+                        ));
+                    }
+                }
+                // A recorded distribution must be the emitter's zero-filled
+                // shape (eval_sweep.rs `to_json` writes every bucket, at zero
+                // runs included): a missing key — `absent`/`unknown` included
+                // — is a dropped field, not a zero, and would erase the
+                // field-not-emitted distinction (#3733 review).
+                for name in vocabulary {
+                    if !counts.contains_key(*name) {
+                        return Err(fail(
+                            display,
+                            &format!("summary.{field}.{name}"),
+                            format!(
+                                "repos_run == 0: recorded distribution omits required bucket `{name}`; the emitter zero-fills every bucket, so a recorded distribution must carry the full emitted key set"
                             ),
                         ));
                     }
@@ -2521,8 +2617,8 @@ fn validate_summary_agreement(
     // set — no unknown buckets, no missing buckets the rows establish, and
     // zero-valued buckets participate like any other (the sweep writes every
     // bucket). With zero run rows the zero-run law above already bounds every
-    // recorded bucket to zero; the recorded key set is still vocabulary-
-    // checked.
+    // recorded bucket to zero and requires the full emitted key set; the
+    // recorded key set is still vocabulary-checked.
     for (field, vocabulary, derived_counts) in [
         (
             "classification_counts",
@@ -3704,9 +3800,13 @@ mod python_eval_sweep {
                 "classification_counts".to_string(),
                 json!({"exposed": 0, "weakly_exposed": 0, "reachable_unrevealed": 0, "no_static_path": 0, "infection_unknown": 0, "propagation_unknown": 0, "static_unknown": 0}),
             );
+            // The emitter zero-fills every alignment bucket, at zero runs
+            // included (eval_sweep.rs `to_json`), so the recorded summary
+            // carries the full nine-key set — `absent`/`unknown` and the
+            // three repair-packet counters included.
             summary.insert(
                 "alignment_counts".to_string(),
-                json!({"direct": 0, "alias": 0, "changed_sink_token": 0, "orthogonal": 0, "unknown": 0, "absent": 0}),
+                json!({"direct": 0, "alias": 0, "changed_sink_token": 0, "orthogonal": 0, "unknown": 0, "absent": 0, "repair_placement_present": 0, "verify_command_present": 0, "python_repair_card_present": 0}),
             );
             summary.insert("gate_status".to_string(), json!("not_run"));
             summary.insert("gate_reason".to_string(), json!("no repos analyzed"));
@@ -4742,6 +4842,143 @@ mod python_eval_sweep {
             validate_manifest_value(&parsed(&value)?),
             "field=`description`",
         )
+    }
+
+    // -- hardening round: malformed blocks fail, host rules, zero-run keys ---
+
+    #[test]
+    fn malformed_repository_block_fails_while_absence_discloses_incomplete() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // A wrong-typed `repository` block is malformed, not absent: it fails
+        // naming the field instead of disclosing an incomplete identity
+        // (#3733 review).
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.insert("repository".to_string(), json!("x"));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "repository identity must be an object when present",
+        )?;
+
+        // Only ABSENCE discloses: removing the block stays a typed-incomplete
+        // disclosure, not a failure.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.remove("repository");
+        }
+        let check = validate_receipt_value(&receipt, &manifest, &sha)?;
+        assert!(
+            check.incomplete.iter().any(|diagnostic| {
+                diagnostic.subject == "alpha" && diagnostic.field == "repository"
+            }),
+            "an absent repository block must disclose incomplete: {:?}",
+            check.incomplete
+        );
+        assert_eq!(check.verdict(), Verdict::Incomplete);
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_synthetic_diff_fails_even_with_a_valid_fallback() -> Result<(), String> {
+        // A per-subject wrong type cannot hide behind a valid top-level
+        // fallback: a fallback repairs absence, never malformedness
+        // (#3733 review).
+        let mut value = alternate_manifest();
+        value["synthetic_diff"] = json!("fixtures/python-eval-sweep/synthetic-diff.diff");
+        value["repos"][0]["synthetic_diff"] = json!(42);
+        expect_fail(
+            validate_manifest_value(&parsed(&value)?),
+            "field=`synthetic_diff`",
+        )?;
+
+        // The same for a present non-portable path at the subject level.
+        let mut value = alternate_manifest();
+        value["synthetic_diff"] = json!("fixtures/python-eval-sweep/synthetic-diff.diff");
+        value["repos"][0]["synthetic_diff"] = json!("../escape.diff");
+        expect_fail(
+            validate_manifest_value(&parsed(&value)?),
+            "must not contain `..`",
+        )?;
+
+        // And a malformed top-level fallback fails at its own level even
+        // when every subject carries a valid path.
+        let mut value = alternate_manifest();
+        value["synthetic_diff"] = json!(["fixtures/python-eval-sweep/synthetic-diff.diff"]);
+        expect_fail(
+            validate_manifest_value(&parsed(&value)?),
+            "field=`synthetic_diff`",
+        )
+    }
+
+    #[test]
+    fn rejects_hostless_whitespace_and_dotless_https_urls() -> Result<(), String> {
+        for (url, needle) in [
+            ("https:///path", "has no host"),
+            ("https://ex ample.com/x", "must not contain whitespace"),
+            // A dotless host is malformed under the same conservative host
+            // rule: `https://host` carries no repository host shape, so it is
+            // rejected by design, not overlooked.
+            ("https://host", "no dotted host"),
+        ] {
+            let mut value = alternate_manifest();
+            value["repos"][0]["url"] = json!(url);
+            expect_fail(validate_manifest_value(&parsed(&value)?), needle)?;
+        }
+
+        // Existing valid URLs keep passing.
+        let mut value = alternate_manifest();
+        value["repos"][0]["url"] = json!("https://example.com/alpha/nested/path");
+        validate_manifest_value(&parsed(&value)?)?;
+        Ok(())
+    }
+
+    #[test]
+    fn zero_run_summary_distribution_requires_the_emitted_key_set() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // A zero-run alignment_counts without `absent`: every recorded bucket
+        // is zero, but the distribution drops a required emitted bucket, so
+        // it fails (#3733 review).
+        let mut receipt = zero_run_receipt_0_2(&alternate_manifest());
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut)
+            && let Some(Value::Object(counts)) = summary.get_mut("alignment_counts")
+        {
+            counts.remove("absent");
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "omits required bucket `absent`",
+        )?;
+
+        // The same law for `unknown` and for a classification bucket: the
+        // emitter zero-fills every bucket (eval_sweep.rs `to_json`), so a
+        // recorded distribution must carry the full emitted key set.
+        for (field, bucket) in [
+            ("alignment_counts", "unknown"),
+            ("classification_counts", "static_unknown"),
+        ] {
+            let mut receipt = zero_run_receipt_0_2(&alternate_manifest());
+            if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut)
+                && let Some(Value::Object(counts)) = summary.get_mut(field)
+            {
+                counts.remove(bucket);
+            }
+            expect_fail(
+                validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+                &format!("omits required bucket `{bucket}`"),
+            )?;
+        }
+
+        // The full zero-filled emitted key set validates.
+        let receipt = zero_run_receipt_0_2(&alternate_manifest());
+        validate_receipt_value(&receipt, &manifest, &sha)?;
+        Ok(())
     }
 
     // -- verdict + rendering -------------------------------------------------
