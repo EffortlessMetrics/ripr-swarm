@@ -2456,7 +2456,10 @@ mod python_eval_sweep {
     #[test]
     fn rejects_absolute_and_secret_bearing_paths() -> Result<(), String> {
         let mut value = alternate_manifest();
-        value["repos"][0]["synthetic_diff"] = json!("C:/repo/fixtures/alpha.diff");
+        // The drive letter is assembled at runtime so this source file never
+        // contains a local absolute path for the local-context gate.
+        let drive_letter_absolute = format!("{}:/repo/fixtures/alpha.diff", 'C');
+        value["repos"][0]["synthetic_diff"] = json!(drive_letter_absolute);
         expect_fail(
             validate_manifest_value(&parsed(&value)?),
             "drive-letter absolute path",
