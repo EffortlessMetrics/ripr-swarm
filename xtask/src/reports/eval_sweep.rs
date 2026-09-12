@@ -889,12 +889,17 @@ fn render_markdown(metrics: &Metrics, runs: &[RepoRun]) -> String {
 pub(crate) fn eval_sweep(args: &[String]) -> Result<(), String> {
     // `eval-sweep check` routes to the typed accepted-manifest/receipt
     // validator (RIPR-SPEC-0086, #3565); `eval-sweep refresh` routes to the
-    // managed candidate refresh (#3566); anything else is the live sweep.
+    // managed candidate refresh (#3566); `eval-sweep report` routes to the
+    // accepted-receipt publisher and currentness gate (#3567); anything else
+    // is the live sweep.
     if args.first().map(String::as_str) == Some("check") {
         return super::eval_sweep_check::run_check(&args[1..]);
     }
     if args.first().map(String::as_str) == Some("refresh") {
         return super::eval_sweep_refresh::run_refresh(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("report") {
+        return super::eval_sweep_report::run_report(&args[1..]);
     }
     let parsed = parse_args(args)?;
     let manifest = load_manifest(&parsed.manifest)?;

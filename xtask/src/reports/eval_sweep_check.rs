@@ -204,8 +204,9 @@ const STATUS_VOCABULARY: [&str; 8] = [
 /// Statuses that evidence an analysis attempt (count toward `repos_run`):
 /// exactly these five. The complement — `unsupported`/`tempfail`/`stale` —
 /// does not count, though every status stays selected in the denominator
-/// (SPEC-0086).
-const RUN_STATUSES: [&str; 5] = [
+/// (SPEC-0086). Shared with the report route (#3567), which projects the same
+/// run/non-run split into the accepted receipt instead of re-deriving it.
+pub(crate) const RUN_STATUSES: [&str; 5] = [
     "complete",
     "partial",
     "parse-failed",
@@ -265,7 +266,9 @@ const ALIGNMENT_VOCABULARY: [&str; 9] = [
 
 /// Secret tripwire substrings for path/URL fields (case-insensitive). This is
 /// a conservative tripwire, not a secret parser: a hit fails the artifact.
-const SECRET_TRIPWIRES: [&str; 18] = [
+/// Shared with the report route (#3567), whose accepted-artifact hygiene scan
+/// reuses the same tripwire list instead of forking a parallel one.
+pub(crate) const SECRET_TRIPWIRES: [&str; 18] = [
     "api_key",
     "apikey",
     "api_token",
@@ -308,7 +311,10 @@ impl Diagnostic {
         }
     }
 
-    fn render(&self) -> String {
+    /// Renders one disclosure line; shared with the report route (#3567),
+    /// which copies the validated candidate's typed disclosures into the
+    /// accepted receipt.
+    pub(crate) fn render(&self) -> String {
         format!(
             "subject=`{}` field=`{}`: {}",
             self.subject, self.field, self.reason
@@ -682,28 +688,31 @@ fn check_subject_url(subject: &str, field: &str, url: &str) -> Result<(), String
 }
 
 fn check_no_secrets(subject: &str, field: &str, text: &str) -> Result<(), String> {
+    match secret_tripwire_match(text) {
+        Some(what) => Err(fail(subject, field, what)),
+        None => Ok(()),
+    }
+}
+
+/// The shared conservative secret tripwire: returns a description of the
+/// matched tripwire shape, or `None` when the text carries none. One list, two
+/// consumers (this validator and the #3567 accepted-artifact hygiene scan), so
+/// the detection data is never forked.
+pub(crate) fn secret_tripwire_match(text: &str) -> Option<String> {
     let lowered = text.to_ascii_lowercase();
     for tripwire in SECRET_TRIPWIRES {
         if lowered.contains(tripwire) {
-            return Err(fail(
-                subject,
-                field,
-                format!(
-                    "value must not carry a secret-shaped token (matched tripwire `{tripwire}`)"
-                ),
+            return Some(format!(
+                "value must not carry a secret-shaped token (matched tripwire `{tripwire}`)"
             ));
         }
     }
     if let Some(offset) = text.find("AKIA")
         && text[offset..].len() >= 20
     {
-        return Err(fail(
-            subject,
-            field,
-            "value must not carry an AWS-access-key-shaped token",
-        ));
+        return Some("value must not carry an AWS-access-key-shaped token".to_string());
     }
-    Ok(())
+    None
 }
 
 /// Digest fields are bare lowercase sha256 hex (64 chars); git identity fields

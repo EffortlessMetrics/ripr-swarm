@@ -8,6 +8,7 @@ mod dogfood;
 mod eval_sweep;
 mod eval_sweep_check;
 mod eval_sweep_refresh;
+mod eval_sweep_report;
 mod first_pr;
 mod fixtures;
 mod impacted_evidence;
