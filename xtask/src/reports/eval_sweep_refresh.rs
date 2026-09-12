@@ -69,10 +69,20 @@
 //!   termination, cwd anchored inside the candidate tree, isolated
 //!   `RIPR_CACHE_DIR`, terminal prompts disabled for git); no new
 //!   process-spawn surface is introduced.
+//! - Candidate publication is generation-staged: raw evidence and receipts are
+//!   written under `<out>/.refresh-staging` and moved into their final
+//!   locations by a single rename per file at finalization, so an interrupted
+//!   refresh cannot leave a mixed old/new generation in the published paths.
+//!   Full one-receipt-to-one-raw-set generation binding across reruns remains
+//!   #3567's promotion contract.
 //! - Claim boundary: a candidate receipt is structural currentness evidence
-//!   over the retained denominator. It is not accepted promotion evidence, no
-//!   structural-accuracy, repair-correctness, gate, badge, or support claim is
-//!   inferred, and distributions stay descriptive (they never gate).
+//!   over the retained denominator. Self-validation is structural — digest
+//!   syntax, status vocabulary, and schema shape are what `eval-sweep check`
+//!   accepts; the route does not recompute retained artifact bytes against
+//!   their digests. That recomputation is the promotion-time binding #3567's
+//!   validator/publisher owns. The receipt is not accepted promotion evidence,
+//!   no structural-accuracy, repair-correctness, gate, badge, or support claim
+//!   is inferred, and distributions stay descriptive (they never gate).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -120,6 +130,13 @@ const REPORT_MD: &str = "eval-sweep-refresh.md";
 const SUBJECTS_DIR: &str = "subjects";
 const RAW_DIR: &str = "raw";
 const CACHE_DIR: &str = "cache";
+
+/// Generation staging directory under `--out`: raw evidence and receipts land
+/// here first and are moved into their final locations by one rename per file
+/// at finalization. A refresh interrupted before finalization leaves only this
+/// directory behind (cleared by the next run) — never a mixed old/new
+/// generation in the published paths.
+const STAGING_DIR: &str = ".refresh-staging";
 
 /// Bounded corpus walk: the working-set cap on entries visited per subject
 /// before the walk discloses `partial` selection instead of a silently
@@ -206,6 +223,20 @@ pub(crate) fn run_refresh_with_env(
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
+    // Generation staging: fresh per run, so a previous interrupted refresh
+    // cannot mix its half-written generation into this one.
+    let staging = out_abs.join(STAGING_DIR);
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(|error| {
+        format!(
+            "eval-sweep refresh cannot create staging dir `{}`: {error}",
+            staging.display()
+        )
+    })?;
+    let destinations = CandidateOut {
+        out: out_abs,
+        staging,
+    };
 
     let started = std::time::Instant::now();
     let mut executions: Vec<SubjectExecution> = Vec::new();
@@ -217,7 +248,7 @@ pub(crate) fn run_refresh_with_env(
             subject,
             &binary,
             &manifest_dir,
-            &out_abs,
+            &destinations,
             &parsed.checkout_root,
             parsed.timeout,
             parsed.clone_timeout,
@@ -228,20 +259,25 @@ pub(crate) fn run_refresh_with_env(
     // retained-receipt validator before writing anything: refresh produces
     // only what `eval-sweep check --runs` accepts.
     let receipt = assemble_receipt(&manifest_sha256, &binary, &executions);
-    let receipt_display = out_abs.join(RECEIPT_FILE).to_string_lossy().to_string();
+    let receipt_display = destinations
+        .out
+        .join(RECEIPT_FILE)
+        .to_string_lossy()
+        .to_string();
     let validated = validate_run_receipt(&receipt, &manifest_sha256, &manifest, &receipt_display)?;
     let exec_receipt = assemble_execution_receipt(
         &manifest,
         &manifest_sha256,
         &parsed,
         &binary,
-        &out_abs,
+        &destinations.out,
         &executions,
         started.elapsed().as_millis(),
     );
 
-    write_candidate_file(&out_abs, RECEIPT_FILE, &receipt)?;
-    write_candidate_file(&out_abs, EXEC_RECEIPT_FILE, &exec_receipt)?;
+    write_candidate_file(&destinations.staging, RECEIPT_FILE, &receipt)?;
+    write_candidate_file(&destinations.staging, EXEC_RECEIPT_FILE, &exec_receipt)?;
+    finalize_candidate_generation(&destinations.staging, &destinations.out)?;
 
     println!(
         "eval-sweep refresh: manifest={} subjects={} binary={} (sha256 {})",
@@ -266,7 +302,7 @@ pub(crate) fn run_refresh_with_env(
     );
     println!(
         "eval-sweep refresh: candidates written under {} — accepted/current state untouched; promotion requires #3567",
-        out_abs.display()
+        destinations.out.display()
     );
     println!("rerun: {RERUN_COMMAND}");
 
@@ -617,7 +653,7 @@ fn materialize_subject(
 ) -> Materialization {
     let dir = out_abs.join(SUBJECTS_DIR).join(&subject.id);
     if dir.exists() {
-        return verify_materialized_dir(&dir, subject, "candidate_reuse");
+        return verify_materialized_dir(&dir, subject, "candidate_reuse", clone_timeout);
     }
     // Local seed first: a pre-placed checkout under the checkout root is a
     // filesystem-local clone source (git local transport, no network), so an
@@ -625,14 +661,14 @@ fn materialize_subject(
     let seed = Path::new(checkout_root).join(&subject.id);
     if seed.join(".git").exists() {
         if clone_into(&seed, &dir, clone_timeout, subject).is_ok() {
-            return verify_materialized_dir(&dir, subject, "local_seed_clone");
+            return verify_materialized_dir(&dir, subject, "local_seed_clone", clone_timeout);
         }
         // The seed lacked the pin or the local clone failed; the network
         // clone may still satisfy the pin.
         discard_partial_dir(&dir);
     }
     match clone_into(Path::new(&subject.url), &dir, clone_timeout, subject) {
-        Ok(()) => verify_materialized_dir(&dir, subject, "network_clone"),
+        Ok(()) => verify_materialized_dir(&dir, subject, "network_clone", clone_timeout),
         Err(limitation) => {
             discard_partial_dir(&dir);
             Materialization::Failed { limitation }
@@ -727,14 +763,16 @@ fn clone_into(
 
 /// Verifies a materialized directory: it must be a git checkout whose HEAD is
 /// exactly the pinned SHA (after a bounded detached re-checkout when HEAD
-/// drifted) AND whose worktree is clean — local modifications or untracked
-/// files mean the content cannot be attributed to the accepted pin even when
-/// HEAD matches, so a reused-but-dirty checkout is a typed `Stale`, never an
-/// analysis of altered content.
+/// drifted — bounded by the CONFIGURED `clone_timeout`, the same deadline the
+/// clone itself runs under) AND whose worktree is clean — local modifications
+/// or untracked files mean the content cannot be attributed to the accepted
+/// pin even when HEAD matches, so a reused-but-dirty checkout is a typed
+/// `Stale`, never an analysis of altered content.
 fn verify_materialized_dir(
     dir: &Path,
     subject: &AcceptedSubject,
     source: &'static str,
+    clone_timeout: Duration,
 ) -> Materialization {
     if !dir.join(".git").exists() {
         return Materialization::Stale {
@@ -770,7 +808,7 @@ fn verify_materialized_dir(
             subject.sha.clone(),
         ],
         &[("GIT_TERMINAL_PROMPT", "0")],
-        Duration::from_secs(DEFAULT_CLONE_TIMEOUT_SECS),
+        clone_timeout,
         &format!("eval-sweep refresh re-checkout for `{}`", subject.id),
     );
     let rechecked = match reset {
@@ -887,9 +925,25 @@ struct CorpusCounts {
     test_files: u64,
     generated_files: u64,
     vendor_files: u64,
-    /// False when the bounded walk hit the working-set cap; the counts are
-    /// then omitted (never a silently truncated number).
+    /// False when the bounded walk could not enumerate the whole tree: the
+    /// working-set cap was hit, or a directory listing failed. The counts are
+    /// then omitted (never a silently truncated number) and the row's
+    /// corpus-selection state cannot claim `selected`.
     complete: bool,
+    /// Names why the walk is incomplete — the failed subtree (a `read_dir`
+    /// failure) or the working-set cap — so a truncated count is disclosed
+    /// with its cause in the execution receipt, never silent.
+    limitation: Option<String>,
+}
+
+/// The corpus-selection state a row/execution record may claim for these
+/// counts: `selected` only when the walk enumerated the whole tree.
+fn corpus_selection_state(corpus: Option<&CorpusCounts>) -> &'static str {
+    match corpus {
+        Some(counts) if counts.complete => "selected",
+        Some(_) => "partial",
+        None => "absent",
+    }
 }
 
 /// Counts the materialized Python working set by path shape. Producers are
@@ -906,18 +960,36 @@ fn count_corpus(dir: &Path) -> CorpusCounts {
         generated_files: 0,
         vendor_files: 0,
         complete: true,
+        limitation: None,
     };
     let mut stack = vec![dir.to_path_buf()];
     let mut seen = 0usize;
     while let Some(current) = stack.pop() {
         let entries = match std::fs::read_dir(&current) {
             Ok(entries) => entries,
-            Err(_) => continue,
+            // An unreadable subtree is a truncated walk, not a smaller
+            // corpus: the selection state can never claim complete, and the
+            // cause names the subtree (consistent with the working-set cap).
+            Err(error) => {
+                counts.complete = false;
+                if counts.limitation.is_none() {
+                    counts.limitation = Some(format!(
+                        "corpus walk could not list `{}`: {error}",
+                        current.display()
+                    ));
+                }
+                continue;
+            }
         };
         for entry in entries.flatten() {
             seen += 1;
             if seen > WORKING_SET_CAP {
                 counts.complete = false;
+                if counts.limitation.is_none() {
+                    counts.limitation = Some(format!(
+                        "the bounded corpus walk hit the working-set cap ({WORKING_SET_CAP} entries) before finishing; the counts are truncated"
+                    ));
+                }
                 return counts;
             }
             let path = entry.path();
@@ -1194,22 +1266,32 @@ fn run_analysis_pass(
 // Input resolution
 // ---------------------------------------------------------------------------
 
-/// Resolves the synthetic diff for one subject: repo-root-relative first (the
-/// canonical manifest layout), then manifest-directory-relative. Returns the
-/// absolute path; the manifest-declared portable path is recorded on the row.
+/// Resolves the synthetic diff for one subject. Resolution order (documented;
+/// the process cwd is deliberately out of the loop, so an absolute
+/// `--manifest` supplied from a foreign working directory cannot turn a valid
+/// input into a `tempfail` row):
+///
+/// 1. manifest-directory-relative — the layout synthetic refresh manifests
+///    use (`diffs/<id>.diff` next to `manifest.json`);
+/// 2. repository-root-relative — the canonical accepted-manifest layout
+///    (`fixtures/python-eval-sweep/diffs/<id>.diff`), anchored at the
+///    compiled workspace root, never the cwd.
+///
+/// Returns the absolute path; the manifest-declared portable path is recorded
+/// on the row.
 fn resolve_diff(manifest_dir: &Path, declared: &str) -> Result<PathBuf, String> {
-    let from_root = Path::new(declared);
-    if from_root.is_file() {
-        return std::path::absolute(from_root)
-            .map_err(|error| format!("cannot resolve diff `{declared}`: {error}"));
-    }
     let from_manifest_dir = manifest_dir.join(declared);
     if from_manifest_dir.is_file() {
         return std::path::absolute(&from_manifest_dir)
             .map_err(|error| format!("cannot resolve diff `{declared}`: {error}"));
     }
+    let from_repo_root = repo_root_anchor().join(declared);
+    if from_repo_root.is_file() {
+        return std::path::absolute(&from_repo_root)
+            .map_err(|error| format!("cannot resolve diff `{declared}`: {error}"));
+    }
     Err(format!(
-        "synthetic diff `{declared}` was not found relative to the repository root or the manifest directory"
+        "synthetic diff `{declared}` was not found relative to the manifest directory or the repository root"
     ))
 }
 
@@ -1707,6 +1789,12 @@ struct SubjectExecution {
     config_profile: String,
     /// The subject-root config file's out-relative path, when one exists.
     subject_config_path: Option<String>,
+    /// The corpus-selection state this row's counts support (`selected`,
+    /// `partial`, or `absent`).
+    corpus_state: &'static str,
+    /// Why the corpus selection is not `selected` (unreadable subtree,
+    /// working-set cap); `None` when the walk was complete or never ran.
+    corpus_limitation: Option<String>,
     /// A named infrastructure failure contained at this subject (cache
     /// creation, spawn, raw retention, binary-identity drift): the row is a
     /// typed `tempfail` and the execution receipt names the cause.
@@ -1778,6 +1866,10 @@ fn assemble_execution_receipt(
                 "config": {
                     "profile": execution.config_profile,
                     "subject_config": execution.subject_config_path,
+                },
+                "corpus_selection": {
+                    "state": execution.corpus_state,
+                    "limitation": execution.corpus_limitation,
                 },
                 "analysis": {
                     "complete": execution.analysis_complete,
@@ -1884,6 +1976,15 @@ struct ReadyContext<'a> {
     subject_config_path: Option<String>,
 }
 
+/// The candidate output destinations: the published out directory and the
+/// per-run generation staging directory under it. Candidate evidence lands in
+/// staging and moves into `out` by rename at finalization; the materialized
+/// subject trees and the disposable analyzer cache live directly under `out`.
+struct CandidateOut {
+    out: PathBuf,
+    staging: PathBuf,
+}
+
 /// Contains a post-materialization infrastructure failure (cache creation,
 /// analysis spawn, raw retention, binary-identity drift) at its subject: the
 /// row is a typed `tempfail` assembled from the verified facts with no
@@ -1918,6 +2019,8 @@ fn infrastructure_failure_execution(context: ReadyContext, limitation: String) -
         output_identity_stable: None,
         config_profile: context.config_profile,
         subject_config_path: context.subject_config_path,
+        corpus_state: corpus_selection_state(context.corpus),
+        corpus_limitation: context.corpus.and_then(|counts| counts.limitation.clone()),
         infrastructure_limitation: Some(limitation),
     }
 }
@@ -1930,12 +2033,14 @@ fn refresh_subject(
     subject: &AcceptedSubject,
     binary: &BinaryIdentity,
     manifest_dir: &Path,
-    out_abs: &Path,
+    destinations: &CandidateOut,
     checkout_root: &str,
     timeout: Duration,
     clone_timeout: Duration,
 ) -> SubjectExecution {
     let id = &subject.id;
+    let out_abs = destinations.out.as_path();
+    let staging = destinations.staging.as_path();
     match plan_subject(subject, manifest_dir, out_abs, checkout_root, clone_timeout) {
         SubjectPhase::InputUnavailable { limitation } => {
             let row = assemble_row(RowInputs {
@@ -1964,6 +2069,8 @@ fn refresh_subject(
                 output_identity_stable: None,
                 config_profile: CONFIG_PROFILE_UNOBSERVED.to_string(),
                 subject_config_path: None,
+                corpus_state: corpus_selection_state(None),
+                corpus_limitation: None,
                 infrastructure_limitation: None,
             }
         }
@@ -1994,6 +2101,8 @@ fn refresh_subject(
                 output_identity_stable: None,
                 config_profile: CONFIG_PROFILE_UNOBSERVED.to_string(),
                 subject_config_path: None,
+                corpus_state: corpus_selection_state(None),
+                corpus_limitation: None,
                 infrastructure_limitation: None,
             }
         }
@@ -2041,7 +2150,7 @@ fn refresh_subject(
                         );
                     }
                 };
-            if let Err(error) = write_raw_output(out_abs, id, "pass1", &first.stdout, &first.stderr)
+            if let Err(error) = write_raw_output(staging, id, "pass1", &first.stdout, &first.stderr)
             {
                 return infrastructure_failure_execution(
                     context(),
@@ -2069,7 +2178,7 @@ fn refresh_subject(
                     ..
                 } = &result
                     && let Err(error) =
-                        write_repeat_raw_output(out_abs, id, repeat_stdout, repeat_stderr)
+                        write_repeat_raw_output(staging, id, repeat_stdout, repeat_stderr)
                 {
                     return infrastructure_failure_execution(
                         context(),
@@ -2138,6 +2247,8 @@ fn refresh_subject(
                 output_identity_stable,
                 config_profile,
                 subject_config_path,
+                corpus_state: corpus_selection_state(Some(&corpus)),
+                corpus_limitation: corpus.limitation.clone(),
                 infrastructure_limitation: None,
             }
         }
@@ -2161,16 +2272,18 @@ fn materialization_limitation(materialization: &Materialization) -> Option<Strin
     }
 }
 
-/// Retains one pass's raw stdout/stderr under `raw/<id>/`. The bytes bound
-/// the row digests; retention is part of the candidate evidence.
+/// Retains one pass's raw stdout/stderr under `<staging>/raw/<id>/`. The bytes
+/// bound the row digests; retention is part of the candidate evidence. Files
+/// land in the generation staging directory and are renamed into their final
+/// `raw/` locations at finalization.
 fn write_raw_output(
-    out_abs: &Path,
+    staging: &Path,
     subject_id: &str,
     pass: &str,
     stdout: &[u8],
     stderr: &[u8],
 ) -> Result<(), String> {
-    let dir = out_abs.join(RAW_DIR).join(subject_id);
+    let dir = staging.join(RAW_DIR).join(subject_id);
     std::fs::create_dir_all(&dir).map_err(|error| {
         format!(
             "eval-sweep refresh cannot create raw dir `{}` for `{subject_id}`: {error}",
@@ -2186,17 +2299,17 @@ fn write_raw_output(
     Ok(())
 }
 
-/// Retains the stability pass's raw stdout AND stderr under `raw/<id>/`
-/// (`pass2-stdout.txt` / `pass2-stderr.txt`): SPEC-0086's retention contract
-/// covers each pass, so the second pass keeps both streams and binds the
-/// stderr digest into the row's `repeat` block.
+/// Retains the stability pass's raw stdout AND stderr under
+/// `<staging>/raw/<id>/` (`pass2-stdout.txt` / `pass2-stderr.txt`):
+/// SPEC-0086's retention contract covers each pass, so the second pass keeps
+/// both streams and binds the stderr digest into the row's `repeat` block.
 fn write_repeat_raw_output(
-    out_abs: &Path,
+    staging: &Path,
     subject_id: &str,
     stdout: &[u8],
     stderr: &[u8],
 ) -> Result<(), String> {
-    let dir = out_abs.join(RAW_DIR).join(subject_id);
+    let dir = staging.join(RAW_DIR).join(subject_id);
     std::fs::create_dir_all(&dir).map_err(|error| {
         format!(
             "eval-sweep refresh cannot create raw dir `{}` for `{subject_id}`: {error}",
@@ -2217,15 +2330,81 @@ fn write_repeat_raw_output(
 // Candidate file writing and report rendering
 // ---------------------------------------------------------------------------
 
-fn write_candidate_file(out_abs: &Path, name: &str, value: &Value) -> Result<(), String> {
+fn write_candidate_file(staging: &Path, name: &str, value: &Value) -> Result<(), String> {
     let text = serde_json::to_string_pretty(value)
         .map_err(|error| format!("eval-sweep refresh cannot render {name}: {error}"))?;
-    std::fs::write(out_abs.join(name), format!("{text}\n")).map_err(|error| {
+    std::fs::write(staging.join(name), format!("{text}\n")).map_err(|error| {
         format!(
             "eval-sweep refresh cannot write `{}`: {error}",
-            out_abs.join(name).display()
+            staging.join(name).display()
         )
     })
+}
+
+/// Moves every staged candidate file into its final location under `out`, one
+/// rename per file, then removes the staging directory. A refresh interrupted
+/// before this point leaves the published paths untouched (only staging
+/// residue, cleared by the next run), so an interrupted run can never leave a
+/// mixed old/new generation among the published candidate files.
+fn finalize_candidate_generation(staging: &Path, out_abs: &Path) -> Result<(), String> {
+    let mut stack = vec![staging.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let entries = std::fs::read_dir(&current).map_err(|error| {
+            format!(
+                "eval-sweep refresh cannot read the staging dir `{}`: {error}",
+                current.display()
+            )
+        })?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let relative = path.strip_prefix(staging).map_err(|error| {
+                format!(
+                    "eval-sweep refresh cannot relativize staged file `{}`: {error}",
+                    path.display()
+                )
+            })?;
+            let final_path = out_abs.join(relative);
+            if let Some(parent) = final_path.parent()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    format!(
+                        "eval-sweep refresh cannot create `{}`: {error}",
+                        parent.display()
+                    )
+                })?;
+            }
+            // A rerun over an existing candidate replaces the published file;
+            // remove-then-rename keeps the move working on platforms whose
+            // rename refuses an existing destination.
+            if final_path.exists() {
+                std::fs::remove_file(&final_path).map_err(|error| {
+                    format!(
+                        "eval-sweep refresh cannot replace `{}`: {error}",
+                        final_path.display()
+                    )
+                })?;
+            }
+            std::fs::rename(&path, &final_path).map_err(|error| {
+                format!(
+                    "eval-sweep refresh cannot move `{}` into place at `{}`: {error}",
+                    path.display(),
+                    final_path.display()
+                )
+            })?;
+        }
+    }
+    std::fs::remove_dir_all(staging).map_err(|error| {
+        format!(
+            "eval-sweep refresh cannot remove the staging dir `{}`: {error}",
+            staging.display()
+        )
+    })?;
+    Ok(())
 }
 
 fn render_report_json(exec_receipt: &Value) -> Result<String, String> {
@@ -2672,6 +2851,78 @@ mod python_eval_sweep_refresh {
         Ok(())
     }
 
+    // -- input resolution ----------------------------------------------------
+
+    /// Diff resolution is anchored, never process-cwd dependent (#3735 N1):
+    /// the manifest directory wins first, then the repository root — anchored
+    /// at the compiled workspace, not the cwd. A decoy file at the declared
+    /// relative path inside the process cwd must never win, and the canonical
+    /// fixture layout (repo-root-relative) must resolve through the anchored
+    /// root even from a foreign cwd: an absolute `--manifest` run from
+    /// elsewhere must find its inputs instead of recording `tempfail` rows.
+    #[test]
+    fn resolve_diff_is_manifest_dir_first_then_anchored_repo_root() -> Result<(), String> {
+        crate::tests::with_temp_cwd("resolve-diff", |cwd| -> Result<(), String> {
+            let manifest_dir = cwd.join("manifest-home");
+            std::fs::create_dir_all(manifest_dir.join("diffs"))
+                .map_err(|error| format!("create manifest diffs: {error}"))?;
+            std::fs::write(
+                manifest_dir.join("diffs").join("x.diff"),
+                b"manifest-dir bytes",
+            )
+            .map_err(|error| format!("write manifest diff: {error}"))?;
+            // The decoy: the SAME relative path inside the process cwd. A
+            // cwd-resolved lookup would find these bytes.
+            std::fs::create_dir_all(cwd.join("diffs"))
+                .map_err(|error| format!("create decoy: {error}"))?;
+            std::fs::write(cwd.join("diffs").join("x.diff"), b"cwd decoy")
+                .map_err(|error| format!("write decoy: {error}"))?;
+
+            let resolved = resolve_diff(&manifest_dir, "diffs/x.diff")?;
+            assert!(
+                resolved.starts_with(&manifest_dir),
+                "the manifest directory wins: {}",
+                resolved.display()
+            );
+            let bytes = std::fs::read(&resolved).map_err(|error| error.to_string())?;
+            assert_eq!(
+                bytes, b"manifest-dir bytes",
+                "the resolved diff is the manifest-dir file, never the cwd decoy"
+            );
+
+            // Repo-root fallback: the canonical accepted manifest declares its
+            // diff repository-root-relative; that layout resolves through the
+            // ANCHORED repo root even from this foreign cwd (which carries no
+            // fixtures/ tree at all).
+            let canonical = resolve_diff(
+                &manifest_dir,
+                "fixtures/python-eval-sweep/synthetic-diff.diff",
+            )?;
+            let repo_root = std::path::absolute(repo_root_anchor())
+                .map_err(|error| format!("resolve repo root: {error}"))?;
+            assert!(
+                canonical.starts_with(&repo_root),
+                "the repo-root-relative layout resolves through the anchored root: {}",
+                canonical.display()
+            );
+            assert!(
+                canonical.is_file(),
+                "the fixture diff exists: {}",
+                canonical.display()
+            );
+
+            // Found nowhere: typed error, never a cwd guess.
+            let error = refusal_of(resolve_diff(&manifest_dir, "diffs/missing.diff").map(|_| ()))?;
+            assert!(
+                error.contains(
+                    "not found relative to the manifest directory or the repository root"
+                ),
+                "{error}"
+            );
+            Ok(())
+        })
+    }
+
     // -- row assembly (pure) -------------------------------------------------
 
     fn test_subject(id: &str, sha: &str, shape: &str) -> AcceptedSubject {
@@ -2829,6 +3080,179 @@ mod python_eval_sweep_refresh {
         Ok(())
     }
 
+    /// An unreadable subtree is a truncated walk, not a smaller corpus
+    /// (#3735 N3): the counts can never claim complete, so the row's
+    /// corpus-selection state is `partial` (consistent with the working-set-
+    /// cap rule) with the counts omitted, and the limitation names the failed
+    /// subtree for the execution receipt. Windows denies the listing with an
+    /// ACL; Unix removes the read permission.
+    #[test]
+    fn unreadable_subtree_marks_corpus_selection_incomplete() -> Result<(), String> {
+        let dir = temp_root("corpus-unreadable");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("sealed")).map_err(|error| error.to_string())?;
+        std::fs::write(dir.join("src").join("app.py"), "x = 1\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(dir.join("sealed").join("hidden.py"), "x = 1\n")
+            .map_err(|error| error.to_string())?;
+        let sealed = dir.join("sealed");
+
+        // Deny only the LISTING of `sealed/`: the walk still sees the
+        // directory (metadata stays readable), then cannot enumerate it.
+        #[cfg(windows)]
+        let denied: Result<(), String> = capture_output_with_timeout(
+            "icacls",
+            &[
+                sealed.to_string_lossy().to_string(),
+                "/deny".to_string(),
+                "*S-1-1-0:(OI)(CI)(RD)".to_string(),
+            ],
+            &[],
+            Duration::from_secs(30),
+            "python_eval_sweep_refresh test icacls deny",
+        )
+        .and_then(|output| {
+            if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+                Err(format!(
+                    "icacls deny failed: {}",
+                    first_line(&output.stderr)
+                ))
+            } else {
+                Ok(())
+            }
+        });
+        #[cfg(unix)]
+        let denied: Result<(), String> = {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000))
+                .map_err(|error| format!("chmod sealed: {error}"))
+        };
+        denied.map_err(|error| format!("deny the sealed subtree: {error}"))?;
+
+        let counts = count_corpus(&dir);
+
+        // Restore access BEFORE asserting, so cleanup cannot fail.
+        #[cfg(windows)]
+        {
+            let _ = capture_output_with_timeout(
+                "icacls",
+                &[
+                    sealed.to_string_lossy().to_string(),
+                    "/remove:d".to_string(),
+                    "*S-1-1-0".to_string(),
+                ],
+                &[],
+                Duration::from_secs(30),
+                "python_eval_sweep_refresh test icacls restore",
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o755));
+        }
+
+        assert!(
+            !counts.complete,
+            "a walk that could not enumerate a subtree is never complete"
+        );
+        let limitation = counts
+            .limitation
+            .as_deref()
+            .ok_or_else(|| "the truncated walk names its cause".to_string())?;
+        assert!(
+            limitation.contains("sealed"),
+            "the limitation names the failed subtree: {limitation}"
+        );
+        assert_eq!(
+            corpus_selection_state(Some(&counts)),
+            "partial",
+            "a truncated count cannot claim selected"
+        );
+
+        // The row cannot claim complete counts either: state `partial`, no
+        // counts emitted (never a silently truncated number).
+        let subject = test_subject("sealed", VALID_SHA_A, "pytest_library");
+        let row = assemble_row(RowInputs {
+            subject: &subject,
+            binary: &test_binary(),
+            diff_portable: "diffs/sealed.diff",
+            diff_digest: None,
+            materialization: &materialized(),
+            first: None,
+            stability: None,
+            corpus: Some(&counts),
+            config_profile: CONFIG_PROFILE_SUBJECT,
+        });
+        let corpus_json = row
+            .value
+            .get("corpus_selection")
+            .cloned()
+            .ok_or_else(|| "the row records its corpus selection".to_string())?;
+        assert_eq!(corpus_json.get("state"), Some(&json!("partial")));
+        assert!(
+            corpus_json.get("source_files").is_none(),
+            "truncated counts are omitted, not emitted: {corpus_json}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// Candidate publication is generation-staged (#3735 N4): finalization
+    /// moves every staged file into place by rename — replacing any previous
+    /// generation's file on a rerun — and leaves no staging residue behind, so
+    /// an interrupted refresh can never leave a mixed old/new generation in
+    /// the published paths.
+    #[test]
+    fn staged_generation_finalizes_by_rename_without_residue() -> Result<(), String> {
+        let root = temp_root("staging");
+        let _ = std::fs::remove_dir_all(&root);
+        let out = root.join("out");
+        let staging = out.join(STAGING_DIR);
+        std::fs::create_dir_all(staging.join(RAW_DIR).join("s0"))
+            .map_err(|error| format!("create staging raw: {error}"))?;
+        std::fs::write(
+            staging.join(RAW_DIR).join("s0").join("pass1-stdout.txt"),
+            b"pass one",
+        )
+        .map_err(|error| format!("write staged raw: {error}"))?;
+        std::fs::write(staging.join(RECEIPT_FILE), b"{\"generation\": 2}\n")
+            .map_err(|error| format!("write staged receipt: {error}"))?;
+
+        finalize_candidate_generation(&staging, &out)?;
+
+        let raw = std::fs::read(out.join(RAW_DIR).join("s0").join("pass1-stdout.txt"))
+            .map_err(|error| error.to_string())?;
+        assert_eq!(raw, b"pass one", "the staged raw bytes moved into place");
+        let receipt = std::fs::read(out.join(RECEIPT_FILE)).map_err(|error| error.to_string())?;
+        assert_eq!(
+            receipt, b"{\"generation\": 2}\n",
+            "the staged receipt moved into place"
+        );
+        assert!(
+            !staging.exists(),
+            "finalization leaves no staging residue behind"
+        );
+
+        // A rerun replaces the published generation instead of failing on an
+        // existing destination.
+        std::fs::create_dir_all(&staging).map_err(|error| format!("recreate staging: {error}"))?;
+        std::fs::write(staging.join(RECEIPT_FILE), b"{\"generation\": 3}\n")
+            .map_err(|error| format!("write second staged receipt: {error}"))?;
+        finalize_candidate_generation(&staging, &out)?;
+        let receipt =
+            std::fs::read_to_string(out.join(RECEIPT_FILE)).map_err(|error| error.to_string())?;
+        assert_eq!(
+            receipt, "{\"generation\": 3}\n",
+            "the rerun replaces the published generation"
+        );
+        assert!(!staging.exists());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     #[test]
     fn evidence_digest_binds_raw_stderr_and_repeat() {
         let base = evidence_digest("aa", "bb", None);
@@ -2849,6 +3273,7 @@ mod python_eval_sweep_refresh {
             generated_files: 0,
             vendor_files: 0,
             complete: true,
+            limitation: None,
         };
         let build = || {
             assemble_row(RowInputs {
@@ -2896,6 +3321,8 @@ mod python_eval_sweep_refresh {
             output_identity_stable: Some(true),
             config_profile: CONFIG_PROFILE_SUBJECT.to_string(),
             subject_config_path: Some("ripr.toml".to_string()),
+            corpus_state: "selected",
+            corpus_limitation: None,
             infrastructure_limitation: None,
         };
         let executions = vec![execution];
@@ -3000,6 +3427,8 @@ mod python_eval_sweep_refresh {
                 output_identity_stable: None,
                 config_profile: CONFIG_PROFILE_SUBJECT.to_string(),
                 subject_config_path: None,
+                corpus_state: corpus_selection_state(None),
+                corpus_limitation: None,
                 infrastructure_limitation: None,
             });
         }
@@ -3573,6 +4002,13 @@ mod python_eval_sweep_refresh {
                 .map(|ids| ids.len()),
             Some(8)
         );
+        // Generation staging leaves no residue: the published candidate paths
+        // carry exactly this run's generation.
+        assert!(
+            !out.join(STAGING_DIR).exists(),
+            "finalization must remove the staging directory: {}",
+            out.join(STAGING_DIR).display()
+        );
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
@@ -3737,6 +4173,118 @@ mod python_eval_sweep_refresh {
         if let Err(error) = &outcome {
             let _ = std::fs::remove_dir_all(&root);
             return Err(format!("dirty-reuse receipt must validate: {error}"));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// The HEAD-drifted re-checkout runs under the CONFIGURED
+    /// `--clone-timeout-secs`, not a hardcoded default (#3735 N2): a
+    /// re-checkout whose post-checkout hook sleeps far past the configured
+    /// deadline is bounded by it, so the drifted subject lands `stale` and the
+    /// route still produces the full validatable denominator. Under a
+    /// hardcoded 600s deadline the same tree would have been re-checked out
+    /// (the sleep would have finished) and analyzed.
+    #[test]
+    fn drifted_recheckout_runs_under_the_configured_clone_timeout() -> Result<(), String> {
+        let root = temp_root("recheckout-timeout");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
+
+        // Eight local seeds; each seed's real HEAD becomes the manifest pin.
+        let mut pins = Vec::new();
+        for index in 0..8 {
+            let seed = root.join("seeds").join(format!("s{index}"));
+            pins.push(build_seed(&seed)?);
+        }
+        let manifest_path = write_manifest_and_diffs(&root, &pins)?;
+
+        // Pre-place s7's candidate dir as a local clone whose HEAD has
+        // DRIFTED past the pin (one extra empty commit), then install a
+        // post-checkout hook that sleeps far past the configured deadline:
+        // the route must attempt the pin's re-checkout, and that re-checkout
+        // must die at the CONFIGURED deadline.
+        git(&root, &["clone", "-q", "seeds/s7", "out/subjects/s7"])?;
+        let drifted = root.join("out").join(SUBJECTS_DIR).join("s7");
+        git(
+            &drifted,
+            &[
+                "-c",
+                "user.name=ripr-test",
+                "-c",
+                "user.email=ripr-test@example.invalid",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "drift past the pin",
+            ],
+        )?;
+        let head = git(&drifted, &["rev-parse", "HEAD"])?.trim().to_string();
+        assert_ne!(
+            head, pins[7],
+            "the reused checkout must be drifted before the route runs"
+        );
+        std::fs::create_dir_all(drifted.join(".git").join("hooks"))
+            .map_err(|error| format!("create hooks dir: {error}"))?;
+        std::fs::write(
+            drifted.join(".git").join("hooks").join("post-checkout"),
+            b"#!/bin/sh\nsleep 60\n",
+        )
+        .map_err(|error| format!("write post-checkout hook: {error}"))?;
+
+        let binary = built_ripr_binary()?;
+        let out = root.join("out");
+        let args = vec![
+            "--manifest".to_string(),
+            manifest_path.to_string_lossy().to_string(),
+            "--ripr-bin".to_string(),
+            binary,
+            "--out".to_string(),
+            out.to_string_lossy().to_string(),
+            "--checkout-root".to_string(),
+            root.join("seeds").to_string_lossy().to_string(),
+            "--timeout-secs".to_string(),
+            "60".to_string(),
+            "--clone-timeout-secs".to_string(),
+            "2".to_string(),
+            "--allow-network".to_string(),
+        ];
+        let run = run_refresh_with_env(&args, Some("1"));
+        if let Err(error) = &run {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!(
+                "recheckout-timeout refresh must still run: {error}"
+            ));
+        }
+
+        let receipt_text = std::fs::read_to_string(out.join(RECEIPT_FILE))
+            .map_err(|error| format!("read receipt: {error}"))?;
+        let receipt: Value = serde_json::from_str(&receipt_text)
+            .map_err(|error| format!("parse receipt: {error}"))?;
+        let rows = receipt
+            .get("repos")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| "receipt rows".to_string())?;
+        assert_eq!(rows.len(), 8, "the denominator is retained");
+        let stale_row = rows
+            .iter()
+            .find(|row| row.get("id").and_then(Value::as_str) == Some("s7"))
+            .ok_or_else(|| "s7 row present".to_string())?;
+        assert_eq!(
+            stale_row.get("status").and_then(Value::as_str),
+            Some("stale"),
+            "the re-checkout died at the configured deadline, so the drifted subject stays stale, never analyzed: {stale_row}"
+        );
+
+        let outcome = check_artifacts(
+            manifest_path.to_string_lossy().as_ref(),
+            Some(out.join(RECEIPT_FILE).to_string_lossy().as_ref()),
+        );
+        if let Err(error) = &outcome {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!("recheckout-timeout receipt must validate: {error}"));
         }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())

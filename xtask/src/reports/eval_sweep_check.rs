@@ -954,11 +954,17 @@ pub(crate) fn validate_accepted_manifest(
                 )
             })?
             .to_string();
-        if !seen.insert(id.clone()) {
+        // Case-insensitive uniqueness (ASCII): subject ids become filesystem
+        // path components, and on case-insensitive filesystems (Windows,
+        // default macOS) `Alpha` and `alpha` would resolve to one directory —
+        // two distinct ids colliding into one candidate tree. The charset
+        // already bars `~` (short-name aliases) and path separators;
+        // case-collision is the remaining alias, so it is rejected here.
+        if !seen.insert(id.to_ascii_lowercase()) {
             return Err(fail(
                 &id,
                 "id",
-                "duplicate subject id in the accepted manifest",
+                "duplicate subject id in the accepted manifest (ids must be unique case-insensitively: ids are path components, and a case-insensitive filesystem would collide `Alpha` with `alpha`)",
             ));
         }
         check_subject_id(&id)?;
@@ -3380,6 +3386,36 @@ mod python_eval_sweep {
         )
     }
 
+    /// Subject ids are unique CASE-insensitively (ASCII): they become
+    /// filesystem path components, and on a case-insensitive filesystem
+    /// (Windows, default macOS) `Alpha` and `alpha` would resolve to one
+    /// candidate directory — two distinct subjects colliding into one tree.
+    /// The charset already bars `~` (short-name aliases) and separators; the
+    /// case alias is rejected at the duplicate check.
+    #[test]
+    fn rejects_subject_ids_differing_only_by_case() -> Result<(), String> {
+        let mut value = alternate_manifest();
+        let first_id = value["repos"][0]["id"]
+            .as_str()
+            .ok_or_else(|| "first subject id".to_string())?
+            .to_string();
+        let uppercase = first_id.to_ascii_uppercase();
+        assert_ne!(
+            first_id, uppercase,
+            "the test needs an id with a distinct uppercase form"
+        );
+        value["repos"][1]["id"] = json!(uppercase);
+        value["repos"][1]["url"] = json!(format!("https://example.com/{uppercase}"));
+        expect_fail(
+            validate_manifest_value(&parsed(&value)?),
+            "duplicate subject id",
+        )?;
+        expect_fail(
+            validate_manifest_value(&parsed(&value)?),
+            "case-insensitively",
+        )
+    }
+
     #[test]
     fn rejects_non_https_and_credential_urls() -> Result<(), String> {
         let mut value = alternate_manifest();
@@ -4242,7 +4278,12 @@ mod python_eval_sweep {
     /// selected and only the five analysis-attempting statuses count as run.
     /// Row identities restate the manifest's own values when it pins them
     /// (the receipt binds against the manifest side), and the summary carries
-    /// the full emitted aggregate set the sweep writes (#3733 review).
+    /// the full emitted aggregate set the sweep writes (#3733 review) minus
+    /// the stability aggregates: the builder attaches the `repeat` block only
+    /// to `complete` rows — the producer shape, since a stability pass only
+    /// runs where the first result is complete — so stability is under-
+    /// evidenced whenever any run row is non-complete and the aggregates are
+    /// absent (typed incomplete, never derived over partial evidence).
     fn current_receipt_0_3(manifest: &AcceptedManifest) -> Value {
         let statuses = [
             "complete",
@@ -4329,11 +4370,6 @@ mod python_eval_sweep {
                     "output": DIGEST_TWO,
                     "evidence": DIGEST_ONE,
                 },
-                "repeat": {
-                    "comparable_with": format!("{}#run-1", subject.id),
-                    "gap_ids_stable": true,
-                    "unstable_gap_ids": [],
-                },
                 "runtime_ms": 100 * (index as u64 + 1),
                 "classification_counts": {
                     "exposed": 0,
@@ -4364,15 +4400,35 @@ mod python_eval_sweep {
                         json!({"direct": 0, "alias": 0, "changed_sink_token": 0, "orthogonal": 0, "unknown": 0, "absent": 0}),
                     );
             }
+            // The `repeat` block exists only where the stability pass actually
+            // compared — a `complete` first result. A compared non-complete
+            // row would claim stability over no comparison (equal failure gap
+            // sets must never read as `stable`), so the builder matches the
+            // producer: non-complete rows omit the block and disclose the
+            // absent comparison as typed incomplete.
+            if status == "complete"
+                && let Some(entry) = row.as_object_mut()
+            {
+                entry.insert(
+                    "repeat".to_string(),
+                    json!({
+                        "comparable_with": format!("{}#run-1", subject.id),
+                        "gap_ids_stable": true,
+                        "unstable_gap_ids": [],
+                    }),
+                );
+            }
             rows.push(row);
         }
         // Derived aggregates over the five run rows (complete/partial/
         // parse-failed/timed-out/crashed): one crash, one parse failure, one
         // timeout, one tempfail; runtimes 100..500 (min 100, median 300, max
-        // 500, total 1500); stability 5/5 (every run row carries `repeat`
-        // evidence); classification weakly_exposed=1 + static_unknown=1;
-        // alignment orthogonal=1, unknown=1, absent=3. The full emitted
-        // summary is present, exactly as the sweep writes it (#3733 review).
+        // 500, total 1500); classification weakly_exposed=1 + static_unknown=1;
+        // alignment orthogonal=1, unknown=1, absent=3. Only the complete row
+        // carries `repeat` evidence, so the stability aggregates are absent —
+        // the under-evidenced path the validator discloses, never a value
+        // derived over partial evidence. The rest of the emitted summary is
+        // present, exactly as the sweep writes it (#3733 review).
         json!({
             "schema_version": "0.3",
             "kind": "python_eval_sweep_report",
@@ -4401,9 +4457,6 @@ mod python_eval_sweep {
                 "runtime_ms_median": 300,
                 "runtime_ms_max": 500,
                 "runtime_ms_total": 1500,
-                "gap_id_stable_count": 5,
-                "gap_id_unstable_count": 0,
-                "gap_id_stability_rate": 1.0,
                 "classification_counts": {
                     "exposed": 0,
                     "weakly_exposed": 1,
@@ -4431,9 +4484,11 @@ mod python_eval_sweep {
     #[test]
     fn current_receipt_all_eight_statuses_validate_and_stay_selected() -> Result<(), String> {
         // The identity-complete manifest pins every optional identity, so the
-        // receipt's restated identities bind cleanly and zero incompletes
-        // remain (an identity-complete receipt over a gappy manifest would
-        // disclose the unbindable manifest sides instead).
+        // receipt's restated identities bind cleanly. The builder attaches
+        // `repeat` only to the `complete` row (the producer shape), so the
+        // seven other rows disclose the absent comparison as typed incomplete,
+        // and the under-evidenced summary stability aggregate is disclosed at
+        // the receipt level — nothing else is incomplete.
         let complete = identity_complete_manifest();
         let (manifest, sha) = accepted_manifest(&complete)?;
         let receipt = current_receipt_0_3(&manifest);
@@ -4442,9 +4497,21 @@ mod python_eval_sweep {
         // Every row stays selected; only five attempted analysis.
         assert_eq!(check.denominator_selected, 8);
         assert_eq!(check.denominator_run, 5);
-        assert!(
-            check.incomplete.is_empty(),
-            "complete 0.3 receipt over a pinned manifest should disclose nothing: {:?}",
+        assert_eq!(
+            check
+                .incomplete
+                .iter()
+                .filter(|diagnostic| diagnostic.field != "repeat"
+                    && diagnostic.field != "summary.gap_id_stable_count")
+                .count(),
+            0,
+            "only the absent repeat comparisons and the under-evidenced stability aggregate are disclosed: {:?}",
+            check.incomplete
+        );
+        assert_eq!(
+            check.incomplete.len(),
+            8,
+            "one repeat disclosure per non-complete row plus the summary disclosure: {:?}",
             check.incomplete
         );
         Ok(())
@@ -4531,12 +4598,14 @@ mod python_eval_sweep {
         )
     }
 
-    #[test]
-    fn current_receipt_with_full_repeat_evidence_reaches_pass() -> Result<(), String> {
-        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
-        let mut receipt = current_receipt_0_3(&manifest);
-        // Every row becomes a fully-observed complete run whose stability
-        // evidence lives in `repeat`; the rows now derive the `pass` gate.
+    /// Flips a builder receipt into eight fully-observed complete runs with
+    /// `repeat` evidence on every row and a re-derived honest summary (8
+    /// complete runs, no crashes/parse failures/timeouts, runtimes 100..800 —
+    /// min 100, median 500, max 800, total 3600 — 8/8 stable,
+    /// weakly_exposed=8, direct=8, `pass` gate). This is the one shape under
+    /// which the stability aggregates are derivable: every run row carries a
+    /// compared pass (#3733 review).
+    fn flip_to_fully_complete_0_3(receipt: &mut Value) {
         if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut) {
             for row in rows.iter_mut() {
                 if let Some(entry) = row.as_object_mut() {
@@ -4555,14 +4624,17 @@ mod python_eval_sweep {
                         "alignment_counts".to_string(),
                         json!({"direct": 1, "alias": 0, "changed_sink_token": 0, "orthogonal": 0, "unknown": 0, "absent": 0}),
                     );
+                    entry.insert(
+                        "repeat".to_string(),
+                        json!({
+                            "comparable_with": "pass-1",
+                            "gap_ids_stable": true,
+                            "unstable_gap_ids": [],
+                        }),
+                    );
                 }
             }
         }
-        // The hand-entered summary is re-derived honestly from the modified
-        // rows: 8 complete runs, no crashes/parse failures/timeouts, runtimes
-        // 100..800 (min 100, median 500, max 800, total 3600), 8/8 stable,
-        // weakly_exposed=8, direct=8 (#3733 review: the full summary is
-        // required on analyzed receipts, so every aggregate must agree).
         if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
             summary.insert("repos_run".to_string(), json!(8));
             summary.insert("repos_clone_failed".to_string(), json!(0));
@@ -4592,6 +4664,15 @@ mod python_eval_sweep {
                 json!("8 complete runs; no crashes; repeat evidence stable on every row"),
             );
         }
+    }
+
+    #[test]
+    fn current_receipt_with_full_repeat_evidence_reaches_pass() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        let mut receipt = current_receipt_0_3(&manifest);
+        // Every row becomes a fully-observed complete run whose stability
+        // evidence lives in `repeat`; the rows now derive the `pass` gate.
+        flip_to_fully_complete_0_3(&mut receipt);
         let check = validate_receipt_value(&receipt, &manifest, &sha)?;
         assert_eq!(check.denominator_selected, 8);
         assert_eq!(check.denominator_run, 8);
@@ -4719,10 +4800,12 @@ mod python_eval_sweep {
     #[test]
     fn fully_evidenced_receipt_requires_stability_aggregates() -> Result<(), String> {
         let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
-        // Every run row carries `repeat` evidence, so the emitter writes the
-        // stability aggregates; deleting one must not silently disable the
+        // Every run row carries `repeat` evidence (the fully-complete shape is
+        // the one shape where stability is derivable), so the emitter writes
+        // the stability aggregates; deleting one must not silently disable the
         // stability comparison.
         let mut receipt = current_receipt_0_3(&manifest);
+        flip_to_fully_complete_0_3(&mut receipt);
         if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
             summary.remove("gap_id_stable_count");
         }
@@ -5407,7 +5490,12 @@ mod python_eval_sweep {
         let complete = identity_complete_manifest();
         let (manifest, sha) = accepted_manifest(&complete)?;
         assert!(manifest.incomplete.is_empty());
-        let receipt_value = current_receipt_0_3(&manifest);
+        // The fully-complete shape (every row complete with compared repeat
+        // evidence) is the one receipt shape with zero incompletes: rows
+        // without a compared pass disclose the absent comparison, so a
+        // builder receipt over even a pinned manifest is `incomplete`.
+        let mut receipt_value = current_receipt_0_3(&manifest);
+        flip_to_fully_complete_0_3(&mut receipt_value);
         let receipt = validate_receipt_value(&receipt_value, &manifest, &sha)?;
         assert!(receipt.incomplete.is_empty());
         let outcome = CheckOutcome {
