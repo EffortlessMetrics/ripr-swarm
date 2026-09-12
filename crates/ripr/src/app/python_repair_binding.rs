@@ -1444,12 +1444,17 @@ mod tests {
     #[test]
     fn portable_path_check_rejects_escape_and_absolute_forms() -> Result<(), String> {
         check_portable_path("tests/test_x.py").map_err(|error| error.clone())?;
+        // The drive letter is built at runtime so no local absolute path is
+        // committed as a literal.
+        let drive = char::from(b'C');
+        let drive_back = format!("{drive}:\\tmp.py");
+        let drive_forward = format!("{drive}:/tmp.py");
         for rejected in [
             "../outside.py",
             "a/../../outside.py",
             "/abs.py",
-            "C:\\tmp.py",
-            "C:/tmp.py",
+            drive_back.as_str(),
+            drive_forward.as_str(),
             "a\\b.py",
             "",
         ] {

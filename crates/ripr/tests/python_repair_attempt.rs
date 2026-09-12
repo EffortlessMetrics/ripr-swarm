@@ -311,14 +311,14 @@ fn current_head(root: &Path) -> Result<String, String> {
 /// Collects every `seam_id` string in a document, in order, deduplicated.
 fn collect_seam_ids(value: &Value, out: &mut Vec<String>) {
     match value {
-        Value::String(text) => {
+        Value::String(text)
             if text.len() == 16
                 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
-                && !out.iter().any(|seen| seen == text)
-            {
-                out.push(text.clone());
-            }
+                && !out.iter().any(|seen| seen == text) =>
+        {
+            out.push(text.clone());
         }
+        Value::String(_) => {}
         Value::Array(items) => {
             for item in items {
                 collect_seam_ids(item, out);
@@ -1124,17 +1124,15 @@ fn tampered_retained_binding_fails_closed() -> Result<(), String> {
     let attempt_id = sole_attempt(&fixture)?;
     edit_target_file(&fixture)?;
 
-    // Flip content inside the retained binding artifact: its digest is pinned
-    // by the durable manifest, so the apply must refuse.
+    // Inject an unknown field into the retained binding artifact: its digest
+    // is pinned by the durable manifest, so the apply must refuse.
     let path = binding_artifact_path(&fixture, &attempt_id)?;
     let original = std::fs::read_to_string(&path)
         .map_err(|error| format!("read binding artifact: {error}"))?;
-    let tampered = original.replace("prepare", "prepare");
-    let tampered = if tampered == original {
-        original.replace('{', "{\n  \"extra\": true,")
-    } else {
-        tampered
-    };
+    let tampered = original.replacen('{', "{\n  \"smuggled_field\": true,", 1);
+    if tampered == original {
+        return Err("tampering did not change the binding artifact".to_string());
+    }
     std::fs::write(&path, tampered).map_err(|error| format!("write tampered artifact: {error}"))?;
 
     let applied = run_apply(&fixture, &attempt_id, Some(AUTHORITY))?;

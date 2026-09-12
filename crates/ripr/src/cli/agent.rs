@@ -365,6 +365,12 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                     .to_string(),
             );
         }
+        (Some(_), AgentRepairPhase::Before) if !edit_authorization.authorized => {
+            return Err(
+                "agent repair --python-repair-trust-manifest/--python-repair-trust-attempt require --edit-authorized and --edit-authority <identity>; the driver never authorizes an edit automatically"
+                    .to_string(),
+            );
+        }
         _ => {}
     }
 
