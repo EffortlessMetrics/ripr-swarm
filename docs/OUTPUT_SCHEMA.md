@@ -15915,6 +15915,65 @@ p50 no greater than 30 seconds, and a cold-full-to-warm-targeted p50 speedup of
 at least 5x. Otherwise the receipt remains `inconclusive` and preserves the
 measured values.
 
+## Python Eval Sweep Accepted Receipt
+
+`cargo xtask eval-sweep report --candidate <receipt.json> --accept`
+(RIPR-SPEC-0086, after the candidate passes the exact `eval-sweep check`
+validation) writes the accepted receipt to
+`<state-dir>/receipts/<receipt-sha256>.json`, content-addressed over the exact
+written bytes. The envelope has `schema_version: "0.1"`, the kind
+`python_eval_sweep_accepted_receipt`, the spec and support tier, the
+command-contract version, and the retained candidate binding (candidate kind
+and schema version, candidate receipt sha256, manifest sha256).
+
+Every count is emitted as `{numerator, denominator}` with the denominator its
+contract defines — selection over the manifest subject denominator, top-level
+counts and outcomes and distribution buckets over the selected rows, health
+tallies over the selected rows they tally, and the runtime count over the
+analyzed (run) rows. There are no bare rates and no denominator-free numbers.
+Blocks: `counts`, `outcomes`, `runtime_envelope` (a reliable envelope, or a
+typed `unavailable` with its reason), `stability` (compared and stable counts
+with per-subject mismatch reasons), `distributions` (classification,
+alignment, and a named disclosure in place of a limitation taxonomy that no
+schema-0.3 row produces), `health` (detection and corpus-selection tallies
+including the unrecorded share), per-subject rows with identity, evidence
+digests, and recorded dispositions, `identities` (the currentness-bound
+identity projection), `incomplete_disclosures` (copied from the candidate),
+`non_claims`, and `claim_boundary`.
+
+Non-claims are embedded in the artifact itself: no judged accuracy
+(robustness and distribution metrics are informational and never become judged
+accuracy), no repair-correctness claim, no support-tier change, no
+outcome-flip claim, no coverage claim beyond the retained eight-subject
+denominator, and no durable currentness claim — currentness is established
+only by `eval-sweep report --check-currentness` at consumption time. Accepted
+bytes reach their final path through a staged atomic write (staging file,
+flush, rename). A file under a digest address whose bytes do not hash to that
+address is not a valid prior artifact: re-acceptance republishes the
+digest-named bytes (repair). The Markdown copy is named by the receipt's
+digest rather than a digest of its own bytes, so it is not self-verifying: an
+existing copy with different bytes is a typed refusal, never a silent repair.
+
+## Python Eval Sweep Current Pointer
+
+Acceptance also writes `<state-dir>/current.json` with `schema_version: "0.1"`
+and the kind `python_eval_sweep_current_pointer`. The pointer is identity-only:
+the accepted receipt's digest and portable filename, the command-contract
+version, an optional bounded `as_of` disclosure string, the manifest digest,
+the RIPR toolchain identity block (source sha, binary digest, features, build
+profile), and per-subject bound identities (accepted-row digest, tree digest,
+input digest, config input and profile). It carries no totals, no rates, and
+no per-subject outcomes.
+
+`as_of` is a disclosure, never an identity: editing it can never repair
+staleness, and `--check-currentness` requires it, when present, to be a
+non-empty bounded string but never compares its value. Currentness is a
+mechanical recomputation over digest, binding, and vocabulary comparisons with
+the verdicts `current`, `stale`, `unverifiable`, or `not_run` (no pointer;
+never a pass); only `stale` exits nonzero. The pointer is replaced by atomic
+staged write, so a reader sees either the old or the new pointer, never a
+partial one.
+
 ## Stability Rules
 
 Output contract values are registered in `policy/output_contracts.txt`.

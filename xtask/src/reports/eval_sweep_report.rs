@@ -12,16 +12,24 @@
 //!   receipt semantics; report never re-implements them), then renders the
 //!   accepted receipt JSON and a bounded Markdown report derived from the SAME
 //!   validated rows as a dry run. No accepted state is written.
-//! - `... --accept` additionally appends the immutable accepted receipt under
+//! - `... --accept` additionally publishes the immutable accepted receipt under
 //!   `<state-dir>/receipts/<receipt-sha256>.json` (content-addressed over the
-//!   exact written bytes; an existing file is never overwritten — identical
-//!   bytes are an idempotent no-op, different bytes are a typed refusal)
-//!   together with the retained candidate
+//!   exact written bytes) together with the retained candidate
 //!   (`receipts/<candidate-sha256>.candidate.json`, addressed by the
 //!   candidate's own digest, so the currentness check can re-validate the
 //!   rows through the shared validator) and atomically updates the current
 //!   pointer `<state-dir>/current.json` to identify exactly that accepted
-//!   receipt.
+//!   receipt. Every accepted byte reaches its final path through the staged
+//!   pattern (write a staging file in the same directory, flush, rename over
+//!   the final path), so an interrupted run cannot leave truncated bytes
+//!   under an accepted-artifact name. The self-addressed artifacts repair:
+//!   identical bytes are an idempotent no-op, and a file whose bytes do not
+//!   hash to its own digest address is not a valid prior artifact, so the
+//!   atomic publication overwrites it with exactly the digest-named bytes
+//!   (truncated bytes never block re-acceptance as "conflicting content").
+//!   The Markdown copy is named by the receipt's digest, not by its own
+//!   bytes, so it is not self-verifying against its address: an existing
+//!   file with different bytes is a typed refusal, never silently repaired.
 //! - `eval-sweep report --check-currentness` recomputes the identities the
 //!   pointer binds against current state and reports the mechanical verdict:
 //!   `current`, `stale`, `unverifiable`, or `not_run` (no pointer; never a
@@ -1551,9 +1559,13 @@ fn run_candidate_report(parsed: &ReportArgs) -> Result<(), String> {
     // BEFORE any accepted byte is written (a candidate edited between the
     // initial parse and this point is a typed refusal, so the accepted
     // artifacts can never retain new bytes under the OLD candidate digest
-    // while `current.json` moves), then append the immutable
-    // content-addressed receipt and move the pointer. Previously accepted
-    // artifacts are never rewritten.
+    // while `current.json` moves), then publish the content-addressed
+    // receipt, its Markdown, and the retained candidate through the staged
+    // atomic pattern, and move the pointer. Every accepted write is atomic,
+    // so an interrupted run cannot leave truncated bytes under an accepted
+    // artifact name; the self-addressed artifacts (receipt, retained
+    // candidate) repair a file whose bytes do not hash to their own digest
+    // address, and no other accepted artifact is ever rewritten.
     let candidate_bytes = revalidate_candidate_bytes(Path::new(candidate_path), &candidate_sha256)?;
     let state_dir = PathBuf::from(&parsed.state_dir);
     let receipts_dir = state_dir.join(RECEIPTS_DIR);
@@ -1565,39 +1577,37 @@ fn run_candidate_report(parsed: &ReportArgs) -> Result<(), String> {
         )
     })?;
     let receipt_target = receipts_dir.join(format!("{receipt_sha256}.json"));
-    if receipt_target.exists() {
-        let existing = std::fs::read(&receipt_target).map_err(|error| {
-            fail(
-                &receipt_target.to_string_lossy(),
-                "file",
-                format!("existing accepted receipt cannot be read: {error}"),
-            )
-        })?;
-        if existing != receipt_bytes.as_bytes() {
-            return Err(fail(
-                &receipt_target.to_string_lossy(),
-                "file",
-                "an accepted receipt with this digest exists with different bytes; accepted receipts are immutable and are never overwritten",
-            ));
+    // The receipt path is content-addressed over exactly the bytes staged
+    // here, so publishing them by atomic rename keeps the address
+    // self-verifying: the file at `<sha256>.json` hashes to `<sha256>` by
+    // construction. A file already present with other bytes is not a valid
+    // prior artifact — truncated by an interrupted write, or edited after
+    // acceptance — and is repaired rather than preserved: keeping it would
+    // block re-acceptance forever as "conflicting content" that its own
+    // digest address refutes. Identical bytes remain an idempotent no-op.
+    match std::fs::read(&receipt_target) {
+        Ok(existing) if existing == receipt_bytes.as_bytes() => {
+            println!(
+                "eval-sweep report: accepted receipt `{}` already accepted (identical bytes); immutable artifact untouched",
+                receipt_target.to_string_lossy()
+            );
         }
-        println!(
-            "eval-sweep report: accepted receipt `{}` already accepted (identical bytes); immutable artifact untouched",
-            receipt_target.to_string_lossy()
-        );
-    } else {
-        std::fs::write(&receipt_target, &receipt_bytes).map_err(|error| {
-            fail(
-                &receipt_target.to_string_lossy(),
-                "file",
-                format!("cannot write the accepted receipt: {error}"),
-            )
-        })?;
+        _ => {
+            publish_bytes_atomically(
+                &receipt_target,
+                receipt_bytes.as_bytes(),
+                "accepted receipt",
+            )?;
+        }
     }
     let markdown_target = receipts_dir.join(format!("{receipt_sha256}.md"));
     if markdown_target.exists() {
         // An existing Markdown is verified, never silently kept or rewritten:
+        // its name is the RECEIPT's digest, not a digest of its own bytes, so
         // an edited artifact under the accepted receipt's digest is a typed
-        // refusal, mirroring the existing-different-JSON rule above.
+        // refusal (the self-addressed artifacts above can repair because
+        // their address refutes corrupt bytes; this one cannot, so it
+        // refuses).
         let existing = std::fs::read(&markdown_target).map_err(|error| {
             fail(
                 &markdown_target.to_string_lossy(),
@@ -1613,42 +1623,19 @@ fn run_candidate_report(parsed: &ReportArgs) -> Result<(), String> {
             ));
         }
     } else {
-        std::fs::write(&markdown_target, &markdown).map_err(|error| {
-            fail(
-                &markdown_target.to_string_lossy(),
-                "file",
-                format!("cannot write the accepted markdown: {error}"),
-            )
-        })?;
+        publish_bytes_atomically(&markdown_target, markdown.as_bytes(), "accepted markdown")?;
     }
     // The retained candidate: addressed by the candidate's own digest, so the
     // currentness check can re-validate the accepted rows through the shared
-    // validator without trusting any pointer content. The bytes are the ones
-    // verified by the pre-write digest re-check above.
+    // validator without trusting any pointer content. The staged bytes are
+    // exactly the ones verified by the pre-write digest re-check above, so
+    // the same self-addressed repair law applies: a file under this digest
+    // with other bytes is corrupt (an interrupted write, or an edit), not a
+    // valid prior artifact, and is repaired rather than preserved.
     let candidate_target = receipts_dir.join(format!("{candidate_sha256}.candidate.json"));
-    if candidate_target.exists() {
-        let existing = std::fs::read(&candidate_target).map_err(|error| {
-            fail(
-                &candidate_target.to_string_lossy(),
-                "file",
-                format!("existing retained candidate cannot be read: {error}"),
-            )
-        })?;
-        if existing != candidate_bytes {
-            return Err(fail(
-                &candidate_target.to_string_lossy(),
-                "file",
-                "a retained candidate with this digest exists with different bytes; retained candidates are immutable and are never overwritten",
-            ));
-        }
-    } else {
-        std::fs::write(&candidate_target, &candidate_bytes).map_err(|error| {
-            fail(
-                &candidate_target.to_string_lossy(),
-                "file",
-                format!("cannot write the retained candidate: {error}"),
-            )
-        })?;
+    match std::fs::read(&candidate_target) {
+        Ok(existing) if existing == candidate_bytes => {}
+        _ => publish_bytes_atomically(&candidate_target, &candidate_bytes, "retained candidate")?,
     }
 
     write_pointer_atomically(&state_dir, &pointer_text)?;
@@ -1695,17 +1682,85 @@ fn revalidate_candidate_bytes(
     Ok(bytes)
 }
 
-/// Atomically updates the current pointer: the staging file is written and
-/// flushed FIRST, then renamed over the existing pointer. Renaming over an
-/// existing destination replaces it in one step on the platforms this route
-/// supports (Unix, and Windows `fs::rename` moves with replace-existing), so
-/// there is no window in which `current.json` is absent — a reader after the
-/// write sees either the old pointer or the new one, never a missing pointer.
-/// If a host refuses rename-over-existing, the fallback removes the old
-/// pointer only after the staged bytes are fully written and flushed, then
-/// renames; the residual window between that remove and the rename can leave
-/// no pointer after a crash — readers then see `not_run`, never a partial
-/// pointer.
+/// Publishes bytes at their final path through the staged pattern: the bytes
+/// are written to a staging file in the target's directory and flushed FIRST,
+/// then renamed over the final path. Renaming over an existing destination
+/// replaces it in one step on the platforms this route supports (Unix, and
+/// Windows `fs::rename` moves with replace-existing). The rename is atomic, so
+/// there is no window in which the target holds partial bytes — an interrupted
+/// run leaves either the previous bytes or the complete new bytes at the final
+/// path, never a truncated artifact. If a host refuses rename-over-existing,
+/// the fallback removes the target only after the staged bytes are fully
+/// written and flushed, then renames; the residual window between that remove
+/// and the rename can lose the file after a crash but can never leave partial
+/// bytes.
+fn publish_bytes_atomically(target: &Path, bytes: &[u8], what: &str) -> Result<(), String> {
+    let file_name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .ok_or_else(|| {
+            fail(
+                &target.to_string_lossy(),
+                "file",
+                format!("cannot stage the {what}: the target has no file name"),
+            )
+        })?;
+    let temp = target.with_file_name(format!("{file_name}.tmp-{}", std::process::id()));
+    {
+        let mut staged = std::fs::File::create(&temp).map_err(|error| {
+            fail(
+                &temp.to_string_lossy(),
+                "file",
+                format!("cannot write the {what} staging file: {error}"),
+            )
+        })?;
+        staged.write_all(bytes).map_err(|error| {
+            fail(
+                &temp.to_string_lossy(),
+                "file",
+                format!("cannot write the {what} staging file: {error}"),
+            )
+        })?;
+        staged.sync_all().map_err(|error| {
+            fail(
+                &temp.to_string_lossy(),
+                "file",
+                format!("cannot flush the {what} staging file: {error}"),
+            )
+        })?;
+    }
+    // Replace-in-place rename: an existing target is NOT removed first, so it
+    // stays readable until the rename swaps the bytes in one step.
+    if std::fs::rename(&temp, target).is_ok() {
+        return Ok(());
+    }
+    // Fallback for hosts that refuse rename-over-existing: remove then
+    // rename, only after the staged bytes are fully written and flushed
+    // (above).
+    if target.exists() {
+        std::fs::remove_file(target).map_err(|error| {
+            fail(
+                &target.to_string_lossy(),
+                "file",
+                format!("cannot replace the {what}: {error}"),
+            )
+        })?;
+    }
+    std::fs::rename(&temp, target).map_err(|error| {
+        fail(
+            &target.to_string_lossy(),
+            "file",
+            format!("cannot move the staged {what} into place: {error}"),
+        )
+    })?;
+    Ok(())
+}
+
+/// Atomically updates the current pointer: the staged file is written and
+/// flushed FIRST, then renamed over the existing pointer (see
+/// `publish_bytes_atomically` for the atomicity and fallback law). Readers
+/// after the write see either the old pointer or the new one — never a
+/// missing pointer and never a partial pointer.
 fn write_pointer_atomically(state_dir: &Path, pointer_text: &str) -> Result<(), String> {
     std::fs::create_dir_all(state_dir).map_err(|error| {
         fail(
@@ -1715,56 +1770,11 @@ fn write_pointer_atomically(state_dir: &Path, pointer_text: &str) -> Result<(), 
         )
     })?;
     let target = state_dir.join(POINTER_FILE);
-    let temp = state_dir.join(format!("{POINTER_FILE}.tmp-{}", std::process::id()));
-    {
-        let mut staged = std::fs::File::create(&temp).map_err(|error| {
-            fail(
-                &temp.to_string_lossy(),
-                "file",
-                format!("cannot write the pointer staging file: {error}"),
-            )
-        })?;
-        staged
-            .write_all(format!("{pointer_text}\n").as_bytes())
-            .map_err(|error| {
-                fail(
-                    &temp.to_string_lossy(),
-                    "file",
-                    format!("cannot write the pointer staging file: {error}"),
-                )
-            })?;
-        staged.sync_all().map_err(|error| {
-            fail(
-                &temp.to_string_lossy(),
-                "file",
-                format!("cannot flush the pointer staging file: {error}"),
-            )
-        })?;
-    }
-    // Replace-in-place rename: the existing pointer is NOT removed first, so
-    // it stays readable until the rename swaps the bytes in one step.
-    if std::fs::rename(&temp, &target).is_ok() {
-        return Ok(());
-    }
-    // Fallback for hosts that refuse rename-over-existing: remove then
-    // rename, only after the staged file is fully written and flushed (above).
-    if target.exists() {
-        std::fs::remove_file(&target).map_err(|error| {
-            fail(
-                &target.to_string_lossy(),
-                "file",
-                format!("cannot replace the current pointer: {error}"),
-            )
-        })?;
-    }
-    std::fs::rename(&temp, &target).map_err(|error| {
-        fail(
-            &target.to_string_lossy(),
-            "file",
-            format!("cannot move the staged pointer into place: {error}"),
-        )
-    })?;
-    Ok(())
+    publish_bytes_atomically(
+        &target,
+        format!("{pointer_text}\n").as_bytes(),
+        "current pointer",
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -2364,6 +2374,36 @@ fn run_currentness_check(parsed: &ReportArgs) -> Result<(), String> {
                 "pointer",
                 field,
                 format!("expected `{expected}`, got `{actual}`"),
+            ));
+        }
+    }
+    // The as-of disclosure is hygiene-checked but never enters the identity
+    // comparison below (editing it can never repair staleness): when present
+    // it must be a non-empty bounded string, so a malformed value cannot ride
+    // along inside an otherwise current pointer.
+    if let Some(as_of) = pointer.get("as_of") {
+        let text = as_of.as_str().ok_or_else(|| {
+            fail(
+                "pointer",
+                "as_of",
+                "as-of must be a JSON string when present",
+            )
+        })?;
+        if text.trim().is_empty() {
+            return Err(fail(
+                "pointer",
+                "as_of",
+                "as-of must be non-empty when present",
+            ));
+        }
+        let length = text.chars().count();
+        if length > NOTE_MAX_CHARS {
+            return Err(fail(
+                "pointer",
+                "as_of",
+                format!(
+                    "as-of exceeds the {NOTE_MAX_CHARS}-character bound ({length} characters); accepted artifacts carry bounded excerpts, never unbounded logs"
+                ),
             ));
         }
     }
@@ -3891,6 +3931,48 @@ mod python_eval_sweep_report {
     }
 
     #[test]
+    fn malformed_as_of_pointer_fails_currentness() -> Result<(), String> {
+        // The as-of value never enters the identity comparison, but a
+        // malformed disclosure (empty, non-string, oversized) must fail the
+        // check naming the field instead of riding along inside an otherwise
+        // current pointer.
+        for (label, value, needle) in [
+            ("as-of-empty", json!(""), "as-of must be non-empty"),
+            ("as-of-number", json!(5), "as-of must be a JSON string"),
+            (
+                "as-of-oversized",
+                json!("x".repeat(NOTE_MAX_CHARS + 1)),
+                "512-character bound",
+            ),
+        ] {
+            let sandbox = accepted_sandbox(label)?;
+            let binary = write_binary_v1(&sandbox)?;
+            let pointer_path = sandbox.path("accepted/current.json");
+            let mut pointer = read_strict(&pointer_path)?;
+            if let Some(object) = pointer.as_object_mut() {
+                object.insert("as_of".to_string(), value);
+            }
+            write_json(&pointer_path, &pointer)?;
+            expect_fail_all(
+                run_report(&currentness_args(&sandbox, &binary, &[])),
+                &[needle, "as_of"],
+            )?;
+        }
+
+        // A normal as_of value passes the hygiene check and currentness.
+        let sandbox = accepted_sandbox("as-of-shape-good")?;
+        let binary = write_binary_v1(&sandbox)?;
+        let pointer_path = sandbox.path("accepted/current.json");
+        let mut pointer = read_strict(&pointer_path)?;
+        if let Some(object) = pointer.as_object_mut() {
+            object.insert("as_of".to_string(), json!("2026-09-10T00:00:00Z"));
+        }
+        write_json(&pointer_path, &pointer)?;
+        run_report(&currentness_args(&sandbox, &binary, &[]))?;
+        Ok(())
+    }
+
+    #[test]
     fn unverifiable_identities_disclose_without_claiming_current() -> Result<(), String> {
         let sandbox = accepted_sandbox("unverifiable")?;
         // No --ripr-bin: the binary identity cannot be recomputed, so the
@@ -4661,6 +4743,83 @@ mod python_eval_sweep_report {
         assert_eq!(
             replaced.get("replaced").and_then(Value::as_bool),
             Some(false)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn truncated_accepted_artifacts_are_repaired_on_reacceptance() -> Result<(), String> {
+        // A digest-addressed artifact whose on-disk bytes do not hash to its
+        // own address is not a valid prior artifact (truncated by an
+        // interrupted write, or edited): re-acceptance repairs it with
+        // exactly the digest-named bytes instead of refusing forever as
+        // "conflicting content".
+        let (sandbox, args) = prepared_args(
+            "accept-repair",
+            &["--dispositions", "DISPOSITIONS", "--accept"],
+        )?;
+        let dispositions = sandbox.dispositions_path()?;
+        let args = with_dispositions(&args, &dispositions);
+        run_report(&args)?;
+
+        let pointer = read_strict(&sandbox.path("accepted/current.json"))?;
+        let receipt_file = pointer
+            .get("receipt_file")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "receipt_file".to_string())?
+            .to_string();
+        let receipt_path = sandbox.path(&format!("accepted/{receipt_file}"));
+        let (accepted_receipt, _path) = accepted_receipt(&sandbox)?;
+        let candidate_sha = accepted_receipt
+            .get("candidate")
+            .and_then(|candidate| candidate.get("sha256"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| "candidate.sha256".to_string())?
+            .to_string();
+        let candidate_path =
+            sandbox.path(&format!("accepted/receipts/{candidate_sha}.candidate.json"));
+        let receipt_bytes =
+            std::fs::read(&receipt_path).map_err(|error| format!("read receipt: {error}"))?;
+        let candidate_bytes =
+            std::fs::read(&candidate_path).map_err(|error| format!("read candidate: {error}"))?;
+        // The published bytes hash to their digest addresses by construction.
+        assert_eq!(
+            sha256_hex(&receipt_bytes),
+            pointer
+                .get("receipt_sha256")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "receipt_sha256".to_string())?,
+            "the accepted receipt's bytes hash to its digest address"
+        );
+        assert_eq!(
+            sha256_hex(&candidate_bytes),
+            candidate_sha,
+            "the retained candidate's bytes hash to its digest address"
+        );
+
+        // Simulate interrupted writes: truncated bytes at both digest
+        // addresses.
+        std::fs::write(&receipt_path, &receipt_bytes[..receipt_bytes.len() / 2])
+            .map_err(|error| format!("truncate receipt: {error}"))?;
+        std::fs::write(
+            &candidate_path,
+            &candidate_bytes[..candidate_bytes.len() / 2],
+        )
+        .map_err(|error| format!("truncate candidate: {error}"))?;
+
+        // Re-acceptance repairs both instead of refusing.
+        run_report(&args)?;
+        let repaired_receipt =
+            std::fs::read(&receipt_path).map_err(|error| format!("reread receipt: {error}"))?;
+        let repaired_candidate =
+            std::fs::read(&candidate_path).map_err(|error| format!("reread candidate: {error}"))?;
+        assert_eq!(
+            repaired_receipt, receipt_bytes,
+            "the receipt must hold exactly the staged bytes after repair"
+        );
+        assert_eq!(
+            repaired_candidate, candidate_bytes,
+            "the retained candidate must hold exactly the verified bytes after repair"
         );
         Ok(())
     }
