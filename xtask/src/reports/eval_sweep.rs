@@ -72,7 +72,7 @@ fn parse_args(args: &[String]) -> Result<SweepArgs, String> {
             "--json-only" => parsed.json_only = true,
             other => {
                 return Err(format!(
-                    "unknown eval-sweep argument: {other}\nusage: cargo xtask eval-sweep [--manifest <path>] [--clone] [--checkout-root <dir>] [--repo <id>] [--timeout-secs <secs>] [--json-only] | cargo xtask eval-sweep check [--manifest <path>] [--runs <receipt>]"
+                    "unknown eval-sweep argument: {other}\nusage: cargo xtask eval-sweep [--manifest <path>] [--clone] [--checkout-root <dir>] [--repo <id>] [--timeout-secs <secs>] [--json-only] | cargo xtask eval-sweep check [--manifest <path>] [--runs <path>] | cargo xtask eval-sweep refresh --manifest <path> --ripr-bin <path> --out <dir> --allow-network | cargo xtask eval-sweep report (--candidate <receipt.json> [--dispositions <path>] [--accept] | --check-currentness)"
                 ));
             }
         }
@@ -889,12 +889,17 @@ fn render_markdown(metrics: &Metrics, runs: &[RepoRun]) -> String {
 pub(crate) fn eval_sweep(args: &[String]) -> Result<(), String> {
     // `eval-sweep check` routes to the typed accepted-manifest/receipt
     // validator (RIPR-SPEC-0086, #3565); `eval-sweep refresh` routes to the
-    // managed candidate refresh (#3566); anything else is the live sweep.
+    // managed candidate refresh (#3566); `eval-sweep report` routes to the
+    // accepted-receipt publisher and currentness gate (#3567); anything else
+    // is the live sweep.
     if args.first().map(String::as_str) == Some("check") {
         return super::eval_sweep_check::run_check(&args[1..]);
     }
     if args.first().map(String::as_str) == Some("refresh") {
         return super::eval_sweep_refresh::run_refresh(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("report") {
+        return super::eval_sweep_report::run_report(&args[1..]);
     }
     let parsed = parse_args(args)?;
     let manifest = load_manifest(&parsed.manifest)?;
@@ -943,6 +948,27 @@ pub(crate) fn eval_sweep(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The public usage string must match the routed surface: an unknown
+    /// argument names every routed subcommand (`check`, `refresh`, `report`),
+    /// not just the bare sweep.
+    #[test]
+    fn unknown_argument_usage_names_every_routed_subcommand() {
+        let error = match parse_args(&["--bogus".to_string()]) {
+            Ok(_) => "an unknown argument must fail with usage".to_string(),
+            Err(error) => error,
+        };
+        for surface in [
+            "eval-sweep check",
+            "eval-sweep refresh",
+            "eval-sweep report",
+        ] {
+            assert!(
+                error.contains(surface),
+                "usage must name the routed `{surface}` subcommand: {error}"
+            );
+        }
+    }
 
     fn good_manifest() -> Value {
         json!({

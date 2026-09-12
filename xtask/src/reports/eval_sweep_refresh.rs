@@ -501,7 +501,9 @@ fn canonical_deep(path: &Path) -> std::io::Result<PathBuf> {
 /// root. This anchor stays stable when the process cwd differs (parallel
 /// tests transiently change cwd); when the compiled layout is absent, the
 /// cwd is the anchor, which is the repo root for `cargo xtask` runs.
-fn repo_root_anchor() -> PathBuf {
+/// Shared with the report route (#3567), which resolves the same anchor for
+/// its currentness input recomputation.
+pub(crate) fn repo_root_anchor() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(Path::to_path_buf)

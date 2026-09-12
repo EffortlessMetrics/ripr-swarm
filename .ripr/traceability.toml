@@ -5683,6 +5683,31 @@ tests = [
   "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::unstable_repeat_comparison_records_the_mismatch_list",
   "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::refresh_candidate_validates_through_eval_sweep_check",
   "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::stale_subject_path_keeps_the_denominator_without_loss",
+  "xtask/src/reports/eval_sweep_report.rs",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::valid_candidate_dry_run_renders_agreeing_json_and_markdown",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::accept_appends_immutably_and_moves_pointer",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::pointer_contains_no_totals_only_identity",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::hand_edited_candidate_totals_fail",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::missing_and_duplicate_subjects_fail",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::non_complete_row_without_disposition_fails",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::disposition_gaps_fail_closed",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::disposition_vocabulary_and_hygiene_fail_closed",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::historical_0_2_candidate_refuses_acceptance_with_typed_note",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::currentness_is_current_with_matching_identities",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::binary_digest_change_flips_stale",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::manifest_digest_change_flips_stale",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::accepted_row_or_tree_change_flips_stale",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::input_change_flips_stale",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::pointer_config_edit_flips_stale",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::pointer_features_edit_flips_stale",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::source_sha_change_flips_stale",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::editing_as_of_never_repairs_staleness",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::unverifiable_identities_disclose_without_claiming_current",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::stability_mismatch_reasons_are_recorded_in_the_receipt",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::runtime_envelope_is_derived_and_bounded",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::counts_and_health_are_derived_from_rows",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::dry_run_writes_no_accepted_state",
+  "xtask/src/reports/eval_sweep_report.rs::python_eval_sweep_report::pointer_field_hygiene_fails_on_secrets",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -5691,7 +5716,8 @@ fixtures = [
 code = [
   "xtask/src/reports/eval_sweep.rs",
   "xtask/src/reports/eval_sweep_check.rs",
-  "xtask/src/reports/eval_sweep_refresh.rs"
+  "xtask/src/reports/eval_sweep_refresh.rs",
+  "xtask/src/reports/eval_sweep_report.rs"
 ]
 outputs = []
 metrics = [
