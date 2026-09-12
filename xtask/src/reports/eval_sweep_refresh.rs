@@ -27,9 +27,11 @@
 //!   names the missing signals.
 //! - Candidate separation: `--out` is mandatory and rejected when it equals or
 //!   overlaps accepted state (the `fixtures/` tree, or the repository root
-//!   itself). A candidate receipt cannot rewrite expected status, subject
-//!   selection, the historical receipt, or the current pointer; promotion is
-//!   #3567's validator/publisher, not this route.
+//!   itself). The comparison runs on canonicalized paths on both sides, so a
+//!   `--out` symlink resolving into accepted state is refused too. A candidate
+//!   receipt cannot rewrite expected status, subject selection, the historical
+//!   receipt, or the current pointer; promotion is #3567's validator/publisher,
+//!   not this route.
 //! - Explicit binary: `--ripr-bin` is mandatory and must name an existing file;
 //!   the route resolves it to an absolute path before any invocation, so PATH
 //!   can never select an installed binary.
@@ -347,6 +349,13 @@ fn check_network_authorization(flag_present: bool, env_value: Option<&str>) -> R
 /// `target/ripr/eval-sweep/refresh/`) is the recommended shape and is
 /// accepted. The repository root is anchored at the compiled workspace layout
 /// so the check stays stable regardless of the process cwd.
+///
+/// The comparison runs on canonicalized paths on BOTH sides (`--out` and the
+/// accepted-state roots): a `--out` path that is a symlink (or junction) into
+/// accepted state resolves to the same canonical target and is refused, where
+/// a lexical comparison would wave it through. Canonicalization walks to the
+/// deepest existing ancestor when the leaf does not exist yet, and a
+/// canonicalization failure is a typed refusal, never a skip.
 fn validate_out_separation(out_display: &str) -> Result<PathBuf, String> {
     if out_display.trim().is_empty() {
         return Err(format!(
@@ -356,16 +365,25 @@ fn validate_out_separation(out_display: &str) -> Result<PathBuf, String> {
     let out_abs = std::path::absolute(out_display).map_err(|error| {
         format!("eval-sweep refresh --out `{out_display}` cannot be resolved: {error}\n{USAGE}")
     })?;
+    let out_canonical = canonical_deep(&out_abs).map_err(|error| {
+        format!("eval-sweep refresh --out `{out_display}` cannot be canonicalized: {error}\n{USAGE}")
+    })?;
     let repo_root = std::path::absolute(repo_root_anchor()).map_err(|error| {
         format!("eval-sweep refresh cannot resolve the repository root: {error}")
     })?;
-    let fixtures = repo_root.join("fixtures");
-    if path_overlaps(&out_abs, &fixtures) {
+    let repo_root_canonical = canonical_deep(&repo_root)
+        .map_err(|error| format!("eval-sweep refresh cannot canonicalize the repository root: {error}"))?;
+    let fixtures_canonical = canonical_deep(&repo_root.join("fixtures")).map_err(|error| {
+        format!(
+            "eval-sweep refresh cannot canonicalize the accepted `fixtures/` tree: {error}"
+        )
+    })?;
+    if path_overlaps(&out_canonical, &fixtures_canonical) {
         return Err(format!(
             "eval-sweep refresh --out `{out_display}` overlaps accepted state under `fixtures/`; candidate artifacts must be written outside accepted/current state\n{USAGE}"
         ));
     }
-    if out_abs == repo_root || repo_root.starts_with(&out_abs) {
+    if out_canonical == repo_root_canonical || repo_root_canonical.starts_with(&out_canonical) {
         return Err(format!(
             "eval-sweep refresh --out `{out_display}` is the repository root or contains it; candidate artifacts must live in a dedicated directory (e.g. under `target/ripr/eval-sweep/refresh/`)\n{USAGE}"
         ));
@@ -376,6 +394,38 @@ fn validate_out_separation(out_display: &str) -> Result<PathBuf, String> {
         ));
     }
     Ok(out_abs)
+}
+
+/// Canonicalizes a path through `std::fs::canonicalize`, which requires every
+/// component to exist: when the leaf (or any intermediate) does not exist yet,
+/// the deepest existing ancestor is canonicalized and the non-existing tail is
+/// re-joined lexically. This resolves symlinks and junctions on every existing
+/// component — the property the candidate-separation check needs — while
+/// still accepting a not-yet-created candidate directory.
+fn canonical_deep(path: &Path) -> std::io::Result<PathBuf> {
+    let mut existing = path.to_path_buf();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        match std::fs::canonicalize(&existing) {
+            Ok(canonical) => {
+                let mut resolved = canonical;
+                for component in tail.iter().rev() {
+                    resolved.push(component);
+                }
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match (existing.parent(), existing.file_name()) {
+                    (Some(parent), Some(name)) => {
+                        tail.push(name.to_os_string());
+                        existing = parent.to_path_buf();
+                    }
+                    _ => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 /// The repository root anchor: the xtask package is compiled inside the
@@ -2020,6 +2070,42 @@ mod python_eval_sweep_refresh {
         Ok(output.stdout)
     }
 
+    /// Creates a directory link (`link` -> `target`): a real symlink on Unix,
+    /// a junction on Windows (no privilege required). Both resolve through
+    /// `std::fs::canonicalize`, which is what the candidate-separation check
+    /// must see through.
+    #[cfg(unix)]
+    fn create_dir_link(link: &Path, target: &Path) -> Result<(), String> {
+        std::os::unix::fs::symlink(target, link)
+            .map_err(|error| format!("create symlink `{} -> {}`: {error}", link.display(), target.display()))
+    }
+
+    #[cfg(windows)]
+    fn create_dir_link(link: &Path, target: &Path) -> Result<(), String> {
+        let output = capture_output_with_timeout(
+            "cmd",
+            &[
+                "/c".to_string(),
+                "mklink".to_string(),
+                "/J".to_string(),
+                link.to_string_lossy().to_string(),
+                target.to_string_lossy().to_string(),
+            ],
+            &[],
+            Duration::from_secs(30),
+            "python_eval_sweep_refresh test junction",
+        )?;
+        if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+            return Err(format!(
+                "mklink /J `{} -> {}` failed: {}",
+                link.display(),
+                target.display(),
+                first_line(&output.stderr)
+            ));
+        }
+        Ok(())
+    }
+
     const SUBJECT_SHAPES: [&str; 8] = [
         "pytest_library",
         "unittest_library",
@@ -2236,6 +2322,46 @@ mod python_eval_sweep_refresh {
             ok.display()
         );
         let _ = std::fs::remove_dir_all(&ok);
+        Ok(())
+    }
+
+    /// An existing `--out` symlink that resolves into accepted state is
+    /// refused: the containment comparison runs on canonicalized paths, so a
+    /// `target/x -> fixtures/python-eval-sweep` link cannot launder an
+    /// accepted-state write into a lexical pass. Unix uses a real symlink;
+    /// Windows uses a junction (no privilege required); both resolve through
+    /// `std::fs::canonicalize`.
+    #[test]
+    fn symlinked_out_into_accepted_state_is_refused() -> Result<(), String> {
+        let root = std::path::absolute(repo_root_anchor())
+            .map_err(|error| format!("resolve root: {error}"))?;
+        let link = root
+            .join("target")
+            .join("ripr")
+            .join("eval-sweep")
+            .join(format!(
+                "symlink-out-check-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+        let target = root.join("fixtures").join("python-eval-sweep");
+        let _ = std::fs::remove_dir_all(&link);
+        let _ = std::fs::remove_file(&link);
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| format!("create link parent: {error}"))?;
+        }
+        create_dir_link(&link, &target)?;
+
+        let refused = refusal_of(
+            validate_out_separation(link.to_string_lossy().as_ref()).map(|_| ()),
+        );
+        let _ = std::fs::remove_dir_all(&link);
+        let _ = std::fs::remove_file(&link);
+        let error = refused?;
+        assert!(
+            error.contains("accepted state"),
+            "the symlinked --out must be refused as accepted-state overlap: {error}"
+        );
         Ok(())
     }
 

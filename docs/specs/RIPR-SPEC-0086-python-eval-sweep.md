@@ -283,9 +283,13 @@ validates and publishes.
   route's core proof, exercised offline with synthetic local subjects.
 - **Candidate separation.** `--out` is mandatory and rejected when it equals
   or overlaps accepted state (the `fixtures/` tree, or the repository root).
-  A candidate refresh cannot rewrite expected status, subject selection, the
-  historical receipt, or the current pointer; only #3567 can promote a
-  candidate into accepted state.
+  The comparison runs on canonicalized paths on BOTH sides — `--out` and the
+  accepted-state roots (canonicalized at the deepest existing ancestor when
+  the candidate leaf does not exist yet) — so a symlinked `--out` resolving
+  into accepted state is refused, and a canonicalization failure is a typed
+  refusal, never a skip. A candidate refresh cannot rewrite expected status,
+  subject selection, the historical receipt, or the current pointer; only
+  #3567 can promote a candidate into accepted state.
 - **Explicit binary.** `--ripr-bin` is mandatory and must name an existing
   file; the route resolves it to an absolute path before any invocation, so
   PATH can never select an installed binary. The route records the binary's
