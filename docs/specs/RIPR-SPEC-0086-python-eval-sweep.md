@@ -133,7 +133,13 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   (`python_eval_sweep_manifest`) must declare schema/kind/spec/tier and
   **exactly eight** uniquely identified subjects — the canonical denominator.
   Subject content is data-driven: any eight well-formed subjects validate, not
-  only the retained fixture bytes.
+  only the retained fixture bytes. The manifest schema is closed (deny-unknown):
+  the owned top-level keys are `schema_version`/`kind`/`spec`/`tier`/
+  `description`/`limits`/`synthetic_diff`/`repos` and the owned per-subject
+  keys are `id`/`url`/`sha`/`license`/`shape`/`synthetic_diff`/`why` plus the
+  optional `tree_digest`/`snapshot`/`provenance`/`retention_class` identities —
+  exactly the keys the canonical fixture carries, so unknown keys are schema
+  rot, not forward compatibility.
 - Retained run receipts (`python_eval_sweep_report`) validate in two owned
   shapes. Schema `0.2` is the historical shape the sweep command writes.
   Schema `0.3` adds the currentness identities: binary/features/config/profile/
@@ -146,11 +152,23 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   denominator, receipt rows contradicting the manifest pins, unsafe
   (non-portable, absolute, or secret-bearing) paths and URLs, unknown state
   vocabulary, contradictory status (e.g. `complete` with an execution state
-  that did not run, or stable gap IDs listed as unstable), malformed digests,
+  that did not run, or stable gap IDs listed as unstable — in either direction,
+  at the 0.2 row level or inside the 0.3 `repeat` block), malformed digests,
   a stale manifest digest (receipt bound to different manifest bytes), and
   hand-edited aggregates that disagree with the derived rows (denominator,
   outcome counts, stability counts, runtime aggregates, rates, distributions,
-  gate status).
+  gate status). Aggregate agreement is checked in both directions: an analyzed
+  (run-status) row must carry the aggregate source evidence the sweep records
+  on every row (`runtime_ms`, both distributions, and the 0.2 `gap_ids_stable`;
+  0.3 stability lives in the optional `repeat` block, so a recorded summary
+  stability value over rows lacking it fails while an unrecorded one is
+  disclosed `incomplete`), summary distributions must equal the row-derived
+  key set exactly (zero-valued buckets included; with zero run rows the
+  recorded keys are still vocabulary-checked), the supplied `gate_status` must
+  equal the gate derived from the rows (`not_run` at zero runs, `pass` only
+  with zero crashes and full per-row stability evidence, `review` otherwise),
+  and runtime totals and distribution merges use checked arithmetic (overflow
+  is a structured failure naming the aggregate field, never a panic).
 - Failed, unavailable, timeout, parse-failed, unsupported, partial, and stale
   rows remain selected: they are valid rows and stay in the denominator. A row
   that did not run must carry no analysis counts, and `repos_run == 0` gates to
@@ -164,7 +182,12 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   (field not emitted) distinct from `unknown` (emitted value).
 - Exit contract: exit 0 when every present artifact is structurally valid —
   including when identities are disclosed `incomplete` or no receipt is
-  supplied (`not_run`); nonzero on any fail-closed violation. The verdict
+  supplied (`not_run`); nonzero on any fail-closed violation. Top-level
+  verdict precedence spans both artifacts: `not_run` only when no receipt is
+  supplied; with a receipt, `incomplete` whenever the manifest or the receipt
+  discloses incomplete identities (a complete receipt never hides manifest
+  gaps), and `valid` only when both artifacts are structurally valid and carry
+  zero incompletes. The verdict
   vocabulary is `valid` / `incomplete` / `not_run`: a structural
   currentness-readiness verdict, never a robustness or adequacy claim. The
   check writes `eval-sweep-check.{json,md}` only.
@@ -304,6 +327,23 @@ receipt rows derive repos_run = 8 but the summary claims 7
   -> `absent` remains distinct from emitted `unknown`.
 - `eval_sweep_check::python_eval_sweep::historical_receipt_validates_incomplete_without_rewrite`
   -> historical receipts stay historical; missing identities type incomplete.
+- `eval_sweep_check::python_eval_sweep::top_level_verdict_is_incomplete_when_manifest_gaps_survive_a_complete_receipt`
+  -> top-level verdict precedence across both artifacts (`valid` only when both
+  carry zero incompletes; `not_run` only without a receipt).
+- `eval_sweep_check::python_eval_sweep::gate_status_must_equal_the_derived_gate`
+  -> supplied `gate_status` must equal the derived gate (`not_run`/`pass`/`review`).
+- `eval_sweep_check::python_eval_sweep::summary_distribution_extra_bucket_fails`
+  -> exact summary-distribution key-set equality (zero-valued buckets included).
+- `eval_sweep_check::python_eval_sweep::analyzed_row_missing_runtime_fails`
+  (with `analyzed_row_missing_distribution_fails_and_rejects_summary_totals` and
+  `under_evidenced_stability_rejects_recorded_summary_and_discloses_absent`) ->
+  missing aggregate source evidence never silently disables a summary comparison.
+- `eval_sweep_check::python_eval_sweep::runtime_total_overflow_fails_structurally_without_panic`
+  (with `distribution_merge_overflow_fails_structurally_without_panic`) ->
+  checked aggregate arithmetic.
+- `eval_sweep_check::python_eval_sweep::manifest_rejects_unknown_top_level_and_repo_keys`
+  (with `canonical_fixture_manifest_passes_with_owned_keys_only`) -> closed
+  accepted-manifest schema.
 - `eval_sweep_check::python_eval_sweep::receipt_rejects_absolute_and_secret_bearing_paths`
   (with `rejects_non_https_and_credential_urls` and
   `current_receipt_rejects_malformed_digests_and_paths`) -> portable-path,

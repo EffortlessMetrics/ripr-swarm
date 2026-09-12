@@ -25,6 +25,29 @@
 //!   vocabulary, contradictory status, malformed or stale digests, and
 //!   hand-edited aggregates that disagree with the derived rows. Every
 //!   failure names subject/field/reason and the deterministic rerun command.
+//! - Aggregate agreement is checked in both directions. An analyzed
+//!   (run-status) row must carry the aggregate source evidence the sweep
+//!   records on every row it writes — `runtime_ms`, both distributions, and
+//!   the 0.2 row-level `gap_ids_stable`; 0.3 stability lives in the optional
+//!   `repeat` block, whose absence is typed incomplete — so a missing field
+//!   can never silently disable a summary comparison. A recorded summary
+//!   stability value over rows lacking 0.3 `repeat` stability evidence fails;
+//!   unrecorded values are disclosed incomplete. Summary distributions must
+//!   equal the row-derived key set exactly (zero-valued buckets included;
+//!   with zero run rows the recorded keys are still vocabulary-checked), and
+//!   the supplied `gate_status` must EQUAL the gate derived from the rows —
+//!   `not_run` at zero runs, `pass` only with zero crashes and full stability
+//!   evidence, `review` otherwise. Runtime totals and distribution merges use
+//!   checked arithmetic: overflow is a structured failure naming the
+//!   aggregate field, never a panic.
+//! - The accepted-manifest schema is closed. The owned top-level keys are
+//!   `schema_version`/`kind`/`spec`/`tier`/`description`/`limits`/
+//!   `synthetic_diff`/`repos`; the owned per-subject keys are
+//!   `id`/`url`/`sha`/`license`/`shape`/`synthetic_diff`/`why` plus the
+//!   optional identity fields (`tree_digest`/`snapshot`/`provenance`/
+//!   `retention_class`). The canonical fixture carries exactly these keys, so
+//!   deny-unknown costs nothing and catches schema rot and typos; every key
+//!   the canonical manifest carries is owned here.
 //! - Failed, unavailable, timeout, parse-failed, unsupported, partial, and
 //!   stale rows **remain selected**: they are valid rows and stay in the
 //!   denominator. The validator never treats a bad outcome as an invalid row.
@@ -44,9 +67,14 @@
 //!
 //! Exit contract: `check` exits 0 when every present artifact is structurally
 //! valid, disclosing `incomplete` identities and a `not_run` receipt dimension
-//! in the verdict; it exits nonzero on any fail-closed violation. The verdict
-//! vocabulary is `valid` / `incomplete` / `not_run` — a structural
-//! currentness-readiness verdict, never a robustness or adequacy claim.
+//! in the verdict; it exits nonzero on any fail-closed violation. Top-level
+//! verdict precedence spans BOTH artifacts: `not_run` only when no receipt is
+//! supplied; with a receipt, `incomplete` whenever the manifest or the receipt
+//! discloses incomplete identities (a complete receipt never hides manifest
+//! gaps), and `valid` only when both artifacts are structurally valid and
+//! carry zero incompletes. The verdict vocabulary is `valid` / `incomplete` /
+//! `not_run` — a structural currentness-readiness verdict, never a robustness
+//! or adequacy claim.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -62,6 +90,37 @@ const CHECK_REPORT_MD: &str = "eval-sweep-check.md";
 
 const MANIFEST_KIND: &str = "python_eval_sweep_manifest";
 const MANIFEST_SCHEMA_VERSION: &str = "0.1";
+
+/// The closed accepted-manifest schema (deny-unknown). The canonical
+/// `fixtures/python-eval-sweep/manifest.json` carries exactly the top-level
+/// keys below, so every key it carries is owned and unknown keys are schema
+/// rot, not forward compatibility.
+const MANIFEST_KEYS: [&str; 8] = [
+    "schema_version",
+    "kind",
+    "spec",
+    "tier",
+    "description",
+    "limits",
+    "synthetic_diff",
+    "repos",
+];
+/// Owned per-subject keys: everything the canonical repos carry plus the
+/// optional identity fields whose absence is typed incomplete.
+const MANIFEST_REPO_KEYS: [&str; 11] = [
+    "id",
+    "url",
+    "sha",
+    "license",
+    "shape",
+    "synthetic_diff",
+    "why",
+    "tree_digest",
+    "snapshot",
+    "provenance",
+    "retention_class",
+];
+
 const REPORT_KIND: &str = "python_eval_sweep_report";
 const KNOWN_SPEC: &str = "RIPR-SPEC-0086";
 const KNOWN_TIER: &str = "A";
@@ -628,6 +687,7 @@ impl AcceptedManifest {
 /// portable diff paths. Data-driven: any eight well-formed subjects pass.
 fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedManifest, String> {
     let top = as_object(value, "manifest", "manifest", "accepted manifest")?;
+    reject_unknown_keys(top, &MANIFEST_KEYS, "manifest", "accepted manifest")?;
     for (field, expected) in [
         ("schema_version", MANIFEST_SCHEMA_VERSION),
         ("kind", MANIFEST_KIND),
@@ -676,6 +736,12 @@ fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedM
     let mut incomplete = Vec::new();
     for repo in repos {
         let entry = as_object(repo, "manifest", "repos", "manifest repo entry")?;
+        reject_unknown_keys(
+            entry,
+            &MANIFEST_REPO_KEYS,
+            "manifest",
+            "manifest repo entry",
+        )?;
         let id = entry
             .get("id")
             .and_then(Value::as_str)
@@ -862,8 +928,6 @@ struct Derived {
     runtime: Option<(u64, u64, u64, u64)>,
     classification: BTreeMap<String, u64>,
     alignment: BTreeMap<String, u64>,
-    /// True when any run row lacks a distribution the summary would aggregate.
-    distributions_partial: bool,
 }
 
 impl Derived {
@@ -1083,7 +1147,7 @@ fn validate_run_receipt(
         summaries.push(summary);
     }
 
-    let derived = derive_denominator(&summaries);
+    let derived = derive_denominator(&summaries, display)?;
 
     // Row/aggregate agreement + gate semantics (fail closed on hand-edited
     // aggregates and vacuous passes).
@@ -1300,23 +1364,43 @@ fn validate_row(
     }
 
     // Stability and contradiction: unstable gap-ID lists cannot coexist with a
-    // stable claim.
-    let stability = opt_bool(id, entry, "gap_ids_stable")?;
-    let mut unstable_ids: Option<Vec<String>> = opt_string_array(id, entry, "unstable_gap_ids")?;
-    if let Some(Value::Object(repeat)) = entry.get("repeat")
-        && let Some(repeat_unstable) = opt_string_array(id, repeat, "unstable_gap_ids")?
-    {
-        unstable_ids = Some(repeat_unstable);
-    }
-    if let (Some(stable), Some(unstable)) = (stability, unstable_ids.as_ref())
-        && stable
-        && !unstable.is_empty()
-    {
-        return Err(fail(
-            id,
+    // stable claim, and an unstable claim cannot carry an empty list (the
+    // sweep derives both fields from the same comparison, so the emitted shape
+    // never produces either pairing). 0.2 rows carry row-level evidence; 0.3
+    // rows carry it inside the validated `repeat` block — the row-level
+    // stability fields are denied there, so this is the only evidence source.
+    let (stability, unstable_ids, stability_field) = if is_current {
+        match entry.get("repeat") {
+            Some(Value::Object(repeat)) => (
+                opt_bool(id, repeat, "gap_ids_stable")?,
+                opt_string_array(id, repeat, "unstable_gap_ids")?,
+                "repeat.gap_ids_stable",
+            ),
+            _ => (None, None, "repeat.gap_ids_stable"),
+        }
+    } else {
+        (
+            opt_bool(id, entry, "gap_ids_stable")?,
+            opt_string_array(id, entry, "unstable_gap_ids")?,
             "gap_ids_stable",
-            "contradictory status: row claims stable gap IDs while listing unstable ones",
-        ));
+        )
+    };
+    match (stability, unstable_ids.as_ref()) {
+        (Some(true), Some(unstable)) if !unstable.is_empty() => {
+            return Err(fail(
+                id,
+                stability_field,
+                "contradictory status: row claims stable gap IDs while listing unstable ones",
+            ));
+        }
+        (Some(false), Some(unstable)) if unstable.is_empty() => {
+            return Err(fail(
+                id,
+                stability_field,
+                "contradictory status: row claims unstable gap IDs but lists none",
+            ));
+        }
+        _ => {}
     }
 
     // absent-vs-unknown: a recorded alignment distribution must keep the two
@@ -1376,6 +1460,44 @@ fn validate_row(
     }
 
     let runtime_ms = opt_u64(id, entry, "runtime_ms")?;
+
+    // Aggregate source evidence is required on analyzed rows: the sweep
+    // records these fields on every row it writes (terminal rows included),
+    // and a missing field would silently disable the corresponding summary
+    // comparison — letting fabricated aggregates validate. A 0.3 row's
+    // stability evidence lives in the optional `repeat` block; its absence is
+    // typed incomplete and enforced at the summary layer instead.
+    if counts_as_run {
+        if runtime_ms.is_none() {
+            return Err(fail(
+                id,
+                "runtime_ms",
+                "analyzed row omits its runtime; the owned row shape records runtime_ms on every row, and a missing value would silently disable the runtime aggregate check",
+            ));
+        }
+        if classification.is_none() {
+            return Err(fail(
+                id,
+                "classification_counts",
+                "analyzed row omits its classification distribution; the owned row shape records classification_counts on every row, and a missing value would silently disable the distribution check",
+            ));
+        }
+        if alignment.is_none() {
+            return Err(fail(
+                id,
+                "alignment_counts",
+                "analyzed row omits its alignment distribution; the owned row shape records alignment_counts on every row, and a missing value would silently disable the distribution check",
+            ));
+        }
+        if !is_current && stability.is_none() {
+            return Err(fail(
+                id,
+                "gap_ids_stable",
+                "analyzed row omits its gap-ID stability evidence; the owned 0.2 row shape records gap_ids_stable on every row, and a missing value would silently disable the stability and gate checks",
+            ));
+        }
+    }
+
     Ok(RowSummary {
         counts_as_run,
         crashed: status_label == "crashed" || status_label == "crash",
@@ -1758,14 +1880,15 @@ fn validate_row_currentness(
 }
 
 /// Derives the denominator and aggregates from validated rows only — the
-/// arithmetic every hand-entered summary number must agree with.
-fn derive_denominator(rows: &[RowSummary]) -> Derived {
+/// arithmetic every hand-entered summary number must agree with. Checked
+/// throughout: an overflowing aggregate is a structured failure naming the
+/// summary field it would feed, never a panic.
+fn derive_denominator(rows: &[RowSummary], display: &str) -> Result<Derived, String> {
     let mut derived = Derived {
         total: rows.len(),
         ..Derived::default()
     };
     let mut runtimes: Vec<u64> = Vec::new();
-    let mut distributions_complete = true;
     let mut stability_complete = true;
     for row in rows {
         if row.crashed {
@@ -1800,12 +1923,18 @@ fn derive_denominator(rows: &[RowSummary]) -> Derived {
         if let Some(runtime) = row.runtime_ms {
             runtimes.push(runtime);
         }
-        match (&row.classification, &row.alignment) {
-            (Some(class), Some(align)) => {
-                merge_distribution(&mut derived.classification, class);
-                merge_distribution(&mut derived.alignment, align);
-            }
-            _ => distributions_complete = false,
+        // Analyzed rows always carry both distributions (enforced at row
+        // level); terminal rows never enter the aggregates.
+        if let Some(class) = &row.classification {
+            merge_distribution(
+                &mut derived.classification,
+                class,
+                "classification_counts",
+                display,
+            )?;
+        }
+        if let Some(align) = &row.alignment {
+            merge_distribution(&mut derived.alignment, align, "alignment_counts", display)?;
         }
     }
     if !stability_complete {
@@ -1813,7 +1942,19 @@ fn derive_denominator(rows: &[RowSummary]) -> Derived {
     }
     if !runtimes.is_empty() && runtimes.len() == derived.run {
         runtimes.sort_unstable();
-        let total: u64 = runtimes.iter().sum();
+        let mut total: u64 = 0;
+        for runtime in &runtimes {
+            total = total.checked_add(*runtime).ok_or_else(|| {
+                fail(
+                    display,
+                    "summary.runtime_ms_total",
+                    format!(
+                        "aggregate overflow: runtime total exceeds u64 when summed across {} run row(s)",
+                        runtimes.len()
+                    ),
+                )
+            })?;
+        }
         derived.runtime = Some((
             runtimes[0],
             runtimes[runtimes.len() / 2],
@@ -1821,14 +1962,28 @@ fn derive_denominator(rows: &[RowSummary]) -> Derived {
             total,
         ));
     }
-    derived.distributions_partial = !distributions_complete;
-    derived
+    Ok(derived)
 }
 
-fn merge_distribution(target: &mut BTreeMap<String, u64>, source: &BTreeMap<String, u64>) {
+fn merge_distribution(
+    target: &mut BTreeMap<String, u64>,
+    source: &BTreeMap<String, u64>,
+    field: &str,
+    display: &str,
+) -> Result<(), String> {
     for (name, count) in source {
-        *target.entry(name.clone()).or_insert(0) += count;
+        let bucket = target.entry(name.clone()).or_insert(0);
+        *bucket = bucket.checked_add(*count).ok_or_else(|| {
+            fail(
+                display,
+                &format!("summary.{field}.{name}"),
+                format!(
+                    "aggregate overflow: bucket `{name}` exceeds u64 when summed across run rows"
+                ),
+            )
+        })?;
     }
+    Ok(())
 }
 
 /// Fails closed when hand-entered summary numbers disagree with the derived
@@ -1890,7 +2045,7 @@ fn validate_summary_agreement(
         }
     }
 
-    // Stability counts (only derivable when every run row carries evidence).
+    // Stability counts (derivable only when every run row carries evidence).
     if let Some(stable) = derived.stable {
         let unstable = derived.run.saturating_sub(stable);
         for (field, expected) in [
@@ -1910,6 +2065,29 @@ fn validate_summary_agreement(
                 _ => {}
             }
         }
+    } else if derived.run > 0 {
+        // Missing stability evidence must not silently disable the aggregate
+        // check: a recorded value cannot be verified against the rows, and an
+        // unrecorded one is disclosed incomplete (never invented).
+        let recorded = [
+            "gap_id_stable_count",
+            "gap_id_unstable_count",
+            "gap_id_stability_rate",
+        ]
+        .iter()
+        .any(|field| summary_records_value(summary, field));
+        if recorded {
+            return Err(fail(
+                display,
+                "summary.gap_id_stable_count",
+                "stability aggregate recorded but analyzed rows lack complete stability evidence (gap_ids_stable / repeat.gap_ids_stable on every run row); the value cannot be derived",
+            ));
+        }
+        incomplete.push(Diagnostic::new(
+            display,
+            "summary.gap_id_stable_count",
+            "stability aggregates not derivable: analyzed rows lack complete stability evidence; absent values are disclosed, not invented",
+        ));
     }
 
     // Runtime aggregates (only derivable when every run row carries one).
@@ -1968,42 +2146,54 @@ fn validate_summary_agreement(
         }
     }
 
-    // Distribution agreement (only when every run row carries both).
-    if !derived.distributions_partial {
-        for (field, derived_counts) in [
-            ("classification_counts", &derived.classification),
-            ("alignment_counts", &derived.alignment),
-        ] {
-            if let Some(summary_counts) = opt_distribution(display, summary, field)? {
-                for (name, count) in derived_counts {
-                    match summary_counts.get(name) {
-                        Some(actual) if actual == count => {}
-                        Some(actual) => {
-                            return Err(fail(
-                                display,
-                                &format!("summary.{field}.{name}"),
-                                format!(
-                                    "hand-edited aggregate: summary claims {actual} but the rows derive {count}"
-                                ),
-                            ));
-                        }
-                        None => {
-                            return Err(fail(
-                                display,
-                                &format!("summary.{field}.{name}"),
-                                format!(
-                                    "hand-edited aggregate: rows derive {count} for `{name}` but the summary omits it"
-                                ),
-                            ));
-                        }
+    // Distribution agreement: exact map equality against the row-derived key
+    // set — no unknown buckets, no missing buckets the rows establish, and
+    // zero-valued buckets participate like any other (the sweep writes every
+    // bucket). With zero run rows nothing is derivable, so recorded summary
+    // keys are still vocabulary-checked but cannot contradict the rows.
+    for (field, vocabulary, derived_counts) in [
+        (
+            "classification_counts",
+            &CLASSIFICATION_VOCABULARY[..],
+            &derived.classification,
+        ),
+        (
+            "alignment_counts",
+            &ALIGNMENT_VOCABULARY[..],
+            &derived.alignment,
+        ),
+    ] {
+        if let Some(summary_counts) = opt_distribution(display, summary, field)? {
+            if derived_counts.is_empty() {
+                for name in summary_counts.keys() {
+                    if !vocabulary.contains(&name.as_str()) {
+                        return Err(fail(
+                            display,
+                            &format!("summary.{field}.{name}"),
+                            format!(
+                                "unknown aggregate bucket `{name}`; known vocabulary: {}",
+                                vocabulary.join(", ")
+                            ),
+                        ));
                     }
                 }
+            } else {
+                check_distribution_equality(display, field, &summary_counts, derived_counts)?;
             }
         }
     }
 
-    // Gate semantics: not_run is the only honest zero-run verdict; a pass must
-    // be derived from the rows (no crashes, full stability evidence).
+    // Gate semantics: the supplied gate_status must EQUAL the gate derived
+    // from the rows — `not_run` at zero runs, `pass` only with zero crashes
+    // and full stability evidence, `review` otherwise. A wrong `not_run` or
+    // `review` is as hand-edited as a wrong count.
+    let expected_gate = if derived.run == 0 {
+        "not_run"
+    } else if derived.crashed == 0 && derived.stable == Some(derived.run) {
+        "pass"
+    } else {
+        "review"
+    };
     match opt_string(display, summary, "gate_status")?.as_deref() {
         Some(gate) => {
             known_value_or_fail(
@@ -2013,43 +2203,43 @@ fn validate_summary_agreement(
                 &GATE_STATUSES,
                 "gate status",
             )?;
-            if derived.run == 0 && gate != "not_run" {
-                return Err(fail(
-                    display,
-                    "summary.gate_status",
-                    format!(
-                        "repos_run == 0 is `not_run`, never `{gate}`: a zero-run receipt must not claim an analyzed verdict"
-                    ),
-                ));
-            }
-            if gate == "pass" {
+            if gate != expected_gate {
                 if derived.run == 0 {
                     return Err(fail(
                         display,
                         "summary.gate_status",
-                        "vacuous pass: repos_run == 0 is `not_run`, never a pass",
-                    ));
-                }
-                if derived.crashed > 0 {
-                    return Err(fail(
-                        display,
-                        "summary.gate_status",
                         format!(
-                            "hand-edited aggregate: `pass` claimed but {} row(s) crashed",
-                            derived.crashed
+                            "repos_run == 0 is `not_run`, never `{gate}`: a zero-run receipt must not claim an analyzed verdict"
                         ),
                     ));
                 }
-                match derived.stable {
-                    Some(stable) if stable == derived.run => {}
-                    _ => {
+                if gate == "pass" {
+                    if derived.crashed > 0 {
                         return Err(fail(
                             display,
                             "summary.gate_status",
-                            "`pass` claimed without full per-row stability evidence (gap_ids_stable / repeat.gap_ids_stable on every run row)",
+                            format!(
+                                "hand-edited aggregate: `pass` claimed but {} row(s) crashed",
+                                derived.crashed
+                            ),
                         ));
                     }
+                    return Err(fail(
+                        display,
+                        "summary.gate_status",
+                        "`pass` claimed without full per-row stability evidence (gap_ids_stable / repeat.gap_ids_stable on every run row)",
+                    ));
                 }
+                return Err(fail(
+                    display,
+                    "summary.gate_status",
+                    format!(
+                        "hand-edited aggregate: gate status `{gate}` does not equal the gate derived from the rows (`{expected_gate}`; repos_run={}, crashes={}, stability evidence complete={})",
+                        derived.run,
+                        derived.crashed,
+                        derived.stable == Some(derived.run)
+                    ),
+                ));
             }
         }
         None => incomplete.push(Diagnostic::new(
@@ -2057,6 +2247,58 @@ fn validate_summary_agreement(
             "summary.gate_status",
             "gate status not recorded",
         )),
+    }
+    Ok(())
+}
+
+/// True when the summary records a present, non-null value for `field`.
+fn summary_records_value(summary: &serde_json::Map<String, Value>, field: &str) -> bool {
+    matches!(summary.get(field), Some(value) if !value.is_null())
+}
+
+/// Exact map equality between a recorded summary distribution and the
+/// row-derived key set: every summary bucket must be row-established (extra
+/// buckets are denied by name) and every derived bucket must be present at
+/// the derived count.
+fn check_distribution_equality(
+    display: &str,
+    field: &str,
+    summary_counts: &BTreeMap<String, u64>,
+    derived_counts: &BTreeMap<String, u64>,
+) -> Result<(), String> {
+    for name in summary_counts.keys() {
+        if !derived_counts.contains_key(name) {
+            return Err(fail(
+                display,
+                &format!("summary.{field}.{name}"),
+                format!(
+                    "summary distribution carries bucket `{name}` that the rows never establish (extra buckets are denied; the known keys come from the row distributions)"
+                ),
+            ));
+        }
+    }
+    for (name, count) in derived_counts {
+        match summary_counts.get(name) {
+            Some(actual) if actual == count => {}
+            Some(actual) => {
+                return Err(fail(
+                    display,
+                    &format!("summary.{field}.{name}"),
+                    format!(
+                        "hand-edited aggregate: summary claims {actual} but the rows derive {count}"
+                    ),
+                ));
+            }
+            None => {
+                return Err(fail(
+                    display,
+                    &format!("summary.{field}.{name}"),
+                    format!(
+                        "hand-edited aggregate: rows derive {count} for `{name}` but the summary omits it"
+                    ),
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -2072,10 +2314,21 @@ struct CheckOutcome {
 }
 
 impl CheckOutcome {
+    /// Top-level verdict precedence across BOTH artifacts: `not_run` only when
+    /// no receipt was supplied; with a receipt, `incomplete` whenever the
+    /// manifest or the receipt discloses incomplete identities — a complete
+    /// receipt never hides manifest gaps — and `valid` only when both are
+    /// structurally valid with zero incompletes.
     fn verdict(&self) -> Verdict {
         match &self.receipt {
             None => Verdict::NotRun,
-            Some(receipt) => receipt.verdict(),
+            Some(receipt) => {
+                if self.accepted.incomplete.is_empty() && receipt.incomplete.is_empty() {
+                    Verdict::Valid
+                } else {
+                    Verdict::Incomplete
+                }
+            }
         }
     }
 
@@ -2317,6 +2570,24 @@ mod python_eval_sweep {
         })
     }
 
+    /// The alternate manifest with every optional identity field present, so
+    /// accepted validation discloses zero incompletes (the other pole of the
+    /// top-level verdict contract).
+    fn identity_complete_manifest() -> Value {
+        let mut value = alternate_manifest();
+        if let Some(repos) = value.get_mut("repos").and_then(Value::as_array_mut) {
+            for repo in repos.iter_mut() {
+                if let Some(entry) = repo.as_object_mut() {
+                    entry.insert("tree_digest".to_string(), json!(DIGEST_ONE));
+                    entry.insert("snapshot".to_string(), json!("snapshot-identities"));
+                    entry.insert("provenance".to_string(), json!("campaign-sweep"));
+                    entry.insert("retention_class".to_string(), json!("retained-evidence"));
+                }
+            }
+        }
+        value
+    }
+
     fn parsed(value: &Value) -> Result<Value, String> {
         let text = serde_json::to_string_pretty(value)
             .map_err(|error| format!("serialize test JSON: {error}"))?;
@@ -2497,6 +2768,38 @@ mod python_eval_sweep {
         );
         let parsed = parse_json_without_duplicate_keys(&body);
         assert!(parsed.is_err(), "duplicate keys must fail at load");
+    }
+
+    #[test]
+    fn manifest_rejects_unknown_top_level_and_repo_keys() -> Result<(), String> {
+        let mut value = alternate_manifest();
+        value["notes"] = json!("unexpected");
+        expect_fail(
+            validate_manifest_value(&parsed(&value)?),
+            "unknown field `notes`",
+        )?;
+
+        let mut value = alternate_manifest();
+        value["repos"][0]["coverage"] = json!(0.9);
+        expect_fail(
+            validate_manifest_value(&parsed(&value)?),
+            "unknown field `coverage`",
+        )
+    }
+
+    #[test]
+    fn canonical_fixture_manifest_passes_with_owned_keys_only() -> Result<(), String> {
+        // The deny-unknown decision is only free if the canonical fixture
+        // carries exactly the owned keys; run the real bytes end to end.
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/python-eval-sweep/manifest.json"
+        );
+        let outcome = check_artifacts(path, None)?;
+        assert_eq!(outcome.accepted.subjects.len(), 8);
+        assert_eq!(outcome.accepted.subjects[0].id, "click");
+        assert_eq!(outcome.verdict(), Verdict::NotRun);
+        Ok(())
     }
 
     // -- retained historical receipt (0.2) ---------------------------------
@@ -2750,6 +3053,213 @@ mod python_eval_sweep {
     }
 
     #[test]
+    fn gate_status_must_equal_the_derived_gate() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // Analyzed, crash-free, fully stable rows derive `pass`: a claimed
+        // `not_run` fails even though it is in the vocabulary.
+        let mut receipt = historical_receipt_0_2(&alternate_manifest());
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.insert("gate_status".to_string(), json!("not_run"));
+            summary.insert("gate_reason".to_string(), json!("unwarranted"));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "does not equal the gate derived from the rows",
+        )?;
+
+        // The same rows with an unwarranted `review` fail too.
+        let mut receipt = historical_receipt_0_2(&alternate_manifest());
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.insert("gate_status".to_string(), json!("review"));
+            summary.insert("gate_reason".to_string(), json!("unwarranted"));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "does not equal the gate derived from the rows",
+        )
+    }
+
+    #[test]
+    fn analyzed_row_missing_distribution_fails_and_rejects_summary_totals() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.remove("classification_counts");
+        }
+        // Arbitrary summary totals cannot rescue a row that omits its
+        // aggregate source evidence.
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.insert(
+                "classification_counts".to_string(),
+                json!({"exposed": 99, "weakly_exposed": 0, "reachable_unrevealed": 0, "no_static_path": 0, "infection_unknown": 0, "propagation_unknown": 0, "static_unknown": 0}),
+            );
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "omits its classification distribution",
+        )
+    }
+
+    #[test]
+    fn analyzed_row_missing_runtime_fails() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.remove("runtime_ms");
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "omits its runtime",
+        )
+    }
+
+    #[test]
+    fn under_evidenced_stability_rejects_recorded_summary_and_discloses_absent()
+    -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // 0.3 stability evidence lives in the optional `repeat` block: a run
+        // row without it disables the stability aggregate, so a recorded
+        // summary stability value fails (it cannot be derived).
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+            && let Some(Value::Object(repeat)) = entry.get_mut("repeat")
+        {
+            repeat.remove("gap_ids_stable");
+        }
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.insert("gap_id_stable_count".to_string(), json!(5));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "stability aggregate recorded but analyzed rows lack complete stability evidence",
+        )?;
+
+        // Without a recorded value the gap is disclosed incomplete, not
+        // invented and not failed.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+            && let Some(Value::Object(repeat)) = entry.get_mut("repeat")
+        {
+            repeat.remove("gap_ids_stable");
+        }
+        let check = validate_receipt_value(&receipt, &manifest, &sha)?;
+        assert!(
+            check
+                .incomplete
+                .iter()
+                .any(|diagnostic| diagnostic.field == "summary.gap_id_stable_count"),
+            "under-evidenced stability must be disclosed incomplete: {:?}",
+            check.incomplete
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn summary_distribution_extra_bucket_fails() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // An extra classification bucket cannot hide behind derived-key
+        // iteration.
+        let mut receipt = historical_receipt_0_2(&alternate_manifest());
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut)
+            && let Some(Value::Object(counts)) = summary.get_mut("classification_counts")
+        {
+            counts.insert("flawlessly_verified".to_string(), json!(1));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "never establish",
+        )?;
+
+        // An extra alignment bucket fails the same way.
+        let mut receipt = historical_receipt_0_2(&alternate_manifest());
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut)
+            && let Some(Value::Object(counts)) = summary.get_mut("alignment_counts")
+        {
+            counts.insert("repair_placement_present".to_string(), json!(1));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "never establish",
+        )
+    }
+
+    #[test]
+    fn zero_valued_buckets_participate_in_exact_agreement() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // Zero-valued buckets are part of the emitted shape (the sweep writes
+        // every bucket), so a missing zero bucket still fails.
+        let mut receipt = historical_receipt_0_2(&alternate_manifest());
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut)
+            && let Some(Value::Object(counts)) = summary.get_mut("alignment_counts")
+        {
+            counts.remove("direct");
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "but the summary omits it",
+        )?;
+
+        // The full zero-filled bucket set agrees.
+        let receipt = historical_receipt_0_2(&alternate_manifest());
+        validate_receipt_value(&receipt, &manifest, &sha)?;
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_total_overflow_fails_structurally_without_panic() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        let mut receipt = historical_receipt_0_2(&alternate_manifest());
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut) {
+            for row in rows.iter_mut().take(2) {
+                if let Some(entry) = row.as_object_mut() {
+                    entry.insert("runtime_ms".to_string(), json!(u64::MAX));
+                }
+            }
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "summary.runtime_ms_total",
+        )?;
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "aggregate overflow",
+        )
+    }
+
+    #[test]
+    fn distribution_merge_overflow_fails_structurally_without_panic() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        let mut receipt = historical_receipt_0_2(&alternate_manifest());
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut) {
+            for row in rows.iter_mut().take(2) {
+                if let Some(entry) = row.as_object_mut()
+                    && let Some(Value::Object(counts)) = entry.get_mut("classification_counts")
+                {
+                    counts.insert("static_unknown".to_string(), json!(u64::MAX));
+                }
+            }
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "summary.classification_counts.static_unknown",
+        )?;
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "aggregate overflow",
+        )
+    }
+
+    #[test]
     fn receipt_rejects_hand_edited_aggregates() -> Result<(), String> {
         for (field, wrong) in [
             ("repos_total", json!(9)),
@@ -2838,11 +3348,35 @@ mod python_eval_sweep {
     #[test]
     fn receipt_rejects_pass_claim_without_stability_evidence() -> Result<(), String> {
         let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // A missing 0.2 stability field on an analyzed row fails at the row
+        // level (H4: aggregate source evidence is required there).
         let mut receipt = historical_receipt_0_2(&alternate_manifest());
         if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
             && let Some(entry) = rows[0].as_object_mut()
         {
             entry.remove("gap_ids_stable");
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "omits its gap-ID stability evidence",
+        )?;
+
+        // With evidence present but not all-stable (stable=false plus the
+        // unstable IDs the comparison produced), a claimed `pass` still fails
+        // at the gate. The stability aggregates are re-derived honestly so
+        // the gate equality is what fails.
+        let mut receipt = historical_receipt_0_2(&alternate_manifest());
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.insert("gap_ids_stable".to_string(), json!(false));
+            entry.insert("unstable_gap_ids".to_string(), json!(["gap:python:x"]));
+        }
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.insert("gap_id_stable_count".to_string(), json!(7));
+            summary.insert("gap_id_unstable_count".to_string(), json!(1));
+            summary.insert("gap_id_stability_rate".to_string(), json!(0.875));
         }
         expect_fail(
             validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
@@ -3139,6 +3673,82 @@ mod python_eval_sweep {
     }
 
     #[test]
+    fn current_receipt_rejects_nested_stability_contradictions_in_both_directions()
+    -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // Direction 1: claims stable while listing unstable IDs in `repeat`.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+            && let Some(Value::Object(repeat)) = entry.get_mut("repeat")
+        {
+            repeat.insert("unstable_gap_ids".to_string(), json!(["gap:python:x"]));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "claims stable gap IDs while listing unstable ones",
+        )?;
+
+        // Direction 2: claims unstable while listing no unstable IDs.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+            && let Some(Value::Object(repeat)) = entry.get_mut("repeat")
+        {
+            repeat.insert("gap_ids_stable".to_string(), json!(false));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "claims unstable gap IDs but lists none",
+        )
+    }
+
+    #[test]
+    fn current_receipt_with_full_repeat_evidence_reaches_pass() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        let mut receipt = current_receipt_0_3(&manifest);
+        // Every row becomes a fully-observed complete run whose stability
+        // evidence lives in `repeat`; the rows now derive the `pass` gate.
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut) {
+            for row in rows.iter_mut() {
+                if let Some(entry) = row.as_object_mut() {
+                    entry.insert("status".to_string(), json!("complete"));
+                    entry.insert("execution".to_string(), json!("executed"));
+                    entry.insert("materialization".to_string(), json!("materialized"));
+                    entry.insert("detection".to_string(), json!("detected"));
+                    if let Some(Value::Object(corpus)) = entry.get_mut("corpus_selection") {
+                        corpus.insert("state".to_string(), json!("selected"));
+                    }
+                    entry.insert(
+                        "classification_counts".to_string(),
+                        json!({"exposed": 0, "weakly_exposed": 1, "reachable_unrevealed": 0, "no_static_path": 0, "infection_unknown": 0, "propagation_unknown": 0, "static_unknown": 0}),
+                    );
+                    entry.insert(
+                        "alignment_counts".to_string(),
+                        json!({"direct": 1, "alias": 0, "changed_sink_token": 0, "orthogonal": 0, "unknown": 0, "absent": 0}),
+                    );
+                }
+            }
+        }
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.insert("repos_run".to_string(), json!(8));
+            summary.insert("crash_count".to_string(), json!(0));
+            summary.insert("parse_failure_count".to_string(), json!(0));
+            summary.insert("timed_out_count".to_string(), json!(0));
+            summary.insert("gate_status".to_string(), json!("pass"));
+            summary.insert(
+                "gate_reason".to_string(),
+                json!("8 complete runs; no crashes; repeat evidence stable on every row"),
+            );
+        }
+        let check = validate_receipt_value(&receipt, &manifest, &sha)?;
+        assert_eq!(check.denominator_selected, 8);
+        assert_eq!(check.denominator_run, 8);
+        Ok(())
+    }
+
+    #[test]
     fn current_receipt_rejects_malformed_digests_and_paths() -> Result<(), String> {
         let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
 
@@ -3239,6 +3849,47 @@ mod python_eval_sweep {
         };
         assert_eq!(outcome.verdict(), Verdict::NotRun);
         assert_eq!(outcome.verdict().as_str(), "not_run");
+        Ok(())
+    }
+
+    #[test]
+    fn top_level_verdict_is_incomplete_when_manifest_gaps_survive_a_complete_receipt()
+    -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        // The retained manifest discloses 32 incomplete identities (four per
+        // subject); the 0.3 receipt is complete on its own.
+        assert_eq!(manifest.incomplete.len(), 8 * 4);
+        let receipt_value = current_receipt_0_3(&manifest);
+        let receipt = validate_receipt_value(&receipt_value, &manifest, &sha)?;
+        assert!(receipt.incomplete.is_empty());
+        let outcome = CheckOutcome {
+            manifest_path: "manifest.json".to_string(),
+            accepted: manifest,
+            receipt: Some(receipt),
+        };
+        // A complete receipt must not hide manifest gaps: the top-level
+        // verdict is exactly `incomplete`.
+        assert_eq!(outcome.verdict(), Verdict::Incomplete);
+        assert_eq!(outcome.verdict().as_str(), "incomplete");
+        Ok(())
+    }
+
+    #[test]
+    fn top_level_verdict_is_valid_only_when_both_artifacts_carry_zero_incompletes()
+    -> Result<(), String> {
+        let complete = identity_complete_manifest();
+        let (manifest, sha) = accepted_manifest(&complete)?;
+        assert!(manifest.incomplete.is_empty());
+        let receipt_value = current_receipt_0_3(&manifest);
+        let receipt = validate_receipt_value(&receipt_value, &manifest, &sha)?;
+        assert!(receipt.incomplete.is_empty());
+        let outcome = CheckOutcome {
+            manifest_path: "manifest.json".to_string(),
+            accepted: manifest,
+            receipt: Some(receipt),
+        };
+        assert_eq!(outcome.verdict(), Verdict::Valid);
+        assert_eq!(outcome.verdict().as_str(), "valid");
         Ok(())
     }
 
