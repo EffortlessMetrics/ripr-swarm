@@ -8989,3 +8989,41 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0176"
+name = "python repair-trust selection and attempt semantics"
+spec = "docs/specs/RIPR-SPEC-0176-python-repair-trust-attempts.md"
+tests = [
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::accepts_alternate_valid_corpus_not_fixture_bytes",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::accepts_a_second_different_cohort",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::check_artifacts_end_to_end_in_temp_dir",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::no_corpus_at_default_path_is_not_run_exit_zero",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::zero_row_envelope_is_not_run_never_a_pass",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::rejects_attempt_outside_the_selection_denominator",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::rejects_stale_manifest_digest",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::rejects_duplicate_attempts_across_envelopes",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::rejects_selection_digest_replacement_and_edit",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::seam_kind_appears_nowhere_in_a_corpus",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::missing_required_identities_at_transitions_fail",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::movement_and_execution_cannot_imply_one_another",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::rejects_contradictory_lifecycle_states",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::unsafe_edit_surface_attempted_fails",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::denied_edit_surface_must_be_declared_unsafe",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::rejects_hand_edited_aggregates",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::missing_required_aggregates_with_rows_fail",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::stratum_floor_pretending_fails",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::supersedes_violations_fail_and_valid_refresh_appends",
+  "xtask/src/reports/python_repair_trust.rs::python_repair_trust_semantics::not_run_is_never_a_pass_in_verdict_vocabulary",
+]
+fixtures = []
+code = [
+  "xtask/src/reports/python_repair_trust.rs",
+]
+outputs = [
+  "target/ripr/reports/python-repair-trust-check.json",
+  "target/ripr/reports/python-repair-trust-check.md",
+]
+metrics = [
+  "python_repair_trust_check_verdict",
+]
