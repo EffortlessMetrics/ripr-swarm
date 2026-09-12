@@ -15,6 +15,17 @@ and Markdown from a fixed two-run vector (stable `ok`, unstable
 deliberately. Tier B judgment semantics live in RIPR-SPEC-0092, which
 remains proposed.
 
+Acceptance note (2026-09): #3565 landed the accepted-artifact validator
+(`cargo xtask eval-sweep check`, `xtask/src/reports/eval_sweep_check.rs`)
+and #3566 landed the managed candidate refresh (`cargo xtask eval-sweep
+refresh`, `xtask/src/reports/eval_sweep_refresh.rs`) — the first
+schema-0.3 producer, self-validated through the #3565 loader before any
+candidate is written, with the refresh-produces-what-check-validates
+symmetry proved offline by the `python_eval_sweep_refresh` tests over
+synthetic local subjects. The live eight-repository network refresh is a
+manual, authorized operation; candidate-to-accepted promotion remains
+#3567.
+
 Owner: language-adapter / swarm
 
 Linked proposal:
@@ -39,6 +50,7 @@ Linked issues:
 
 - [release(py): Python usable-tier readiness checklist](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160)
 - [eval(py): validate the retained eight-repository sweep manifest and run schema](https://github.com/EffortlessMetrics/ripr-swarm/issues/3565)
+- [eval(py): add a managed currentness-bound external sweep refresh](https://github.com/EffortlessMetrics/ripr-swarm/issues/3566)
 
 Linked PRs:
 
@@ -247,6 +259,100 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   currentness-readiness verdict, never a robustness or adequacy claim. The
   check writes `eval-sweep-check.{json,md}` only.
 
+### Managed currentness refresh (`eval-sweep refresh`, #3566)
+
+`cargo xtask eval-sweep refresh --manifest <path> --ripr-bin <path> --out <dir>
+--allow-network` is the managed route that reruns the accepted denominator
+against one explicit RIPR binary and writes CANDIDATE artifacts outside
+accepted/current state. The historical 0.2 sweep receipt is not current for
+promotion; this route produces the currentness-bound candidate that #3567
+validates and publishes.
+
+- **Authorization gate (load-bearing).** The route refuses closed without BOTH
+  the managed env signal `RIPR_EVAL_SWEEP_NETWORK=1` and the explicit
+  `--allow-network` flag, before any filesystem work; the typed refusal names
+  the missing signals. Ordinary CI never refreshes live repositories, and the
+  offline refusal is itself testable.
+- **One loader, one validator.** Refresh consumes #3565's validated subjects
+  (`eval_sweep_check::validate_accepted_manifest` — the resolved
+  `synthetic_diff` identity is retained on each subject) and never re-parses
+  the manifest. Before writing any candidate, the route self-validates its own
+  schema-0.3 receipt through `eval_sweep_check::validate_run_receipt`, so a
+  produced candidate and `eval-sweep check --runs <candidate>` agree by
+  construction. That refresh-produces-what-check-validates symmetry is the
+  route's core proof, exercised offline with synthetic local subjects.
+- **Candidate separation.** `--out` is mandatory and rejected when it equals
+  or overlaps accepted state (the `fixtures/` tree, or the repository root).
+  A candidate refresh cannot rewrite expected status, subject selection, the
+  historical receipt, or the current pointer; only #3567 can promote a
+  candidate into accepted state.
+- **Explicit binary.** `--ripr-bin` is mandatory and must name an existing
+  file; the route resolves it to an absolute path before any invocation, so
+  PATH can never select an installed binary. The route records the binary's
+  sha256 digest, its reported version, and (when the parent directory names a
+  cargo build profile) the build profile; the analyzer source SHA and feature
+  set of an arbitrary supplied binary have no producer here and stay typed
+  incomplete.
+- **Materialization.** Per subject, the pinned tree is materialized into
+  `<out>/subjects/<id>`: a prior candidate directory is reused only when
+  `git rev-parse HEAD` verifies the exact pin (after a bounded detached
+  re-checkout when HEAD drifted); otherwise a local seed checkout under
+  `--checkout-root` is cloned through git's local transport (no network), and
+  only then is the manifest URL cloned over the network. Every failure is a
+  typed disposition that keeps the subject selected: an unverifiable or
+  unmaterializable pin is `stale` (materialization state `failed`), a
+  clone/checkout infrastructure failure is `tempfail` (state `failed`), and
+  an unusable synthetic diff is `tempfail` with materialization state
+  `skipped` — no clone is spent on an input that cannot be analyzed.
+- **Terminal states stay distinct.** The eight 0.3 statuses are derived from
+  producer facts with no two merged: `timed-out` (rail-enforced deadline),
+  `crashed` (failure exit or non-JSON stdout), `unsupported`
+  (`unsupported_input` analysis kind), `parse-failed` (`analysis_failed` or
+  degradation to a named static-unknown limitation, the same producer facts
+  the 0.2 sweep reads), `complete` (producer-reported completeness),
+  `partial` (an attempt without reported completeness), `tempfail`, `stale`.
+  Exactly the five run statuses count toward `repos_run`; a failed or partial
+  row retains its available evidence and can never count as complete.
+- **Per-subject retention.** Each candidate row carries: the repository
+  identity restating the accepted pin (`url`/`sha`; manifest-carried
+  `tree_digest`/`snapshot`/`provenance`/`retention_class` are copied through,
+  never invented); the selected root (recorded out-relative so every receipt
+  path stays portable) and layout tag; the binary identity block; the config
+  identity (`--mode fast` over default configuration) and the synthetic-diff
+  input path with its sha256 `input_digest`; the materialization/detection/
+  execution/corpus-selection states with source/test/generated/vendor counts
+  from a bounded working-set walk (`partial` at the cap — never a silently
+  truncated count); phase status, timeout, exit, completeness, and
+  limitations in the managed execution receipt; raw stdout/stderr retained
+  under `<out>/raw/` with real raw/output/evidence digests; and the
+  classification/alignment distributions (descriptive, never gating).
+- **Stability law.** The route runs a second pass ONLY where the first result
+  is `complete` — the one state where a comparison is meaningful — and
+  records the gap-ID comparison in the row's `repeat` block (stable, or a
+  typed `unstable_gap_ids` mismatch list). Raw-output identity across passes
+  is compared too; drift with stable gap identity is a typed execution-receipt
+  note, never folded into the gap verdict.
+- **Determinism.** Equivalent managed reruns over the same inputs produce
+  identical identities, digests, and rows; wall-clock telemetry is the only
+  run-varying field and is declared as such in the execution receipt, which
+  names the binary, manifest (path + sha256 + exact subject ids), host class,
+  and network authorization.
+- **Process hygiene.** Every spawn — `ripr check`, `git clone`/`checkout`/
+  `rev-parse`, the version probe — routes through the allowlisted
+  `crate::run` bounded-capture helpers (wall-clock timeout, captured
+  stdout/stderr, process-tree termination, cwd anchored inside the candidate
+  tree, isolated per-subject `RIPR_CACHE_DIR`, terminal prompts disabled for
+  git). No new process-spawn surface is introduced.
+- **Live path.** The real eight-repository network refresh is operated
+  MANUALLY with both authorization signals and an explicit built binary; no
+  automated test performs a live network run. The offline tests prove the
+  route end to end over synthetic local subjects whose real git HEADs are the
+  manifest pins.
+- **Claim boundary.** A candidate receipt is structural currentness evidence
+  over the retained denominator. It is not accepted promotion evidence; no
+  structural-accuracy, repair-correctness, gate, badge, or support claim is
+  inferred from it.
+
 ### Policy boundary (load-bearing)
 
 - `--clone` is **opt-in and off the default CI path.** No `.github/workflows`
@@ -300,6 +406,26 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   statuses is pinned per status; the
   historical 0.2 receipt validates with disclosed incompletes and is never
   rewritten.
+- The managed refresh route tests (`python_eval_sweep_refresh` module in
+  `eval_sweep_refresh.rs`): the typed authorization refusal (env signal and
+  flag, each missing alone, and a wrong env value) fires before any
+  filesystem work; the authorized route requires `--ripr-bin` naming an
+  existing file and a `--out` candidate directory; `--out` overlapping
+  accepted state (`fixtures/`, the repo root, or an ancestor) is rejected
+  while a dedicated directory under `target/` is accepted; rows assembled by
+  the route's own `assemble_row` over the full eight-status vocabulary
+  validate through `validate_run_receipt` (denominator retained, run/non-run
+  split exact, crashed rows keep the derived gate at review, unstable repeat
+  claims carry their `unstable_gap_ids` list); row and summary assembly are
+  deterministic over identical inputs; corpus counting uses real path-shaped
+  producers with a bounded walk; stale and clone-failed materializations keep
+  subjects selected without analysis counts; and the end-to-end symmetry
+  proof — an authorized offline refresh over eight synthetic local seed
+  clones with the real built binary produces a candidate receipt plus a
+  managed execution receipt (binary digest, manifest sha256 + subject ids,
+  host class, network authorization) that passes the full
+  `eval-sweep check` artifact path, including a stale-subject run that keeps
+  all eight subjects selected.
 
 ## Non-Goals
 
@@ -435,6 +561,38 @@ receipt rows derive repos_run = 8 but the summary claims 7
   (with `rejects_non_https_and_credential_urls` and
   `current_receipt_rejects_malformed_digests_and_paths`) -> portable-path,
   no-secret, and digest-format fail-closed family.
+- `eval_sweep_refresh::python_eval_sweep_refresh::refuses_without_managed_authorization`
+  (with `full_route_refuses_before_any_filesystem_work`) -> the typed
+  managed-authorization refusal names both signals and fires before any
+  filesystem work (#3566).
+- `eval_sweep_refresh::python_eval_sweep_refresh::authorized_route_requires_explicit_binary_and_out`
+  -> `--ripr-bin` (existing file; PATH cannot select) and `--out` are
+  mandatory.
+- `eval_sweep_refresh::python_eval_sweep_refresh::rejects_out_overlapping_accepted_state`
+  -> candidate separation: accepted state (`fixtures/`, the repo root, an
+  ancestor) is rejected; a dedicated directory under `target/` is accepted.
+- `eval_sweep_refresh::python_eval_sweep_refresh::all_eight_statuses_produce_a_validatable_receipt`
+  -> producer/validator symmetry over the full 0.3 status vocabulary; every
+  terminal state stays selected with the exact run/non-run split.
+- `eval_sweep_refresh::python_eval_sweep_refresh::unstable_repeat_comparison_records_the_mismatch_list`
+  -> a false stability claim carries its typed `unstable_gap_ids` list.
+- `eval_sweep_refresh::python_eval_sweep_refresh::deterministic_row_and_summary_assembly`
+  -> identical inputs assemble identical rows and summary (declared
+  telemetry apart).
+- `eval_sweep_refresh::python_eval_sweep_refresh::stale_materialization_keeps_subject_selected_without_counts`
+  (with `clone_failure_row_shape_is_tempfail`) -> stale/tempfail
+  materializations keep the subject selected and carry no analysis counts.
+- `eval_sweep_refresh::python_eval_sweep_refresh::corpus_classification_counts_by_real_path_shapes`
+  -> bounded working-set counting over real path-shaped producers.
+- `eval_sweep_refresh::python_eval_sweep_refresh::evidence_digest_binds_raw_stderr_and_repeat`
+  -> the evidence digest preimage binds raw stdout, stderr, and the repeat
+  pass.
+- `eval_sweep_refresh::python_eval_sweep_refresh::refresh_candidate_validates_through_eval_sweep_check`
+  -> the end-to-end refresh-produces-what-check-validates symmetry over
+  synthetic local subjects with the real built binary (offline; no network).
+- `eval_sweep_refresh::python_eval_sweep_refresh::stale_subject_path_keeps_the_denominator_without_loss`
+  -> a stale subject is dispositioned `stale` and all eight rows remain in
+  the validatable denominator.
 
 ## Implementation Mapping
 
@@ -442,11 +600,14 @@ receipt rows derive repos_run = 8 but the summary claims 7
 | --- | --- |
 | Command logic (arg parse, manifest load, run orchestration, classify, metrics, render) | `xtask/src/reports/eval_sweep.rs` |
 | Accepted-manifest and retained-receipt validator (`eval-sweep check`) | `xtask/src/reports/eval_sweep_check.rs` |
+| Managed candidate refresh (`eval-sweep refresh`) | `xtask/src/reports/eval_sweep_refresh.rs` |
 | Subcommand registration | `xtask/src/command.rs`, `xtask/src/dispatch.rs`, `xtask/src/reports/mod.rs` |
 | Subprocess helpers (build, clone, `ripr check`) | `xtask/src/run.rs` (`run`, `run_with_envs`, `capture_output_with_timeout`) |
 | Pinned manifest + synthetic diff | `fixtures/python-eval-sweep/manifest.json`, `fixtures/python-eval-sweep/synthetic-diff.diff` |
 | Rendered report | `target/ripr/reports/eval-sweep.{json,md}` |
 | Check verdict report | `target/ripr/reports/eval-sweep-check.{json,md}` |
+| Refresh candidate artifacts (candidate receipt, execution receipt, raw outputs) | `<out>/eval-sweep-refresh-receipt.json`, `<out>/execution-receipt.json`, `<out>/raw/` |
+| Refresh run report | `target/ripr/reports/eval-sweep-refresh.{json,md}` |
 
 ## Metrics
 
