@@ -4227,11 +4227,17 @@ mod python_eval_sweep_refresh {
         );
         std::fs::create_dir_all(drifted.join(".git").join("hooks"))
             .map_err(|error| format!("create hooks dir: {error}"))?;
-        std::fs::write(
-            drifted.join(".git").join("hooks").join("post-checkout"),
-            b"#!/bin/sh\nsleep 60\n",
-        )
-        .map_err(|error| format!("write post-checkout hook: {error}"))?;
+        let hook_path = drifted.join(".git").join("hooks").join("post-checkout");
+        std::fs::write(&hook_path, b"#!/bin/sh\nsleep 60\n")
+            .map_err(|error| format!("write post-checkout hook: {error}"))?;
+        // Linux git skips hooks without the executable bit; Windows git runs
+        // them regardless. Grant the bit so the discriminator works on both.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755))
+                .map_err(|error| format!("mark post-checkout hook executable: {error}"))?;
+        }
 
         let binary = built_ripr_binary()?;
         let out = root.join("out");
