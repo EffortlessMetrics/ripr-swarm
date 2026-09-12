@@ -5652,14 +5652,30 @@ spec = "docs/specs/RIPR-SPEC-0086-python-eval-sweep.md"
 tests = [
   "xtask/src/reports/eval_sweep.rs",
   "xtask/src/reports/eval_sweep.rs::tests::run_check_classifies_failure_exit_with_valid_json_as_crash",
-  "xtask/src/reports/eval_sweep.rs::tests::rendered_report_matches_golden_from_fixed_run_vector"
+  "xtask/src/reports/eval_sweep.rs::tests::rendered_report_matches_golden_from_fixed_run_vector",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::accepts_alternate_valid_manifest_not_fixture_bytes",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::check_artifacts_passes_on_alternate_manifest_in_temp_dir",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::rejects_manifest_with_seven_subjects_changed_denominator",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::receipt_rejects_unknown_subject_and_missing_subject",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::receipt_rejects_hand_edited_aggregates",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::receipt_rejects_vacuous_pass_and_accepts_not_run",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::current_receipt_all_eight_statuses_validate_and_stay_selected",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::current_receipt_rejects_contradictory_status_pairs",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::receipt_rejects_stale_manifest_digest",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::receipt_keeps_absent_distinct_from_unknown_distributions",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::historical_receipt_validates_incomplete_without_rewrite",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::rejects_absolute_and_secret_bearing_paths",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::emitter_shaped_zero_run_stability_rate_discloses_instead_of_failing",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::present_null_receipt_identities_fail_while_absent_discloses_incomplete",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::run_status_split_pins_which_statuses_count_as_run",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/python-eval-sweep"
 ]
 code = [
-  "xtask/src/reports/eval_sweep.rs"
+  "xtask/src/reports/eval_sweep.rs",
+  "xtask/src/reports/eval_sweep_check.rs"
 ]
 outputs = []
 metrics = [

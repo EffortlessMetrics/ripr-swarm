@@ -38,6 +38,7 @@ Linked plan:
 Linked issues:
 
 - [release(py): Python usable-tier readiness checklist](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160)
+- [eval(py): validate the retained eight-repository sweep manifest and run schema](https://github.com/EffortlessMetrics/ripr-swarm/issues/3565)
 
 Linked PRs:
 
@@ -122,6 +123,130 @@ no usefulness/actionability judgement, and never affect `gate_status`.** The
 Each carries a recorded reason. Empty `repos_run` guards division (rates default
 to `0.0` crash / `1.0` stability).
 
+### Accepted-manifest and retained-receipt validation (`eval-sweep check`)
+
+`cargo xtask eval-sweep check [--manifest <path>] [--runs <receipt>]` is the
+typed semantic validator for the accepted artifacts (offline: no repository
+materialization, no RIPR execution, no lookups beyond the two artifact files):
+
+- One loader owns manifest and run-row semantics. The strict
+  duplicate-key-rejecting parse is the check-path contract; the lenient
+  in-memory parse in the sweep-report path stays historical-tolerant on
+  purpose (check validates retained accepted artifacts, the report path
+  renders in-flight sweeps), and the two converge when #3566/#3567 own the
+  refresh/report commands. The accepted manifest
+  (`python_eval_sweep_manifest`) must declare schema/kind/spec/tier and
+  **exactly eight** uniquely identified subjects — the canonical denominator.
+  Subject content is data-driven: any eight well-formed subjects validate, not
+  only the retained fixture bytes. The manifest schema is closed (deny-unknown):
+  the owned top-level keys are `schema_version`/`kind`/`spec`/`tier`/
+  `description`/`limits`/`synthetic_diff`/`repos` and the owned per-subject
+  keys are `id`/`url`/`sha`/`license`/`shape`/`synthetic_diff`/`why` plus the
+  optional `tree_digest`/`snapshot`/`provenance`/`retention_class` identities —
+  exactly the keys the canonical fixture carries, so unknown keys are schema
+  rot, not forward compatibility. License is required (null/empty fails); an
+  optional identity is either absent (typed `incomplete`) or well-formed — an
+  explicit null, an empty string, or a malformed value fails, because a
+  present-but-garbage identity is not an absent one.
+- Retained run receipts (`python_eval_sweep_report`) validate in two owned
+  shapes. Schema `0.2` is the historical shape the sweep command writes.
+  Schema `0.3` adds the currentness identities: binary/features/config/profile/
+  input identity, materialization/detection/corpus-selection/execution states,
+  the `complete`/`partial`/`parse-failed`/`timed-out`/`crashed`/`unsupported`/
+  `tempfail`/`stale` status vocabulary, raw/output/evidence digests,
+  repeat-run comparison identity, and a sha256 manifest-digest binding.
+  Schema `0.3` is deliberately ahead of the live `0.2` producer — no sweep
+  command writes it yet — and producer parity is expected to land with
+  #3566/#3567, so a 0.3 receipt validates here as the accepted target shape
+  before any producer emits it.
+- Fail closed (nonzero exit, diagnostic names subject/field/reason plus the
+  deterministic rerun command) on: duplicate or missing subjects, a changed
+  denominator, receipt rows contradicting the manifest pins, a receipt
+  identity that contradicts the manifest binding (when the manifest and the
+  receipt both record a comparable identity — `license`, `tree_digest`,
+  `snapshot`, `provenance`, `retention_class` — they must match; a receipt
+  value with no manifest side to bind discloses `incomplete` on the manifest
+  side instead of fabricating a binding), unsafe
+  (non-portable, absolute, or secret-bearing) paths and URLs, unknown state
+  vocabulary, contradictory status (e.g. `complete`/`partial` with an
+  execution state that did not run — `partial` with `not-executed` included —
+  or stable gap IDs listed as unstable in either direction, or a false
+  stability claim whose `unstable_gap_ids` list is omitted; each at the 0.2
+  row level or inside the 0.3 `repeat` block), duplicate identity copies
+  inside one receipt that disagree (the row-level `tree_digest`/`snapshot` vs
+  the `repository` block, and a row's `binary` identity vs the receipt-level
+  `ripr` block — a mismatch fails naming both locations), a known field whose
+  recorded value has the wrong type or shape for its emitted shape
+  (`description`/`gate_reason`/`why` are strings, `stderr_excerpt` is a
+  possibly-empty string, `gap_ids`/`limits` are arrays of strings), malformed digests,
+  a stale manifest digest (receipt bound to different manifest bytes), a
+  required summary aggregate missing from an analyzed receipt, a nonzero
+  analysis-bearing aggregate on a zero-run receipt, and
+  hand-edited aggregates that disagree with the derived rows (denominator,
+  outcome counts, stability counts, runtime aggregates, rates, distributions,
+  gate status). Aggregate agreement is checked in both directions: an analyzed
+  (run-status) row must carry the aggregate source evidence the sweep records
+  on every row (`runtime_ms`, both distributions, and the 0.2 `gap_ids_stable`;
+  0.3 stability lives in the optional `repeat` block, so a recorded summary
+  stability value over rows lacking it fails while an unrecorded one is
+  disclosed `incomplete`), an analyzed receipt must carry the full emitted
+  summary (a deleted aggregate would silently disable its row-agreement check;
+  the stability aggregates are required exactly when the rows fully evidence
+  stability), summary distributions must equal the row-derived
+  key set exactly (zero-valued buckets included; with zero run rows the
+  zero-run summary law bounds every recorded bucket to zero and the recorded
+  keys are still vocabulary-checked), the supplied `gate_status` must
+  equal the gate derived from the rows (`not_run` at zero runs, `pass` only
+  with zero crashes and full per-row stability evidence, `review` otherwise),
+  and runtime totals and distribution merges use checked arithmetic (overflow
+  is a structured failure naming the aggregate field, never a panic).
+- Failed, unavailable, timeout, parse-failed, unsupported, partial, and stale
+  rows remain selected: they are valid rows and stay in the denominator. Of
+  the eight 0.3 statuses, exactly `complete`/`partial`/`parse-failed`/
+  `timed-out`/`crashed` evidence an analysis attempt and count toward
+  `repos_run`; `unsupported`/`tempfail`/`stale` do not. A row
+  that did not run must carry no analysis counts, and `repos_run == 0` gates to
+  `not_run` — never a vacuous `pass`, and a `pass` claim requires per-row
+  stability evidence and zero crashes. The not-a-vacuous-pass law extends to
+  the summary: with zero run rows every analysis-bearing aggregate
+  (classification/alignment counts, runtime min/median/max/total, stability
+  counts) must be zero or absent, and the stability rate must be zero, absent,
+  or exactly the live emitter's zero-run default `1.0` — that one value is
+  what the emitter itself records when nothing ran (its empty-set guard), so
+  it is accepted as a named `incomplete` disclosure (`vacuous zero-run
+  stability rate`) instead of a failure, and the disclosed receipt verdict
+  stays `incomplete`/`not_run`, never a pass; any other nonzero rate is a
+  fabricated claim about rows that never ran.
+- Missing identities are typed `incomplete` with a per-field disclosure; they
+  are not invented and not errors (the retained manifest carries no
+  provenance/retention/snapshot identities by design, and historical 0.2 rows
+  carry no currentness fields). Missing owned identity fields — `ripr.*` at
+  receipt level, and every owned field of a present row-level `binary` block
+  (`digest`/`version`/`features`/`build_profile`) — disclose `incomplete` the
+  same way; present-but-malformed values fail. An explicit null is present,
+  not missing: the receipt-side identity fields the binding and copy checks
+  cover (the row-level binding identities
+  `tree_digest`/`snapshot`/`license`/`retention_class`/`provenance`, the
+  receipt-level `ripr.*` fields, and the fields of a present row
+  `repository`/`binary` block) fail naming the field when null — the same
+  present-but-garbage rule the manifest-side optional identities follow —
+  while a key left out discloses `incomplete`. Validation never upgrades or
+  rewrites a historical receipt. `alignment_counts` is required on every
+  analyzed (run-status) row, and a recorded `alignment_counts` object must
+  always carry both keys — `absent` (field not emitted) and `unknown`
+  (emitted value), zero-filled when empty — so the two never merge.
+- Exit contract: exit 0 when every present artifact is structurally valid —
+  including when identities are disclosed `incomplete` or no receipt is
+  supplied (`not_run`); nonzero on any fail-closed violation. Top-level
+  verdict precedence spans both artifacts: `not_run` only when no receipt is
+  supplied; with a receipt, `incomplete` whenever the manifest or the receipt
+  discloses incomplete identities (a complete receipt never hides manifest
+  gaps), and `valid` only when both artifacts are structurally valid and carry
+  zero incompletes. The verdict
+  vocabulary is `valid` / `incomplete` / `not_run`: a structural
+  currentness-readiness verdict, never a robustness or adequacy claim. The
+  check writes `eval-sweep-check.{json,md}` only.
+
 ### Policy boundary (load-bearing)
 
 - `--clone` is **opt-in and off the default CI path.** No `.github/workflows`
@@ -142,6 +267,39 @@ to `0.0` crash / `1.0` stability).
   comparison flags an injected instability; metrics arithmetic with empty-set
   guards; deterministic JSON/markdown report rendering.
 - A golden of the rendered report from a fixed in-memory run vector.
+- The `eval-sweep check` validator tests (`python_eval_sweep` module): an
+  alternate valid eight-subject manifest in a temp directory proves the
+  validator is data-driven; each fail-closed shape (duplicate/missing/unknown
+  subjects, changed denominator, non-https or credential-bearing URLs,
+  absolute and secret-bearing paths, unknown shape tags, malformed SHAs,
+  null/empty/malformed optional manifest identities, present-null
+  receipt-side identity fields (row-level binding identities, `ripr.*`, and
+  the fields of a present `repository`/`binary` block), unknown
+  outcome/status/state values, contradictory status (including `partial` with
+  `not-executed`, and a false stability claim with its `unstable_gap_ids`
+  list omitted), disagreeing duplicate identity copies (row-level
+  tree/snapshot vs the `repository` block, and a row `binary` field vs its
+  receipt-level `ripr` copy), wrong-typed owned fields
+  (`gate_reason`/`gap_ids`/`stderr_excerpt`/`description`/`limits`/`why`),
+  stale and
+  malformed digests, a receipt identity contradicting the manifest binding,
+  a required summary aggregate missing from an analyzed receipt, a nonzero
+  analysis-bearing aggregate on a zero-run receipt (the live emitter's vacuous
+  zero-run stability rate `1.0` excepted: exactly that value discloses
+  `incomplete` as a vacuous zero-run rate while any other nonzero rate fails),
+  hand-edited aggregates,
+  vacuous pass, pass without
+  stability evidence, merged absent/unknown distributions) fails with a
+  subject/field/reason diagnostic and the rerun command; missing identities
+  (including `ripr.features`/`binary.features`, and a present `binary` block
+  without `build_profile`) are typed incomplete, and a
+  receipt value with no manifest side to bind discloses the manifest gap
+  instead of fabricating a binding; a zero-run receipt gates `not_run` (the
+  emitter-shaped zero-run receipt with the vacuous `1.0` rate validates as
+  `incomplete`, never a pass); the run/non-run split over the eight 0.3
+  statuses is pinned per status; the
+  historical 0.2 receipt validates with disclosed incompletes and is never
+  rewritten.
 
 ## Non-Goals
 
@@ -191,6 +349,22 @@ repos_total = 3, repos_run = 0 (all skipped_missing_checkout)
   ->  gate_status = "not_run"  (never a vacuous "pass")
 ```
 
+### Accepted validation without a retained receipt
+
+```text
+cargo xtask eval-sweep check
+  ->  manifest valid (8 subjects), receipt dimension "not_run",
+      missing identities disclosed as incomplete  ->  exit 0 (not a pass)
+```
+
+### A hand-edited aggregate fails closed
+
+```text
+receipt rows derive repos_run = 8 but the summary claims 7
+  ->  exit nonzero, diagnostic: subject=<receipt> field=`summary.repos_run`:
+      hand-edited aggregate ... (rerun: cargo xtask eval-sweep check)
+```
+
 ## Test Mapping
 
 - `eval_sweep::manifest_load_rejects_invalid` -> manifest validation contract.
@@ -208,16 +382,71 @@ repos_total = 3, repos_run = 0 (all skipped_missing_checkout)
   captured failure-exit boundary through the real run path.
 - `eval_sweep::rendered_report_matches_golden_from_fixed_run_vector` ->
   byte-exact JSON/Markdown rendering from the fixed two-run vector.
+- `eval_sweep_check::python_eval_sweep::accepts_alternate_valid_manifest_not_fixture_bytes`
+  -> data-driven eight-subject acceptance (#3565).
+- `eval_sweep_check::python_eval_sweep::check_artifacts_passes_on_alternate_manifest_in_temp_dir`
+  -> end-to-end offline check on an alternate temp-dir manifest.
+- `eval_sweep_check::python_eval_sweep::rejects_manifest_with_seven_subjects_changed_denominator`
+  -> exactly-eight canonical denominator.
+- `eval_sweep_check::python_eval_sweep::receipt_rejects_unknown_subject_and_missing_subject`
+  -> subject-coverage fail-closed family (with the duplicate-row sibling).
+- `eval_sweep_check::python_eval_sweep::receipt_rejects_hand_edited_aggregates`
+  -> row/aggregate denominator agreement.
+- `eval_sweep_check::python_eval_sweep::emitter_shaped_zero_run_stability_rate_discloses_instead_of_failing`
+  -> the live emitter's zero-run `1.0` stability rate validates as a vacuous
+  zero-run disclosure (verdict stays `incomplete`), any other nonzero rate fails.
+- `eval_sweep_check::python_eval_sweep::present_null_receipt_identities_fail_while_absent_discloses_incomplete`
+  -> present-null receipt-side identity fields fail naming the field; the
+  absent key discloses `incomplete`.
+- `eval_sweep_check::python_eval_sweep::run_status_split_pins_which_statuses_count_as_run`
+  -> the exact run/non-run denominator split over the eight 0.3 statuses
+  (`complete`/`partial`/`parse-failed`/`timed-out`/`crashed` count toward
+  `repos_run`; `unsupported`/`tempfail`/`stale` do not).
+- `eval_sweep_check::python_eval_sweep::receipt_rejects_vacuous_pass_and_accepts_not_run`
+  -> `repos_run == 0` is `not_run`, never a vacuous pass.
+- `eval_sweep_check::python_eval_sweep::current_receipt_all_eight_statuses_validate_and_stay_selected`
+  -> the full status vocabulary remains selected (denominator-preserving).
+- `eval_sweep_check::python_eval_sweep::current_receipt_rejects_contradictory_status_pairs`
+  -> contradictory status fail-closed family.
+- `eval_sweep_check::python_eval_sweep::receipt_rejects_stale_manifest_digest`
+  -> stale digest binding fail-closed.
+- `eval_sweep_check::python_eval_sweep::receipt_keeps_absent_distinct_from_unknown_distributions`
+  -> `absent` remains distinct from emitted `unknown`.
+- `eval_sweep_check::python_eval_sweep::historical_receipt_validates_incomplete_without_rewrite`
+  -> historical receipts stay historical; missing identities type incomplete.
+- `eval_sweep_check::python_eval_sweep::top_level_verdict_is_incomplete_when_manifest_gaps_survive_a_complete_receipt`
+  -> top-level verdict precedence across both artifacts (`valid` only when both
+  carry zero incompletes; `not_run` only without a receipt).
+- `eval_sweep_check::python_eval_sweep::gate_status_must_equal_the_derived_gate`
+  -> supplied `gate_status` must equal the derived gate (`not_run`/`pass`/`review`).
+- `eval_sweep_check::python_eval_sweep::summary_distribution_extra_bucket_fails`
+  -> exact summary-distribution key-set equality (zero-valued buckets included).
+- `eval_sweep_check::python_eval_sweep::analyzed_row_missing_runtime_fails`
+  (with `analyzed_row_missing_distribution_fails_and_rejects_summary_totals` and
+  `under_evidenced_stability_rejects_recorded_summary_and_discloses_absent`) ->
+  missing aggregate source evidence never silently disables a summary comparison.
+- `eval_sweep_check::python_eval_sweep::runtime_total_overflow_fails_structurally_without_panic`
+  (with `distribution_merge_overflow_fails_structurally_without_panic`) ->
+  checked aggregate arithmetic.
+- `eval_sweep_check::python_eval_sweep::manifest_rejects_unknown_top_level_and_repo_keys`
+  (with `canonical_fixture_manifest_passes_with_owned_keys_only`) -> closed
+  accepted-manifest schema.
+- `eval_sweep_check::python_eval_sweep::receipt_rejects_absolute_and_secret_bearing_paths`
+  (with `rejects_non_https_and_credential_urls` and
+  `current_receipt_rejects_malformed_digests_and_paths`) -> portable-path,
+  no-secret, and digest-format fail-closed family.
 
 ## Implementation Mapping
 
 | Concern | Code |
 | --- | --- |
 | Command logic (arg parse, manifest load, run orchestration, classify, metrics, render) | `xtask/src/reports/eval_sweep.rs` |
+| Accepted-manifest and retained-receipt validator (`eval-sweep check`) | `xtask/src/reports/eval_sweep_check.rs` |
 | Subcommand registration | `xtask/src/command.rs`, `xtask/src/dispatch.rs`, `xtask/src/reports/mod.rs` |
 | Subprocess helpers (build, clone, `ripr check`) | `xtask/src/run.rs` (`run`, `run_with_envs`, `capture_output_with_timeout`) |
 | Pinned manifest + synthetic diff | `fixtures/python-eval-sweep/manifest.json`, `fixtures/python-eval-sweep/synthetic-diff.diff` |
 | Rendered report | `target/ripr/reports/eval-sweep.{json,md}` |
+| Check verdict report | `target/ripr/reports/eval-sweep-check.{json,md}` |
 
 ## Metrics
 
