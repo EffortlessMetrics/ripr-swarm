@@ -671,9 +671,9 @@ fn materialize_subject(
         Ok(()) => verify_materialized_dir(&dir, subject, "network_clone", clone_timeout),
         Err(limitation) => {
             discard_partial_dir(&dir);
-            // A successful clone whose pinned SHA cannot be checked out is
-            // accepted-state staleness, not clone infrastructure
-            // (#3735 review): the receipt records `stale`, not `tempfail`.
+            // Only a genuinely absent pin is accepted-state staleness;
+            // infrastructure checkout failures stay `tempfail`
+            // (#3735 review round 3).
             if limitation.starts_with("pin-unavailable:") {
                 Materialization::Stale { limitation }
             } else {
@@ -758,14 +758,23 @@ fn clone_into(
         ));
     }
     if !checkout.status.is_some_and(|status| status.success()) {
-        // A successful clone whose pinned SHA cannot be checked out is
-        // accepted-state staleness, not clone infrastructure: the caller maps
-        // this marker to `stale` rather than `tempfail` (#3735 review).
+        // A successful blob-filtered clone whose pinned SHA is simply ABSENT
+        // is accepted-state staleness: `git checkout` names it with
+        // "reference is not a tree" / "bad object". Every other checkout
+        // failure (lazy blob fetch, network, disk, permissions, locks) is
+        // infrastructure and stays `tempfail` (#3735 review round 3).
+        let stderr = first_line(&checkout.stderr);
+        let missing_pin = stderr.contains("reference is not a tree")
+            || stderr.contains("bad object")
+            || stderr.contains("invalid reference");
+        let marker = if missing_pin {
+            "pin-unavailable"
+        } else {
+            "checkout-infrastructure"
+        };
         return Err(format!(
-            "pin-unavailable: pinned SHA {} is unavailable in the cloned repository of `{}`: {}",
-            subject.sha,
-            subject.id,
-            first_line(&checkout.stderr)
+            "{marker}: pinned SHA {} could not be checked out in the cloned repository of `{}`: {}",
+            subject.sha, subject.id, stderr
         ));
     }
     Ok(())
