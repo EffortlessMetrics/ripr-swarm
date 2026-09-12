@@ -424,7 +424,8 @@ fn check_portable_path(subject: &str, field: &str, path: &str) -> Result<(), Str
 /// Scans rendered accepted-artifact text for absolute host paths. A
 /// conservative tripwire, not a path parser: `file://` URLs, POSIX absolute
 /// JSON string values, and drive-letter paths whose letter is not preceded by
-/// another letter (so the `s:` in `https://` never trips while `C:\` does).
+/// another letter (so the `s:` inside an `https://` scheme never trips while
+/// a Windows path prefix does).
 fn absolute_path_tripwire(text: &str) -> Option<String> {
     if text.contains("file://") {
         return Some("artifact carries a `file://` URL".to_string());
