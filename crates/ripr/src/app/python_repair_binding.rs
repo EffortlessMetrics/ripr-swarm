@@ -563,13 +563,12 @@ fn load_selection_manifest(
     Ok((sha256_hex(text.as_bytes()), parsed))
 }
 
-/// Verifies one selection row's digest anchors, shape, and identity alignment
-/// with the packet's selected edit target. Shared by the prepare and apply
-/// phases; the phase-specific checks live with their callers.
+/// Verifies one selection row's digest anchors, shape, and target-state and
+/// surface policy. Shared by the prepare and apply phases; the phase-specific
+/// checks (packet alignment, ground truth, head pin) live with their callers.
 fn verify_row_binding(
     row: &Map<String, Value>,
     request_attempt_id: &str,
-    policy: &EditCagePolicy,
 ) -> Result<VerifiedSelection, String> {
     let attempt_id = require_string("selection row", row, "attempt_id")?;
     if attempt_id != request_attempt_id {
@@ -619,15 +618,6 @@ fn verify_row_binding(
         ));
     }
 
-    // The row's target must be the packet's selected edit target: identity
-    // alignment, never name similarity.
-    if policy.selected_target.path() != target_path {
-        return Err(format!(
-            "wrong target: selection row `{attempt_id}` names `{target_path}` but the repair packet's selected edit target is `{}`; the driver binds one attempt only when both identities agree",
-            policy.selected_target.path()
-        ));
-    }
-
     let tree = opt_string(row, "tree")?;
     if let Some(tree) = &tree
         && !is_sha256_hex(tree)
@@ -670,10 +660,12 @@ fn verify_row_binding(
     })
 }
 
-/// The prepare-phase row checks beyond the shared binding checks: the row's
-/// `head` pin must equal the repository's current HEAD (a selection made at
-/// another commit is stale before the attempt exists), and the target must
-/// resolve to exactly one file in the repository inventory.
+/// The prepare-phase row checks beyond the shared binding checks: the target
+/// must resolve to exactly one file in the repository inventory (ground truth
+/// before identity), the resolved target must agree with the packet's
+/// selected edit target, and the row's `head` pin must equal the repository's
+/// current HEAD (a selection made at another commit is stale before the
+/// attempt exists).
 fn verify_row_for_prepare(
     row: &Map<String, Value>,
     request_attempt_id: &str,
@@ -681,14 +673,14 @@ fn verify_row_for_prepare(
     policy: &EditCagePolicy,
     root: &Path,
 ) -> Result<VerifiedSelection, String> {
-    let verified = verify_row_binding(row, request_attempt_id, policy)?;
+    let verified = verify_row_binding(row, request_attempt_id)?;
     if verified.head != repository_head {
         return Err(format!(
             "stale selection: row `{}` pins head `{}` but the repository HEAD is `{repository_head}`; a changed repository state requires a new selection before editing",
             verified.attempt_id, verified.head
         ));
     }
-    // Ground truth: the target must resolve to exactly one file in the
+    // Ground truth first: the target must resolve to exactly one file in the
     // repository inventory. Zero matches mean the target does not exist; more
     // than one case-insensitive match means the target identity is ambiguous
     // on this checkout. Both fail before editing.
@@ -707,7 +699,34 @@ fn verify_row_for_prepare(
             matches.len()
         ));
     }
+    // Then identity: the row's target must be the packet's selected edit
+    // target, never a merely similar name.
+    if policy.selected_target.path() != verified.target_path {
+        return Err(format!(
+            "wrong target: selection row `{}` names `{}` but the repair packet's selected edit target is `{}`; the driver binds one attempt only when both identities agree",
+            verified.attempt_id,
+            verified.target_path,
+            policy.selected_target.path()
+        ));
+    }
     Ok(verified)
+}
+
+/// The apply-phase alignment check: the row's target identity must still
+/// agree with the packet's selected edit target.
+fn verify_row_target_alignment(
+    verified: &VerifiedSelection,
+    policy: &EditCagePolicy,
+) -> Result<(), String> {
+    if policy.selected_target.path() != verified.target_path {
+        return Err(format!(
+            "wrong target: selection row `{}` names `{}` but the repair packet's selected edit target is `{}`; the driver records one applied edit only when both identities agree",
+            verified.attempt_id,
+            verified.target_path,
+            policy.selected_target.path()
+        ));
+    }
+    Ok(())
 }
 
 /// The tracked + untracked repository paths whose case-folded spelling equals
@@ -1202,11 +1221,14 @@ pub(crate) fn reverify_for_apply(
     // `stale` state instead of silently refusing. Binding integrity (digests,
     // target alignment, packet identity, authorization) is what must fail
     // before the applied edit is recorded.
-    let mut verified = verify_row_binding(row, &request.attempt_id, policy).map_err(|error| {
+    let mut verified = verify_row_binding(row, &request.attempt_id).map_err(|error| {
         format!("stale packet rejected before recording the applied edit: {error}")
     })?;
     verified.selection_manifest_sha256 = manifest_sha256;
     verified.selection_manifest_path = manifest_path_string;
+    verify_row_target_alignment(&verified, policy).map_err(|error| {
+        format!("stale packet rejected before recording the applied edit: {error}")
+    })?;
 
     let input = as_object(
         record

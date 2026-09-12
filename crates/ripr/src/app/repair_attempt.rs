@@ -601,14 +601,26 @@ pub(crate) fn edit_cage_policy_from_packet(
     })
 }
 
+/// Captures the edit-cage baseline and writes it to a workflow compatibility
+/// path. Unlike the immutable attempt destinations, this copy is refreshed on
+/// every before phase (the durable authority is the baseline staged inside
+/// the attempt), so an existing projection is replaced. The captured baseline
+/// is dropped before the replacement so its Windows write authorities cannot
+/// block the removal of the file it just probed.
 pub(crate) fn write_edit_cage_baseline(
     root: &Path,
     path: &Path,
     policy: &EditCagePolicy,
 ) -> Result<(), String> {
-    let baseline = crate::edit_cage::capture_attempt_baseline(root, policy)?;
-    let bytes = serde_json::to_vec_pretty(&baseline)
-        .map_err(|error| format!("serialize edit-cage baseline failed: {error}"))?;
+    let bytes = {
+        let baseline = crate::edit_cage::capture_attempt_baseline(root, policy)?;
+        serde_json::to_vec_pretty(&baseline)
+            .map_err(|error| format!("serialize edit-cage baseline failed: {error}"))?
+    };
+    if path.exists() {
+        std::fs::remove_file(path)
+            .map_err(|error| format!("replace {} failed: {error}", path.display()))?;
+    }
     write_bytes_atomic(path, &bytes)
 }
 

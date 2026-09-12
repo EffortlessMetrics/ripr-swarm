@@ -570,7 +570,11 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                 cage_after.verdict.status
             );
 
-            run_agent_receipt_for_attempt(
+            // The receipt can refuse (for example an escape verdict is not
+            // receipt-ready). The refusal must not swallow the typed apply
+            // evidence, so the outcome is carried to the end and the apply
+            // record is published either way.
+            let receipt_result = run_agent_receipt_for_attempt(
                 AgentReceiptOptions {
                     root: root.clone(),
                     verify_json: verify_json.clone(),
@@ -582,7 +586,7 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                 },
                 Some(cage_after.attempt_id.as_str()),
                 Some(&packet_path),
-            )?;
+            );
 
             run_agent_status(AgentStatusOptions {
                 root: root.clone(),
@@ -593,20 +597,27 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             // The apply record is published last: the receipt re-evaluates the
             // edit cage over the exact delta finish measured, so no artifact
             // write may land between finish and the receipt binding.
+            let mut apply_record_result = Ok(());
             if let (Some(binding), Some(verified)) = (&retained_binding, &verified_binding) {
-                let apply_record_path = crate::app::python_repair_binding::write_apply_record(
+                match crate::app::python_repair_binding::write_apply_record(
                     &root,
                     &attempt.attempt_id,
                     &binding.artifact_sha256,
                     verified,
                     edit_authorization.authority.as_deref().unwrap_or_default(),
                     &cage_after,
-                )?;
-                eprintln!(
-                    "ripr: python repair-trust apply record: {}",
-                    apply_record_path.display()
-                );
+                ) {
+                    Ok(apply_record_path) => {
+                        eprintln!(
+                            "ripr: python repair-trust apply record: {}",
+                            apply_record_path.display()
+                        );
+                    }
+                    Err(error) => apply_record_result = Err(error),
+                }
             }
+            receipt_result?;
+            apply_record_result?;
 
             eprintln!("ripr: after phase complete. Review the receipt and status output.");
             Ok(())
