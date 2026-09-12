@@ -1887,7 +1887,43 @@ fn validate_supersedes_relations(envelopes: &[AttemptsEnvelope]) -> Result<(), S
             }
         }
     }
+    // A refresh chain must terminate: following `supersedes` links from any
+    // record may never revisit an identity. A cycle means impossible history
+    // (every link in the cycle supersedes a stale record, yet nothing in the
+    // cycle could have been stale first).
+    for envelope in envelopes {
+        for row in &envelope.rows {
+            if let Some(revisited) = refresh_chain_revisits(&successor_by_target, &row.attempt_id) {
+                return Err(fail(
+                    &row.attempt_id,
+                    "supersedes",
+                    format!(
+                        "refresh chain revisits `{revisited}`; a `supersedes` cycle is impossible history (every link claims to refresh a stale record, so no link in the cycle could have been stale first)"
+                    ),
+                ));
+            }
+        }
+    }
     Ok(())
+}
+
+/// Walks the `supersedes` successor map from `start`; returns the first
+/// identity visited twice, if the chain ever loops back.
+fn refresh_chain_revisits(
+    successor_by_target: &BTreeMap<String, String>,
+    start: &str,
+) -> Option<String> {
+    let mut seen = BTreeSet::new();
+    let mut current = start.to_string();
+    loop {
+        if !seen.insert(current.clone()) {
+            return Some(current);
+        }
+        match successor_by_target.get(&current) {
+            Some(next) => current = next.clone(),
+            None => return None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1985,7 +2021,10 @@ fn validate_aggregates(
     // The selected denominator: optional but exact — the count is the
     // manifest's fixed selection set, the denominator fixed before outcomes.
     match opt_u64(display, aggregates, "selected_denominator")? {
-        Some(value) if value as usize != manifest.selections.len() => {
+        // Compare in u64: a `value as usize` truncation could fold an
+        // oversized fabricated denominator onto the true count on 32-bit
+        // targets (#3734 review).
+        Some(value) if value != manifest.selections.len() as u64 => {
             return Err(fail(
                 display,
                 "aggregates.selected_denominator",
@@ -3622,6 +3661,47 @@ mod python_repair_trust_semantics {
 
         // The valid refresh shape (att-echo-2 supersedes the stale att-echo)
         // is pinned by the base corpus test.
+
+        // A `supersedes` cycle is impossible history (every link in a cycle
+        // claims to refresh a stale record, yet nothing in the cycle could
+        // have been stale first). The chain walk is pinned directly: a
+        // two-link cycle A→B→A revisits A; an acyclic chain terminates.
+        let cyclic: BTreeMap<String, String> = BTreeMap::from([
+            ("att-a".to_string(), "att-b".to_string()),
+            ("att-b".to_string(), "att-a".to_string()),
+        ]);
+        assert_eq!(
+            refresh_chain_revisits(&cyclic, "att-a").as_deref(),
+            Some("att-a")
+        );
+        assert_eq!(
+            refresh_chain_revisits(&cyclic, "att-b").as_deref(),
+            Some("att-b")
+        );
+        let acyclic: BTreeMap<String, String> = BTreeMap::from([
+            ("att-a".to_string(), "att-b".to_string()),
+            ("att-b".to_string(), "att-c".to_string()),
+        ]);
+        assert_eq!(refresh_chain_revisits(&acyclic, "att-a"), None);
+        Ok(())
+    }
+
+    // -- denominators ---------------------------------------------------------
+
+    #[test]
+    fn oversized_denominator_cannot_truncate_onto_the_true_count() -> Result<(), String> {
+        let (manifest, sha, envelope) = full_valid_envelope()?;
+        // u64 value that would truncate to the manifest's selection count (6)
+        // under a 32-bit `value as usize` cast (6 + 2^32).
+        let truncated = (manifest.selections.len() as u64) + (1u64 << 32);
+        let mut broken = envelope.clone();
+        if let Some(aggregates) = broken.get_mut("aggregates").and_then(Value::as_object_mut) {
+            aggregates.insert("selected_denominator".to_string(), json!(truncated));
+        }
+        expect_fail(
+            validate_envelope_value(&broken, &manifest, &sha).map(|_| ()),
+            "hand-edited aggregate",
+        )?;
         Ok(())
     }
 
