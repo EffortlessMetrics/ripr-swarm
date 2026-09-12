@@ -383,8 +383,44 @@ fn check_git_sha(subject: &str, field: &str, sha: &str) -> Result<(), String> {
     }
 }
 
-/// A portable relative path: forward slashes only, never absolute, no `..`
-/// components.
+/// Component law for portable relative paths: every `/`-separated component
+/// must be non-empty and never `.` or `..`. Empty components (consecutive
+/// separators) are skipped by host path resolution, `..` escapes the base
+/// directory, and `.` hides a component from exact matching — none of them may
+/// reach a path join, or a crafted pointer could read outside the accepted
+/// state directory. A path with no non-empty component at all is rejected too.
+fn check_portable_components(subject: &str, field: &str, portable: &str) -> Result<(), String> {
+    let components: Vec<&str> = portable.split('/').collect();
+    if components.iter().all(|component| component.is_empty()) {
+        return Err(fail(
+            subject,
+            field,
+            "path must name at least one non-empty component",
+        ));
+    }
+    for component in components {
+        if component.is_empty() {
+            return Err(fail(
+                subject,
+                field,
+                format!(
+                    "path `{portable}` must not contain empty components (consecutive separators)"
+                ),
+            ));
+        }
+        if component == "." || component == ".." {
+            return Err(fail(
+                subject,
+                field,
+                format!("path `{portable}` must not contain `{component}` components"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A portable relative path: forward slashes only, never absolute, and
+/// component-checked (no empty, `.`, or `..` components).
 fn check_portable_path(subject: &str, field: &str, path: &str) -> Result<(), String> {
     if path.trim().is_empty() {
         return Err(fail(subject, field, "path must be non-empty"));
@@ -411,14 +447,7 @@ fn check_portable_path(subject: &str, field: &str, path: &str) -> Result<(), Str
             format!("path `{path}` must be relative, not a drive-letter absolute path"),
         ));
     }
-    if path.split('/').any(|component| component == "..") {
-        return Err(fail(
-            subject,
-            field,
-            format!("path `{path}` must not contain `..` components"),
-        ));
-    }
-    Ok(())
+    check_portable_components(subject, field, path)
 }
 
 // ---------------------------------------------------------------------------
@@ -1241,6 +1270,22 @@ fn build_pointer(
 // Bounded Markdown (derived from the same validated rows)
 // ---------------------------------------------------------------------------
 
+/// Renders one bounded-Markdown table cell: pipe characters are escaped and
+/// newline runs are flattened to spaces, so a free-text value (a disposition
+/// owner, recovery route, or evidence reference) can never split or extend a
+/// table row. The accepted receipt JSON keeps the raw value.
+fn markdown_cell(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '|' => out.push_str("\\|"),
+            '\n' | '\r' => out.push(' '),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 fn render_accepted_markdown(receipt: &Value) -> Result<String, String> {
     let counts = receipt
         .get("counts")
@@ -1316,7 +1361,13 @@ fn render_accepted_markdown(receipt: &Value) -> Result<String, String> {
                 .and_then(|disposition| disposition.get("owner"))
                 .and_then(Value::as_str)
                 .unwrap_or("-");
-            out.push_str(&format!("| {id} | {status} | {disposition} | {owner} |\n"));
+            out.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                markdown_cell(id),
+                markdown_cell(status),
+                markdown_cell(disposition),
+                markdown_cell(owner)
+            ));
         }
     }
     out.push('\n');
@@ -2013,6 +2064,14 @@ fn compare_currentness(inputs: &CurrentnessInputs) -> Result<CurrentnessComparis
     let candidate_ripr = candidate.get("ripr").and_then(Value::as_object);
     for field in POINTER_RIPR_KEYS {
         let Some(bound_value) = pointer_ripr.get(field) else {
+            // A missing toolchain identity is never silently skipped: an
+            // unbound identity cannot be re-verified, so the verdict can
+            // never read `current` on its strength (the step-6 subject rule
+            // applied to the toolchain block; the source/binary analogues
+            // are additionally disclosed by the live comparisons in step 9).
+            unverifiable.push(format!(
+                "pointer binds no toolchain identity `{field}`; that identity cannot be re-verified"
+            ));
             continue;
         };
         match candidate_ripr.and_then(|block| block.get(field)) {
@@ -2253,7 +2312,7 @@ fn run_currentness_check(parsed: &ReportArgs) -> Result<(), String> {
             )
         })?;
     check_portable_path("pointer", "receipt_file", receipt_file)?;
-    let receipt_path = split_portable(&parsed.state_dir, receipt_file);
+    let receipt_path = split_portable("pointer", "receipt_file", &parsed.state_dir, receipt_file)?;
     if !receipt_path.exists() {
         return Err(fail(
             &receipt_path.to_string_lossy(),
@@ -2287,9 +2346,11 @@ fn run_currentness_check(parsed: &ReportArgs) -> Result<(), String> {
         })?
         .to_string();
     let candidate_path = split_portable(
+        "accepted receipt",
+        "candidate.sha256",
         &parsed.state_dir,
         &format!("{RECEIPTS_DIR}/{candidate_binding}.candidate.json"),
-    );
+    )?;
     if !candidate_path.exists() {
         return Err(fail(
             &candidate_path.to_string_lossy(),
@@ -2379,13 +2440,22 @@ fn run_currentness_check(parsed: &ReportArgs) -> Result<(), String> {
 }
 
 /// Joins a state dir with a portable (forward-slash) pointer-relative path on
-/// any host.
-fn split_portable(state_dir: &str, portable: &str) -> PathBuf {
+/// any host. The split is the containment boundary: the portable path is
+/// rejected unless every `/`-separated component is non-empty and non-dot
+/// (`split` preserves empty components, and host path resolution skips them,
+/// so an unguarded join could walk outside the accepted state directory).
+fn split_portable(
+    subject: &str,
+    field: &str,
+    state_dir: &str,
+    portable: &str,
+) -> Result<PathBuf, String> {
+    check_portable_components(subject, field, portable)?;
     let mut path = PathBuf::from(state_dir);
     for component in portable.split('/') {
         path.push(component);
     }
-    path
+    Ok(path)
 }
 
 // ---------------------------------------------------------------------------
@@ -3903,6 +3973,256 @@ mod python_eval_sweep_report {
         // is disclosed in full, never a gate pass dressed as current).
         let binary = write_binary_v1(&sandbox)?;
         run_report(&currentness_args(&sandbox, &binary, &[]))?;
+        Ok(())
+    }
+
+    #[test]
+    fn split_portable_rejects_traversal_component_shapes() -> Result<(), String> {
+        // The split is the containment boundary: empty components (consecutive
+        // separators), `.`, `..`, and separator-only paths are rejected, so no
+        // pointer-shaped portable path can walk outside the state directory.
+        let good = split_portable("pointer", "receipt_file", "state", "receipts/abc123.json")?;
+        assert_eq!(
+            good,
+            PathBuf::from("state").join("receipts").join("abc123.json"),
+            "the normal receipt_file shape still joins"
+        );
+        for bad in [
+            "receipts//../../secret",
+            "a//b",
+            "receipts/./abc.json",
+            "./receipts/abc.json",
+            ".",
+            "..",
+            "receipts/",
+            "receipts//",
+            "//",
+            "",
+        ] {
+            let error = match split_portable("pointer", "receipt_file", "state", bad) {
+                Ok(path) => {
+                    return Err(format!(
+                        "split_portable must reject `{bad}`, joined `{}`",
+                        path.display()
+                    ));
+                }
+                Err(error) => error,
+            };
+            assert!(
+                error.contains("receipt_file"),
+                "refusal `{error}` must name the field"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pointer_receipt_file_with_empty_or_dot_components_is_refused() -> Result<(), String> {
+        // A crafted pointer receipt_file cannot use consecutive separators or
+        // `.` components to slip a traversal path past the portable-path
+        // checks: every such shape is refused naming `receipt_file`, while the
+        // normal `receipts/<sha>.json` shape still reads.
+        for (index, bad) in [
+            "receipts//leak.json",
+            "receipts/./leak.json",
+            "a//..//b/../../outside",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let sandbox = accepted_sandbox(&format!("portable-{index}"))?;
+            let binary = write_binary_v1(&sandbox)?;
+            let pointer_path = sandbox.path("accepted/current.json");
+            let mut pointer = read_strict(&pointer_path)?;
+            if let Some(object) = pointer.as_object_mut() {
+                object.insert("receipt_file".to_string(), json!(bad));
+            }
+            write_json(&pointer_path, &pointer)?;
+            expect_fail_all(
+                run_report(&currentness_args(&sandbox, &binary, &[])),
+                &["receipt_file"],
+            )?;
+        }
+        // The normal shape still passes end to end.
+        let sandbox = accepted_sandbox("portable-good")?;
+        let binary = write_binary_v1(&sandbox)?;
+        run_report(&currentness_args(&sandbox, &binary, &[]))?;
+        Ok(())
+    }
+
+    #[test]
+    fn missing_toolchain_identity_is_never_current() -> Result<(), String> {
+        // A pointer that binds no `features` or `build_profile` copy (the
+        // candidate recorded none) cannot verify that identity: the verdict
+        // must read `unverifiable` — never `current` — with the field named
+        // (the step-6 subject rule applied to the toolchain block).
+        for (label, field) in [
+            ("tc-no-features", "features"),
+            ("tc-no-profile", "build_profile"),
+        ] {
+            let sandbox = accepted_sandbox(label)?;
+            let pointer_path = sandbox.path("accepted/current.json");
+            let mut pointer = read_strict(&pointer_path)?;
+            if let Some(ripr) = pointer
+                .get_mut("ripr")
+                .and_then(|block| block.as_object_mut())
+            {
+                ripr.remove(field);
+            }
+            write_json(&pointer_path, &pointer)?;
+            let pointer_object = pointer
+                .as_object()
+                .ok_or_else(|| "pointer object".to_string())?;
+            let (accepted_receipt, receipt_path) = accepted_receipt(&sandbox)?;
+            let receipt_sha = sha256_hex(
+                &std::fs::read(&receipt_path).map_err(|error| format!("read receipt: {error}"))?,
+            );
+            let candidate_binding = accepted_receipt
+                .get("candidate")
+                .and_then(|candidate| candidate.get("sha256"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "candidate binding".to_string())?
+                .to_string();
+            let candidate_path = sandbox.path(&format!(
+                "accepted/receipts/{candidate_binding}.candidate.json"
+            ));
+            let candidate = read_strict(&candidate_path)?;
+            let candidate_sha = sha256_hex(
+                &std::fs::read(&candidate_path)
+                    .map_err(|error| format!("read candidate: {error}"))?,
+            );
+            let (manifest_value, manifest_sha) = load_strict_json(&sandbox.manifest_path_string())?;
+            let accepted = validate_accepted_manifest(&manifest_value, manifest_sha.clone())?;
+            let current = CurrentIdentity {
+                ripr_source_sha: Some(SOURCE_SHA.to_string()),
+                ripr_binary_digest: Some(binary_digest_v1()),
+                subject_inputs: recompute_subject_inputs(
+                    &accepted,
+                    &sandbox.manifest_path_string(),
+                ),
+            };
+            let comparison = compare_currentness(&CurrentnessInputs {
+                pointer: pointer_object,
+                accepted_receipt: &accepted_receipt,
+                receipt_sha256: &receipt_sha,
+                candidate: &candidate,
+                candidate_sha256: &candidate_sha,
+                accepted: &accepted,
+                current_manifest_sha256: &manifest_sha,
+                current: &current,
+            })?;
+            assert_eq!(
+                comparison.verdict,
+                CurrentnessVerdict::Unverifiable,
+                "a pointer binding no `{field}` must never read current: stale={:?} unverifiable={:?}",
+                comparison.stale,
+                comparison.unverifiable
+            );
+            assert!(
+                comparison
+                    .unverifiable
+                    .iter()
+                    .any(|reason| reason.contains("toolchain") && reason.contains(field)),
+                "the disclosure must name the missing toolchain identity `{field}`: {:?}",
+                comparison.unverifiable
+            );
+
+            // End to end: the command exits 0 with the disclosure.
+            let binary = write_binary_v1(&sandbox)?;
+            run_report(&currentness_args(&sandbox, &binary, &[]))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn disposition_owner_pipes_and_newlines_cannot_split_the_markdown_table() -> Result<(), String>
+    {
+        // A free-text disposition owner carrying a pipe and a newline must
+        // not split or extend the accepted Markdown table: the cell renders
+        // escaped and flattened while the receipt JSON keeps the raw value.
+        // The pure derivation path (sidecar -> accepted receipt -> Markdown)
+        // avoids the shared dry-run report files, which sibling tests
+        // rewrite concurrently.
+        let sandbox = TestSandbox::new("md-escape")?;
+        let manifest_sha = sandbox.write_manifest()?;
+        let candidate = candidate_value(&sandbox, &manifest_sha, &binary_digest_v1(), 100);
+        let candidate_path = sandbox.path("candidate.json");
+        write_json(&candidate_path, &candidate)?;
+        let candidate_sha = sha256_hex(
+            &std::fs::read(&candidate_path).map_err(|error| format!("read candidate: {error}"))?,
+        );
+        let rows = read_candidate_rows(&candidate)?;
+        let mut value = dispositions_value();
+        if let Some(first) = value
+            .get_mut("dispositions")
+            .and_then(Value::as_array_mut)
+            .and_then(|entries| entries.first_mut())
+            .and_then(|entry| entry.as_object_mut())
+        {
+            first.insert("owner".to_string(), json!("team\nops|lead"));
+        }
+        let dispositions_path = sandbox.path("dispositions.json");
+        write_json(&dispositions_path, &value)?;
+        let dispositions = load_dispositions(&dispositions_path.to_string_lossy(), &rows)?;
+        require_disposition_coverage(&rows, &dispositions)?;
+        let (manifest_value, current_manifest_sha) =
+            load_strict_json(&sandbox.manifest_path_string())?;
+        let accepted = validate_accepted_manifest(&manifest_value, current_manifest_sha.clone())?;
+        let receipt = build_accepted_receipt(
+            &accepted,
+            &current_manifest_sha,
+            &candidate,
+            &candidate_sha,
+            &rows,
+            &dispositions,
+            &[],
+        );
+        let markdown = render_accepted_markdown(&receipt)?;
+        assert!(
+            markdown.contains("team ops\\|lead"),
+            "the owner cell must render escaped and flattened: {markdown}"
+        );
+        assert!(
+            !markdown.contains("team\nops") && !markdown.contains("team|lead"),
+            "the raw owner value must not leak into the table: {markdown}"
+        );
+        // Table integrity: every subjects-section line keeps exactly the five
+        // structural cell separators (an unescaped pipe or a raw newline would
+        // break that count).
+        let section = markdown
+            .split("## Subjects")
+            .nth(1)
+            .and_then(|rest| rest.split("## Non-claims").next())
+            .ok_or_else(|| "markdown subjects section".to_string())?;
+        for line in section.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let structural = line.replace("\\|", "");
+            assert_eq!(
+                structural.matches('|').count(),
+                5,
+                "every subjects-table line must keep exactly five cell separators: {line}"
+            );
+        }
+
+        // The JSON keeps the raw value.
+        let raw_owner = receipt
+            .get("subjects")
+            .and_then(Value::as_array)
+            .and_then(|subjects| {
+                subjects
+                    .iter()
+                    .find(|subject| subject.get("id").and_then(Value::as_str) == Some("bravo"))
+            })
+            .and_then(|subject| subject.get("disposition"))
+            .and_then(|disposition| disposition.get("owner"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| "bravo disposition owner".to_string())?;
+        assert_eq!(
+            raw_owner, "team\nops|lead",
+            "the receipt JSON keeps the raw disposition value"
+        );
         Ok(())
     }
 

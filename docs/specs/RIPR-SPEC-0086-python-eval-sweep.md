@@ -429,11 +429,17 @@ input digest, config identity).
   input bytes (the manifest-declared synthetic diff, resolved
   manifest-relative then repo-root-relative), and the command-contract
   version. Any movement flips the verdict to `stale` with the exact reason
-  named. Editing the pointer's as-of string can never repair staleness:
+  named. A pointer that binds no toolchain identity field (`features`,
+  `build_profile`) discloses that identity `unverifiable` with the field
+  named: a missing identity never leaves the verdict `current`. Editing the
+  pointer's as-of string can never repair staleness:
   as-of is never an input to the comparison. Identities the loader cannot
   recompute offline are disclosed `unverifiable` — never assumed current —
   and the check-path policy is fail-closed: the pointer's schema is
-  deny-unknown, its digests are format-checked, and a pointer naming a
+  deny-unknown, its digests are format-checked, its portable paths are
+  component-checked (no empty components from consecutive separators, no
+  `.`/`..` components, never a separator-only path, so a crafted pointer
+  cannot walk outside the accepted state directory), and a pointer naming a
   missing artifact is a typed integrity failure.
 - **Accepted receipt content** (all derived from the validated rows — the
   receipt never carries a hand-entered total, and every count is emitted as
@@ -463,7 +469,10 @@ input digest, config identity).
   reference, owner, and recovery route are REQUIRED on every disposition;
   dispositions for complete rows, unknown ids, duplicates, unknown
   vocabulary, hygiene violations, and notes over a 512-character bound all
-  fail closed. The retained historical two parse failures and one timeout
+  fail closed. The bounded Markdown escapes pipe characters and flattens
+  newlines in rendered disposition rows, so a free-text value cannot split a
+  table cell (the receipt JSON keeps the raw value). The retained historical
+  two parse failures and one timeout
   are dispositioned through this machinery when a current candidate lands:
   a fresh candidate row with the same failure is `reproduced-current`;
   otherwise the failure is explicitly dispositioned against current source
@@ -573,8 +582,13 @@ input digest, config identity).
   pointer-config-copy, pointer-features-copy, and source-sha movements each
   flip the verdict to stale with the exact reason, editing the as-of string
   never repairs staleness (and never breaks a current pointer), a missing
-  binary recompute input leaves the verdict `unverifiable` (never
-  `current`), no pointer is `not_run`, and stability mismatch reasons plus
+  binary recompute input and a pointer binding no toolchain identity field
+  (`features`/`build_profile`) each leave the verdict `unverifiable` (never
+  `current`) with the gap named, pointer portable paths with empty/`.`/`..`
+  components are refused naming the field while the normal receipt shape
+  still reads, disposition values render table-safe (escaped pipes, flattened
+  newlines) in the bounded Markdown while the JSON keeps the raw value, no
+  pointer is `not_run`, and stability mismatch reasons plus
   the derived counts/health/runtime envelope are recorded in the accepted
   receipt.
 
@@ -785,6 +799,17 @@ receipt rows derive repos_run = 8 but the summary claims 7
   `..::pointer_config_edit_flips_stale`, `..::pointer_features_edit_flips_stale`,
   and `..::source_sha_change_flips_stale` -> each bound identity movement
   flips the pointer stale with the exact reason named.
+- `eval_sweep_report::python_eval_sweep_report::split_portable_rejects_traversal_component_shapes`
+  and `..::pointer_receipt_file_with_empty_or_dot_components_is_refused` ->
+  portable-path containment: empty components (consecutive separators), `.`,
+  `..`, and separator-only shapes are refused naming the field while the
+  normal `receipts/<sha>.json` shape still reads.
+- `eval_sweep_report::python_eval_sweep_report::missing_toolchain_identity_is_never_current`
+  -> a pointer binding no `features`/`build_profile` copy discloses that
+  identity `unverifiable` with the field named — never `current`.
+- `eval_sweep_report::python_eval_sweep_report::disposition_owner_pipes_and_newlines_cannot_split_the_markdown_table`
+  -> free-text disposition values render escaped and flattened in the bounded
+  Markdown table while the receipt JSON keeps the raw value.
 
 ## Implementation Mapping
 
