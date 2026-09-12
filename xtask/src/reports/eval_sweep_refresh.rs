@@ -671,7 +671,14 @@ fn materialize_subject(
         Ok(()) => verify_materialized_dir(&dir, subject, "network_clone", clone_timeout),
         Err(limitation) => {
             discard_partial_dir(&dir);
-            Materialization::Failed { limitation }
+            // A successful clone whose pinned SHA cannot be checked out is
+            // accepted-state staleness, not clone infrastructure
+            // (#3735 review): the receipt records `stale`, not `tempfail`.
+            if limitation.starts_with("pin-unavailable:") {
+                Materialization::Stale { limitation }
+            } else {
+                Materialization::Failed { limitation }
+            }
         }
     }
 }
@@ -751,8 +758,11 @@ fn clone_into(
         ));
     }
     if !checkout.status.is_some_and(|status| status.success()) {
+        // A successful clone whose pinned SHA cannot be checked out is
+        // accepted-state staleness, not clone infrastructure: the caller maps
+        // this marker to `stale` rather than `tempfail` (#3735 review).
         return Err(format!(
-            "pinned SHA {} is unavailable in the cloned repository of `{}`: {}",
+            "pin-unavailable: pinned SHA {} is unavailable in the cloned repository of `{}`: {}",
             subject.sha,
             subject.id,
             first_line(&checkout.stderr)
@@ -981,7 +991,21 @@ fn count_corpus(dir: &Path) -> CorpusCounts {
                 continue;
             }
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            // A per-entry iteration error (concurrent removal, metadata
+            // failure) means the walk is truncated: the corpus selection can
+            // never claim `complete` over a walk that skipped an entry
+            // (#3735 review).
+            let Ok(entry) = entry else {
+                counts.complete = false;
+                if counts.limitation.is_none() {
+                    counts.limitation = Some(format!(
+                        "corpus walk could not list an entry under `{}`",
+                        current.display()
+                    ));
+                }
+                continue;
+            };
             seen += 1;
             if seen > WORKING_SET_CAP {
                 counts.complete = false;
@@ -3932,6 +3956,21 @@ mod python_eval_sweep_refresh {
             );
         }
         assert_eq!(seen.len(), 8, "all eight subjects received a row");
+
+        // #3735 review: the offline synthetic route is deterministic, so the
+        // PR's "8/8 complete" claim gets its oracle here — every row is
+        // `complete` with both passes executed and compared.
+        let complete_rows = rows
+            .iter()
+            .filter(|row| row.get("status").and_then(Value::as_str) == Some("complete"))
+            .count();
+        assert_eq!(complete_rows, 8, "all 8 rows complete offline: {rows:?}");
+        for row in &rows {
+            assert!(
+                row.get("repeat").is_some(),
+                "every complete row carries its stability comparison"
+            );
+        }
 
         // SPEC-0086 retention covers each pass: every compared (complete)
         // row retains its second-pass stdout AND stderr under raw/, and the
