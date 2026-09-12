@@ -404,6 +404,56 @@ pub(crate) fn repair_attempt_directory(root: &Path, attempt_id: &RepairAttemptId
         .join(attempt_id.as_str())
 }
 
+/// Loads and fully validates one durable attempt manifest by identity,
+/// including its before commitment and artifact digest bindings. Consumers
+/// that extend the attempt (the Python repair-trust binding) read the
+/// retained provenance through this authority instead of re-parsing files.
+pub(crate) fn load_repair_attempt_manifest(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<RepairAttemptManifest, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let (_, manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    Ok(manifest)
+}
+
+/// Finds one staged artifact by role, if the attempt carries it.
+pub(crate) fn find_manifest_artifact_by_role<'a>(
+    manifest: &'a RepairAttemptManifest,
+    role: &str,
+) -> Option<&'a RepairAttemptArtifact> {
+    manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.role == role)
+}
+
+/// Loads the retained edit-cage policy of a durable attempt from its staged
+/// baseline artifact, re-verifying the artifact digest first.
+pub(crate) fn load_edit_cage_policy(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<crate::edit_cage::EditCagePolicy, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let (_, manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    let artifact = find_manifest_artifact(&manifest, "edit_cage_baseline")?;
+    let path = root.join(&artifact.path);
+    let bytes =
+        std::fs::read(&path).map_err(|error| format!("read {} failed: {error}", path.display()))?;
+    if u64::try_from(bytes.len()).map_err(|error| error.to_string())? != artifact.bytes
+        || sha256_bytes(&bytes) != artifact.sha256
+    {
+        return Err("repair attempt edit-cage baseline binding failed".to_string());
+    }
+    let baseline: crate::edit_cage::AttemptBaseline = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
+    Ok(baseline.policy().clone())
+}
+
 /// Reserve the attempt transaction exclusively. Creating the directory with
 /// `create_dir` (not check-then-act) fails closed when the attempt identity is
 /// already taken, so an existing attempt is never reused or overwritten.

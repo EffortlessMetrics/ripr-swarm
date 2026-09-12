@@ -1,0 +1,1492 @@
+//! Digest-bound bridge between the two-phase external-edit driver (#2443),
+//! the durable repair-attempt authority (#2927), and the governed Python
+//! repair-trust selection/attempt model (RIPR-SPEC-0176, #3568).
+//!
+//! The bridge is keyed by digests, never by names: the driver consumes the
+//! accepted selection manifest (#3568) by its exact-bytes sha256, binds one
+//! selection row by its recomputed canonical `selection_digest`, and retains
+//! that binding as a staged artifact of the durable `RepairAttemptId`
+//! transaction. The after phase re-verifies the same digests immediately
+//! before recording an applied edit, so a replaced row or a changed manifest
+//! fails closed before the attempt advances.
+//!
+//! Claim boundary: the driver records preparation and application evidence
+//! only. It records no verification result, no static movement, and no
+//! closure; RIPR-SPEC-0176's `verified`/`reviewed`/`accepted` lifecycle
+//! states and the movement/execution axes stay owned by the later phase
+//! (#3570) and the corpus, never by this driver.
+
+use crate::edit_cage::EditCagePolicy;
+use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// Wire schema of the driver binding record. Versioned independently of the
+/// durable attempt manifest schema.
+pub(crate) const BINDING_SCHEMA_VERSION: &str = "0.1";
+pub(crate) const BINDING_KIND: &str = "python_repair_driver_binding";
+/// The binding consumes and extends the #3568 model, so it carries that spec
+/// identity; it introduces no new spec number.
+pub(crate) const BINDING_SPEC: &str = "RIPR-SPEC-0176";
+/// Artifact role under which the prepare-phase record is staged into the
+/// durable attempt.
+pub(crate) const BINDING_ARTIFACT_ROLE: &str = "python_repair_trust_binding";
+/// Repository-global compatibility projection of the prepare record.
+pub(crate) const PREPARE_RECORD_COMPAT_PATH: &str =
+    "target/ripr/workflow/python-repair-trust-binding.json";
+/// Repository-global compatibility projection of the apply record.
+pub(crate) const APPLY_RECORD_COMPAT_PATH: &str =
+    "target/ripr/workflow/python-repair-driver-after.json";
+
+const MANIFEST_SCHEMA_VERSION: &str = "0.1";
+const MANIFEST_KIND: &str = "python_repair_trust_manifest";
+const SELECTION_DIGEST_FIELD: &str = "selection_digest";
+
+/// The binding is issued only for a target the driver can cage exactly: an
+/// existing, unambiguous, test-only file. `proposed`/`ambiguous`/
+/// `unavailable`/`unsafe` targets each require a new or re-authorized
+/// selection before the driver prepares an edit transaction.
+const BINDABLE_TARGET_STATE: &str = "existing";
+
+/// Declared telemetry of the binding record: the only field that may differ
+/// between two equivalent preparations. It records where the selection
+/// manifest was read from so the after phase can re-read the same bytes; it
+/// is not an identity (the digest is).
+pub(crate) const TELEMETRY_MANIFEST_PATH_FIELD: &str = "selection_manifest_path";
+
+/// The explicit authorization signals. Both are required together at prepare
+/// and at apply; the driver never infers, defaults, or persists an
+/// authorization that was not handed to it on the exact invocation.
+pub(crate) const AUTHORIZATION_STATUS: &str = "granted";
+pub(crate) const AUTHORIZATION_METHOD: &str = "explicit-operator-flags";
+
+/// The driver's standing non-claims. The apply record carries the edit-cage
+/// decision (a structural verdict on which paths changed), never a
+/// verification verdict, never movement, never closure.
+pub(crate) const BINDING_NON_CLAIMS: [&str; 3] = [
+    "no verification result is claimed by the driver",
+    "no static movement is claimed by the driver",
+    "no closure is claimed by the driver",
+];
+
+/// The closed prepare-record field set (deny-unknown). Retained binding
+/// records are always prepare records; the apply-phase additions live only in
+/// the freshly rendered apply record.
+const PREPARE_RECORD_KEYS: [&str; 14] = [
+    "schema_version",
+    "kind",
+    "spec",
+    "phase",
+    "seam_id",
+    "repository_head",
+    TELEMETRY_MANIFEST_PATH_FIELD,
+    "driver",
+    "config",
+    "input",
+    "trust",
+    "edit_surface",
+    "authorization",
+    "non_claims",
+];
+
+const TRUST_KEYS: [&str; 18] = [
+    "attempt_id",
+    "case_id",
+    "subject_id",
+    "repository",
+    "base",
+    "head",
+    "tree",
+    "source_currentness",
+    "selection_manifest_sha256",
+    "selection_digest",
+    "target_path",
+    "target_state",
+    "family",
+    "owner",
+    "discriminator",
+    "relation",
+    "oracle",
+    "limitation",
+];
+
+const DRIVER_KEYS: [&str; 2] = ["binary_sha256", "version"];
+const CONFIG_KEYS: [&str; 1] = ["profile"];
+const INPUT_KEYS: [&str; 2] = ["packet_sha256", "before_snapshot_sha256"];
+const EDIT_SURFACE_KEYS: [&str; 2] = ["allowed", "forbidden"];
+const AUTHORIZATION_KEYS: [&str; 3] = ["status", "authority", "method"];
+
+/// Denied edit-surface path prefixes, mirroring the RIPR-SPEC-0176 denied
+/// production/generated/vendor/environment vocabulary. The invariant is
+/// shared across the crate boundary by digest-bound records, while each
+/// matcher stays local by design (the xtask validator owns corpus
+/// enforcement; this crate owns the fail-closed gate at prepare time).
+const DENIED_SURFACE_PREFIXES: [&str; 14] = [
+    "target/",
+    "dist/",
+    "build/",
+    "vendor/",
+    "vendored/",
+    "node_modules/",
+    "generated/",
+    "__pycache__/",
+    "site-packages/",
+    ".venv/",
+    "venv/",
+    "env/",
+    ".tox/",
+    ".eggs/",
+];
+
+fn is_denied_edit_surface(path: &str) -> bool {
+    let lowered = path.to_ascii_lowercase();
+    DENIED_SURFACE_PREFIXES
+        .iter()
+        .any(|prefix| lowered.starts_with(prefix))
+        || lowered
+            .split('/')
+            .any(|component| component.contains(".generated."))
+}
+
+/// CLI-provided edit authorization. `authorized` is true only when the
+/// explicit flag was passed; `authority` is the non-empty operator/agent
+/// identity supplied with it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EditAuthorization {
+    pub(crate) authorized: bool,
+    pub(crate) authority: Option<String>,
+}
+
+impl EditAuthorization {
+    /// The typed refusal follows the bounded-execution authorization
+    /// precedent: it names the missing signals instead of failing silently,
+    /// and the driver never infers an authorization.
+    fn verify(&self, action: &str) -> Result<&str, String> {
+        if !self.authorized {
+            return Err(format!(
+                "python repair-trust binding refuses to {action}: explicit --edit-authorized and --edit-authority <identity> are required; the driver never authorizes an edit automatically"
+            ));
+        }
+        let authority = self
+            .authority
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "python repair-trust binding refuses to {action}: --edit-authorized requires --edit-authority <identity>"
+                )
+            })?;
+        Ok(authority)
+    }
+}
+
+/// CLI-provided reference into the accepted #3568 selection manifest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PythonRepairTrustSelection {
+    pub(crate) manifest_path: PathBuf,
+    pub(crate) attempt_id: String,
+}
+
+/// One verified selection row, reduced to the identities the binding record
+/// retains.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifiedSelection {
+    pub(crate) attempt_id: String,
+    pub(crate) selection_manifest_sha256: String,
+    pub(crate) selection_manifest_path: String,
+    pub(crate) selection_digest: String,
+    pub(crate) case_id: String,
+    pub(crate) subject_id: String,
+    pub(crate) repository: String,
+    pub(crate) base: String,
+    pub(crate) head: String,
+    pub(crate) tree: Option<String>,
+    pub(crate) source_currentness: Option<String>,
+    pub(crate) family: String,
+    pub(crate) owner: String,
+    pub(crate) discriminator: String,
+    pub(crate) relation: String,
+    pub(crate) oracle: String,
+    pub(crate) limitation: Option<String>,
+    pub(crate) target_path: String,
+    pub(crate) target_state: String,
+}
+
+/// The staged prepare-phase binding artifact: the digest the durable attempt
+/// manifest records for it (prefix-stripped to the corpus digest shape) and
+/// its parsed record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RetainedBinding {
+    pub(crate) artifact_sha256: String,
+    pub(crate) value: Value,
+}
+
+/// Outcome of a successful prepare-phase binding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PreparedBinding {
+    pub(crate) record: Value,
+    pub(crate) record_path: PathBuf,
+    pub(crate) verified: VerifiedSelection,
+}
+
+// ---------------------------------------------------------------------------
+// Strict JSON (duplicate keys fail at load) and digest helpers
+// ---------------------------------------------------------------------------
+
+struct StrictJson(Value);
+
+impl<'de> Deserialize<'de> for StrictJson {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(StrictJsonVisitor)
+    }
+}
+
+struct StrictJsonVisitor;
+
+impl<'de> Visitor<'de> for StrictJsonVisitor {
+    type Value = StrictJson;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("JSON without duplicate object keys")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJson(value.into()))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJson(value.into()))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJson(value.into()))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        serde_json::Number::from_f64(value)
+            .map(serde_json::Value::Number)
+            .map(StrictJson)
+            .ok_or_else(|| serde::de::Error::custom("non-finite JSON number"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJson(value.into()))
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJson(Value::Null))
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(StrictJson(value)) = sequence.next_element::<StrictJson>()? {
+            values.push(value);
+        }
+        Ok(StrictJson(Value::Array(values)))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut values = Map::new();
+        while let Some(key) = map.next_key::<String>()? {
+            let StrictJson(value) = map.next_value::<StrictJson>()?;
+            if values.insert(key.clone(), value).is_some() {
+                return Err(serde::de::Error::custom(format!(
+                    "duplicate object key `{key}`"
+                )));
+            }
+        }
+        Ok(StrictJson(Value::Object(values)))
+    }
+}
+
+/// The one strict-JSON entry point for binding and manifest loads: duplicate
+/// keys fail at load (structural rot), matching the corpus validator canon.
+fn parse_strict_json(text: &str) -> Result<Value, String> {
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    let StrictJson(value) =
+        StrictJson::deserialize(&mut deserializer).map_err(|error| error.to_string())?;
+    deserializer.end().map_err(|error| error.to_string())?;
+    Ok(value)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut rendered = String::with_capacity(64);
+    for byte in digest {
+        rendered.push_str(&format!("{byte:02x}"));
+    }
+    rendered
+}
+
+/// Digest text is bare lowercase sha256 hex (64 characters), the #3568 digest
+/// shape (the durable attempt artifacts keep their `sha256:`-prefixed shape;
+/// the binding record carries the corpus shape so the identities transfer
+/// verbatim).
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn is_git_sha(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+/// A portable repo-relative path: forward slashes, never absolute, no `..`
+/// components. Mirrors the RIPR-SPEC-0176 portability contract.
+fn check_portable_path(path: &str) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("path must be non-empty".to_string());
+    }
+    if path.contains('\\') {
+        return Err(format!(
+            "path `{path}` is not portable: backslash separators are not allowed"
+        ));
+    }
+    if path.starts_with('/') {
+        return Err(format!("path `{path}` must be repo-relative, not absolute"));
+    }
+    let bytes = path.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return Err(format!(
+            "path `{path}` must be repo-relative, not a drive-letter absolute path"
+        ));
+    }
+    if path.split('/').any(|component| component == "..") {
+        return Err(format!("path `{path}` must not contain `..` components"));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Small strict-object accessors
+// ---------------------------------------------------------------------------
+
+fn as_object<'a>(value: &'a Value, subject: &str) -> Result<&'a Map<String, Value>, String> {
+    value.as_object().ok_or_else(|| {
+        format!("python repair-trust binding: subject=`{subject}`: must be a JSON object")
+    })
+}
+
+fn reject_unknown_keys(
+    object: &Map<String, Value>,
+    allowed: &[&str],
+    subject: &str,
+) -> Result<(), String> {
+    for key in object.keys() {
+        if !allowed.contains(&key.as_str()) {
+            return Err(format!(
+                "python repair-trust binding: subject=`{subject}`: unknown field `{key}` (denied to catch schema rot and typos)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn require_string(
+    subject: &str,
+    object: &Map<String, Value>,
+    field: &str,
+) -> Result<String, String> {
+    match object.get(field) {
+        None => Err(format!(
+            "python repair-trust binding: subject=`{subject}` field=`{field}`: required field is missing"
+        )),
+        Some(Value::Null) => Err(format!(
+            "python repair-trust binding: subject=`{subject}` field=`{field}`: a present null is not a value"
+        )),
+        Some(Value::String(text)) if !text.trim().is_empty() => Ok(text.clone()),
+        Some(Value::String(_)) => Err(format!(
+            "python repair-trust binding: subject=`{subject}` field=`{field}`: required field must be non-empty"
+        )),
+        Some(_) => Err(format!(
+            "python repair-trust binding: subject=`{subject}` field=`{field}`: field must be a string"
+        )),
+    }
+}
+
+fn opt_string(object: &Map<String, Value>, field: &str) -> Result<Option<String>, String> {
+    match object.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) if !text.trim().is_empty() => Ok(Some(text.clone())),
+        Some(Value::String(_)) => Err(format!(
+            "python repair-trust binding: field=`{field}`: string field must be non-empty when present"
+        )),
+        Some(_) => Err(format!(
+            "python repair-trust binding: field=`{field}`: field must be a string when present"
+        )),
+    }
+}
+
+/// Canonical selection-row digest: sha256 over the row JSON with only
+/// `selection_digest` removed, re-serialized as compact UTF-8 JSON with
+/// sorted object keys (serde_json's default map orders keys, so the encoding
+/// is canonical). This is the same preimage the corpus validator recomputes.
+fn canonical_selection_digest(row: &Map<String, Value>) -> Result<String, String> {
+    let mut canonical = row.clone();
+    canonical.remove(SELECTION_DIGEST_FIELD);
+    let text = serde_json::to_string(&Value::Object(canonical))
+        .map_err(|error| format!("canonical selection serialization failed: {error}"))?;
+    Ok(sha256_hex(text.as_bytes()))
+}
+
+// ---------------------------------------------------------------------------
+// Selection-manifest verification
+// ---------------------------------------------------------------------------
+
+/// Loads and structurally validates the accepted #3568 selection manifest far
+/// enough to bind one row by digest: envelope identity, closed row schema,
+/// unique attempt identities, and the row digest anchors. Full corpus
+/// semantics remain owned by the xtask validator; this is the fail-closed
+/// consumer-side verification.
+fn load_selection_manifest(
+    manifest_path: &Path,
+) -> Result<(String, Vec<Map<String, Value>>), String> {
+    let bytes = std::fs::read(manifest_path).map_err(|error| {
+        format!(
+            "python repair-trust selection manifest {} is not readable: {error}",
+            manifest_path.display()
+        )
+    })?;
+    let text = String::from_utf8(bytes)
+        .map_err(|error| format!("python repair-trust selection manifest is not UTF-8: {error}"))?;
+    let value = parse_strict_json(&text).map_err(|error| {
+        format!("python repair-trust selection manifest is not well-formed JSON: {error}")
+    })?;
+    let top = as_object(&value, "selection manifest")?;
+    reject_unknown_keys(
+        top,
+        &[
+            "schema_version",
+            "kind",
+            "spec",
+            "description",
+            "selections",
+        ],
+        "selection manifest",
+    )?;
+    for (field, expected) in [
+        ("schema_version", MANIFEST_SCHEMA_VERSION),
+        ("kind", MANIFEST_KIND),
+        ("spec", BINDING_SPEC),
+    ] {
+        let actual = require_string("selection manifest", top, field)?;
+        if actual != expected {
+            return Err(format!(
+                "python repair-trust selection manifest field `{field}` must be `{expected}`, got `{actual}`"
+            ));
+        }
+    }
+    let rows = match value.get("selections") {
+        Some(Value::Array(rows)) => rows,
+        _ => {
+            return Err(
+                "python repair-trust selection manifest must contain a selections array"
+                    .to_string(),
+            );
+        }
+    };
+    let mut parsed = Vec::new();
+    let mut seen = BTreeSet::new();
+    for row in rows {
+        let entry = as_object(row, "selection row")?;
+        reject_unknown_keys(
+            entry,
+            &[
+                "attempt_id",
+                "case_id",
+                "subject_id",
+                "repository",
+                "base",
+                "head",
+                "tree",
+                "source_currentness",
+                "selection_reason",
+                "diversity_stratum",
+                "family",
+                "owner",
+                "discriminator",
+                "relation",
+                "oracle",
+                "limitation",
+                "expected_direction",
+                "claim_boundary",
+                "target_path",
+                "target_state",
+                "selected_at",
+                "selector",
+                "authority_snapshot_digest",
+                "selection_digest",
+            ],
+            "selection row",
+        )?;
+        let attempt_id = require_string("selection row", entry, "attempt_id")?;
+        if !seen.insert(attempt_id.clone()) {
+            return Err(format!(
+                "python repair-trust selection manifest carries duplicate attempt identity `{attempt_id}`"
+            ));
+        }
+        parsed.push(entry.clone());
+    }
+    Ok((sha256_hex(text.as_bytes()), parsed))
+}
+
+/// Verifies one selection row's digest anchors, shape, and identity alignment
+/// with the packet's selected edit target. Shared by the prepare and apply
+/// phases; the phase-specific checks live with their callers.
+fn verify_row_binding(
+    row: &Map<String, Value>,
+    request_attempt_id: &str,
+    policy: &EditCagePolicy,
+) -> Result<VerifiedSelection, String> {
+    let attempt_id = require_string("selection row", row, "attempt_id")?;
+    if attempt_id != request_attempt_id {
+        return Err(format!(
+            "selection row identity `{attempt_id}` does not match the requested attempt `{request_attempt_id}`"
+        ));
+    }
+    let recorded = require_string(&attempt_id, row, SELECTION_DIGEST_FIELD)?;
+    if !is_sha256_hex(&recorded) {
+        return Err(format!(
+            "selection row `{attempt_id}` selection_digest must be bare lowercase sha256 hex"
+        ));
+    }
+    let recomputed = canonical_selection_digest(row)
+        .map_err(|error| format!("selection row `{attempt_id}`: {error}"))?;
+    if recorded != recomputed {
+        return Err(format!(
+            "selection row `{attempt_id}` digest mismatch: recorded `{recorded}` but the canonical content digests to `{recomputed}`; a replaced or edited selected row requires a new selection"
+        ));
+    }
+
+    let target_path = require_string(&attempt_id, row, "target_path")?;
+    check_portable_path(&target_path)
+        .map_err(|error| format!("selection row `{attempt_id}` target_path: {error}"))?;
+    let target_state = require_string(&attempt_id, row, "target_state")?;
+    if target_state != BINDABLE_TARGET_STATE {
+        return Err(format!(
+            "selection row `{attempt_id}` declares target_state `{target_state}`; the driver binds only `{BINDABLE_TARGET_STATE}` targets because a changed or ambiguous target requires a new or re-authorized selection"
+        ));
+    }
+    if is_denied_edit_surface(&target_path) {
+        return Err(format!(
+            "selection row `{attempt_id}` target `{target_path}` falls under a production/generated/vendor/environment edit surface; test-only paths are the only allowed edit surface and this selection must not be bound"
+        ));
+    }
+
+    let row_head = require_string(&attempt_id, row, "head")?;
+    if !is_git_sha(&row_head) {
+        return Err(format!(
+            "selection row `{attempt_id}` head must be a bare lowercase 40-character commit SHA"
+        ));
+    }
+    let base = require_string(&attempt_id, row, "base")?;
+    if !is_git_sha(&base) {
+        return Err(format!(
+            "selection row `{attempt_id}` base must be a bare lowercase 40-character commit SHA"
+        ));
+    }
+
+    // The row's target must be the packet's selected edit target: identity
+    // alignment, never name similarity.
+    if policy.selected_target.path() != target_path {
+        return Err(format!(
+            "wrong target: selection row `{attempt_id}` names `{target_path}` but the repair packet's selected edit target is `{}`; the driver binds one attempt only when both identities agree",
+            policy.selected_target.path()
+        ));
+    }
+
+    let tree = opt_string(row, "tree")?;
+    if let Some(tree) = &tree {
+        if !is_sha256_hex(tree) {
+            return Err(format!(
+                "selection row `{attempt_id}` tree must be bare lowercase sha256 hex when present"
+            ));
+        }
+    }
+    let source_currentness = opt_string(row, "source_currentness")?;
+    let limitation = opt_string(row, "limitation")?;
+    let case_id = require_string(&attempt_id, row, "case_id")?;
+    let subject_id = require_string(&attempt_id, row, "subject_id")?;
+    let repository = require_string(&attempt_id, row, "repository")?;
+    let family = require_string(&attempt_id, row, "family")?;
+    let owner = require_string(&attempt_id, row, "owner")?;
+    let discriminator = require_string(&attempt_id, row, "discriminator")?;
+    let relation = require_string(&attempt_id, row, "relation")?;
+    let oracle = require_string(&attempt_id, row, "oracle")?;
+
+    Ok(VerifiedSelection {
+        attempt_id,
+        selection_manifest_sha256: String::new(),
+        selection_manifest_path: String::new(),
+        selection_digest: recorded,
+        case_id,
+        subject_id,
+        repository,
+        base,
+        head: row_head,
+        tree,
+        source_currentness,
+        family,
+        owner,
+        discriminator,
+        relation,
+        oracle,
+        limitation,
+        target_path,
+        target_state,
+    })
+}
+
+/// The prepare-phase row checks beyond the shared binding checks: the row's
+/// `head` pin must equal the repository's current HEAD (a selection made at
+/// another commit is stale before the attempt exists), and the target must
+/// resolve to exactly one file in the repository inventory.
+fn verify_row_for_prepare(
+    row: &Map<String, Value>,
+    request_attempt_id: &str,
+    repository_head: &str,
+    policy: &EditCagePolicy,
+    root: &Path,
+) -> Result<VerifiedSelection, String> {
+    let verified = verify_row_binding(row, request_attempt_id, policy)?;
+    if verified.head != repository_head {
+        return Err(format!(
+            "stale selection: row `{}` pins head `{}` but the repository HEAD is `{repository_head}`; a changed repository state requires a new selection before editing",
+            verified.attempt_id, verified.head
+        ));
+    }
+    // Ground truth: the target must resolve to exactly one file in the
+    // repository inventory. Zero matches mean the target does not exist; more
+    // than one case-insensitive match means the target identity is ambiguous
+    // on this checkout. Both fail before editing.
+    let matches = repository_target_matches(root, &verified.target_path)?;
+    if matches.is_empty() {
+        return Err(format!(
+            "selection row `{}` target `{}` matches no file in the repository inventory; a zero-match target requires a new selection before editing",
+            verified.attempt_id, verified.target_path
+        ));
+    }
+    if matches.len() > 1 {
+        return Err(format!(
+            "selection row `{}` target `{}` matches {} candidate files in the repository inventory; a multiple-match target is ambiguous and requires a new selection before editing",
+            verified.attempt_id,
+            verified.target_path,
+            matches.len()
+        ));
+    }
+    Ok(verified)
+}
+
+/// The tracked + untracked repository paths whose case-folded spelling equals
+/// the target's. Bounded through the shared git deadline/limit authority.
+fn repository_target_matches(root: &Path, target_path: &str) -> Result<Vec<String>, String> {
+    let mut inventory = git_inventory(root, &["ls-files", "-z"])?;
+    inventory.extend(git_inventory(
+        root,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )?);
+    let lowered_target = target_path.to_ascii_lowercase();
+    let mut matches = Vec::new();
+    for path in inventory {
+        if path.to_ascii_lowercase() == lowered_target {
+            matches.push(path);
+        }
+    }
+    matches.sort();
+    matches.dedup();
+    Ok(matches)
+}
+
+fn git_inventory(root: &Path, args: &[&str]) -> Result<Vec<String>, String> {
+    let output = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        args,
+        Duration::from_secs(30),
+        4 * 1024 * 1024,
+    )
+    .map_err(|error| format!("python repair-trust binding repository inventory failed: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "python repair-trust binding repository inventory failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
+// Binding records
+// ---------------------------------------------------------------------------
+
+/// Identity inputs of one binding record, fixed at render time so the record
+/// stays deterministic apart from the declared telemetry path.
+struct RecordIdentity<'a> {
+    seam_id: &'a str,
+    repository_head: &'a str,
+    phase: &'a str,
+    durable_attempt_id: Option<&'a str>,
+    binding_artifact_sha256: Option<&'a str>,
+    verified: &'a VerifiedSelection,
+    authority: &'a str,
+    packet_sha256: &'a str,
+    before_snapshot_sha256: &'a str,
+    policy: &'a EditCagePolicy,
+}
+
+fn render_record(
+    root: &Path,
+    identity: RecordIdentity<'_>,
+    apply: Option<Value>,
+) -> Result<Value, String> {
+    let verified = identity.verified;
+    let driver_exe = std::env::current_exe().map_err(|error| {
+        format!("python repair-trust binding could not identify the running driver binary: {error}")
+    })?;
+    let driver_bytes = std::fs::read(&driver_exe).map_err(|error| {
+        format!(
+            "python repair-trust binding could not read the running driver binary {}: {error}",
+            driver_exe.display()
+        )
+    })?;
+    let allowed = identity
+        .policy
+        .allowed_edit_surface
+        .iter()
+        .map(|rule| rule.path().to_string())
+        .collect::<Vec<_>>();
+    let forbidden = identity
+        .policy
+        .forbidden_paths
+        .iter()
+        .map(|rule| rule.path().to_string())
+        .collect::<Vec<_>>();
+    let mut trust = serde_json::json!({
+        "attempt_id": verified.attempt_id,
+        "case_id": verified.case_id,
+        "subject_id": verified.subject_id,
+        "repository": verified.repository,
+        "base": verified.base,
+        "head": verified.head,
+        "selection_manifest_sha256": verified.selection_manifest_sha256,
+        "selection_digest": verified.selection_digest,
+        "target_path": verified.target_path,
+        "target_state": verified.target_state,
+        "family": verified.family,
+        "owner": verified.owner,
+        "discriminator": verified.discriminator,
+        "relation": verified.relation,
+        "oracle": verified.oracle,
+    });
+    let trust_object = trust
+        .as_object_mut()
+        .ok_or_else(|| "binding record construction failed: trust must be an object".to_string())?;
+    if let Some(tree) = &verified.tree {
+        trust_object.insert("tree".to_string(), Value::String(tree.clone()));
+    }
+    if let Some(currentness) = &verified.source_currentness {
+        trust_object.insert(
+            "source_currentness".to_string(),
+            Value::String(currentness.clone()),
+        );
+    }
+    if let Some(limitation) = &verified.limitation {
+        trust_object.insert("limitation".to_string(), Value::String(limitation.clone()));
+    }
+    let mut record = serde_json::json!({
+        "schema_version": BINDING_SCHEMA_VERSION,
+        "kind": BINDING_KIND,
+        "spec": BINDING_SPEC,
+        "phase": identity.phase,
+        "seam_id": identity.seam_id,
+        "repository_head": identity.repository_head,
+        TELEMETRY_MANIFEST_PATH_FIELD: verified.selection_manifest_path,
+        "driver": {
+            "binary_sha256": sha256_hex(&driver_bytes),
+            "version": env!("CARGO_PKG_VERSION"),
+        },
+        "config": {
+            "profile": detect_config_profile(root),
+        },
+        "input": {
+            "packet_sha256": identity.packet_sha256,
+            "before_snapshot_sha256": identity.before_snapshot_sha256,
+        },
+        "trust": trust,
+        "edit_surface": {
+            "allowed": allowed,
+            "forbidden": forbidden,
+        },
+        "authorization": {
+            "status": AUTHORIZATION_STATUS,
+            "authority": identity.authority,
+            "method": AUTHORIZATION_METHOD,
+        },
+        "non_claims": BINDING_NON_CLAIMS,
+    });
+    let object = record.as_object_mut().ok_or_else(|| {
+        "binding record construction failed: record must be an object".to_string()
+    })?;
+    if let Some(attempt_id) = identity.durable_attempt_id {
+        object.insert(
+            "durable_attempt_id".to_string(),
+            Value::String(attempt_id.to_string()),
+        );
+    }
+    if let Some(artifact_digest) = identity.binding_artifact_sha256 {
+        object.insert(
+            "binding_artifact_sha256".to_string(),
+            Value::String(artifact_digest.to_string()),
+        );
+    }
+    if let Some(apply) = apply {
+        object.insert("apply".to_string(), apply);
+    }
+    Ok(record)
+}
+
+/// The analyzed root's config identity, detected from the real producer (the
+/// analyzer loads `ripr.toml` from the analyzed root when present), following
+/// the eval-sweep config-profile vocabulary.
+fn detect_config_profile(root: &Path) -> String {
+    if root.join("ripr.toml").is_file() {
+        "subject-ripr-toml".to_string()
+    } else {
+        "default".to_string()
+    }
+}
+
+fn write_record_file(path: &Path, record: &Value) -> Result<(), String> {
+    let mut rendered = serde_json::to_vec_pretty(record)
+        .map_err(|error| format!("serialize python repair-trust binding record failed: {error}"))?;
+    rendered.push(b'\n');
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create {} failed: {error}", parent.display()))?;
+    }
+    std::fs::write(path, rendered)
+        .map_err(|error| format!("write {} failed: {error}", path.display()))
+}
+
+// ---------------------------------------------------------------------------
+// Prepare phase
+// ---------------------------------------------------------------------------
+
+/// Verifies the accepted selection manifest and one requested row, then
+/// renders the prepare-phase binding record. Every failure here happens
+/// before the durable attempt is published, so no edit transaction can begin
+/// from a stale, ambiguous, unsafe, or unauthorized selection.
+pub(crate) fn prepare_binding(
+    root: &Path,
+    seam_id: &str,
+    policy: &EditCagePolicy,
+    before_snapshot_path: &Path,
+    packet_bytes: &[u8],
+    request: &PythonRepairTrustSelection,
+    authorization: &EditAuthorization,
+) -> Result<PreparedBinding, String> {
+    let authority = authorization.verify("prepare the edit transaction")?;
+    // Resolve the cited manifest to its absolute location before the root
+    // containment check, so a repo-relative path is judged by where it
+    // actually lives, not by how it was spelled.
+    let manifest_location = std::fs::canonicalize(&request.manifest_path).map_err(|error| {
+        format!(
+            "python repair-trust selection manifest {} is not readable: {error}",
+            request.manifest_path.display()
+        )
+    })?;
+    let canonical_root = std::fs::canonicalize(root)
+        .map_err(|error| format!("canonicalize repository root failed: {error}"))?;
+    if !manifest_location.starts_with(&canonical_root) {
+        return Err(format!(
+            "python repair-trust selection manifest {} is outside the repository root; a binding must cite a manifest inside the repository it governs",
+            request.manifest_path.display()
+        ));
+    }
+    let (manifest_sha256, rows) = load_selection_manifest(&manifest_location)
+        .map_err(|error| format!("stale packet rejected before editing: {error}"))?;
+    let row = rows
+        .iter()
+        .find(|row| {
+            row.get("attempt_id")
+                .and_then(Value::as_str)
+                .map(|value| value == request.attempt_id)
+                .unwrap_or(false)
+        })
+        .ok_or_else(|| {
+            format!(
+                "selection attempt `{}` names an attempt identity outside the accepted selection denominator ({} rows present); selected rows cannot be substituted by name",
+                request.attempt_id,
+                rows.len()
+            )
+        })?;
+    let repository_head = crate::agent::artifact::current_git_head(root).map_err(|error| {
+        format!("python repair-trust binding requires a concrete repository HEAD: {error}")
+    })?;
+    let mut verified =
+        verify_row_for_prepare(row, &request.attempt_id, &repository_head, policy, root)?;
+    verified.selection_manifest_sha256 = manifest_sha256;
+    // The telemetry path records the resolved absolute location so the after
+    // phase re-reads the same bytes regardless of its own working directory.
+    verified.selection_manifest_path = manifest_location.display().to_string();
+
+    let packet_sha256 = sha256_hex(packet_bytes);
+    let before_bytes = std::fs::read(before_snapshot_path).map_err(|error| {
+        format!(
+            "python repair-trust binding requires the before snapshot {}: {error}",
+            before_snapshot_path.display()
+        )
+    })?;
+    let before_snapshot_sha256 = sha256_hex(&before_bytes);
+    let record = render_record(
+        root,
+        RecordIdentity {
+            seam_id,
+            repository_head: &repository_head,
+            phase: "prepare",
+            durable_attempt_id: None,
+            binding_artifact_sha256: None,
+            verified: &verified,
+            authority,
+            packet_sha256: &packet_sha256,
+            before_snapshot_sha256: &before_snapshot_sha256,
+            policy,
+        },
+        None,
+    )?;
+    let record_path = root.join(PREPARE_RECORD_COMPAT_PATH);
+    write_record_file(&record_path, &record)?;
+    Ok(PreparedBinding {
+        record,
+        record_path,
+        verified,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Apply phase
+// ---------------------------------------------------------------------------
+
+/// Loads the retained prepare-phase binding artifact of a durable attempt, if
+/// the attempt carries one. The attempt loader has already re-verified the
+/// artifact digest against the attempt manifest.
+pub(crate) fn load_retained_binding(
+    root: &Path,
+    attempt_id: &crate::app::repair_attempt::RepairAttemptId,
+) -> Result<Option<RetainedBinding>, String> {
+    let manifest = crate::app::repair_attempt::load_repair_attempt_manifest(root, attempt_id)?;
+    let Some(artifact) = crate::app::repair_attempt::find_manifest_artifact_by_role(
+        &manifest,
+        BINDING_ARTIFACT_ROLE,
+    ) else {
+        return Ok(None);
+    };
+    let bytes = std::fs::read(root.join(&artifact.path)).map_err(|error| {
+        format!(
+            "read retained python repair-trust binding {} failed: {error}",
+            artifact.path
+        )
+    })?;
+    let text = String::from_utf8(bytes)
+        .map_err(|error| format!("retained python repair-trust binding is not UTF-8: {error}"))?;
+    let value = parse_strict_json(&text).map_err(|error| {
+        format!("retained python repair-trust binding is not well-formed JSON: {error}")
+    })?;
+    Ok(Some(RetainedBinding {
+        artifact_sha256: artifact.sha256.trim_start_matches("sha256:").to_string(),
+        value,
+    }))
+}
+
+/// Re-verifies the retained binding immediately before the after phase records
+/// an applied edit: the selection manifest must still digest to the recorded
+/// value, the row must still digest to its recorded `selection_digest`, the
+/// target and packet identities must be unchanged, and the invocation must
+/// re-affirm the retained authorization with the same authority. Any drift
+/// fails before `finish` runs, so a replaced selection or a changed manifest
+/// can never be recorded as an applied edit.
+pub(crate) fn reverify_for_apply(
+    seam_id: &str,
+    policy: &EditCagePolicy,
+    packet_bytes: &[u8],
+    retained: &RetainedBinding,
+    authorization: &EditAuthorization,
+) -> Result<VerifiedSelection, String> {
+    let authority = authorization.verify("record the applied edit")?;
+    let record = as_object(&retained.value, "retained binding record")?;
+    reject_unknown_keys(record, &PREPARE_RECORD_KEYS, "retained binding record")?;
+    for (field, expected) in [
+        ("schema_version", BINDING_SCHEMA_VERSION),
+        ("kind", BINDING_KIND),
+        ("spec", BINDING_SPEC),
+        ("phase", "prepare"),
+    ] {
+        let actual = require_string("retained binding record", record, field)?;
+        if actual != expected {
+            return Err(format!(
+                "retained binding record field `{field}` must be `{expected}` for the apply phase, got `{actual}`"
+            ));
+        }
+    }
+    if record.contains_key("apply") {
+        return Err(
+            "retained binding record already carries an apply block; a prepare record cannot be replayed as an apply"
+                .to_string(),
+        );
+    }
+    let record_seam = require_string("retained binding record", record, "seam_id")?;
+    if record_seam != seam_id {
+        return Err(format!(
+            "retained binding record names seam `{record_seam}` but the selected attempt belongs to seam `{seam_id}`"
+        ));
+    }
+
+    let retained_authorization = as_object(
+        record
+            .get("authorization")
+            .ok_or_else(|| "retained binding record is missing authorization".to_string())?,
+        "retained authorization",
+    )?;
+    reject_unknown_keys(
+        retained_authorization,
+        &AUTHORIZATION_KEYS,
+        "retained authorization",
+    )?;
+    let retained_status =
+        require_string("retained authorization", retained_authorization, "status")?;
+    if retained_status != AUTHORIZATION_STATUS {
+        return Err(format!(
+            "retained binding authorization status is `{retained_status}`; the driver records no applied edit without explicit operator or agent authorization"
+        ));
+    }
+    let retained_authority = require_string(
+        "retained authorization",
+        retained_authorization,
+        "authority",
+    )?;
+    if retained_authority != authority {
+        return Err(format!(
+            "apply authorization authority `{authority}` does not match the retained authorization authority; a different authority requires a new re-authorized attempt"
+        ));
+    }
+    let retained_method =
+        require_string("retained authorization", retained_authorization, "method")?;
+    if retained_method != AUTHORIZATION_METHOD {
+        return Err(format!(
+            "retained binding authorization method `{retained_method}` is not the explicit-operator-flags authority"
+        ));
+    }
+
+    // The closed nested blocks are shape-checked on the retained record so a
+    // tampered or future-schema record cannot slip a field past the digest
+    // anchors.
+    let nested_blocks: [(&str, &str, &[&str]); 4] = [
+        ("driver", "retained binding driver", &DRIVER_KEYS),
+        ("config", "retained binding config", &CONFIG_KEYS),
+        ("input", "retained binding input", &INPUT_KEYS),
+        (
+            "edit_surface",
+            "retained binding edit surface",
+            &EDIT_SURFACE_KEYS,
+        ),
+    ];
+    for (field, subject, allowed) in nested_blocks {
+        let block = as_object(
+            record
+                .get(field)
+                .ok_or_else(|| format!("retained binding record is missing {field}"))?,
+            subject,
+        )?;
+        reject_unknown_keys(block, allowed, subject)?;
+    }
+    let record_non_claims = match record.get("non_claims") {
+        Some(Value::Array(values)) => values,
+        _ => return Err("retained binding record must carry its non_claims".to_string()),
+    };
+    let recorded_non_claims = record_non_claims
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<BTreeSet<_>>();
+    for non_claim in BINDING_NON_CLAIMS {
+        if !recorded_non_claims.contains(non_claim) {
+            return Err(format!(
+                "retained binding record dropped the standing non-claim `{non_claim}`"
+            ));
+        }
+    }
+
+    let trust = as_object(
+        record
+            .get("trust")
+            .ok_or_else(|| "retained binding record is missing trust".to_string())?,
+        "retained binding trust",
+    )?;
+    reject_unknown_keys(trust, &TRUST_KEYS, "retained binding trust")?;
+    let manifest_path_string = require_string(
+        "retained binding record",
+        record,
+        TELEMETRY_MANIFEST_PATH_FIELD,
+    )?;
+    let request = PythonRepairTrustSelection {
+        manifest_path: PathBuf::from(&manifest_path_string),
+        attempt_id: require_string("retained binding trust", trust, "attempt_id")?,
+    };
+    let (manifest_sha256, rows) =
+        load_selection_manifest(&request.manifest_path).map_err(|error| {
+            format!("stale packet rejected before recording the applied edit: {error}")
+        })?;
+    let recorded_manifest_sha256 =
+        require_string("retained binding trust", trust, "selection_manifest_sha256")?;
+    if recorded_manifest_sha256 != manifest_sha256 {
+        return Err(format!(
+            "stale selection manifest: the retained binding pins manifest sha256 `{recorded_manifest_sha256}` but {} now digests to `{manifest_sha256}`; a changed manifest requires a new re-authorized attempt",
+            request.manifest_path.display()
+        ));
+    }
+    let row = rows
+        .iter()
+        .find(|row| {
+            row.get("attempt_id")
+                .and_then(Value::as_str)
+                .map(|value| value == request.attempt_id)
+                .unwrap_or(false)
+        })
+        .ok_or_else(|| {
+            format!(
+                "selection attempt `{}` no longer exists in the accepted selection manifest; selected rows cannot be deleted or replaced after outcome",
+                request.attempt_id
+            )
+        })?;
+    // The apply phase deliberately does NOT re-check the row's head pin
+    // against the current HEAD: repository drift between prepare and apply is
+    // owned by the durable attempt authority, whose finish records the typed
+    // `stale` state instead of silently refusing. Binding integrity (digests,
+    // target alignment, packet identity, authorization) is what must fail
+    // before the applied edit is recorded.
+    let mut verified = verify_row_binding(row, &request.attempt_id, policy).map_err(|error| {
+        format!("stale packet rejected before recording the applied edit: {error}")
+    })?;
+    verified.selection_manifest_sha256 = manifest_sha256;
+    verified.selection_manifest_path = manifest_path_string;
+
+    let input = as_object(
+        record
+            .get("input")
+            .ok_or_else(|| "retained binding record is missing input".to_string())?,
+        "retained binding input",
+    )?;
+    reject_unknown_keys(input, &INPUT_KEYS, "retained binding input")?;
+    let retained_packet_sha256 = require_string("retained binding input", input, "packet_sha256")?;
+    let packet_sha256 = sha256_hex(packet_bytes);
+    if retained_packet_sha256 != packet_sha256 {
+        return Err(format!(
+            "stale packet: the retained binding pins packet sha256 `{retained_packet_sha256}` but the attempt's retained packet digests to `{packet_sha256}`"
+        ));
+    }
+    Ok(verified)
+}
+
+/// Renders and publishes the apply-phase record after the durable attempt
+/// recorded its after verdict. The record carries the changed-file set, the
+/// patch digest, the edit-cage decision, and the resulting repository head —
+/// and no verification, movement, or closure claim. The identities are read
+/// from the durable attempt's own retained artifacts, so the record restates
+/// the authority instead of re-deriving it.
+pub(crate) fn write_apply_record(
+    root: &Path,
+    attempt_id: &crate::app::repair_attempt::RepairAttemptId,
+    retained_artifact_sha256: &str,
+    verified: &VerifiedSelection,
+    authority: &str,
+    after: &crate::app::repair_attempt::RepairAttemptAfter,
+) -> Result<PathBuf, String> {
+    let manifest = crate::app::repair_attempt::load_repair_attempt_manifest(root, attempt_id)?;
+    let policy = crate::app::repair_attempt::load_edit_cage_policy(root, attempt_id)?;
+    let packet_artifact =
+        crate::app::repair_attempt::find_manifest_artifact_by_role(&manifest, "agent_packet")
+            .ok_or_else(|| "durable attempt is missing its retained agent packet".to_string())?;
+    let before_artifact =
+        crate::app::repair_attempt::find_manifest_artifact_by_role(&manifest, "before_snapshot")
+            .ok_or_else(|| "durable attempt is missing its retained before snapshot".to_string())?;
+    let packet_sha256 = packet_artifact
+        .sha256
+        .trim_start_matches("sha256:")
+        .to_string();
+    let before_snapshot_sha256 = before_artifact
+        .sha256
+        .trim_start_matches("sha256:")
+        .to_string();
+    if !is_sha256_hex(&packet_sha256) || !is_sha256_hex(&before_snapshot_sha256) {
+        return Err("apply record refuses malformed durable attempt digests".to_string());
+    }
+    let patch_sha256 = after.delta_sha256.trim_start_matches("sha256:").to_string();
+    if !is_sha256_hex(&patch_sha256) {
+        return Err("apply record refuses a malformed patch digest".to_string());
+    }
+    if after.packet_sha256 != packet_artifact.sha256 {
+        return Err(
+            "apply record refuses an after verdict whose packet digest leaves the retained artifacts"
+                .to_string(),
+        );
+    }
+    let cage_status = serde_json::to_value(after.verdict.status)
+        .map_err(|error| format!("serialize edit-cage status failed: {error}"))?;
+    let changed_paths = after
+        .verdict
+        .changed_paths
+        .iter()
+        .map(|path| path.as_str())
+        .collect::<Vec<_>>();
+    let apply = serde_json::json!({
+        "patch_sha256": patch_sha256,
+        "changed_paths": changed_paths,
+        "cage_status": cage_status,
+        "repository_head_after": after.repository_head,
+        "current": after.current,
+    });
+    let record = render_record(
+        root,
+        RecordIdentity {
+            seam_id: &manifest.seam_id,
+            repository_head: &verified.head,
+            phase: "apply",
+            durable_attempt_id: Some(attempt_id.as_str()),
+            binding_artifact_sha256: Some(retained_artifact_sha256),
+            verified,
+            authority,
+            packet_sha256: &packet_sha256,
+            before_snapshot_sha256: &before_snapshot_sha256,
+            policy: &policy,
+        },
+        Some(apply),
+    )?;
+    let record_path = root.join(APPLY_RECORD_COMPAT_PATH);
+    write_record_file(&record_path, &record)?;
+    Ok(record_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_row() -> Result<Value, String> {
+        let mut value: Value = serde_json::from_str(
+            r#"{
+            "attempt_id": "att-test-1",
+            "case_id": "case-1",
+            "subject_id": "subj-1",
+            "repository": "https://example.com/subj-1",
+            "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "head": "cccccccccccccccccccccccccccccccccccccccc",
+            "selection_reason": "behavior changed in the diff",
+            "diversity_stratum": "pytest_library",
+            "family": "error_path_gating",
+            "owner": "pricing.calculate_discount",
+            "discriminator": "amount == threshold",
+            "relation": "test calls owner directly",
+            "oracle": "assert exact boundary value",
+            "expected_direction": "should_gap",
+            "claim_boundary": "static exposure evidence only",
+            "target_path": "tests/test_pricing.py",
+            "target_state": "existing",
+            "selected_at": "2026-09-10T00:00:00Z",
+            "selector": "campaign-selector",
+            "authority_snapshot_digest": "2020202020202020202020202020202020202020202020202020202020202020",
+            "selection_digest": "d"
+        }"#,
+        )
+        .map_err(|error| format!("sample row json: {error}"))?;
+        {
+            let object = value
+                .as_object_mut()
+                .ok_or_else(|| "sample row is not an object".to_string())?;
+            let digest = canonical_selection_digest(object)?;
+            object.insert(SELECTION_DIGEST_FIELD.to_string(), Value::String(digest));
+        }
+        Ok(value)
+    }
+
+    #[test]
+    fn canonical_digest_is_stable_and_matches_the_corpus_preimage() -> Result<(), String> {
+        let row = sample_row()?;
+        let object = as_object(&row, "sample row")?;
+        let digest = canonical_selection_digest(object)?;
+        let again = canonical_selection_digest(object)?;
+        if digest != again || digest.len() != 64 {
+            return Err("canonical selection digest was not stable 64-hex".to_string());
+        }
+        // Recomputing the preimage independently: the row without its digest
+        // field, serialized with sorted keys.
+        let mut manual = object.clone();
+        manual.remove(SELECTION_DIGEST_FIELD);
+        let expected = sha256_hex(
+            serde_json::to_string(&Value::Object(manual))
+                .map_err(|error| error.to_string())?
+                .as_bytes(),
+        );
+        if digest != expected {
+            return Err("canonical selection digest left the documented preimage".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn denied_edit_surface_vocabulary_rejects_generated_and_environment_paths() -> Result<(), String>
+    {
+        // The prefix matcher covers the generated/vendor/environment/cache
+        // vocabulary; a production path such as `src/pricing.py` is denied
+        // earlier, by the `existing` target-state requirement and the packet's
+        // forbidden-path rules, exactly as the corpus declares it `unsafe`.
+        for allowed in ["tests/test_pricing.py", "tests/unit/test_x.py"] {
+            if is_denied_edit_surface(allowed) {
+                return Err(format!("test path `{allowed}` was denied"));
+            }
+        }
+        for denied in [
+            "generated/module.py",
+            "vendor/lib.py",
+            "vendored/lib.py",
+            "dist/bundle.py",
+            "build/out.py",
+            "target/cache/x.py",
+            "node_modules/pkg/mod.py",
+            "__pycache__/mod.py",
+            "site-packages/pkg.py",
+            ".venv/lib.py",
+            "env/lib.py",
+            ".tox/py/lib.py",
+            "src/foo.generated.py",
+        ] {
+            if !is_denied_edit_surface(denied) {
+                return Err(format!("denied surface `{denied}` was accepted"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn strict_json_rejects_duplicate_keys() -> Result<(), String> {
+        if parse_strict_json("{\"a\":1,\"a\":2}").is_ok() {
+            return Err("duplicate top-level key was accepted".to_string());
+        }
+        if parse_strict_json("{\"a\":{\"b\":1,\"b\":2}}").is_ok() {
+            return Err("duplicate nested key was accepted".to_string());
+        }
+        let value = parse_strict_json("{\"a\":1,\"b\":[2,null,true]}")
+            .map_err(|error| format!("well-formed JSON was rejected: {error}"))?;
+        if value.get("a").and_then(Value::as_i64) != Some(1) {
+            return Err("strict JSON round trip changed a value".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn portable_path_check_rejects_escape_and_absolute_forms() -> Result<(), String> {
+        check_portable_path("tests/test_x.py").map_err(|error| error.clone())?;
+        for rejected in [
+            "../outside.py",
+            "a/../../outside.py",
+            "/abs.py",
+            "C:\\tmp.py",
+            "C:/tmp.py",
+            "a\\b.py",
+            "",
+        ] {
+            if check_portable_path(rejected).is_ok() {
+                return Err(format!("portable path check accepted `{rejected}`"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn authorization_refusal_names_the_missing_signals() -> Result<(), String> {
+        let refused = EditAuthorization {
+            authorized: false,
+            authority: None,
+        };
+        let error = match refused.verify("prepare the edit transaction") {
+            Err(error) => error,
+            Ok(_) => return Err("unauthorized prepare was accepted".to_string()),
+        };
+        for signal in ["--edit-authorized", "--edit-authority"] {
+            if !error.contains(signal) {
+                return Err(format!("refusal did not name `{signal}`: {error}"));
+            }
+        }
+        let flag_only = EditAuthorization {
+            authorized: true,
+            authority: None,
+        };
+        let error = match flag_only.verify("record the applied edit") {
+            Err(error) => error,
+            Ok(_) => return Err("authorization without an authority was accepted".to_string()),
+        };
+        if !error.contains("--edit-authority") {
+            return Err(format!(
+                "refusal did not name the authority signal: {error}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn digest_shape_checks_reject_prefixed_and_malformed_values() -> Result<(), String> {
+        if is_sha256_hex("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        {
+            return Err("prefixed digest passed the corpus-shape check".to_string());
+        }
+        if is_sha256_hex("0123") {
+            return Err("short digest passed the corpus-shape check".to_string());
+        }
+        if !is_sha256_hex(&"a".repeat(64)) {
+            return Err("64-hex digest failed the corpus-shape check".to_string());
+        }
+        if is_git_sha("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG") {
+            return Err("non-hex commit SHA passed the git-shape check".to_string());
+        }
+        if !is_git_sha(&"a".repeat(40)) {
+            return Err("40-hex commit SHA failed the git-shape check".to_string());
+        }
+        Ok(())
+    }
+}

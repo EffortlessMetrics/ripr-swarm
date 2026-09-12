@@ -415,12 +415,23 @@ fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), St
 ///
 /// This reduces the 7-command loop to 2 while preserving the agent's control
 /// over the edit step and the transaction's identity across fresh sessions.
+///
+/// When the before phase was bound to a Python repair-trust selection
+/// (RIPR-SPEC-0176, #3568), the after phase re-verifies the retained binding
+/// by digest before recording the applied edit, and publishes the apply-phase
+/// record. The driver records no verification result, no static movement, and
+/// no closure; #3570 owns the verification phase.
 fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
     let AgentRepairOptions {
         root,
         seam_id,
         attempt_id,
         phase,
+        // The before-phase half runs the workflow only; the digest-bound
+        // binding is produced in `cli::run` once the workflow artifacts exist
+        // (see `persist_before_repair_attempt`).
+        python_repair_trust: _,
+        edit_authorization,
     } = options;
 
     match phase {
@@ -489,6 +500,44 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             write_agent_repo_exposure_snapshot(&root, &after)?;
 
             let packet_path = attempt.packet_path.clone();
+            let packet_bytes = std::fs::read(&packet_path).map_err(|error| {
+                format!(
+                    "read retained repair packet {} failed: {error}",
+                    packet_path.display()
+                )
+            })?;
+            let packet_text = String::from_utf8(packet_bytes.clone())
+                .map_err(|error| format!("retained repair packet is not UTF-8: {error}"))?;
+            let cage_policy = crate::app::repair_attempt::edit_cage_policy_from_packet(
+                &packet_text,
+                &attempt.seam_id,
+            )?;
+
+            // The trust binding, when the attempt carries one, is re-verified
+            // by digest immediately before the applied edit is recorded.
+            let retained_binding = crate::app::python_repair_binding::load_retained_binding(
+                &root,
+                &attempt.attempt_id,
+            )?;
+            let verified_binding = match &retained_binding {
+                Some(binding) => Some(crate::app::python_repair_binding::reverify_for_apply(
+                    &attempt.seam_id,
+                    &cage_policy,
+                    &packet_bytes,
+                    binding,
+                    &edit_authorization,
+                )?),
+                None => {
+                    if edit_authorization.authorized {
+                        return Err(
+                            "agent repair --edit-authorized/--edit-authority require an attempt whose before phase recorded a python repair-trust binding; this attempt is not trust-bound"
+                                .to_string(),
+                        );
+                    }
+                    None
+                }
+            };
+
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing
             // the receipt so the built-in repair route cannot report a clean
@@ -536,10 +585,28 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             )?;
 
             run_agent_status(AgentStatusOptions {
-                root,
+                root: root.clone(),
                 json: true,
                 out_dir: Some(std::path::PathBuf::from("target/ripr/workflow")),
             })?;
+
+            // The apply record is published last: the receipt re-evaluates the
+            // edit cage over the exact delta finish measured, so no artifact
+            // write may land between finish and the receipt binding.
+            if let (Some(binding), Some(verified)) = (&retained_binding, &verified_binding) {
+                let apply_record_path = crate::app::python_repair_binding::write_apply_record(
+                    &root,
+                    &attempt.attempt_id,
+                    &binding.artifact_sha256,
+                    verified,
+                    edit_authorization.authority.as_deref().unwrap_or_default(),
+                    &cage_after,
+                )?;
+                eprintln!(
+                    "ripr: python repair-trust apply record: {}",
+                    apply_record_path.display()
+                );
+            }
 
             eprintln!("ripr: after phase complete. Review the receipt and status output.");
             Ok(())

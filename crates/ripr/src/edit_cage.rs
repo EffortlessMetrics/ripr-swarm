@@ -121,6 +121,12 @@ impl AttemptBaseline {
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
+
+    /// The declared cage policy the baseline was captured under, for consumers
+    /// that restate the retained edit surface (repair-attempt binding records).
+    pub(crate) fn policy(&self) -> &EditCagePolicy {
+        &self.policy
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -935,6 +941,12 @@ impl CagePathRule {
             path: normalize_repo_relative_path(path)?,
             scope,
         })
+    }
+
+    /// The normalized repository-relative rule path, for consumers that
+    /// restate the retained edit surface in binding records.
+    pub(crate) fn path(&self) -> &str {
+        &self.path
     }
 
     fn matches(&self, candidate: &str) -> bool {
