@@ -740,6 +740,46 @@ fn check_git_sha(subject: &str, field: &str, sha: &str) -> Result<(), String> {
     }
 }
 
+/// Subject ids become filesystem path components — the candidate subject dirs
+/// and the raw/cache dirs the refresh route (#3566) derives from them — so
+/// they must be safe identifiers: at most 64 characters, limited to
+/// `[A-Za-z0-9._-]`, and never starting with `.` (which also bars `.`/`..`
+/// and hidden components). The character set bars `/` and `\\`, so a hostile
+/// id like `../../outside` fails here as a named diagnostic instead of
+/// escaping candidate storage downstream.
+const SUBJECT_ID_MAX_LENGTH: usize = 64;
+
+fn check_subject_id(id: &str) -> Result<(), String> {
+    if id.len() > SUBJECT_ID_MAX_LENGTH {
+        return Err(fail(
+            id,
+            "id",
+            format!(
+                "subject id must be at most {SUBJECT_ID_MAX_LENGTH} characters, got {}",
+                id.len()
+            ),
+        ));
+    }
+    if id.starts_with('.') {
+        return Err(fail(
+            id,
+            "id",
+            "subject id must not start with `.`: hidden or relative path components are not safe identifiers",
+        ));
+    }
+    if !id
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'_' || byte == b'-')
+    {
+        return Err(fail(
+            id,
+            "id",
+            "subject id must use only `[A-Za-z0-9._-]`: path separators, whitespace, and other characters are not safe identifiers",
+        ));
+    }
+    Ok(())
+}
+
 fn known_value_or_fail(
     subject: &str,
     field: &str,
@@ -921,6 +961,7 @@ pub(crate) fn validate_accepted_manifest(
                 "duplicate subject id in the accepted manifest",
             ));
         }
+        check_subject_id(&id)?;
 
         let url = entry
             .get("url")
@@ -958,19 +999,15 @@ pub(crate) fn validate_accepted_manifest(
         // through. Portable and secret-free; existence is a run-time concern,
         // not an offline structural one. The resolved path is retained on the
         // subject for the refresh route (#3566).
-        let diff = match synthetic_diff_at_level(&id, entry)? {
-            Some(path) => path,
-            None => match top_level_diff.clone() {
-                Some(path) => path,
-                None => {
-                    return Err(fail(
-                        &id,
-                        "synthetic_diff",
-                        "subject has no synthetic_diff and the manifest has no top-level fallback",
-                    ));
-                }
-            },
-        };
+        let diff = synthetic_diff_at_level(&id, entry)?
+            .or_else(|| top_level_diff.clone())
+            .ok_or_else(|| {
+                fail(
+                    &id,
+                    "synthetic_diff",
+                    "subject has no synthetic_diff and the manifest has no top-level fallback",
+                )
+            })?;
 
         // Optional identities (#3733 review): absent is typed incomplete; a
         // present value must be well-formed, because an explicit null, an
@@ -2310,7 +2347,12 @@ fn validate_row_currentness(
             "repeat-run comparison identity not recorded",
         )),
         Some(Value::Object(repeat)) => {
-            let allowed: [&str; 3] = ["comparable_with", "gap_ids_stable", "unstable_gap_ids"];
+            let allowed: [&str; 4] = [
+                "comparable_with",
+                "gap_ids_stable",
+                "unstable_gap_ids",
+                "repeat_stderr",
+            ];
             reject_unknown_keys(repeat, &allowed, id, "repeat-run identity")?;
             if opt_string(id, repeat, "comparable_with")?.is_none() {
                 return Err(fail(
@@ -2321,6 +2363,14 @@ fn validate_row_currentness(
             }
             opt_bool(id, repeat, "gap_ids_stable")?;
             opt_string_array(id, repeat, "unstable_gap_ids")?;
+            // The repeat pass's raw-stderr digest (SPEC-0086 retention): when
+            // recorded it must be a real sha256 hex digest over the retained
+            // second-pass stderr bytes under `<out>/raw/`. Optional so
+            // historical 0.3 rows stay historical.
+            match opt_string(id, repeat, "repeat_stderr")? {
+                Some(digest) => check_sha256_digest(id, "repeat.repeat_stderr", &digest)?,
+                None => {}
+            }
         }
         Some(_) => {
             return Err(fail(
@@ -3274,6 +3324,47 @@ mod python_eval_sweep {
             validate_manifest_value(&parsed(&value)?),
             "exactly 8 selected subjects, got 7",
         )
+    }
+
+    /// Subject ids are safe identifiers: path-traversal and hidden/relative
+    /// ids fail with a named diagnostic, while the full safe charset (at the
+    /// length cap) passes. Existing valid ids (the fixture's and the
+    /// alternate manifest's) are covered by the acceptance tests and the
+    /// `eval-sweep check` gate over the canonical fixture.
+    #[test]
+    fn manifest_rejects_unsafe_subject_ids() -> Result<(), String> {
+        let swapped = |id: &str| -> Result<Value, String> {
+            let mut value = alternate_manifest();
+            let entry = value
+                .get_mut("repos")
+                .and_then(Value::as_array_mut)
+                .and_then(|repos| repos.first_mut())
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| "alternate manifest repos[0]".to_string())?;
+            entry.insert("id".to_string(), json!(id));
+            Ok(value)
+        };
+        for (bad, needle) in [
+            ("../../outside", "must not start with"),
+            ("..", "must not start with"),
+            (".hidden", "must not start with"),
+            ("a/b", "must use only"),
+            ("a\\b", "must use only"),
+            ("a b", "must use only"),
+        ] {
+            expect_fail(validate_manifest_value(&parsed(&swapped(bad)?)?), needle)?;
+        }
+        let long_id = "a".repeat(65);
+        expect_fail(
+            validate_manifest_value(&parsed(&swapped(&long_id)?)?),
+            "at most 64 characters",
+        )?;
+
+        // The full safe charset at the exact length cap passes.
+        let edge_ok = "b.x_y-9".repeat(9) + &"c".repeat(1);
+        assert_eq!(edge_ok.len(), 64, "edge id must sit at the cap");
+        validate_manifest_value(&parsed(&swapped(&edge_ok)?)?)?;
+        Ok(())
     }
 
     #[test]
