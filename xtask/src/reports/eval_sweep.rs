@@ -221,7 +221,9 @@ fn classify(timed_out: bool, failed_exit: bool, parsed: Option<&Value>) -> Outco
     }
 }
 
-fn findings_have_parse_failure(value: &Value) -> bool {
+/// Shared with the refresh route (#3566), which classifies current statuses
+/// from the same producer facts.
+pub(crate) fn findings_have_parse_failure(value: &Value) -> bool {
     let Some(findings) = value.get("findings").and_then(Value::as_array) else {
         return false;
     };
@@ -240,7 +242,9 @@ fn findings_have_parse_failure(value: &Value) -> bool {
     })
 }
 
-fn gap_ids(value: &Value) -> BTreeSet<String> {
+/// Shared with the refresh route (#3566): the same gap-identity extraction
+/// feeds the candidate receipt's repeat-run comparison.
+pub(crate) fn gap_ids(value: &Value) -> BTreeSet<String> {
     let mut set = BTreeSet::new();
     let Some(findings) = value.get("findings").and_then(Value::as_array) else {
         return set;
@@ -270,9 +274,10 @@ fn gap_ids(value: &Value) -> BTreeSet<String> {
 // ---------------------------------------------------------------------------
 
 /// The 7-way exposure-class distribution over a run's findings. Descriptive
-/// only: it counts emitted facts and never affects `gate_status`.
+/// only: it counts emitted facts and never affects `gate_status`. Shared with
+/// the refresh route (#3566) so both surfaces count identically.
 #[derive(Clone, Copy, Default)]
-struct ClassificationCounts {
+pub(crate) struct ClassificationCounts {
     exposed: usize,
     weakly_exposed: usize,
     reachable_unrevealed: usize,
@@ -283,7 +288,7 @@ struct ClassificationCounts {
 }
 
 impl ClassificationCounts {
-    fn add(&mut self, other: &ClassificationCounts) {
+    pub(crate) fn add(&mut self, other: &ClassificationCounts) {
         self.exposed += other.exposed;
         self.weakly_exposed += other.weakly_exposed;
         self.reachable_unrevealed += other.reachable_unrevealed;
@@ -293,7 +298,7 @@ impl ClassificationCounts {
         self.static_unknown += other.static_unknown;
     }
 
-    fn to_json(self) -> Value {
+    pub(crate) fn to_json(self) -> Value {
         json!({
             "exposed": self.exposed,
             "weakly_exposed": self.weakly_exposed,
@@ -309,22 +314,23 @@ impl ClassificationCounts {
 /// The Python sink-alignment distribution (RIPR-SPEC-0028 fields) plus
 /// repair-packet presence counts. `absent` (field not emitted) is kept distinct
 /// from `unknown` (the emitted enum value) so the distribution is not silently
-/// overcounted. Descriptive only; never affects `gate_status`.
+/// overcounted. Descriptive only; never affects `gate_status`. Shared with the
+/// refresh route (#3566).
 #[derive(Clone, Copy, Default)]
-struct AlignmentCounts {
-    direct: usize,
-    alias: usize,
-    changed_sink_token: usize,
-    orthogonal: usize,
-    unknown: usize,
-    absent: usize,
-    repair_placement_present: usize,
-    verify_command_present: usize,
-    python_repair_card_present: usize,
+pub(crate) struct AlignmentCounts {
+    pub(crate) direct: usize,
+    pub(crate) alias: usize,
+    pub(crate) changed_sink_token: usize,
+    pub(crate) orthogonal: usize,
+    pub(crate) unknown: usize,
+    pub(crate) absent: usize,
+    pub(crate) repair_placement_present: usize,
+    pub(crate) verify_command_present: usize,
+    pub(crate) python_repair_card_present: usize,
 }
 
 impl AlignmentCounts {
-    fn add(&mut self, other: &AlignmentCounts) {
+    pub(crate) fn add(&mut self, other: &AlignmentCounts) {
         self.direct += other.direct;
         self.alias += other.alias;
         self.changed_sink_token += other.changed_sink_token;
@@ -336,7 +342,7 @@ impl AlignmentCounts {
         self.python_repair_card_present += other.python_repair_card_present;
     }
 
-    fn to_json(self) -> Value {
+    pub(crate) fn to_json(self) -> Value {
         json!({
             "direct": self.direct,
             "alias": self.alias,
@@ -357,7 +363,8 @@ impl AlignmentCounts {
 /// `crates/ripr/src/output/json/report.rs`), not the legacy `"class"`.
 /// Unrecognized/missing values are dropped silently, consistent with Tier-A
 /// robustness counting (no panic).
-fn count_distributions(value: &Value) -> (ClassificationCounts, AlignmentCounts) {
+/// Shared with the refresh route (#3566): identical distribution counting.
+pub(crate) fn count_distributions(value: &Value) -> (ClassificationCounts, AlignmentCounts) {
     let mut class = ClassificationCounts::default();
     let mut align = AlignmentCounts::default();
     let Some(findings) = value.get("findings").and_then(Value::as_array) else {
@@ -881,9 +888,13 @@ fn render_markdown(metrics: &Metrics, runs: &[RepoRun]) -> String {
 
 pub(crate) fn eval_sweep(args: &[String]) -> Result<(), String> {
     // `eval-sweep check` routes to the typed accepted-manifest/receipt
-    // validator (RIPR-SPEC-0086, #3565); anything else is the live sweep.
+    // validator (RIPR-SPEC-0086, #3565); `eval-sweep refresh` routes to the
+    // managed candidate refresh (#3566); anything else is the live sweep.
     if args.first().map(String::as_str) == Some("check") {
         return super::eval_sweep_check::run_check(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("refresh") {
+        return super::eval_sweep_refresh::run_refresh(&args[1..]);
     }
     let parsed = parse_args(args)?;
     let manifest = load_manifest(&parsed.manifest)?;

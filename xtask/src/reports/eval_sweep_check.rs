@@ -293,7 +293,7 @@ const SECRET_TRIPWIRES: [&str; 18] = [
 /// One non-failing disclosure: an identity that is absent (typed `incomplete`,
 /// never invented) or otherwise not currently established.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Diagnostic {
+pub(crate) struct Diagnostic {
     subject: String,
     field: String,
     reason: String,
@@ -327,14 +327,14 @@ fn fail(subject: &str, field: &str, reason: impl std::fmt::Display) -> String {
 /// `incomplete` identities disclosed in full); fail-closed violations exit
 /// nonzero. None of these is a robustness or adequacy claim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Verdict {
+pub(crate) enum Verdict {
     Valid,
     Incomplete,
     NotRun,
 }
 
 impl Verdict {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Verdict::Valid => "valid",
             Verdict::Incomplete => "incomplete",
@@ -389,8 +389,9 @@ fn parse_check_args(args: &[String]) -> Result<CheckArgs, String> {
 
 /// Reads a file and parses it as JSON with duplicate-key rejection (structural
 /// rot fails at load). Returns the parsed value and the sha256 hex of the raw
-/// bytes (used for the manifest-digest binding).
-fn load_strict_json(display: &str) -> Result<(Value, String), String> {
+/// bytes (used for the manifest-digest binding). Shared with the refresh route
+/// (#3566), which consumes the same strict loader instead of re-parsing.
+pub(crate) fn load_strict_json(display: &str) -> Result<(Value, String), String> {
     let bytes = std::fs::read(display)
         .map_err(|error| fail(display, "file", format!("failed to read: {error}")))?;
     let text = String::from_utf8(bytes)
@@ -400,7 +401,9 @@ fn load_strict_json(display: &str) -> Result<(Value, String), String> {
     Ok((value, sha256_hex(text.as_bytes())))
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+/// sha256 hex of the exact bytes; shared with the refresh route (#3566) so
+/// both surfaces define the digest once.
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::Digest;
     let digest = sha2::Sha256::digest(bytes);
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -764,35 +767,42 @@ fn known_value_or_fail(
 
 /// One accepted subject: the immutable identity the denominator is built from.
 /// The optional identity fields carry the manifest-side values receipt rows
-/// bind against (`None` = not recorded, typed incomplete).
+/// bind against (`None` = not recorded, typed incomplete). Fields are shared
+/// with the refresh route (#3566), which consumes the validated subjects
+/// without re-parsing the manifest.
 #[derive(Debug, Clone)]
-struct AcceptedSubject {
-    id: String,
-    url: String,
-    sha: String,
-    license: String,
-    shape: String,
-    tree_digest: Option<String>,
-    snapshot: Option<String>,
-    provenance: Option<String>,
-    retention_class: Option<String>,
+pub(crate) struct AcceptedSubject {
+    pub(crate) id: String,
+    pub(crate) url: String,
+    pub(crate) sha: String,
+    pub(crate) license: String,
+    pub(crate) shape: String,
+    /// The resolved synthetic-diff path (per-repo, or the manifest-level
+    /// fallback) as a portable repo-relative path. Retained so the refresh
+    /// route (#3566) consumes the resolved input identity instead of
+    /// re-parsing the manifest.
+    pub(crate) synthetic_diff: String,
+    pub(crate) tree_digest: Option<String>,
+    pub(crate) snapshot: Option<String>,
+    pub(crate) provenance: Option<String>,
+    pub(crate) retention_class: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-struct AcceptedManifest {
-    sha256: String,
-    subjects: Vec<AcceptedSubject>,
+pub(crate) struct AcceptedManifest {
+    pub(crate) sha256: String,
+    pub(crate) subjects: Vec<AcceptedSubject>,
     /// Identities the retained manifest does not carry by design; disclosed as
     /// `incomplete`, never invented.
-    incomplete: Vec<Diagnostic>,
+    pub(crate) incomplete: Vec<Diagnostic>,
 }
 
 impl AcceptedManifest {
-    fn subject(&self, id: &str) -> Option<&AcceptedSubject> {
+    pub(crate) fn subject(&self, id: &str) -> Option<&AcceptedSubject> {
         self.subjects.iter().find(|entry| entry.id == id)
     }
 
-    fn ids(&self) -> Vec<String> {
+    pub(crate) fn ids(&self) -> Vec<String> {
         self.subjects.iter().map(|entry| entry.id.clone()).collect()
     }
 }
@@ -822,7 +832,12 @@ fn synthetic_diff_at_level(
 /// Validates the accepted manifest: schema/kind/spec/tier, exactly eight
 /// unique subjects, immutable repository identity, license and shape tags,
 /// portable diff paths. Data-driven: any eight well-formed subjects pass.
-fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedManifest, String> {
+/// Shared with the refresh route (#3566): refresh consumes the validated
+/// subjects instead of re-parsing.
+pub(crate) fn validate_accepted_manifest(
+    value: &Value,
+    sha256: String,
+) -> Result<AcceptedManifest, String> {
     let top = as_object(value, "manifest", "manifest", "accepted manifest")?;
     reject_unknown_keys(top, &MANIFEST_KEYS, "manifest", "accepted manifest")?;
     for (field, expected) in [
@@ -941,18 +956,21 @@ fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedM
         // records it (#3733 review): a malformed present value fails even
         // when the other level supplies a valid fallback — only absence falls
         // through. Portable and secret-free; existence is a run-time concern,
-        // not an offline structural one.
+        // not an offline structural one. The resolved path is retained on the
+        // subject for the refresh route (#3566).
         let diff = match synthetic_diff_at_level(&id, entry)? {
-            Some(path) => Some(path),
-            None => top_level_diff.clone(),
+            Some(path) => path,
+            None => match top_level_diff.clone() {
+                Some(path) => path,
+                None => {
+                    return Err(fail(
+                        &id,
+                        "synthetic_diff",
+                        "subject has no synthetic_diff and the manifest has no top-level fallback",
+                    ));
+                }
+            },
         };
-        if diff.is_none() {
-            return Err(fail(
-                &id,
-                "synthetic_diff",
-                "subject has no synthetic_diff and the manifest has no top-level fallback",
-            ));
-        }
 
         // Optional identities (#3733 review): absent is typed incomplete; a
         // present value must be well-formed, because an explicit null, an
@@ -1005,6 +1023,7 @@ fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedM
             sha: sha.to_string(),
             license,
             shape: shape.to_string(),
+            synthetic_diff: diff,
             tree_digest,
             snapshot,
             provenance,
@@ -1145,16 +1164,18 @@ fn ratio(numerator: usize, denominator: usize) -> f64 {
     }
 }
 
-struct ReceiptCheck {
-    path: String,
-    schema_version: String,
-    denominator_selected: usize,
-    denominator_run: usize,
-    incomplete: Vec<Diagnostic>,
+/// One validated receipt: the structural facts the refresh route reports
+/// after self-validating its own candidate (#3566).
+pub(crate) struct ReceiptCheck {
+    pub(crate) path: String,
+    pub(crate) schema_version: String,
+    pub(crate) denominator_selected: usize,
+    pub(crate) denominator_run: usize,
+    pub(crate) incomplete: Vec<Diagnostic>,
 }
 
 impl ReceiptCheck {
-    fn verdict(&self) -> Verdict {
+    pub(crate) fn verdict(&self) -> Verdict {
         if self.incomplete.is_empty() {
             Verdict::Valid
         } else {
@@ -1166,7 +1187,10 @@ impl ReceiptCheck {
 /// Validates one retained run receipt against the accepted manifest.
 /// Fails closed on the issue #3565 failure families; discloses missing
 /// identities as `incomplete`. Never rewrites or upgrades the receipt.
-fn validate_run_receipt(
+/// Shared with the refresh route (#3566): refresh self-validates its own
+/// candidate receipt through this exact validator before writing it, so a
+/// produced candidate and `eval-sweep check --runs` agree by construction.
+pub(crate) fn validate_run_receipt(
     value: &Value,
     manifest_sha256: &str,
     accepted: &AcceptedManifest,
@@ -2856,9 +2880,9 @@ fn check_distribution_equality(
 // Entry points
 // ---------------------------------------------------------------------------
 
-struct CheckOutcome {
+pub(crate) struct CheckOutcome {
     manifest_path: String,
-    accepted: AcceptedManifest,
+    pub(crate) accepted: AcceptedManifest,
     receipt: Option<ReceiptCheck>,
 }
 
@@ -2868,7 +2892,7 @@ impl CheckOutcome {
     /// manifest or the receipt discloses incomplete identities — a complete
     /// receipt never hides manifest gaps — and `valid` only when both are
     /// structurally valid with zero incompletes.
-    fn verdict(&self) -> Verdict {
+    pub(crate) fn verdict(&self) -> Verdict {
         match &self.receipt {
             None => Verdict::NotRun,
             Some(receipt) => {
@@ -2892,7 +2916,11 @@ impl CheckOutcome {
 
 /// The full offline check: load + validate the accepted manifest, then (when
 /// supplied) the retained receipt. Writes nothing; `run_check` renders.
-fn check_artifacts(manifest_path: &str, runs_path: Option<&str>) -> Result<CheckOutcome, String> {
+/// Shared with the refresh route's end-to-end symmetry tests (#3566).
+pub(crate) fn check_artifacts(
+    manifest_path: &str,
+    runs_path: Option<&str>,
+) -> Result<CheckOutcome, String> {
     let (manifest_value, manifest_sha256) = load_strict_json(manifest_path)?;
     let accepted = validate_accepted_manifest(&manifest_value, manifest_sha256)?;
 
@@ -4864,6 +4892,7 @@ mod python_eval_sweep {
             sha: VALID_SHA_A.to_string(),
             license: "MIT".to_string(),
             shape: "pytest_library".to_string(),
+            synthetic_diff: "fixtures/python-eval-sweep/diffs/alpha.diff".to_string(),
             tree_digest: None,
             snapshot: None,
             provenance: None,
