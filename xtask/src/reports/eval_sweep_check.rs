@@ -18,6 +18,13 @@
 //!   eight-word run status vocabulary, raw/output/evidence digests,
 //!   repeat-run comparison identity, and a manifest-digest binding).
 //!
+//! Parser split (resolved with reason, #3733 review): the strict
+//! duplicate-key-rejecting loader here is the check-path contract, while the
+//! lenient in-memory parse in `eval_sweep.rs` stays the historical-tolerant
+//! report path on purpose — the check path validates retained accepted
+//! artifacts, the report path renders in-flight sweeps. The two converge
+//! when #3566/#3567 own the refresh/report commands.
+//!
 //! Design laws (issue #3565 acceptance):
 //!
 //! - Fail closed on: duplicate or missing subjects, a changed denominator,
@@ -40,6 +47,28 @@
 //!   evidence, `review` otherwise. Runtime totals and distribution merges use
 //!   checked arithmetic: overflow is a structured failure naming the
 //!   aggregate field, never a panic.
+//! - The emitted summary is owned in full (#3733 review). With analyzed
+//!   (run-status) rows, every summary aggregate the emitter writes must be
+//!   present — a deleted field would silently disable its row-agreement
+//!   check. Stability aggregates are required exactly when the rows fully
+//!   evidence stability; the under-evidenced path discloses instead of
+//!   failing on an omission the emitter could not have written. With zero
+//!   run rows the `not_run`/not-a-vacuous-pass law extends to the summary:
+//!   every analysis-bearing aggregate (classification/alignment counts,
+//!   runtime min/median/max/total, stability counts and rate) must be zero
+//!   or absent — any nonzero value is a fabricated claim about rows that
+//!   never ran.
+//! - Identity binding is symmetric (#3733 review). When the accepted
+//!   manifest and the receipt both record a comparable identity (`license`,
+//!   `tree_digest`, `snapshot`, `provenance`, `retention_class`) and both
+//!   are well-formed, they must match — a mismatch fails naming both sides;
+//!   a receipt value with no manifest side to bind discloses `incomplete` on
+//!   the manifest side instead of fabricating a binding. Optional manifest
+//!   identities are either absent (typed incomplete) or well-formed: an
+//!   explicit null, an empty string, or a malformed value fails, because a
+//!   present-but-garbage identity is not an absent one. Absent
+//!   `ripr.features` / `binary.features` disclose incomplete;
+//!   present-but-malformed feature sets fail.
 //! - The accepted-manifest schema is closed. The owned top-level keys are
 //!   `schema_version`/`kind`/`spec`/`tier`/`description`/`limits`/
 //!   `synthetic_diff`/`repos`; the owned per-subject keys are
@@ -660,6 +689,8 @@ fn known_value_or_fail(
 // ---------------------------------------------------------------------------
 
 /// One accepted subject: the immutable identity the denominator is built from.
+/// The optional identity fields carry the manifest-side values receipt rows
+/// bind against (`None` = not recorded, typed incomplete).
 #[derive(Debug, Clone)]
 struct AcceptedSubject {
     id: String,
@@ -667,6 +698,10 @@ struct AcceptedSubject {
     sha: String,
     license: String,
     shape: String,
+    tree_digest: Option<String>,
+    snapshot: Option<String>,
+    provenance: Option<String>,
+    retention_class: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -811,23 +846,61 @@ fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedM
             }
         }
 
-        // Identities the retained manifest does not carry: typed incomplete.
-        for field in ["tree_digest", "snapshot", "provenance", "retention_class"] {
-            if entry.get(field).is_none() {
-                incomplete.push(Diagnostic::new(
+        // Optional identities (#3733 review): absent is typed incomplete; a
+        // present value must be well-formed, because an explicit null, an
+        // empty string, or a malformed digest is a garbage identity, not an
+        // absent one — that fails instead of silently completing the artifact.
+        // Well-formed values are retained on the subject for receipt binding.
+        let mut identities = [None, None, None, None];
+        for (index, field) in ["tree_digest", "snapshot", "provenance", "retention_class"]
+            .into_iter()
+            .enumerate()
+        {
+            match entry.get(field) {
+                None => incomplete.push(Diagnostic::new(
                     &id,
                     field,
                     "identity not recorded in the retained manifest; typed incomplete, not invented",
-                ));
+                )),
+                Some(Value::Null) => {
+                    return Err(fail(
+                        &id,
+                        field,
+                        "identity is explicitly null; omit the field to record it absent — a present null is not an absent identity",
+                    ));
+                }
+                Some(value) => {
+                    let text = value
+                        .as_str()
+                        .ok_or_else(|| fail(&id, field, "identity must be a string when present"))?;
+                    if text.trim().is_empty() {
+                        return Err(fail(
+                            &id,
+                            field,
+                            "identity must be non-empty when present",
+                        ));
+                    }
+                    match field {
+                        "tree_digest" => check_sha256_digest(&id, field, text)?,
+                        "snapshot" => check_no_secrets(&id, field, text)?,
+                        _ => {}
+                    }
+                    identities[index] = Some(text.to_string());
+                }
             }
         }
 
+        let [tree_digest, snapshot, provenance, retention_class] = identities;
         subjects.push(AcceptedSubject {
             id,
             url: url.to_string(),
             sha: sha.to_string(),
             license,
             shape: shape.to_string(),
+            tree_digest,
+            snapshot,
+            provenance,
+            retention_class,
         });
     }
 
@@ -1270,7 +1343,14 @@ fn validate_ripr_identity(
             "analyzer version not recorded",
         )),
     }
-    opt_string_array(display, ripr, "features")?;
+    match opt_string_array(display, ripr, "features")? {
+        Some(_) => {}
+        None => incomplete.push(Diagnostic::new(
+            display,
+            "ripr.features",
+            "feature set not recorded",
+        )),
+    }
     Ok(())
 }
 
@@ -1320,7 +1400,7 @@ fn validate_row(
     // accepted pin. Present-and-different fails; absent is incomplete.
     if is_current {
         validate_row_repository(entry, id, subject, incomplete)?;
-        validate_row_currentness(entry, id, &status_label, incomplete)?;
+        validate_row_currentness(entry, id, &status_label, subject, incomplete)?;
     } else {
         match opt_string(id, entry, "sha")? {
             Some(sha) => {
@@ -1581,12 +1661,16 @@ fn validate_row_repository(
 }
 
 /// 0.3 row currentness: state vocabularies, binary/config/input identity,
-/// evidence digests, repeat-run identity. Unknown states fail; absent states
-/// and identities are typed incomplete; contradictions fail.
+/// evidence digests, repeat-run identity, and the receipt-vs-manifest identity
+/// binding. Unknown states fail; absent states and identities are typed
+/// incomplete; contradictions fail; a well-formed receipt identity that
+/// contradicts the manifest pin fails naming both sides, while a receipt value
+/// with no manifest side to bind discloses the manifest gap instead.
 fn validate_row_currentness(
     entry: &serde_json::Map<String, Value>,
     id: &str,
     status: &str,
+    subject: &AcceptedSubject,
     incomplete: &mut Vec<Diagnostic>,
 ) -> Result<(), String> {
     // State fields: present values must use the known vocabulary.
@@ -1734,7 +1818,14 @@ fn validate_row_currentness(
                     "build profile",
                 )?;
             }
-            opt_string_array(id, binary, "features")?;
+            match opt_string_array(id, binary, "features")? {
+                Some(_) => {}
+                None => incomplete.push(Diagnostic::new(
+                    id,
+                    "binary.features",
+                    "feature set not recorded",
+                )),
+            }
         }
         Some(_) => {
             return Err(fail(
@@ -1801,7 +1892,12 @@ fn validate_row_currentness(
     }
     opt_string_array(id, entry, "layout")?;
 
-    // Tree/snapshot identity, license/provenance/retention restatement.
+    // Tree/snapshot identity, license/provenance/retention restatement, and
+    // the receipt-vs-manifest identity binding (#3733 review): when both
+    // sides record a comparable identity and both are well-formed, they must
+    // MATCH — a mismatch fails naming both sides. When only the receipt
+    // records it, the value cannot be bound, so the manifest side discloses
+    // incomplete instead of fabricating a binding.
     for field in [
         "tree_digest",
         "snapshot",
@@ -1809,15 +1905,43 @@ fn validate_row_currentness(
         "retention_class",
         "provenance",
     ] {
-        match opt_string(id, entry, field)? {
-            Some(tree) if field == "tree_digest" => check_sha256_digest(id, field, &tree)?,
-            Some(snapshot) if field == "snapshot" => check_no_secrets(id, field, &snapshot)?,
+        let recorded = opt_string(id, entry, field)?;
+        match recorded.as_deref() {
+            Some(tree) if field == "tree_digest" => check_sha256_digest(id, field, tree)?,
+            Some(snapshot) if field == "snapshot" => check_no_secrets(id, field, snapshot)?,
             Some(_) => {}
             None => incomplete.push(Diagnostic::new(
                 id,
                 field,
                 "identity not recorded on the row; typed incomplete, not invented",
             )),
+        }
+        let manifest_side = match field {
+            "tree_digest" => subject.tree_digest.as_deref(),
+            "snapshot" => subject.snapshot.as_deref(),
+            "license" => Some(subject.license.as_str()),
+            "provenance" => subject.provenance.as_deref(),
+            "retention_class" => subject.retention_class.as_deref(),
+            _ => None,
+        };
+        match (recorded.as_deref(), manifest_side) {
+            (Some(receipt_value), Some(manifest_value)) if receipt_value != manifest_value => {
+                return Err(fail(
+                    id,
+                    field,
+                    format!(
+                        "receipt {field} `{receipt_value}` does not match the accepted manifest {field} `{manifest_value}`"
+                    ),
+                ));
+            }
+            (Some(receipt_value), None) => incomplete.push(Diagnostic::new(
+                id,
+                &format!("manifest.{field}"),
+                format!(
+                    "receipt records {field} `{receipt_value}` but the accepted manifest records none; the binding is unverifiable (typed incomplete, not invented)"
+                ),
+            )),
+            _ => {}
         }
     }
 
@@ -1993,13 +2117,94 @@ fn merge_distribution(
 }
 
 /// Fails closed when hand-entered summary numbers disagree with the derived
-/// rows; discloses absent core fields as incomplete.
+/// rows; discloses absent core fields as incomplete. The summary itself is
+/// owned in full (#3733 review): analyzed receipts must carry every aggregate
+/// the emitter writes, and zero-run receipts must not carry a nonzero
+/// analysis-bearing aggregate.
 fn validate_summary_agreement(
     display: &str,
     summary: &serde_json::Map<String, Value>,
     derived: &Derived,
     incomplete: &mut Vec<Diagnostic>,
 ) -> Result<(), String> {
+    // Summary ownership (#3733 review). With analyzed rows the receipt must
+    // carry the emitted summary in full: the sweep records every aggregate on
+    // every receipt, and a deleted field would silently disable its
+    // row-agreement check. Stability aggregates are required exactly when the
+    // rows fully evidence stability; the under-evidenced path discloses
+    // instead of failing on an omission the emitter could not have written.
+    const STABILITY_AGGREGATES: [&str; 3] = [
+        "gap_id_stable_count",
+        "gap_id_unstable_count",
+        "gap_id_stability_rate",
+    ];
+    if derived.run > 0 {
+        let stability_required = derived.stable.is_some();
+        for field in SUMMARY_KEYS {
+            if STABILITY_AGGREGATES.contains(&field) && !stability_required {
+                continue;
+            }
+            if !summary_records_value(summary, field) {
+                return Err(fail(
+                    display,
+                    &format!("summary.{field}"),
+                    "required summary aggregate is missing: the sweep records the full summary on every receipt, and an omitted field would silently disable its row-agreement check",
+                ));
+            }
+        }
+    } else {
+        // Zero-run law: `repos_run == 0` is `not_run`, never a vacuous pass —
+        // extended to the summary. Every analysis-bearing aggregate must be
+        // zero or absent; a recorded nonzero value claims analysis that never
+        // happened.
+        for field in [
+            "runtime_ms_min",
+            "runtime_ms_median",
+            "runtime_ms_max",
+            "runtime_ms_total",
+            "gap_id_stable_count",
+            "gap_id_unstable_count",
+        ] {
+            if let Some(value) = opt_u64(display, summary, field)?
+                && value != 0
+            {
+                return Err(fail(
+                    display,
+                    &format!("summary.{field}"),
+                    format!(
+                        "repos_run == 0: aggregate must be zero or absent, got {value} — nothing ran, so a nonzero analysis-bearing aggregate is fabricated"
+                    ),
+                ));
+            }
+        }
+        if let Some(value) = opt_number(display, summary, "gap_id_stability_rate")?
+            && value != 0.0
+        {
+            return Err(fail(
+                display,
+                "summary.gap_id_stability_rate",
+                format!(
+                    "repos_run == 0: stability rate must be zero or absent, got {value} — nothing ran, so a nonzero stability claim is fabricated"
+                ),
+            ));
+        }
+        for field in ["classification_counts", "alignment_counts"] {
+            if let Some(counts) = opt_distribution(display, summary, field)? {
+                for (name, count) in &counts {
+                    if *count != 0 {
+                        return Err(fail(
+                            display,
+                            &format!("summary.{field}.{name}"),
+                            format!(
+                                "repos_run == 0: bucket `{name}` claims {count} but nothing ran — analysis-bearing aggregates must be zero or absent at zero runs"
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     // Denominator agreement.
     match opt_u64(display, summary, "repos_total")? {
         Some(value) if value as usize != derived.total => {
@@ -2155,8 +2360,9 @@ fn validate_summary_agreement(
     // Distribution agreement: exact map equality against the row-derived key
     // set — no unknown buckets, no missing buckets the rows establish, and
     // zero-valued buckets participate like any other (the sweep writes every
-    // bucket). With zero run rows nothing is derivable, so recorded summary
-    // keys are still vocabulary-checked but cannot contradict the rows.
+    // bucket). With zero run rows the zero-run law above already bounds every
+    // recorded bucket to zero; the recorded key set is still vocabulary-
+    // checked.
     for (field, vocabulary, derived_counts) in [
         (
             "classification_counts",
@@ -3147,14 +3353,21 @@ mod python_eval_sweep {
             "stability aggregate recorded but analyzed rows lack complete stability evidence",
         )?;
 
-        // Without a recorded value the gap is disclosed incomplete, not
-        // invented and not failed.
+        // Without recorded values the gap is disclosed incomplete, not
+        // invented and not failed: over rows lacking `repeat` evidence the
+        // emitter could not have written the stability aggregates, so they
+        // are omitted here and the absence is disclosed.
         let mut receipt = current_receipt_0_3(&manifest);
         if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
             && let Some(entry) = rows[0].as_object_mut()
             && let Some(Value::Object(repeat)) = entry.get_mut("repeat")
         {
             repeat.remove("gap_ids_stable");
+        }
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.remove("gap_id_stable_count");
+            summary.remove("gap_id_unstable_count");
+            summary.remove("gap_id_stability_rate");
         }
         let check = validate_receipt_value(&receipt, &manifest, &sha)?;
         assert!(
@@ -3289,13 +3502,12 @@ mod python_eval_sweep {
         Ok(())
     }
 
-    #[test]
-    fn receipt_rejects_vacuous_pass_and_accepts_not_run() -> Result<(), String> {
-        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
-        let mut receipt = historical_receipt_0_2(&alternate_manifest());
-        // Every row becomes a skipped (non-run) row; the honest derived
-        // aggregates are all-zero with run = 0. Non-run rows must drop their
-        // analysis counts (a row that did not run carries none).
+    /// A zero-run receipt: every row is a skipped non-run row with zero
+    /// analysis counts, and the hand-entered aggregates are honestly all-zero
+    /// with the not_run gate. The stability rate is 0.0 — nothing ran, so a
+    /// nonzero stability claim is fabricated (#3733 review zero-run law).
+    fn zero_run_receipt_0_2(value_manifest: &Value) -> Value {
+        let mut receipt = historical_receipt_0_2(value_manifest);
         if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut) {
             for row in rows.iter_mut() {
                 if let Some(entry) = row.as_object_mut() {
@@ -3315,6 +3527,7 @@ mod python_eval_sweep {
             summary.insert("repos_run".to_string(), json!(0));
             summary.insert("repos_skipped".to_string(), json!(8));
             summary.insert("gap_id_stable_count".to_string(), json!(0));
+            summary.insert("gap_id_stability_rate".to_string(), json!(0.0));
             summary.insert("crash_rate".to_string(), json!(0.0));
             summary.insert("parse_failure_count".to_string(), json!(0));
             summary.insert("parse_failure_rate".to_string(), json!(0.0));
@@ -3331,23 +3544,70 @@ mod python_eval_sweep {
                 "alignment_counts".to_string(),
                 json!({"direct": 0, "alias": 0, "changed_sink_token": 0, "orthogonal": 0, "unknown": 0, "absent": 0}),
             );
+            summary.insert("gate_status".to_string(), json!("not_run"));
+            summary.insert("gate_reason".to_string(), json!("no repos analyzed"));
+        }
+        receipt
+    }
+
+    #[test]
+    fn receipt_rejects_vacuous_pass_and_accepts_not_run() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        // A zero-run receipt claiming pass fails: never a vacuous pass.
+        let mut receipt = zero_run_receipt_0_2(&alternate_manifest());
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
             summary.insert("gate_status".to_string(), json!("pass"));
             summary.insert("gate_reason".to_string(), json!("nothing ran"));
         }
-        // A zero-run receipt claiming pass fails: never a vacuous pass.
         expect_fail(
             validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
             "repos_run == 0 is `not_run`, never `pass`",
         )?;
 
         // The same zero-run receipt with the honest not_run gate validates.
-        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
-            summary.insert("gate_status".to_string(), json!("not_run"));
-            summary.insert("gate_reason".to_string(), json!("no repos analyzed"));
-        }
+        let receipt = zero_run_receipt_0_2(&alternate_manifest());
         let check = validate_receipt_value(&receipt, &manifest, &sha)?;
         assert_eq!(check.denominator_selected, 8);
         assert_eq!(check.denominator_run, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn zero_run_receipt_rejects_fabricated_summary_aggregates() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // A nonzero classification bucket claims analysis that never ran.
+        let mut receipt = zero_run_receipt_0_2(&alternate_manifest());
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut)
+            && let Some(Value::Object(counts)) = summary.get_mut("classification_counts")
+        {
+            counts.insert("static_unknown".to_string(), json!(5));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "summary.classification_counts.static_unknown",
+        )?;
+
+        // The same zero-run law bounds the runtime aggregates, the stability
+        // counts, and the stability rate — any nonzero value is fabricated.
+        for (field, value) in [
+            ("runtime_ms_total", json!(1234)),
+            ("gap_id_stable_count", json!(3)),
+            ("gap_id_stability_rate", json!(1.0)),
+        ] {
+            let mut receipt = zero_run_receipt_0_2(&alternate_manifest());
+            if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+                summary.insert(field.to_string(), value);
+            }
+            expect_fail(
+                validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+                &format!("summary.{field}"),
+            )?;
+        }
+
+        // The all-zero summary validates (absent would too).
+        let receipt = zero_run_receipt_0_2(&alternate_manifest());
+        validate_receipt_value(&receipt, &manifest, &sha)?;
         Ok(())
     }
 
@@ -3473,9 +3733,12 @@ mod python_eval_sweep {
 
     // -- currentness receipt (0.3) ------------------------------------------
 
-    /// A fully-current 0.3 receipt for the alternate manifest: every status in
+    /// A fully-current 0.3 receipt for the given manifest: every status in
     /// the eight-word vocabulary appears once; failed/unavailable rows stay
     /// selected and only the five analysis-attempting statuses count as run.
+    /// Row identities restate the manifest's own values when it pins them
+    /// (the receipt binds against the manifest side), and the summary carries
+    /// the full emitted aggregate set the sweep writes (#3733 review).
     fn current_receipt_0_3(manifest: &AcceptedManifest) -> Value {
         let statuses = [
             "complete",
@@ -3505,19 +3768,35 @@ mod python_eval_sweep {
                 status,
                 "complete" | "partial" | "parse-failed" | "timed-out" | "crashed"
             );
+            let tree = subject
+                .tree_digest
+                .clone()
+                .unwrap_or_else(|| DIGEST_ONE.to_string());
+            let snapshot = subject
+                .snapshot
+                .clone()
+                .unwrap_or_else(|| format!("snapshot-{}", subject.id));
+            let provenance = subject
+                .provenance
+                .clone()
+                .unwrap_or_else(|| "campaign-sweep".to_string());
+            let retention = subject
+                .retention_class
+                .clone()
+                .unwrap_or_else(|| "retained-evidence".to_string());
             let mut row = json!({
                 "id": subject.id,
                 "status": status,
                 "repository": {
                     "url": subject.url,
                     "sha": subject.sha,
-                    "tree_digest": DIGEST_ONE,
+                    "tree_digest": tree,
                 },
-                "tree_digest": DIGEST_ONE,
-                "snapshot": format!("snapshot-{}", subject.id),
+                "tree_digest": tree,
+                "snapshot": snapshot,
                 "license": subject.license,
-                "retention_class": "retained-evidence",
-                "provenance": "campaign-sweep",
+                "retention_class": retention,
+                "provenance": provenance,
                 "selected_root": format!("target/ripr/eval-sweep/checkouts/{}", subject.id),
                 "layout": ["pytest_library"],
                 "binary": {
@@ -3583,8 +3862,13 @@ mod python_eval_sweep {
             }
             rows.push(row);
         }
-        // Derived aggregates: run = complete/partial/parse-failed/timed-out/
-        // crashed = 5; one crashed row.
+        // Derived aggregates over the five run rows (complete/partial/
+        // parse-failed/timed-out/crashed): one crash, one parse failure, one
+        // timeout, one tempfail; runtimes 100..500 (min 100, median 300, max
+        // 500, total 1500); stability 5/5 (every run row carries `repeat`
+        // evidence); classification weakly_exposed=1 + static_unknown=1;
+        // alignment orthogonal=1, unknown=1, absent=3. The full emitted
+        // summary is present, exactly as the sweep writes it (#3733 review).
         json!({
             "schema_version": "0.3",
             "kind": "python_eval_sweep_report",
@@ -3602,9 +3886,37 @@ mod python_eval_sweep {
             "summary": {
                 "repos_total": 8,
                 "repos_run": 5,
+                "repos_skipped": 0,
+                "repos_clone_failed": 1,
                 "crash_count": 1,
+                "crash_rate": 0.2,
                 "parse_failure_count": 1,
+                "parse_failure_rate": 0.2,
                 "timed_out_count": 1,
+                "runtime_ms_min": 100,
+                "runtime_ms_median": 300,
+                "runtime_ms_max": 500,
+                "runtime_ms_total": 1500,
+                "gap_id_stable_count": 5,
+                "gap_id_unstable_count": 0,
+                "gap_id_stability_rate": 1.0,
+                "classification_counts": {
+                    "exposed": 0,
+                    "weakly_exposed": 1,
+                    "reachable_unrevealed": 0,
+                    "no_static_path": 0,
+                    "infection_unknown": 0,
+                    "propagation_unknown": 0,
+                    "static_unknown": 1,
+                },
+                "alignment_counts": {
+                    "direct": 0,
+                    "alias": 0,
+                    "changed_sink_token": 0,
+                    "orthogonal": 1,
+                    "unknown": 1,
+                    "absent": 3,
+                },
                 "gate_status": "review",
                 "gate_reason": "1 crash over 5 run rows",
             },
@@ -3614,7 +3926,12 @@ mod python_eval_sweep {
 
     #[test]
     fn current_receipt_all_eight_statuses_validate_and_stay_selected() -> Result<(), String> {
-        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        // The identity-complete manifest pins every optional identity, so the
+        // receipt's restated identities bind cleanly and zero incompletes
+        // remain (an identity-complete receipt over a gappy manifest would
+        // disclose the unbindable manifest sides instead).
+        let complete = identity_complete_manifest();
+        let (manifest, sha) = accepted_manifest(&complete)?;
         let receipt = current_receipt_0_3(&manifest);
         let check = validate_receipt_value(&receipt, &manifest, &sha)?;
         assert_eq!(check.schema_version, RECEIPT_SCHEMA_0_3);
@@ -3623,7 +3940,7 @@ mod python_eval_sweep {
         assert_eq!(check.denominator_run, 5);
         assert!(
             check.incomplete.is_empty(),
-            "complete 0.3 receipt should disclose nothing: {:?}",
+            "complete 0.3 receipt over a pinned manifest should disclose nothing: {:?}",
             check.incomplete
         );
         Ok(())
@@ -3737,11 +4054,34 @@ mod python_eval_sweep {
                 }
             }
         }
+        // The hand-entered summary is re-derived honestly from the modified
+        // rows: 8 complete runs, no crashes/parse failures/timeouts, runtimes
+        // 100..800 (min 100, median 500, max 800, total 3600), 8/8 stable,
+        // weakly_exposed=8, direct=8 (#3733 review: the full summary is
+        // required on analyzed receipts, so every aggregate must agree).
         if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
             summary.insert("repos_run".to_string(), json!(8));
+            summary.insert("repos_clone_failed".to_string(), json!(0));
             summary.insert("crash_count".to_string(), json!(0));
+            summary.insert("crash_rate".to_string(), json!(0.0));
             summary.insert("parse_failure_count".to_string(), json!(0));
+            summary.insert("parse_failure_rate".to_string(), json!(0.0));
             summary.insert("timed_out_count".to_string(), json!(0));
+            summary.insert("runtime_ms_min".to_string(), json!(100));
+            summary.insert("runtime_ms_median".to_string(), json!(500));
+            summary.insert("runtime_ms_max".to_string(), json!(800));
+            summary.insert("runtime_ms_total".to_string(), json!(3600));
+            summary.insert("gap_id_stable_count".to_string(), json!(8));
+            summary.insert("gap_id_unstable_count".to_string(), json!(0));
+            summary.insert("gap_id_stability_rate".to_string(), json!(1.0));
+            summary.insert(
+                "classification_counts".to_string(),
+                json!({"exposed": 0, "weakly_exposed": 8, "reachable_unrevealed": 0, "no_static_path": 0, "infection_unknown": 0, "propagation_unknown": 0, "static_unknown": 0}),
+            );
+            summary.insert(
+                "alignment_counts".to_string(),
+                json!({"direct": 8, "alias": 0, "changed_sink_token": 0, "orthogonal": 0, "unknown": 0, "absent": 0}),
+            );
             summary.insert("gate_status".to_string(), json!("pass"));
             summary.insert(
                 "gate_reason".to_string(),
@@ -3816,6 +4156,14 @@ mod python_eval_sweep {
                 entry.remove(field);
             }
         }
+        // With the row's `repeat` evidence gone, the stability aggregates are
+        // no longer derivable — the emitter could not have written them, so
+        // they are omitted here and the absence is disclosed below.
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.remove("gap_id_stable_count");
+            summary.remove("gap_id_unstable_count");
+            summary.remove("gap_id_stability_rate");
+        }
         let check = validate_receipt_value(&receipt, &manifest, &sha)?;
         let fields: BTreeSet<String> = check
             .incomplete
@@ -3843,6 +4191,197 @@ mod python_eval_sweep {
         Ok(())
     }
 
+    // -- #3733 review fixes ---------------------------------------------------
+
+    #[test]
+    fn analyzed_receipt_missing_summary_aggregate_fails() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        // An analyzed receipt must carry the emitted summary in full: the
+        // emitter records every aggregate, and a deleted field would silently
+        // disable its row-agreement check (#3733 review).
+        for field in ["runtime_ms_total", "classification_counts", "crash_rate"] {
+            let mut receipt = current_receipt_0_3(&manifest);
+            if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+                summary.remove(field);
+            }
+            expect_fail(
+                validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+                &format!("summary.{field}"),
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fully_evidenced_receipt_requires_stability_aggregates() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        // Every run row carries `repeat` evidence, so the emitter writes the
+        // stability aggregates; deleting one must not silently disable the
+        // stability comparison.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.remove("gap_id_stable_count");
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "summary.gap_id_stable_count",
+        )
+    }
+
+    #[test]
+    fn manifest_rejects_null_empty_and_malformed_identities() -> Result<(), String> {
+        // Explicit null: a present-but-null identity is not an absent one.
+        let mut value = identity_complete_manifest();
+        value["repos"][0]["provenance"] = Value::Null;
+        expect_fail(validate_manifest_value(&parsed(&value)?), "explicitly null")?;
+
+        // Malformed digest: present-but-garbage fails instead of completing.
+        let mut value = identity_complete_manifest();
+        value["repos"][0]["tree_digest"] = json!("nothex");
+        expect_fail(validate_manifest_value(&parsed(&value)?), "sha256 hex")?;
+
+        // Empty string.
+        let mut value = identity_complete_manifest();
+        value["repos"][0]["snapshot"] = json!("");
+        expect_fail(
+            validate_manifest_value(&parsed(&value)?),
+            "must be non-empty",
+        )?;
+
+        // License stays required: null and empty fail outright, with the
+        // subject and field named.
+        let mut value = alternate_manifest();
+        value["repos"][0]["license"] = Value::Null;
+        expect_fail(validate_manifest_value(&parsed(&value)?), "field=`license`")?;
+
+        let mut value = alternate_manifest();
+        value["repos"][2]["license"] = json!("");
+        expect_fail(
+            validate_manifest_value(&parsed(&value)?),
+            "subject=`charlie`",
+        )
+    }
+
+    #[test]
+    fn receipt_identity_must_match_the_manifest_binding() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // License mismatch: both sides record the identity, so a difference
+        // fails naming both sides.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.insert("license".to_string(), json!("GPL-3.0-only"));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "does not match the accepted manifest license",
+        )?;
+
+        // The same for an optional identity the manifest pins.
+        let (complete_manifest, complete_sha) = accepted_manifest(&identity_complete_manifest())?;
+        let mut receipt = current_receipt_0_3(&complete_manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.insert("retention_class".to_string(), json!("discarded"));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &complete_manifest, &complete_sha).map(|_| ()),
+            "does not match the accepted manifest retention_class",
+        )
+    }
+
+    #[test]
+    fn receipt_identity_without_manifest_side_discloses_incomplete() -> Result<(), String> {
+        // Manifest without tree_digest; the receipt carries one. The value
+        // cannot be bound, so the manifest side discloses incomplete — the
+        // outcome is neither valid nor a failure (#3733 review).
+        let mut gappy = identity_complete_manifest();
+        if let Some(repos) = gappy.get_mut("repos").and_then(Value::as_array_mut) {
+            for repo in repos.iter_mut() {
+                if let Some(entry) = repo.as_object_mut() {
+                    entry.remove("tree_digest");
+                }
+            }
+        }
+        let (manifest, sha) = accepted_manifest(&gappy)?;
+        let receipt_value = current_receipt_0_3(&manifest);
+        let check = validate_receipt_value(&receipt_value, &manifest, &sha)?;
+        assert!(
+            check.incomplete.iter().any(|diagnostic| {
+                diagnostic.subject == "alpha" && diagnostic.field == "manifest.tree_digest"
+            }),
+            "an unbindable receipt tree_digest must disclose the manifest side: {:?}",
+            check.incomplete
+        );
+        assert_eq!(check.verdict(), Verdict::Incomplete);
+        Ok(())
+    }
+
+    #[test]
+    fn absent_features_disclose_incomplete_and_malformed_features_fail() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // Receipt-level: absent ripr.features discloses incomplete.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(ripr) = receipt.get_mut("ripr").and_then(Value::as_object_mut) {
+            ripr.remove("features");
+        }
+        let check = validate_receipt_value(&receipt, &manifest, &sha)?;
+        assert!(
+            check
+                .incomplete
+                .iter()
+                .any(|diagnostic| diagnostic.field == "ripr.features"),
+            "absent ripr.features must disclose incomplete: {:?}",
+            check.incomplete
+        );
+
+        // Receipt-level: present-but-malformed fails.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(ripr) = receipt.get_mut("ripr").and_then(Value::as_object_mut) {
+            ripr.insert("features".to_string(), json!("python"));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "array of strings",
+        )?;
+
+        // Row-level: absent binary.features discloses incomplete.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+            && let Some(Value::Object(binary)) = entry.get_mut("binary")
+        {
+            binary.remove("features");
+        }
+        let check = validate_receipt_value(&receipt, &manifest, &sha)?;
+        assert!(
+            check
+                .incomplete
+                .iter()
+                .any(|diagnostic| diagnostic.subject == "alpha"
+                    && diagnostic.field == "binary.features"),
+            "absent binary.features must disclose incomplete: {:?}",
+            check.incomplete
+        );
+
+        // Row-level: present-but-malformed fails.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+            && let Some(Value::Object(binary)) = entry.get_mut("binary")
+        {
+            binary.insert("features".to_string(), json!(42));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "array of strings",
+        )
+    }
+
     // -- verdict + rendering -------------------------------------------------
 
     #[test]
@@ -3863,11 +4402,21 @@ mod python_eval_sweep {
     -> Result<(), String> {
         let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
         // The retained manifest discloses 32 incomplete identities (four per
-        // subject); the 0.3 receipt is complete on its own.
+        // subject); the 0.3 receipt is otherwise complete on its own — but the
+        // identities it restates have no manifest side to bind against, so
+        // each one discloses the unbindable manifest gap (#3733 review)
+        // instead of fabricating a binding.
         assert_eq!(manifest.incomplete.len(), 8 * 4);
         let receipt_value = current_receipt_0_3(&manifest);
         let receipt = validate_receipt_value(&receipt_value, &manifest, &sha)?;
-        assert!(receipt.incomplete.is_empty());
+        assert!(
+            receipt
+                .incomplete
+                .iter()
+                .any(|diagnostic| diagnostic.field == "manifest.tree_digest"),
+            "a receipt identity with no manifest side must disclose the gap: {:?}",
+            receipt.incomplete
+        );
         let outcome = CheckOutcome {
             manifest_path: "manifest.json".to_string(),
             accepted: manifest,

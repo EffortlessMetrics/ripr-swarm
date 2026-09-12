@@ -129,7 +129,12 @@ to `0.0` crash / `1.0` stability).
 typed semantic validator for the accepted artifacts (offline: no repository
 materialization, no RIPR execution, no lookups beyond the two artifact files):
 
-- One loader owns manifest and run-row semantics. The accepted manifest
+- One loader owns manifest and run-row semantics. The strict
+  duplicate-key-rejecting parse is the check-path contract; the lenient
+  in-memory parse in the sweep-report path stays historical-tolerant on
+  purpose (check validates retained accepted artifacts, the report path
+  renders in-flight sweeps), and the two converge when #3566/#3567 own the
+  refresh/report commands. The accepted manifest
   (`python_eval_sweep_manifest`) must declare schema/kind/spec/tier and
   **exactly eight** uniquely identified subjects — the canonical denominator.
   Subject content is data-driven: any eight well-formed subjects validate, not
@@ -139,7 +144,10 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   keys are `id`/`url`/`sha`/`license`/`shape`/`synthetic_diff`/`why` plus the
   optional `tree_digest`/`snapshot`/`provenance`/`retention_class` identities —
   exactly the keys the canonical fixture carries, so unknown keys are schema
-  rot, not forward compatibility.
+  rot, not forward compatibility. License is required (null/empty fails); an
+  optional identity is either absent (typed `incomplete`) or well-formed — an
+  explicit null, an empty string, or a malformed value fails, because a
+  present-but-garbage identity is not an absent one.
 - Retained run receipts (`python_eval_sweep_report`) validate in two owned
   shapes. Schema `0.2` is the historical shape the sweep command writes.
   Schema `0.3` adds the currentness identities: binary/features/config/profile/
@@ -149,12 +157,19 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   repeat-run comparison identity, and a sha256 manifest-digest binding.
 - Fail closed (nonzero exit, diagnostic names subject/field/reason plus the
   deterministic rerun command) on: duplicate or missing subjects, a changed
-  denominator, receipt rows contradicting the manifest pins, unsafe
+  denominator, receipt rows contradicting the manifest pins, a receipt
+  identity that contradicts the manifest binding (when the manifest and the
+  receipt both record a comparable identity — `license`, `tree_digest`,
+  `snapshot`, `provenance`, `retention_class` — they must match; a receipt
+  value with no manifest side to bind discloses `incomplete` on the manifest
+  side instead of fabricating a binding), unsafe
   (non-portable, absolute, or secret-bearing) paths and URLs, unknown state
   vocabulary, contradictory status (e.g. `complete` with an execution state
   that did not run, or stable gap IDs listed as unstable — in either direction,
   at the 0.2 row level or inside the 0.3 `repeat` block), malformed digests,
-  a stale manifest digest (receipt bound to different manifest bytes), and
+  a stale manifest digest (receipt bound to different manifest bytes), a
+  required summary aggregate missing from an analyzed receipt, a nonzero
+  analysis-bearing aggregate on a zero-run receipt, and
   hand-edited aggregates that disagree with the derived rows (denominator,
   outcome counts, stability counts, runtime aggregates, rates, distributions,
   gate status). Aggregate agreement is checked in both directions: an analyzed
@@ -162,9 +177,13 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   on every row (`runtime_ms`, both distributions, and the 0.2 `gap_ids_stable`;
   0.3 stability lives in the optional `repeat` block, so a recorded summary
   stability value over rows lacking it fails while an unrecorded one is
-  disclosed `incomplete`), summary distributions must equal the row-derived
+  disclosed `incomplete`), an analyzed receipt must carry the full emitted
+  summary (a deleted aggregate would silently disable its row-agreement check;
+  the stability aggregates are required exactly when the rows fully evidence
+  stability), summary distributions must equal the row-derived
   key set exactly (zero-valued buckets included; with zero run rows the
-  recorded keys are still vocabulary-checked), the supplied `gate_status` must
+  zero-run summary law bounds every recorded bucket to zero and the recorded
+  keys are still vocabulary-checked), the supplied `gate_status` must
   equal the gate derived from the rows (`not_run` at zero runs, `pass` only
   with zero crashes and full per-row stability evidence, `review` otherwise),
   and runtime totals and distribution merges use checked arithmetic (overflow
@@ -173,13 +192,19 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   rows remain selected: they are valid rows and stay in the denominator. A row
   that did not run must carry no analysis counts, and `repos_run == 0` gates to
   `not_run` — never a vacuous `pass`, and a `pass` claim requires per-row
-  stability evidence and zero crashes.
+  stability evidence and zero crashes. The not-a-vacuous-pass law extends to
+  the summary: with zero run rows every analysis-bearing aggregate
+  (classification/alignment counts, runtime min/median/max/total, stability
+  counts and rate) must be zero or absent — any nonzero value is a fabricated
+  claim about rows that never ran.
 - Missing identities are typed `incomplete` with a per-field disclosure; they
   are not invented and not errors (the retained manifest carries no
   provenance/retention/snapshot identities by design, and historical 0.2 rows
-  carry no currentness fields). Validation never upgrades or rewrites a
-  historical receipt. A recorded `alignment_counts` object must keep `absent`
-  (field not emitted) distinct from `unknown` (emitted value).
+  carry no currentness fields). Absent `ripr.features` (receipt-level) and
+  `binary.features` (row-level) disclose `incomplete` the same way;
+  present-but-malformed feature sets fail. Validation never upgrades or
+  rewrites a historical receipt. A recorded `alignment_counts` object must
+  keep `absent` (field not emitted) distinct from `unknown` (emitted value).
 - Exit contract: exit 0 when every present artifact is structurally valid —
   including when identities are disclosed `incomplete` or no receipt is
   supplied (`not_run`); nonzero on any fail-closed violation. Top-level
@@ -217,12 +242,19 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   validator is data-driven; each fail-closed shape (duplicate/missing/unknown
   subjects, changed denominator, non-https or credential-bearing URLs,
   absolute and secret-bearing paths, unknown shape tags, malformed SHAs,
-  unknown outcome/status/state values, contradictory status, stale and
-  malformed digests, hand-edited aggregates, vacuous pass, pass without
+  null/empty/malformed optional manifest identities, unknown
+  outcome/status/state values, contradictory status, stale and
+  malformed digests, a receipt identity contradicting the manifest binding,
+  a required summary aggregate missing from an analyzed receipt, a nonzero
+  analysis-bearing aggregate on a zero-run receipt, hand-edited aggregates,
+  vacuous pass, pass without
   stability evidence, merged absent/unknown distributions) fails with a
   subject/field/reason diagnostic and the rerun command; missing identities
-  are typed incomplete; a zero-run receipt gates `not_run`; the historical 0.2
-  receipt validates with disclosed incompletes and is never rewritten.
+  (including `ripr.features`/`binary.features`) are typed incomplete, and a
+  receipt value with no manifest side to bind discloses the manifest gap
+  instead of fabricating a binding; a zero-run receipt gates `not_run`; the
+  historical 0.2 receipt validates with disclosed incompletes and is never
+  rewritten.
 
 ## Non-Goals
 
