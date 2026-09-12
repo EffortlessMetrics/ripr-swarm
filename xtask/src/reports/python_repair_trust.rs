@@ -124,15 +124,15 @@ use serde_json::{Value, json};
 use crate::python_judged_panel::parse_json_without_duplicate_keys;
 use crate::python_judged_panel_replay::sha256_hex;
 
-const DEFAULT_MANIFEST: &str = "fixtures/python-repair-trust/manifest.json";
+pub(crate) const DEFAULT_MANIFEST: &str = "fixtures/python-repair-trust/manifest.json";
 const RERUN_COMMAND: &str = "cargo xtask python-repair-trust check";
 const CHECK_REPORT_JSON: &str = "python-repair-trust-check.json";
 const CHECK_REPORT_MD: &str = "python-repair-trust-check.md";
 
-const MANIFEST_KIND: &str = "python_repair_trust_manifest";
+pub(crate) const MANIFEST_KIND: &str = "python_repair_trust_manifest";
 const ATTEMPTS_KIND: &str = "python_repair_trust_attempts";
-const SCHEMA_VERSION: &str = "0.1";
-const KNOWN_SPEC: &str = "RIPR-SPEC-0176";
+pub(crate) const SCHEMA_VERSION: &str = "0.1";
+pub(crate) const KNOWN_SPEC: &str = "RIPR-SPEC-0176";
 
 /// The closed selection-manifest schema (deny-unknown). Every key the
 /// manifest shape owns is listed; unknown keys are schema rot, not forward
@@ -345,11 +345,12 @@ const EXECUTIONS: [&str; 7] = [
 const VERDICT_EXECUTIONS: [&str; 2] = ["passed", "failed"];
 
 /// Target state vocabulary (issue #3568).
-const TARGET_STATES: [&str; 5] = ["existing", "proposed", "ambiguous", "unavailable", "unsafe"];
+pub(crate) const TARGET_STATES: [&str; 5] =
+    ["existing", "proposed", "ambiguous", "unavailable", "unsafe"];
 
 /// Source-currentness vocabulary, mirrored from the repo's currentness
 /// authority (RIPR-SPEC-0151): reuse, never a private vocabulary.
-const SOURCE_CURRENTNESS: [&str; 4] = [
+pub(crate) const SOURCE_CURRENTNESS: [&str; 4] = [
     "candidate_current",
     "base_deleted",
     "moved_or_renamed",
@@ -436,7 +437,7 @@ impl Diagnostic {
 }
 
 /// Fail-closed error text: names subject/field/reason plus the rerun command.
-fn fail(subject: &str, field: &str, reason: impl std::fmt::Display) -> String {
+pub(crate) fn fail(subject: &str, field: &str, reason: impl std::fmt::Display) -> String {
     format!(
         "python-repair-trust check failed: subject=`{subject}` field=`{field}`: {reason}\nrerun: {RERUN_COMMAND}"
     )
@@ -520,7 +521,7 @@ fn parse_check_args(args: &[String]) -> Result<CheckArgs, String> {
 /// canonicalization, no reserialization — the one manifest-level digest
 /// definition; the envelope binding and each selection row's recorded value
 /// are instances of it.
-fn load_strict_json(display: &str) -> Result<(Value, String), String> {
+pub(crate) fn load_strict_json(display: &str) -> Result<(Value, String), String> {
     let bytes = std::fs::read(display)
         .map_err(|error| fail(display, "file", format!("failed to read: {error}")))?;
     let text = String::from_utf8(bytes)
@@ -530,7 +531,7 @@ fn load_strict_json(display: &str) -> Result<(Value, String), String> {
     Ok((value, sha256_hex(text.as_bytes())))
 }
 
-fn as_object<'a>(
+pub(crate) fn as_object<'a>(
     value: &'a Value,
     subject: &str,
     field: &str,
@@ -542,7 +543,7 @@ fn as_object<'a>(
 }
 
 /// Rejects keys outside the owned schema (structural rot).
-fn reject_unknown_keys(
+pub(crate) fn reject_unknown_keys(
     object: &serde_json::Map<String, Value>,
     allowed: &[&str],
     subject: &str,
@@ -562,7 +563,7 @@ fn reject_unknown_keys(
 
 /// Required non-empty string. Absent, null, wrong-typed, and blank all fail
 /// with the field named — required identities are never invented.
-fn require_string(
+pub(crate) fn require_string(
     subject: &str,
     object: &serde_json::Map<String, Value>,
     key: &str,
@@ -588,7 +589,7 @@ fn require_string(
 /// Present-and-non-null optional string; `None` = absent. An explicit null on
 /// an optional identity is garbage, not absence — the identity checks fail it
 /// with the field named.
-fn opt_string(
+pub(crate) fn opt_string(
     subject: &str,
     object: &serde_json::Map<String, Value>,
     key: &str,
@@ -640,7 +641,7 @@ fn opt_bool(
     }
 }
 
-fn known_value_or_fail(
+pub(crate) fn known_value_or_fail(
     subject: &str,
     field: &str,
     value: &str,
@@ -667,7 +668,7 @@ fn known_value_or_fail(
 
 /// A portable repo-relative path: forward slashes only, never absolute, no
 /// `..` components, and free of secret tripwires.
-fn check_portable_path(subject: &str, field: &str, path: &str) -> Result<(), String> {
+pub(crate) fn check_portable_path(subject: &str, field: &str, path: &str) -> Result<(), String> {
     if path.trim().is_empty() {
         return Err(fail(subject, field, "path must be non-empty"));
     }
@@ -773,7 +774,7 @@ fn check_no_secrets(subject: &str, field: &str, text: &str) -> Result<(), String
 
 /// Digest fields are bare lowercase sha256 hex (64 chars); git identity
 /// fields are bare lowercase 40-char hex.
-fn check_sha256_digest(subject: &str, field: &str, digest: &str) -> Result<(), String> {
+pub(crate) fn check_sha256_digest(subject: &str, field: &str, digest: &str) -> Result<(), String> {
     let ok = digest.len() == 64
         && digest
             .bytes()
@@ -789,7 +790,7 @@ fn check_sha256_digest(subject: &str, field: &str, digest: &str) -> Result<(), S
     }
 }
 
-fn check_git_sha(subject: &str, field: &str, sha: &str) -> Result<(), String> {
+pub(crate) fn check_git_sha(subject: &str, field: &str, sha: &str) -> Result<(), String> {
     let ok = sha.len() == 40
         && sha
             .bytes()
@@ -808,7 +809,11 @@ fn check_git_sha(subject: &str, field: &str, sha: &str) -> Result<(), String> {
 /// Every string value in a corpus artifact stays free of secret tripwires —
 /// a conservative recursive tripwire, not a secret parser; a hit fails with
 /// the field path named.
-fn reject_secret_tokens(value: &Value, subject: &str, field: &str) -> Result<(), String> {
+pub(crate) fn reject_secret_tokens(
+    value: &Value,
+    subject: &str,
+    field: &str,
+) -> Result<(), String> {
     match value {
         Value::String(text) => check_no_secrets(subject, field, text),
         Value::Array(items) => {
@@ -887,19 +892,24 @@ fn check_date_prefix(subject: &str, field: &str, value: &str) -> Result<(), Stri
 /// One accepted selection row: the immutable denominator entry fixed before
 /// outcomes are known.
 #[derive(Debug, Clone)]
-struct Selection {
-    attempt_id: String,
-    diversity_stratum: String,
-    target_state: String,
+pub(crate) struct Selection {
+    pub(crate) attempt_id: String,
+    pub(crate) diversity_stratum: String,
+    pub(crate) target_path: String,
+    pub(crate) target_state: String,
 }
 
 #[derive(Debug, Clone)]
-struct SelectionManifest {
-    sha256: String,
-    selections: Vec<Selection>,
+pub(crate) struct SelectionManifest {
+    pub(crate) sha256: String,
+    pub(crate) selections: Vec<Selection>,
     /// Optional identities the rows do not record; disclosed as
     /// `incomplete`, never invented.
-    incomplete: Vec<Diagnostic>,
+    pub(crate) incomplete: Vec<Diagnostic>,
+    /// Canonical row preimages by attempt identity, retained so digest-bound
+    /// consumers (the #3569 driver binding validator) can recompute each
+    /// row's `selection_digest` against the exact accepted content.
+    pub(crate) row_preimages: BTreeMap<String, serde_json::Map<String, Value>>,
 }
 
 impl SelectionManifest {
@@ -914,7 +924,7 @@ impl SelectionManifest {
 /// JSON with `selection_digest` removed, re-serialized (object keys are
 /// sorted, so the encoding is canonical). This is the immutability anchor —
 /// any content change moves the digest.
-fn canonical_selection_digest(
+pub(crate) fn canonical_selection_digest(
     row: &serde_json::Map<String, Value>,
     attempt_id: &str,
 ) -> Result<String, String> {
@@ -932,7 +942,10 @@ fn canonical_selection_digest(
 
 /// Validates the accepted selection manifest. Data-driven: any set of
 /// well-formed selection rows validates, not just a retained cohort.
-fn validate_selection_manifest(value: &Value, sha256: String) -> Result<SelectionManifest, String> {
+pub(crate) fn validate_selection_manifest(
+    value: &Value,
+    sha256: String,
+) -> Result<SelectionManifest, String> {
     let top = as_object(value, "manifest", "manifest", "selection manifest")?;
     reject_unknown_keys(top, &MANIFEST_KEYS, "manifest", "selection manifest")?;
     for (field, expected) in [
@@ -971,6 +984,7 @@ fn validate_selection_manifest(value: &Value, sha256: String) -> Result<Selectio
     let mut parsed = Vec::new();
     let mut seen = BTreeSet::new();
     let mut incomplete = Vec::new();
+    let mut preimages = BTreeMap::new();
     for row in selections {
         let entry = as_object(row, "manifest", "selections", "selection row")?;
         reject_unknown_keys(entry, &SELECTION_KEYS, "manifest", "selection row")?;
@@ -985,9 +999,14 @@ fn validate_selection_manifest(value: &Value, sha256: String) -> Result<Selectio
         let diversity_stratum = require_string(&attempt_id, entry, "diversity_stratum")?;
         let target_state = require_string(&attempt_id, entry, "target_state")?;
         validate_selection_row(entry, &attempt_id, &target_state, &mut incomplete)?;
+        preimages.insert(attempt_id.clone(), entry.clone());
         parsed.push(Selection {
             attempt_id,
             diversity_stratum,
+            target_path: entry["target_path"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
             target_state,
         });
     }
@@ -996,6 +1015,7 @@ fn validate_selection_manifest(value: &Value, sha256: String) -> Result<Selectio
         sha256,
         selections: parsed,
         incomplete,
+        row_preimages: preimages,
     })
 }
 
@@ -2499,10 +2519,12 @@ fn render_check_markdown(outcome: &CheckOutcome, verdict: Verdict) -> String {
     out
 }
 
-/// The command entry: `python-repair-trust check` is the only subcommand.
+/// The command entries: `check` (the corpus validator) and `check-driver`
+/// (the #3569 driver binding validator).
 pub(crate) fn python_repair_trust(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("check") => run_check(&args[1..]),
+        Some("check-driver") => super::python_repair_driver::run_check_driver(&args[1..]),
         Some(other) => Err(format!(
             "unknown python-repair-trust subcommand: {other}\nusage: cargo xtask python-repair-trust check [--manifest <path>] [--attempts <dir-or-file>]\nrerun: {RERUN_COMMAND}"
         )),

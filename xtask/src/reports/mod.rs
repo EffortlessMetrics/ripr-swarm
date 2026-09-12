@@ -26,6 +26,7 @@ mod pr_evidence;
 mod pr_evidence_summary;
 mod proof_preflight;
 mod proof_route;
+mod python_repair_driver;
 mod python_repair_trust;
 mod receipts;
 mod recommendation;
