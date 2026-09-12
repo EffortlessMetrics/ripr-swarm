@@ -629,12 +629,12 @@ fn verify_row_binding(
     }
 
     let tree = opt_string(row, "tree")?;
-    if let Some(tree) = &tree {
-        if !is_sha256_hex(tree) {
-            return Err(format!(
-                "selection row `{attempt_id}` tree must be bare lowercase sha256 hex when present"
-            ));
-        }
+    if let Some(tree) = &tree
+        && !is_sha256_hex(tree)
+    {
+        return Err(format!(
+            "selection row `{attempt_id}` tree must be bare lowercase sha256 hex when present"
+        ));
     }
     let source_currentness = opt_string(row, "source_currentness")?;
     let limitation = opt_string(row, "limitation")?;

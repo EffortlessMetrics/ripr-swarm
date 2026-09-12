@@ -1080,7 +1080,7 @@ mod tests {
         let Some(trust) = &options.python_repair_trust else {
             return Err("trust flags were dropped during parsing".to_string());
         };
-        if trust.manifest_path != PathBuf::from("target/ripr/manifest.json")
+        if trust.manifest_path != std::path::Path::new("target/ripr/manifest.json")
             || trust.attempt_id != "att-trust-1"
             || options.edit_authorization != authorized(Some("operator-a"))
         {

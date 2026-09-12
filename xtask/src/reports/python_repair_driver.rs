@@ -552,14 +552,14 @@ fn validate_binding_record(
             "source-currentness disposition",
         )?;
     }
-    if let Some(limitation) = opt_string(display, trust, "limitation")? {
-        if limitation.trim().is_empty() {
-            return Err(driver_fail(
-                display,
-                "trust.limitation",
-                "must be non-empty when present",
-            ));
-        }
+    if let Some(limitation) = opt_string(display, trust, "limitation")?
+        && limitation.trim().is_empty()
+    {
+        return Err(driver_fail(
+            display,
+            "trust.limitation",
+            "must be non-empty when present",
+        ));
     }
     let recorded_manifest_digest = require_string(display, trust, "selection_manifest_sha256")?;
     check_sha256_digest(
@@ -1092,6 +1092,33 @@ mod python_repair_driver_binding {
         Ok(record)
     }
 
+    /// Sets one field of the record's trust block.
+    fn set_trust_field(record: &mut Value, field: &str, value: Value) {
+        if let Some(object) = record.as_object_mut()
+            && let Some(trust) = object.get_mut("trust").and_then(Value::as_object_mut)
+        {
+            trust.insert(field.to_string(), value);
+        }
+    }
+
+    /// Sets (or removes) one field of the record's authorization block.
+    fn set_authorization_field(record: &mut Value, field: &str, value: Option<Value>) {
+        if let Some(object) = record.as_object_mut()
+            && let Some(authorization) = object
+                .get_mut("authorization")
+                .and_then(Value::as_object_mut)
+        {
+            match value {
+                Some(value) => {
+                    authorization.insert(field.to_string(), value);
+                }
+                None => {
+                    authorization.remove(field);
+                }
+            }
+        }
+    }
+
     fn checked(record: &Value, fixture: &Fixture) -> Result<DriverBindingRecord, String> {
         let manifest = validate_selection_manifest(&fixture.value, fixture.sha256.clone())?;
         validate_binding_record("record.json", record, &manifest, &fixture.sha256)
@@ -1145,10 +1172,10 @@ mod python_repair_driver_binding {
             "existing",
         ))?;
         let mut record = prepare_record(&fixture, "att-unknown", "tests/test_handler.py")?;
-        if let Some(object) = record.as_object_mut() {
-            if let Some(trust) = object.get_mut("trust").and_then(Value::as_object_mut) {
-                trust.insert("attempt_id".to_string(), json!("att-unknown"));
-            }
+        if let Some(object) = record.as_object_mut()
+            && let Some(trust) = object.get_mut("trust").and_then(Value::as_object_mut)
+        {
+            trust.insert("attempt_id".to_string(), json!("att-unknown"));
         }
         expect_rejection(
             &record,
@@ -1165,10 +1192,10 @@ mod python_repair_driver_binding {
             "existing",
         ))?;
         let mut record = prepare_record(&fixture, "att-row", "tests/test_handler.py")?;
-        if let Some(object) = record.as_object_mut() {
-            if let Some(trust) = object.get_mut("trust").and_then(Value::as_object_mut) {
-                trust.insert("selection_digest".to_string(), json!(DIGEST_TWO));
-            }
+        if let Some(object) = record.as_object_mut()
+            && let Some(trust) = object.get_mut("trust").and_then(Value::as_object_mut)
+        {
+            trust.insert("selection_digest".to_string(), json!(DIGEST_TWO));
         }
         expect_rejection(&record, &fixture, "selection row digest mismatch")
     }
@@ -1181,11 +1208,7 @@ mod python_repair_driver_binding {
             "existing",
         ))?;
         let mut record = prepare_record(&fixture, "att-target", "tests/other_test.py")?;
-        if let Some(object) = record.as_object_mut() {
-            if let Some(trust) = object.get_mut("trust").and_then(Value::as_object_mut) {
-                trust.insert("target_path".to_string(), json!("tests/other_test.py"));
-            }
-        }
+        set_trust_field(&mut record, "target_path", json!("tests/other_test.py"));
         expect_rejection(&record, &fixture, "target identity disagreement")
     }
 
@@ -1196,11 +1219,7 @@ mod python_repair_driver_binding {
         // driver binds only test-only targets.
         let fixture = build_fixture(selection_row("att-unsafe", "vendor/lib/ext.py", "unsafe"))?;
         let mut record = prepare_record(&fixture, "att-unsafe", "vendor/lib/ext.py")?;
-        if let Some(object) = record.as_object_mut() {
-            if let Some(trust) = object.get_mut("trust").and_then(Value::as_object_mut) {
-                trust.insert("target_state".to_string(), json!("unsafe"));
-            }
-        }
+        set_trust_field(&mut record, "target_state", json!("unsafe"));
         expect_rejection(
             &record,
             &fixture,
@@ -1221,18 +1240,12 @@ mod python_repair_driver_binding {
             ("method", json!("automatic"), "unknown authorization method"),
         ] {
             let mut record = prepare_record(&fixture, "att-auth", "tests/test_handler.py")?;
-            if let Some(object) = record.as_object_mut() {
-                if let Some(authorization) = object
-                    .get_mut("authorization")
-                    .and_then(Value::as_object_mut)
-                {
-                    if value.is_null() {
-                        authorization.remove(field);
-                    } else {
-                        authorization.insert(field.to_string(), value.clone());
-                    }
-                }
-            }
+            let replacement = if value.is_null() {
+                None
+            } else {
+                Some(value.clone())
+            };
+            set_authorization_field(&mut record, field, replacement);
             expect_rejection(&record, &fixture, needle)?;
         }
         Ok(())
