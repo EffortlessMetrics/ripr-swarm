@@ -294,9 +294,12 @@ validates and publishes.
   file; the route resolves it to an absolute path before any invocation, so
   PATH can never select an installed binary. The route records the binary's
   sha256 digest, its reported version, and (when the parent directory names a
-  cargo build profile) the build profile; the analyzer source SHA and feature
-  set of an arbitrary supplied binary have no producer here and stay typed
-  incomplete.
+  cargo build profile) the build profile, and re-verifies the digest after
+  EACH subject's run: a content drift (concurrent rebuild) or an unreadable
+  binary is a typed `tempfail` row disposition named in the managed execution
+  receipt — a run is never attributed to a stale binary identity. The
+  analyzer source SHA and feature set of an arbitrary supplied binary have no
+  producer here and stay typed incomplete.
 - **Materialization.** Per subject, the pinned tree is materialized into
   `<out>/subjects/<id>`: a prior candidate directory is reused only when
   `git rev-parse HEAD` verifies the exact pin (after a bounded detached
@@ -321,12 +324,21 @@ validates and publishes.
   `partial` (an attempt without reported completeness), `tempfail`, `stale`.
   Exactly the five run statuses count toward `repos_run`; a failed or partial
   row retains its available evidence and can never count as complete.
+  Post-materialization infrastructure failures — cache-dir creation, analysis
+  spawn, raw-evidence retention — are contained the same way: each becomes a
+  typed `tempfail` row over the verified facts with its cause named in the
+  managed execution receipt, so the route ALWAYS produces the full eight-row
+  candidate denominator instead of aborting.
 - **Per-subject retention.** Each candidate row carries: the repository
   identity restating the accepted pin (`url`/`sha`; manifest-carried
   `tree_digest`/`snapshot`/`provenance`/`retention_class` are copied through,
   never invented); the selected root (recorded out-relative so every receipt
   path stays portable) and layout tag; the binary identity block; the config
-  identity (`--mode fast` over default configuration) and the synthetic-diff
+  identity, recorded honestly (`--mode fast`; `subject-ripr-toml` with the
+  relative path when the materialized subject root carries its own
+  `ripr.toml` — the configuration `ripr check --root` actually loads —
+  `default` only when the file is genuinely absent, `unobserved` when no tree
+  was materialized to inspect) and the synthetic-diff
   input path with its sha256 `input_digest`; the materialization/detection/
   execution/corpus-selection states with source/test/generated/vendor counts
   from a bounded working-set walk (`partial` at the cap — never a silently
@@ -600,6 +612,20 @@ receipt rows derive repos_run = 8 but the summary claims 7
 - `eval_sweep_refresh::python_eval_sweep_refresh::non_complete_first_results_never_enter_the_repeat_phase`
   -> the complete-first gate lives inside the stability pass: a non-complete
   first result never spawns a repeat and never claims stability.
+- `eval_sweep_refresh::python_eval_sweep_refresh::binary_swap_between_subjects_is_detected`
+  -> the per-subject post-run identity re-verification names a swapped
+  (rebuilt) binary's drift and fails closed on an unreadable binary.
+- `eval_sweep_refresh::python_eval_sweep_refresh::infrastructure_failure_row_keeps_the_denominator_shape`
+  -> a contained infrastructure failure is a typed `tempfail` row over the
+  verified facts with its cause named — no analysis counts, no invented
+  digests.
+- `eval_sweep_refresh::python_eval_sweep_refresh::cache_creation_failure_becomes_tempfail_and_route_completes`
+  -> a subject whose cache dir cannot be created becomes a `tempfail` row and
+  the route still produces the full validatable eight-row denominator with
+  the cause in the execution receipt.
+- `eval_sweep_refresh::python_eval_sweep_refresh::subject_ripr_toml_is_recorded_not_default`
+  -> a subject root carrying `ripr.toml` records the configured identity with
+  its relative path; `default` only when genuinely absent.
 - `eval_sweep_refresh::python_eval_sweep_refresh::deterministic_row_and_summary_assembly`
   -> identical inputs assemble identical rows and summary (declared
   telemetry apart).

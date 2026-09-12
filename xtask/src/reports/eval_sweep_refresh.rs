@@ -34,12 +34,18 @@
 //!   not this route.
 //! - Explicit binary: `--ripr-bin` is mandatory and must name an existing file;
 //!   the route resolves it to an absolute path before any invocation, so PATH
-//!   can never select an installed binary.
+//!   can never select an installed binary. The binary's content identity is
+//!   re-verified after EACH subject's run: a concurrent rebuild is a typed
+//!   `tempfail` row disposition named in the execution receipt — never a
+//!   silent stale digest over changed bytes.
 //! - Subjects remain selected after ANY failure: materialization, input,
 //!   infrastructure, parse, timeout, unsupported, partial, and stale outcomes
 //!   all stay rows in the candidate denominator under the owned 0.3 status
-//!   vocabulary; a failed row retains its available evidence and can never
-//!   count as complete.
+//!   vocabulary; infrastructure failures at or after materialization (cache
+//!   creation, analysis spawn, raw retention, binary-identity drift) are
+//!   contained as typed `tempfail` rows naming their cause, so the route
+//!   ALWAYS produces the full candidate receipt denominator; a failed row
+//!   retains its available evidence and can never count as complete.
 //! - Terminal states stay distinct: `complete`/`partial`/`parse-failed`/
 //!   `timed-out`/`crashed`/`unsupported`/`tempfail`/`stale` are derived from
 //!   producer facts (rail-enforced timeout, exit status, captured JSON,
@@ -123,11 +129,33 @@ const WORKING_SET_CAP: usize = 500_000;
 /// Per-invocation deadline for the binary version probe.
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The config identity recorded on every row: the sweep invocation profile
-/// (`--mode fast`) over the analyzer's default configuration. A supplied
-/// `ripr.toml` inside a materialized subject belongs to the subject tree and
-/// is disclosed by the analyzer, not re-identified here.
-const CONFIG_PROFILE: &str = "mode-fast-default-config";
+/// The config identity recorded on every row, honestly: `ripr check --root
+/// <tree>` loads the subject root's own `ripr.toml` when present, so a
+/// materialized tree carrying that file records `subject-ripr-toml` (the
+/// execution receipt retains the relative path); `default` only when the
+/// materialized tree genuinely carries no subject config; `unobserved` when
+/// no tree was materialized to inspect.
+const CONFIG_PROFILE_SUBJECT: &str = "subject-ripr-toml";
+const CONFIG_PROFILE_DEFAULT: &str = "default";
+const CONFIG_PROFILE_UNOBSERVED: &str = "unobserved";
+
+/// The subject-root config file `ripr check` loads from the analyzed root.
+const SUBJECT_CONFIG_FILE: &str = "ripr.toml";
+
+/// Detects the subject-root config identity from a materialized tree: the
+/// file's presence is the real producer (the analyzer loads it from the
+/// root), so the row records the configured identity instead of claiming the
+/// default configuration.
+fn detect_subject_config(dir: &Path) -> (String, Option<String>) {
+    if dir.join(SUBJECT_CONFIG_FILE).is_file() {
+        (
+            CONFIG_PROFILE_SUBJECT.to_string(),
+            Some(SUBJECT_CONFIG_FILE.to_string()),
+        )
+    } else {
+        (CONFIG_PROFILE_DEFAULT.to_string(), None)
+    }
+}
 
 /// The repeat-run identity: the first complete analysis pass of the same
 /// subject under the same binary/config/input.
@@ -182,6 +210,9 @@ pub(crate) fn run_refresh_with_env(
     let started = std::time::Instant::now();
     let mut executions: Vec<SubjectExecution> = Vec::new();
     for subject in &manifest.subjects {
+        // A subject's failure never aborts the route: refresh_subject always
+        // yields this subject's row, so the candidate denominator always
+        // equals the accepted manifest.
         executions.push(refresh_subject(
             subject,
             &binary,
@@ -190,7 +221,7 @@ pub(crate) fn run_refresh_with_env(
             &parsed.checkout_root,
             parsed.timeout,
             parsed.clone_timeout,
-        )?);
+        ));
     }
 
     // Assemble the candidate receipt, then self-validate it through the exact
@@ -366,17 +397,18 @@ fn validate_out_separation(out_display: &str) -> Result<PathBuf, String> {
         format!("eval-sweep refresh --out `{out_display}` cannot be resolved: {error}\n{USAGE}")
     })?;
     let out_canonical = canonical_deep(&out_abs).map_err(|error| {
-        format!("eval-sweep refresh --out `{out_display}` cannot be canonicalized: {error}\n{USAGE}")
+        format!(
+            "eval-sweep refresh --out `{out_display}` cannot be canonicalized: {error}\n{USAGE}"
+        )
     })?;
     let repo_root = std::path::absolute(repo_root_anchor()).map_err(|error| {
         format!("eval-sweep refresh cannot resolve the repository root: {error}")
     })?;
-    let repo_root_canonical = canonical_deep(&repo_root)
-        .map_err(|error| format!("eval-sweep refresh cannot canonicalize the repository root: {error}"))?;
+    let repo_root_canonical = canonical_deep(&repo_root).map_err(|error| {
+        format!("eval-sweep refresh cannot canonicalize the repository root: {error}")
+    })?;
     let fixtures_canonical = canonical_deep(&repo_root.join("fixtures")).map_err(|error| {
-        format!(
-            "eval-sweep refresh cannot canonicalize the accepted `fixtures/` tree: {error}"
-        )
+        format!("eval-sweep refresh cannot canonicalize the accepted `fixtures/` tree: {error}")
     })?;
     if path_overlaps(&out_canonical, &fixtures_canonical) {
         return Err(format!(
@@ -529,6 +561,31 @@ fn resolve_binary(supplied: &str) -> Result<BinaryIdentity, String> {
         version,
         build_profile,
     })
+}
+
+/// Re-verifies the binary's content identity against the digest recorded at
+/// resolve time. `None` means the identity held; `Some(reason)` names the
+/// drift — including the fail-closed case where the binary cannot be re-read
+/// at all (unverifiable identity is not identity). The route re-verifies
+/// after EACH subject's run: a concurrent rebuild must never let rows keep a
+/// stale digest while executed bytes changed underneath them.
+fn binary_identity_drift(binary: &BinaryIdentity) -> Option<String> {
+    match std::fs::read(&binary.absolute) {
+        Ok(bytes) => {
+            let post_run_digest = sha256_hex(&bytes);
+            if post_run_digest == binary.binary_digest {
+                None
+            } else {
+                Some(format!(
+                    "binary content identity drifted during the run: recorded sha256 `{}`, post-run sha256 `{}` — the executed bytes can no longer be attributed to the recorded identity",
+                    binary.binary_digest, post_run_digest
+                ))
+            }
+        }
+        Err(error) => Some(format!(
+            "binary could not be re-read after the run for its identity check: {error}"
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1266,6 +1323,9 @@ struct RowInputs<'a> {
     first: Option<&'a AnalysisPass>,
     stability: Option<&'a StabilityResult>,
     corpus: Option<&'a CorpusCounts>,
+    /// The honest config identity for this row (`subject-ripr-toml`,
+    /// `default`, or `unobserved` — see `detect_subject_config`).
+    config_profile: &'a str,
 }
 
 /// One candidate row: the terminal 0.3 shape `eval_sweep_check` validates.
@@ -1291,6 +1351,7 @@ fn assemble_row(inputs: RowInputs) -> CandidateRow {
         first,
         stability,
         corpus,
+        config_profile,
     } = inputs;
     let id = &subject.id;
 
@@ -1407,7 +1468,7 @@ fn assemble_row(inputs: RowInputs) -> CandidateRow {
     row.insert(
         "config".to_string(),
         json!({
-            "profile": CONFIG_PROFILE,
+            "profile": config_profile,
             "input": diff_portable,
         }),
     );
@@ -1642,6 +1703,14 @@ struct SubjectExecution {
     stability_performed: bool,
     stability_limitation: Option<String>,
     output_identity_stable: Option<bool>,
+    /// The honest config identity detected for this subject's tree.
+    config_profile: String,
+    /// The subject-root config file's out-relative path, when one exists.
+    subject_config_path: Option<String>,
+    /// A named infrastructure failure contained at this subject (cache
+    /// creation, spawn, raw retention, binary-identity drift): the row is a
+    /// typed `tempfail` and the execution receipt names the cause.
+    infrastructure_limitation: Option<String>,
 }
 
 fn assemble_receipt(
@@ -1706,6 +1775,10 @@ fn assemble_execution_receipt(
                     "source": execution.materialization_source,
                     "limitation": execution.materialization_limitation,
                 },
+                "config": {
+                    "profile": execution.config_profile,
+                    "subject_config": execution.subject_config_path,
+                },
                 "analysis": {
                     "complete": execution.analysis_complete,
                     "limitations": execution.analysis_limitations,
@@ -1716,6 +1789,7 @@ fn assemble_execution_receipt(
                     "output_identity_stable": execution.output_identity_stable,
                     "limitation": execution.stability_limitation,
                 },
+                "infrastructure_limitation": execution.infrastructure_limitation,
             })
         })
         .collect();
@@ -1794,6 +1868,64 @@ fn plan_subject(
     }
 }
 
+/// The verified-tree context a post-materialization failure still carries:
+/// the row stays a typed `tempfail` while the facts already established
+/// (verified tree, resolved input, counted corpus, detected config) remain
+/// attached — evidence is kept where it is real.
+struct ReadyContext<'a> {
+    subject: &'a AcceptedSubject,
+    binary: &'a BinaryIdentity,
+    diff_portable: &'a str,
+    diff_digest: Option<String>,
+    dir: PathBuf,
+    source: &'static str,
+    corpus: Option<&'a CorpusCounts>,
+    config_profile: String,
+    subject_config_path: Option<String>,
+}
+
+/// Contains a post-materialization infrastructure failure (cache creation,
+/// analysis spawn, raw retention, binary-identity drift) at its subject: the
+/// row is a typed `tempfail` assembled from the verified facts with no
+/// captured pass — the route ALWAYS produces the full eight-row candidate
+/// denominator, and the execution receipt names the cause. Captured bytes
+/// whose retention failed are not digested (digests bind retained bytes).
+fn infrastructure_failure_execution(context: ReadyContext, limitation: String) -> SubjectExecution {
+    let row = assemble_row(RowInputs {
+        subject: context.subject,
+        binary: context.binary,
+        diff_portable: context.diff_portable,
+        diff_digest: context.diff_digest,
+        materialization: &Materialization::Materialized {
+            dir: context.dir,
+            source: context.source,
+        },
+        first: None,
+        stability: None,
+        corpus: context.corpus,
+        config_profile: &context.config_profile,
+    });
+    SubjectExecution {
+        subject_id: context.subject.id.clone(),
+        row,
+        materialization_state: "materialized",
+        materialization_source: Some(context.source),
+        materialization_limitation: None,
+        analysis_complete: None,
+        analysis_limitations: Vec::new(),
+        stability_performed: false,
+        stability_limitation: None,
+        output_identity_stable: None,
+        config_profile: context.config_profile,
+        subject_config_path: context.subject_config_path,
+        infrastructure_limitation: Some(limitation),
+    }
+}
+
+/// Runs one subject's phases to a terminal execution record. The route never
+/// aborts on a subject's failure: every phase outcome below `Ready` — and
+/// every infrastructure failure at or after `Ready` — still yields this
+/// subject's row, so the candidate denominator always equals the manifest.
 fn refresh_subject(
     subject: &AcceptedSubject,
     binary: &BinaryIdentity,
@@ -1802,7 +1934,7 @@ fn refresh_subject(
     checkout_root: &str,
     timeout: Duration,
     clone_timeout: Duration,
-) -> Result<SubjectExecution, String> {
+) -> SubjectExecution {
     let id = &subject.id;
     match plan_subject(subject, manifest_dir, out_abs, checkout_root, clone_timeout) {
         SubjectPhase::InputUnavailable { limitation } => {
@@ -1817,8 +1949,9 @@ fn refresh_subject(
                 first: None,
                 stability: None,
                 corpus: None,
+                config_profile: CONFIG_PROFILE_UNOBSERVED,
             });
-            Ok(SubjectExecution {
+            SubjectExecution {
                 subject_id: id.clone(),
                 row,
                 materialization_state: "skipped",
@@ -1829,7 +1962,10 @@ fn refresh_subject(
                 stability_performed: false,
                 stability_limitation: None,
                 output_identity_stable: None,
-            })
+                config_profile: CONFIG_PROFILE_UNOBSERVED.to_string(),
+                subject_config_path: None,
+                infrastructure_limitation: None,
+            }
         }
         SubjectPhase::NotMaterialized(materialization) => {
             let state = materialization_state(&materialization);
@@ -1843,8 +1979,9 @@ fn refresh_subject(
                 first: None,
                 stability: None,
                 corpus: None,
+                config_profile: CONFIG_PROFILE_UNOBSERVED,
             });
-            Ok(SubjectExecution {
+            SubjectExecution {
                 subject_id: id.clone(),
                 row,
                 materialization_state: state,
@@ -1855,7 +1992,10 @@ fn refresh_subject(
                 stability_performed: false,
                 stability_limitation: None,
                 output_identity_stable: None,
-            })
+                config_profile: CONFIG_PROFILE_UNOBSERVED.to_string(),
+                subject_config_path: None,
+                infrastructure_limitation: None,
+            }
         }
         SubjectPhase::Ready {
             dir,
@@ -1865,19 +2005,54 @@ fn refresh_subject(
         } => {
             // Bounded corpus walk over the verified tree.
             let corpus = count_corpus(&dir);
+            // Honest config identity from the materialized tree: a subject
+            // root carrying `ripr.toml` means `ripr check` runs configured,
+            // not default.
+            let (config_profile, subject_config_path) = detect_subject_config(&dir);
+            let context = || ReadyContext {
+                subject,
+                binary,
+                diff_portable: &subject.synthetic_diff,
+                diff_digest: Some(diff_digest.clone()),
+                dir: dir.clone(),
+                source,
+                corpus: Some(&corpus),
+                config_profile: config_profile.clone(),
+                subject_config_path: subject_config_path.clone(),
+            };
             // Isolated per-subject cache so runs never share analyzer state.
             let cache_dir = out_abs.join(CACHE_DIR).join(id);
-            std::fs::create_dir_all(&cache_dir).map_err(|error| {
-                format!(
-                    "eval-sweep refresh cannot create cache dir `{}` for `{id}`: {error}",
-                    cache_dir.display()
-                )
-            })?;
-            let first = run_analysis_pass(binary, &dir, &diff_absolute, &cache_dir, timeout, id)?;
-            write_raw_output(out_abs, id, "pass1", &first.stdout, &first.stderr)?;
+            if let Err(error) = std::fs::create_dir_all(&cache_dir) {
+                return infrastructure_failure_execution(
+                    context(),
+                    format!(
+                        "eval-sweep refresh cannot create cache dir `{}` for `{id}`: {error}",
+                        cache_dir.display()
+                    ),
+                );
+            }
+            let first =
+                match run_analysis_pass(binary, &dir, &diff_absolute, &cache_dir, timeout, id) {
+                    Ok(pass) => pass,
+                    Err(error) => {
+                        return infrastructure_failure_execution(
+                            context(),
+                            format!("the analysis pass could not run: {error}"),
+                        );
+                    }
+                };
+            if let Err(error) = write_raw_output(out_abs, id, "pass1", &first.stdout, &first.stderr)
+            {
+                return infrastructure_failure_execution(
+                    context(),
+                    format!(
+                        "the analysis ran but its pass-1 raw evidence could not be retained under the candidate tree: {error}"
+                    ),
+                );
+            }
 
             // Stability runs only where the first result is complete enough
-            // for a meaningful comparison.
+            // for a meaningful comparison (gated again inside the pass).
             let stability = if matches!(first.status, RunStatus::Complete) {
                 let result = run_stability_pass(
                     binary,
@@ -1893,22 +2068,43 @@ fn refresh_subject(
                     repeat_stderr,
                     ..
                 } = &result
+                    && let Err(error) =
+                        write_repeat_raw_output(out_abs, id, repeat_stdout, repeat_stderr)
                 {
-                    write_repeat_raw_output(out_abs, id, repeat_stdout, repeat_stderr)?;
+                    return infrastructure_failure_execution(
+                        context(),
+                        format!(
+                            "the repeat pass ran but its raw evidence could not be retained under the candidate tree: {error}"
+                        ),
+                    );
                 }
                 Some(result)
             } else {
                 None
             };
+
+            // Binary identity re-verification after THIS subject's runs: a
+            // concurrent rebuild is a typed tempfail row disposition named in
+            // the execution receipt — never a silent stale identity, and the
+            // captured passes are discarded rather than attributed to an
+            // unknown binary.
+            if let Some(drift) = binary_identity_drift(binary) {
+                return infrastructure_failure_execution(context(), drift);
+            }
+
             let row = assemble_row(RowInputs {
                 subject,
                 binary,
                 diff_portable: &subject.synthetic_diff,
                 diff_digest: Some(diff_digest),
-                materialization: &Materialization::Materialized { dir, source },
+                materialization: &Materialization::Materialized {
+                    dir: dir.clone(),
+                    source,
+                },
                 first: Some(&first),
                 stability: stability.as_ref(),
                 corpus: Some(&corpus),
+                config_profile: &config_profile,
             });
             let analysis_limitations = analysis_limitations(&first);
             let (stability_performed, stability_limitation, output_identity_stable) =
@@ -1929,7 +2125,7 @@ fn refresh_subject(
                         None,
                     ),
                 };
-            Ok(SubjectExecution {
+            SubjectExecution {
                 subject_id: id.clone(),
                 row,
                 materialization_state: "materialized",
@@ -1940,7 +2136,10 @@ fn refresh_subject(
                 stability_performed,
                 stability_limitation,
                 output_identity_stable,
-            })
+                config_profile,
+                subject_config_path,
+                infrastructure_limitation: None,
+            }
         }
     }
 }
@@ -2165,8 +2364,13 @@ mod python_eval_sweep_refresh {
     /// must see through.
     #[cfg(unix)]
     fn create_dir_link(link: &Path, target: &Path) -> Result<(), String> {
-        std::os::unix::fs::symlink(target, link)
-            .map_err(|error| format!("create symlink `{} -> {}`: {error}", link.display(), target.display()))
+        std::os::unix::fs::symlink(target, link).map_err(|error| {
+            format!(
+                "create symlink `{} -> {}`: {error}",
+                link.display(),
+                target.display()
+            )
+        })
     }
 
     #[cfg(windows)]
@@ -2437,13 +2641,13 @@ mod python_eval_sweep_refresh {
         let _ = std::fs::remove_dir_all(&link);
         let _ = std::fs::remove_file(&link);
         if let Some(parent) = link.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| format!("create link parent: {error}"))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("create link parent: {error}"))?;
         }
         create_dir_link(&link, &target)?;
 
-        let refused = refusal_of(
-            validate_out_separation(link.to_string_lossy().as_ref()).map(|_| ()),
-        );
+        let refused =
+            refusal_of(validate_out_separation(link.to_string_lossy().as_ref()).map(|_| ()));
         let _ = std::fs::remove_dir_all(&link);
         let _ = std::fs::remove_file(&link);
         let error = refused?;
@@ -2541,6 +2745,7 @@ mod python_eval_sweep_refresh {
             first: None,
             stability: None,
             corpus: None,
+            config_profile: CONFIG_PROFILE_UNOBSERVED,
         });
         assert_eq!(row.status, "stale");
         assert!(!row.counts_as_run);
@@ -2581,6 +2786,7 @@ mod python_eval_sweep_refresh {
             first: None,
             stability: None,
             corpus: None,
+            config_profile: CONFIG_PROFILE_UNOBSERVED,
         });
         assert_eq!(row.status, "tempfail");
         assert!(!row.counts_as_run);
@@ -2654,6 +2860,7 @@ mod python_eval_sweep_refresh {
                 first: Some(&first),
                 stability: Some(&stable_comparison()),
                 corpus: Some(&corpus),
+                config_profile: CONFIG_PROFILE_SUBJECT,
             })
         };
         let a = build();
@@ -2664,6 +2871,15 @@ mod python_eval_sweep_refresh {
         assert_eq!(row_text_a, row_text_b);
         assert_eq!(a.status, "complete");
         assert_eq!(a.stability, Some(true));
+        // The row records the configured identity honestly, not `default`.
+        assert_eq!(
+            a.value
+                .get("config")
+                .and_then(|config| config.get("profile"))
+                .and_then(Value::as_str),
+            Some(CONFIG_PROFILE_SUBJECT),
+            "a subject-ripr-toml tree records the configured identity"
+        );
 
         // The summary derivation is equally deterministic and reports the
         // stability aggregates when every run row carries repeat evidence.
@@ -2678,6 +2894,9 @@ mod python_eval_sweep_refresh {
             stability_performed: true,
             stability_limitation: None,
             output_identity_stable: Some(true),
+            config_profile: CONFIG_PROFILE_SUBJECT.to_string(),
+            subject_config_path: Some("ripr.toml".to_string()),
+            infrastructure_limitation: None,
         };
         let executions = vec![execution];
         let summary_a = derive_summary(&executions);
@@ -2766,6 +2985,7 @@ mod python_eval_sweep_refresh {
                 first: first.as_ref(),
                 stability: stability.as_ref(),
                 corpus: None,
+                config_profile: CONFIG_PROFILE_SUBJECT,
             });
             executions.push(SubjectExecution {
                 subject_id: subject.id.clone(),
@@ -2778,6 +2998,9 @@ mod python_eval_sweep_refresh {
                 stability_performed: stability.is_some(),
                 stability_limitation: None,
                 output_identity_stable: None,
+                config_profile: CONFIG_PROFILE_SUBJECT.to_string(),
+                subject_config_path: None,
+                infrastructure_limitation: None,
             });
         }
 
@@ -2862,6 +3085,7 @@ mod python_eval_sweep_refresh {
             first: Some(&first),
             stability: Some(&comparison),
             corpus: None,
+            config_profile: CONFIG_PROFILE_SUBJECT,
         });
         assert_eq!(row.stability, Some(false));
         let repeat = row
@@ -2937,6 +3161,237 @@ mod python_eval_sweep_refresh {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// F-E seam: the per-subject post-run identity re-verification detects a
+    /// swapped binary. The identity file stands in for the built binary — a
+    /// concurrent rebuild between two subjects' runs changes its bytes, and
+    /// the mismatch is named (recorded vs post-run digest), never silently
+    /// carried as a stale identity. An unreadable binary fails closed too.
+    #[test]
+    fn binary_swap_between_subjects_is_detected() -> Result<(), String> {
+        let root = temp_root("drift-binary");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
+        let binary_path = root.join("ripr-under-test");
+        std::fs::write(&binary_path, b"binary bytes subject 1-3")
+            .map_err(|error| format!("write binary: {error}"))?;
+        let recorded = sha256_hex(&std::fs::read(&binary_path).map_err(|error| error.to_string())?);
+        let binary = BinaryIdentity {
+            absolute: binary_path.clone(),
+            binary_digest: recorded.clone(),
+            version: "ripr 0.0.0-test".to_string(),
+            build_profile: None,
+        };
+        assert!(
+            binary_identity_drift(&binary).is_none(),
+            "the identity holds before any swap"
+        );
+
+        // The concurrent rebuild lands between subjects.
+        std::fs::write(&binary_path, b"REBUILT binary bytes subject 4")
+            .map_err(|error| format!("swap binary: {error}"))?;
+        let drift = binary_identity_drift(&binary)
+            .ok_or_else(|| "the swapped binary must be detected as drift".to_string())?;
+        assert!(
+            drift.contains(&recorded),
+            "the drift names the recorded digest: {drift}"
+        );
+        assert!(
+            drift.contains(&sha256_hex(b"REBUILT binary bytes subject 4")),
+            "the drift names the post-run digest: {drift}"
+        );
+        assert!(
+            drift.contains("drifted") || drift.contains("attributed"),
+            "the drift is a named typed disposition, not a silent identity: {drift}"
+        );
+
+        // A binary that cannot be re-read is fail-closed drift as well.
+        std::fs::remove_file(&binary_path).map_err(|error| format!("remove binary: {error}"))?;
+        let unreadable = binary_identity_drift(&binary)
+            .ok_or_else(|| "an unreadable binary must fail closed".to_string())?;
+        assert!(unreadable.contains("re-read"), "{unreadable}");
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A post-materialization infrastructure failure (or binary-identity
+    /// drift) keeps the subject selected as a typed tempfail row over the
+    /// verified facts, with the cause named on the execution record — the
+    /// denominator never shrinks.
+    #[test]
+    fn infrastructure_failure_row_keeps_the_denominator_shape() -> Result<(), String> {
+        let subject = test_subject("infra", VALID_SHA_E, "flask_web");
+        let execution = infrastructure_failure_execution(
+            ReadyContext {
+                subject: &subject,
+                binary: &test_binary(),
+                diff_portable: &subject.synthetic_diff,
+                diff_digest: Some(DIGEST_ONE.to_string()),
+                dir: PathBuf::from("subjects").join("infra"),
+                source: "local_seed_clone",
+                corpus: None,
+                config_profile: CONFIG_PROFILE_SUBJECT.to_string(),
+                subject_config_path: Some("ripr.toml".to_string()),
+            },
+            "the analysis pass could not run: spawn refused".to_string(),
+        );
+        assert_eq!(execution.row.status, "tempfail");
+        assert!(!execution.row.counts_as_run);
+        assert_eq!(execution.materialization_state, "materialized");
+        assert_eq!(
+            execution.infrastructure_limitation.as_deref(),
+            Some("the analysis pass could not run: spawn refused")
+        );
+        assert!(execution.row.stability.is_none());
+        let entry = execution
+            .row
+            .value
+            .as_object()
+            .ok_or_else(|| "row must be a JSON object".to_string())?;
+        assert!(
+            entry.get("classification_counts").is_none(),
+            "a contained row carries no analysis counts"
+        );
+        assert!(
+            entry.get("digests").and_then(Value::as_null).is_some(),
+            "no captured pass means no digests (digests bind retained bytes)"
+        );
+        assert_eq!(
+            entry
+                .get("config")
+                .and_then(|config| config.get("profile"))
+                .and_then(Value::as_str),
+            Some(CONFIG_PROFILE_SUBJECT),
+            "the detected config identity survives the containment"
+        );
+        Ok(())
+    }
+
+    /// F-G: the config identity is honest — a subject root carrying its own
+    /// `ripr.toml` (which `ripr check --root` loads) records the configured
+    /// identity with the relative path; `default` only when the file is
+    /// genuinely absent.
+    #[test]
+    fn subject_ripr_toml_is_recorded_not_default() -> Result<(), String> {
+        let root = temp_root("config-detect");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
+        let (profile, path) = detect_subject_config(&root);
+        assert_eq!(profile, CONFIG_PROFILE_DEFAULT, "no subject config file");
+        assert_eq!(path, None);
+        std::fs::write(
+            root.join("ripr.toml"),
+            "[languages]\nenabled = [\"python\"]\n",
+        )
+        .map_err(|error| format!("write ripr.toml: {error}"))?;
+        let (profile, path) = detect_subject_config(&root);
+        assert_eq!(profile, CONFIG_PROFILE_SUBJECT);
+        assert_eq!(path.as_deref(), Some("ripr.toml"));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A subject whose cache dir cannot be created is contained as a
+    /// `tempfail` row — the route still completes with the full eight-row
+    /// candidate denominator, self-validated, with the cause named on the
+    /// execution record. The cache path is sabotaged with a regular file, a
+    /// deterministic stand-in for an uncreatable directory.
+    #[test]
+    fn cache_creation_failure_becomes_tempfail_and_route_completes() -> Result<(), String> {
+        let root = temp_root("cache-fail");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
+        let mut pins = Vec::new();
+        for index in 0..8 {
+            let seed = root.join("seeds").join(format!("s{index}"));
+            pins.push(build_seed(&seed)?);
+        }
+        let manifest_path = write_manifest_and_diffs(&root, &pins)?;
+
+        // Sabotage s7's cache dir: a regular FILE where the route needs a
+        // directory. Every other subject materializes and analyzes normally.
+        let out = root.join("out");
+        std::fs::create_dir_all(out.join(CACHE_DIR))
+            .map_err(|error| format!("create cache root: {error}"))?;
+        std::fs::write(out.join(CACHE_DIR).join("s7"), "not a directory")
+            .map_err(|error| format!("write cache blocker: {error}"))?;
+
+        let binary = built_ripr_binary()?;
+        let args = vec![
+            "--manifest".to_string(),
+            manifest_path.to_string_lossy().to_string(),
+            "--ripr-bin".to_string(),
+            binary,
+            "--out".to_string(),
+            out.to_string_lossy().to_string(),
+            "--checkout-root".to_string(),
+            root.join("seeds").to_string_lossy().to_string(),
+            "--timeout-secs".to_string(),
+            "60".to_string(),
+            "--allow-network".to_string(),
+        ];
+        let run = run_refresh_with_env(&args, Some("1"));
+        if let Err(error) = &run {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!(
+                "the route must contain the failure, not abort: {error}"
+            ));
+        }
+
+        let receipt_text = std::fs::read_to_string(out.join(RECEIPT_FILE))
+            .map_err(|error| format!("read receipt: {error}"))?;
+        let receipt: Value = serde_json::from_str(&receipt_text)
+            .map_err(|error| format!("parse receipt: {error}"))?;
+        let rows = receipt
+            .get("repos")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| "receipt rows".to_string())?;
+        assert_eq!(rows.len(), 8, "the denominator never shrinks: all 8 rows");
+        let blocked = rows
+            .iter()
+            .find(|row| row.get("id").and_then(Value::as_str) == Some("s7"))
+            .ok_or_else(|| "s7 row present".to_string())?;
+        assert_eq!(
+            blocked.get("status").and_then(Value::as_str),
+            Some("tempfail"),
+            "the cache failure is a contained tempfail row: {blocked}"
+        );
+
+        // The produced receipt still validates end to end.
+        let outcome = check_artifacts(
+            manifest_path.to_string_lossy().as_ref(),
+            Some(out.join(RECEIPT_FILE).to_string_lossy().as_ref()),
+        );
+        if let Err(error) = &outcome {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!("the contained receipt must validate: {error}"));
+        }
+
+        // The execution receipt names the contained failure.
+        let exec_text = std::fs::read_to_string(out.join(EXEC_RECEIPT_FILE))
+            .map_err(|error| format!("read execution receipt: {error}"))?;
+        let exec: Value = serde_json::from_str(&exec_text)
+            .map_err(|error| format!("parse execution receipt: {error}"))?;
+        let blocked_record = exec
+            .get("subjects")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| "execution receipt subjects".to_string())?
+            .into_iter()
+            .find(|subject| subject.get("id").and_then(Value::as_str) == Some("s7"))
+            .ok_or_else(|| "s7 execution record".to_string())?;
+        let limitation = blocked_record
+            .get("infrastructure_limitation")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the contained failure must be named".to_string())?;
+        assert!(
+            limitation.contains("cache dir"),
+            "the limitation names the cache-creation cause: {limitation}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 
@@ -3038,6 +3493,14 @@ mod python_eval_sweep_refresh {
                 .contains(&status),
                 "terminal status in the owned vocabulary, got {status}"
             );
+            // Every synthetic seed carries a subject-root `ripr.toml`, and
+            // every tree materialized, so the row records the configured
+            // identity — never `default`.
+            assert_eq!(
+                row.pointer("/config/profile").and_then(Value::as_str),
+                Some(CONFIG_PROFILE_SUBJECT),
+                "{id} records the configured identity, not default"
+            );
         }
         assert_eq!(seen.len(), 8, "all eight subjects received a row");
 
@@ -3088,6 +3551,22 @@ mod python_eval_sweep_refresh {
                 .unwrap_or(false)
         );
         assert!(exec.get("host_class").and_then(Value::as_str).is_some());
+        // The execution receipt retains the honest config identity with the
+        // subject-config relative path.
+        let record = exec
+            .pointer("/subjects/0")
+            .cloned()
+            .ok_or_else(|| "first execution record".to_string())?;
+        assert_eq!(
+            record.pointer("/config/profile").and_then(Value::as_str),
+            Some(CONFIG_PROFILE_SUBJECT)
+        );
+        assert_eq!(
+            record
+                .pointer("/config/subject_config")
+                .and_then(Value::as_str),
+            Some("ripr.toml")
+        );
         assert_eq!(
             exec.pointer("/manifest/subject_ids")
                 .and_then(Value::as_array)

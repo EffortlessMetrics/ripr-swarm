@@ -2367,9 +2367,8 @@ fn validate_row_currentness(
             // recorded it must be a real sha256 hex digest over the retained
             // second-pass stderr bytes under `<out>/raw/`. Optional so
             // historical 0.3 rows stay historical.
-            match opt_string(id, repeat, "repeat_stderr")? {
-                Some(digest) => check_sha256_digest(id, "repeat.repeat_stderr", &digest)?,
-                None => {}
+            if let Some(digest) = opt_string(id, repeat, "repeat_stderr")? {
+                check_sha256_digest(id, "repeat.repeat_stderr", &digest)?;
             }
         }
         Some(_) => {
@@ -3361,7 +3360,7 @@ mod python_eval_sweep {
         )?;
 
         // The full safe charset at the exact length cap passes.
-        let edge_ok = "b.x_y-9".repeat(9) + &"c".repeat(1);
+        let edge_ok = "b.x_y-9".repeat(9) + "c";
         assert_eq!(edge_ok.len(), 64, "edge id must sit at the cap");
         validate_manifest_value(&parsed(&swapped(&edge_ok)?)?)?;
         Ok(())
