@@ -72,7 +72,7 @@ fn parse_args(args: &[String]) -> Result<SweepArgs, String> {
             "--json-only" => parsed.json_only = true,
             other => {
                 return Err(format!(
-                    "unknown eval-sweep argument: {other}\nusage: cargo xtask eval-sweep [--manifest <path>] [--clone] [--checkout-root <dir>] [--repo <id>] [--timeout-secs <secs>] [--json-only] | cargo xtask eval-sweep check [--manifest <path>] [--runs <receipt>]"
+                    "unknown eval-sweep argument: {other}\nusage: cargo xtask eval-sweep [--manifest <path>] [--clone] [--checkout-root <dir>] [--repo <id>] [--timeout-secs <secs>] [--json-only] | cargo xtask eval-sweep check [--manifest <path>] [--runs <path>] | cargo xtask eval-sweep refresh --manifest <path> --ripr-bin <path> --out <dir> --allow-network | cargo xtask eval-sweep report (--candidate <receipt.json> [--dispositions <path>] [--accept] | --check-currentness)"
                 ));
             }
         }
@@ -948,6 +948,27 @@ pub(crate) fn eval_sweep(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The public usage string must match the routed surface: an unknown
+    /// argument names every routed subcommand (`check`, `refresh`, `report`),
+    /// not just the bare sweep.
+    #[test]
+    fn unknown_argument_usage_names_every_routed_subcommand() {
+        let error = match parse_args(&["--bogus".to_string()]) {
+            Ok(_) => "an unknown argument must fail with usage".to_string(),
+            Err(error) => error,
+        };
+        for surface in [
+            "eval-sweep check",
+            "eval-sweep refresh",
+            "eval-sweep report",
+        ] {
+            assert!(
+                error.contains(surface),
+                "usage must name the routed `{surface}` subcommand: {error}"
+            );
+        }
+    }
 
     fn good_manifest() -> Value {
         json!({

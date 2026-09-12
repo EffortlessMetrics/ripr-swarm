@@ -37,8 +37,10 @@
 //! command-contract version, and per-subject bound identities (tree digest,
 //! accepted-row digest, input digest, config identity). The currentness law
 //! is mechanical: changed ripr source/binary bytes, a moved manifest, edited
-//! accepted-row bytes, a moved subject tree pin, moved config/input bytes, or
-//! a different command contract flips the verdict to `stale` — and editing
+//! accepted-row bytes, a moved subject tree pin, a substituted input path
+//! (the bound config input must BE the manifest-declared input), moved
+//! config/input bytes, or a different command contract flips the verdict to
+//! `stale` — and editing
 //! the as-of string can never repair it, because staleness derives only from
 //! digest, binding, and vocabulary comparisons; as-of is never an input.
 //!
@@ -78,6 +80,7 @@
 //!   authorize any support-tier change.
 
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -193,8 +196,9 @@ const LICENSE_VOCABULARY: [&str; 6] = [
     "MIT OR Apache-2.0",
 ];
 
-/// Free-text budget for accepted-artifact notes and the pointer's as-of
-/// disclosure: bounded excerpts, never unbounded logs.
+/// Free-text budget for accepted-artifact free text: disposition notes,
+/// evidence references, owners, recovery routes, and the pointer's as-of
+/// disclosure. Bounded excerpts, never unbounded logs.
 const NOTE_MAX_CHARS: usize = 512;
 
 /// The promotion-relevant non-claims embedded in every accepted receipt.
@@ -677,7 +681,8 @@ struct Disposition {
 /// Reads + validates the dispositions sidecar. Fails closed on unknown keys,
 /// unknown ids, duplicates, dispositions for complete rows, unknown
 /// vocabulary, missing owner/recovery route (every owned disposition type is
-/// actionable by definition), hygiene violations, and oversized notes.
+/// actionable by definition), hygiene violations, and oversized free text
+/// (every bounded-artifact field is capped, not just notes).
 fn load_dispositions(
     path: &str,
     rows: &[CandidateRowFacts],
@@ -741,7 +746,10 @@ fn load_dispositions(
         // Every owned disposition type is terminal and actionable by
         // definition, so the evidence reference, owner, and recovery route
         // are required — a disposition without them is an unresolved
-        // follow-up wearing a terminal label, which fails closed.
+        // follow-up wearing a terminal label, which fails closed. Each is
+        // also a bounded-artifact field: an unlimited-length free-text value
+        // would defeat the bounded-artifact contract the same way an
+        // oversized note would, so every field is capped.
         for field in ["evidence_ref", "owner", "recovery_route"] {
             let text = object
                 .get(field)
@@ -756,6 +764,16 @@ fn load_dispositions(
                         ),
                     )
                 })?;
+            if text.chars().count() > NOTE_MAX_CHARS {
+                return Err(fail(
+                    &id,
+                    field,
+                    format!(
+                        "{field} exceeds the {NOTE_MAX_CHARS}-character bound ({} characters); accepted artifacts carry bounded excerpts, never unbounded logs",
+                        text.chars().count()
+                    ),
+                ));
+            }
             check_artifact_hygiene(text, &format!("dispositions[{id}].{field}"))?;
         }
         if let Some(notes) = object.get("notes") {
@@ -1443,8 +1461,14 @@ fn run_candidate_report(parsed: &ReportArgs) -> Result<(), String> {
         return Ok(());
     }
 
-    // Accept: append the immutable content-addressed receipt, then move the
-    // pointer. Previously accepted artifacts are never rewritten.
+    // Accept: verify the candidate file still holds the validated bytes
+    // BEFORE any accepted byte is written (a candidate edited between the
+    // initial parse and this point is a typed refusal, so the accepted
+    // artifacts can never retain new bytes under the OLD candidate digest
+    // while `current.json` moves), then append the immutable
+    // content-addressed receipt and move the pointer. Previously accepted
+    // artifacts are never rewritten.
+    let candidate_bytes = revalidate_candidate_bytes(Path::new(candidate_path), &candidate_sha256)?;
     let state_dir = PathBuf::from(&parsed.state_dir);
     let receipts_dir = state_dir.join(RECEIPTS_DIR);
     std::fs::create_dir_all(&receipts_dir).map_err(|error| {
@@ -1484,7 +1508,25 @@ fn run_candidate_report(parsed: &ReportArgs) -> Result<(), String> {
         })?;
     }
     let markdown_target = receipts_dir.join(format!("{receipt_sha256}.md"));
-    if !markdown_target.exists() {
+    if markdown_target.exists() {
+        // An existing Markdown is verified, never silently kept or rewritten:
+        // an edited artifact under the accepted receipt's digest is a typed
+        // refusal, mirroring the existing-different-JSON rule above.
+        let existing = std::fs::read(&markdown_target).map_err(|error| {
+            fail(
+                &markdown_target.to_string_lossy(),
+                "file",
+                format!("existing accepted markdown cannot be read: {error}"),
+            )
+        })?;
+        if existing != markdown.as_bytes() {
+            return Err(fail(
+                &markdown_target.to_string_lossy(),
+                "file",
+                "an accepted markdown with this digest exists with different bytes; accepted evidence is immutable and is never overwritten — investigate the edited file before re-accepting",
+            ));
+        }
+    } else {
         std::fs::write(&markdown_target, &markdown).map_err(|error| {
             fail(
                 &markdown_target.to_string_lossy(),
@@ -1495,14 +1537,8 @@ fn run_candidate_report(parsed: &ReportArgs) -> Result<(), String> {
     }
     // The retained candidate: addressed by the candidate's own digest, so the
     // currentness check can re-validate the accepted rows through the shared
-    // validator without trusting any pointer content.
-    let candidate_bytes = std::fs::read(candidate_path).map_err(|error| {
-        fail(
-            candidate_path,
-            "file",
-            format!("validated candidate cannot be re-read for retention: {error}"),
-        )
-    })?;
+    // validator without trusting any pointer content. The bytes are the ones
+    // verified by the pre-write digest re-check above.
     let candidate_target = receipts_dir.join(format!("{candidate_sha256}.candidate.json"));
     if candidate_target.exists() {
         let existing = std::fs::read(&candidate_target).map_err(|error| {
@@ -1543,11 +1579,47 @@ fn run_candidate_report(parsed: &ReportArgs) -> Result<(), String> {
     Ok(())
 }
 
-/// Atomically updates the current pointer: write to a sibling staging file,
-/// then rename over the pointer. Platform note: on hosts whose rename refuses
-/// an existing destination (Windows), the previous pointer is removed first —
-/// the same remove-then-rename shape the candidate finalizer uses; the
-/// staging write is the atomicity boundary for the pointer's CONTENT.
+/// Re-reads the candidate file immediately before the acceptance writes and
+/// verifies its bytes still hash to the digest recorded when the candidate was
+/// parsed and validated. A candidate edited between validation and acceptance
+/// is a typed refusal: the accepted artifacts must retain exactly the
+/// validated bytes under the recorded digest, never new bytes under the old
+/// candidate identity.
+fn revalidate_candidate_bytes(
+    candidate_path: &Path,
+    bound_sha256: &str,
+) -> Result<Vec<u8>, String> {
+    let bytes = std::fs::read(candidate_path).map_err(|error| {
+        fail(
+            &candidate_path.to_string_lossy(),
+            "file",
+            format!("validated candidate cannot be re-read for retention: {error}"),
+        )
+    })?;
+    let actual = sha256_hex(&bytes);
+    if actual != bound_sha256 {
+        return Err(fail(
+            &candidate_path.to_string_lossy(),
+            "candidate_sha256",
+            format!(
+                "the candidate file changed after validation: the report parsed sha256 `{bound_sha256}` but the file now hashes to `{actual}`; re-run the report so the accepted artifacts retain exactly the validated candidate"
+            ),
+        ));
+    }
+    Ok(bytes)
+}
+
+/// Atomically updates the current pointer: the staging file is written and
+/// flushed FIRST, then renamed over the existing pointer. Renaming over an
+/// existing destination replaces it in one step on the platforms this route
+/// supports (Unix, and Windows `fs::rename` moves with replace-existing), so
+/// there is no window in which `current.json` is absent — a reader after the
+/// write sees either the old pointer or the new one, never a missing pointer.
+/// If a host refuses rename-over-existing, the fallback removes the old
+/// pointer only after the staged bytes are fully written and flushed, then
+/// renames; the residual window between that remove and the rename can leave
+/// no pointer after a crash — readers then see `not_run`, never a partial
+/// pointer.
 fn write_pointer_atomically(state_dir: &Path, pointer_text: &str) -> Result<(), String> {
     std::fs::create_dir_all(state_dir).map_err(|error| {
         fail(
@@ -1558,13 +1630,38 @@ fn write_pointer_atomically(state_dir: &Path, pointer_text: &str) -> Result<(), 
     })?;
     let target = state_dir.join(POINTER_FILE);
     let temp = state_dir.join(format!("{POINTER_FILE}.tmp-{}", std::process::id()));
-    std::fs::write(&temp, format!("{pointer_text}\n")).map_err(|error| {
-        fail(
-            &temp.to_string_lossy(),
-            "file",
-            format!("cannot write the pointer staging file: {error}"),
-        )
-    })?;
+    {
+        let mut staged = std::fs::File::create(&temp).map_err(|error| {
+            fail(
+                &temp.to_string_lossy(),
+                "file",
+                format!("cannot write the pointer staging file: {error}"),
+            )
+        })?;
+        staged
+            .write_all(format!("{pointer_text}\n").as_bytes())
+            .map_err(|error| {
+                fail(
+                    &temp.to_string_lossy(),
+                    "file",
+                    format!("cannot write the pointer staging file: {error}"),
+                )
+            })?;
+        staged.sync_all().map_err(|error| {
+            fail(
+                &temp.to_string_lossy(),
+                "file",
+                format!("cannot flush the pointer staging file: {error}"),
+            )
+        })?;
+    }
+    // Replace-in-place rename: the existing pointer is NOT removed first, so
+    // it stays readable until the rename swaps the bytes in one step.
+    if std::fs::rename(&temp, &target).is_ok() {
+        return Ok(());
+    }
+    // Fallback for hosts that refuse rename-over-existing: remove then
+    // rename, only after the staged file is fully written and flushed (above).
     if target.exists() {
         std::fs::remove_file(&target).map_err(|error| {
             fail(
@@ -1818,6 +1915,15 @@ fn compare_currentness(inputs: &CurrentnessInputs) -> Result<CurrentnessComparis
         )?;
         for field in POINTER_SUBJECT_KEYS {
             let Some(bound_value) = bound.get(field) else {
+                // A missing subject identity is never silently skipped: an
+                // unbound identity cannot be re-verified, so the verdict can
+                // never read `current` on its strength. (`row_sha256`
+                // absence is additionally refused outright by the row-digest
+                // binding below; the toolchain-level analogues are disclosed
+                // by the live source/binary comparisons in step 9.)
+                unverifiable.push(format!(
+                    "pointer binds no `{field}` for subject `{id}`; that identity cannot be re-verified"
+                ));
                 continue;
             };
             let current_value = match field {
@@ -1973,28 +2079,54 @@ fn compare_currentness(inputs: &CurrentnessInputs) -> Result<CurrentnessComparis
         ),
     }
 
-    // 10. Config/input identity: the pointer's bound per-subject input
-    // digests against the CURRENT input bytes (the manifest-declared
-    // synthetic diff), resolved the same way the refresh route resolves
-    // them.
-    for (id, bound_input) in pointer_subjects.iter().map(|(id, bound)| {
-        (
-            id.clone(),
-            bound
-                .get("input_digest")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-        )
-    }) {
-        match (bound_input, current.subject_inputs.get(&id)) {
+    // 10. Config/input identity, PATH-BOUND: the pointer's per-subject
+    // `config_input` must BE the manifest-declared synthetic diff for that
+    // subject — a candidate that hashed a different portable file is stale,
+    // not current, even when the digest matches the substituted bytes — and
+    // the bound `input_digest` must match the recomputed digest of the
+    // CURRENT bytes at the manifest-declared path (the recomputation hashes
+    // the declared path only). A missing or unrecomputable subject identity
+    // is disclosed unverifiable and can never leave the verdict `current`.
+    for (id, bound) in pointer_subjects.iter() {
+        let declared = accepted
+            .subject(id)
+            .map(|subject| subject.synthetic_diff.as_str());
+        let bound_config = bound.get("config_input").and_then(Value::as_str);
+        match (bound_config, declared) {
+            (Some(bound), Some(declared_path)) if bound != declared_path => {
+                stale.push(format!(
+                    "input path substituted for subject `{id}`: pointer binds config_input `{bound}` but the accepted manifest declares `{declared_path}`; the hashed input must be the manifest-declared input"
+                ));
+            }
+            (Some(_), Some(_)) => {}
+            (Some(_), None) => {
+                // Outside the manifest denominator; step 8's re-validation
+                // against the current manifest already reports it stale.
+            }
+            (None, Some(declared_path)) => unverifiable.push(format!(
+                "input path for subject `{id}` could not be verified (the pointer binds no config_input while the accepted manifest declares `{declared_path}`)"
+            )),
+            (None, None) => {}
+        }
+        let bound_input = bound
+            .get("input_digest")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        match (bound_input, current.subject_inputs.get(id)) {
             (Some(bound), Some(recomputed)) if bound != *recomputed => stale.push(format!(
                 "input moved for subject `{id}`: pointer binds input sha256 `{bound}` but the current input hashes to `{recomputed}`"
             )),
             (Some(_), Some(_)) => {}
             (Some(_), None) => unverifiable.push(format!(
-                "input identity for subject `{id}` could not be recomputed (the configured input file did not resolve or read)"
+                "input identity for subject `{id}` could not be recomputed (the manifest-declared input file did not resolve or read)"
             )),
-            (None, _) => {}
+            (None, recomputed) => unverifiable.push(format!(
+                "input identity for subject `{id}` could not be verified (the pointer binds no input digest; the manifest-declared input {})",
+                match recomputed {
+                    Some(digest) => format!("currently hashes to `{digest}`"),
+                    None => "did not resolve or read".to_string(),
+                }
+            )),
         }
     }
 
@@ -2013,12 +2145,16 @@ fn compare_currentness(inputs: &CurrentnessInputs) -> Result<CurrentnessComparis
 }
 
 /// Recomputes the per-subject input digest from the CURRENT input files: the
-/// configured input path is resolved manifest-directory-relative first, then
-/// repository-root-relative (the same resolution order the refresh route
-/// documents). Subjects whose input does not resolve or read are omitted —
-/// disclosed unverifiable, never assumed current.
+/// manifest-DECLARED synthetic diff for each accepted subject — never a
+/// candidate-named substitute path — resolved manifest-directory-relative
+/// first, then repository-root-relative (the same resolution order the
+/// refresh route documents). The pointer-vs-manifest path binding itself is
+/// enforced in the comparison; this recomputation makes the hashed bytes the
+/// bytes of the declared input by construction. Subjects whose input does
+/// not resolve or read are omitted — disclosed unverifiable, never assumed
+/// current.
 fn recompute_subject_inputs(
-    subjects: &serde_json::Map<String, Value>,
+    accepted: &AcceptedManifest,
     manifest_path: &str,
 ) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
@@ -2026,12 +2162,9 @@ fn recompute_subject_inputs(
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
-    for (id, bound) in subjects {
-        let Some(input) = bound.get("config_input").and_then(Value::as_str) else {
-            continue;
-        };
-        let from_manifest_dir = manifest_dir.join(input);
-        let from_repo_root = repo_root_anchor().join(input);
+    for subject in &accepted.subjects {
+        let from_manifest_dir = manifest_dir.join(&subject.synthetic_diff);
+        let from_repo_root = repo_root_anchor().join(&subject.synthetic_diff);
         let resolved = if from_manifest_dir.is_file() {
             Some(from_manifest_dir)
         } else if from_repo_root.is_file() {
@@ -2042,7 +2175,7 @@ fn recompute_subject_inputs(
         if let Some(path) = resolved
             && let Ok(bytes) = std::fs::read(&path)
         {
-            out.insert(id.clone(), sha256_hex(&bytes));
+            out.insert(subject.id.clone(), sha256_hex(&bytes));
         }
     }
     out
@@ -2195,13 +2328,7 @@ fn run_currentness_check(parsed: &ReportArgs) -> Result<(), String> {
             }
             None => None,
         },
-        subject_inputs: recompute_subject_inputs(
-            pointer
-                .get("subjects")
-                .and_then(Value::as_object)
-                .unwrap_or(&serde_json::Map::new()),
-            &parsed.manifest,
-        ),
+        subject_inputs: recompute_subject_inputs(&accepted, &parsed.manifest),
     };
 
     let comparison = compare_currentness(&CurrentnessInputs {
@@ -2299,6 +2426,15 @@ mod python_eval_sweep_report {
     const BINARY_BYTES_V1: &str = "test-binary-bytes-v1";
     const BINARY_BYTES_V2: &str = "test-binary-bytes-v2";
 
+    /// The per-subject tree identity, recorded identically by the sandbox
+    /// manifest and the candidate rows (the validator binds the two copies).
+    /// With every per-subject identity bound, the currentness happy path is
+    /// genuinely `current`; a subject with an unbound identity is disclosed
+    /// unverifiable and can never read `current`.
+    fn tree_digest_for(id: &str) -> String {
+        sha256_hex(format!("tree-for-{id}\n").as_bytes())
+    }
+
     /// A data-driven eight-subject manifest sandbox whose synthetic diffs
     /// exist as real files under `<dir>/diffs/<id>.diff`, so the currentness
     /// input recomputation reads real bytes.
@@ -2346,6 +2482,7 @@ mod python_eval_sweep_report {
                     "sha": sha,
                     "license": license,
                     "shape": shape,
+                    "tree_digest": tree_digest_for(id),
                     "synthetic_diff": format!("diffs/{id}.diff"),
                 }));
             }
@@ -2458,6 +2595,7 @@ mod python_eval_sweep_report {
                 "license": license,
                 "selected_root": format!("subjects/{id}"),
                 "layout": ["pytest_library"],
+                "tree_digest": tree_digest_for(id),
                 "binary": {
                     "digest": binary_digest,
                     "version": "ripr 0.11.0",
@@ -3116,6 +3254,29 @@ mod python_eval_sweep_report {
             "requires a non-empty recovery_route",
         )?;
 
+        // An oversized owner defeats the bounded-artifact contract exactly
+        // like an oversized note: every bounded-artifact field is capped.
+        let (sandbox, args) =
+            prepared_args("disp-huge-owner", &["--dispositions", "DISPOSITIONS"])?;
+        let mut value = dispositions_value();
+        if let Some(first) = value
+            .get_mut("dispositions")
+            .and_then(Value::as_array_mut)
+            .and_then(|entries| entries.first_mut())
+            .and_then(|entry| entry.as_object_mut())
+        {
+            first.insert("owner".to_string(), json!("x".repeat(NOTE_MAX_CHARS + 1)));
+        }
+        let dispositions = {
+            let path = sandbox.path("dispositions.json");
+            write_json(&path, &value)?;
+            path.to_string_lossy().to_string()
+        };
+        expect_fail(
+            run_report(&with_dispositions(&args, &dispositions)),
+            "exceeds the 512-character bound",
+        )?;
+
         // A disposition for a COMPLETE row contradicts the run.
         let (sandbox, args) = prepared_args("disp-complete", &["--dispositions", "DISPOSITIONS"])?;
         let mut value = dispositions_value();
@@ -3613,6 +3774,138 @@ mod python_eval_sweep_report {
         Ok(())
     }
 
+    #[test]
+    fn config_input_substitution_flips_stale() -> Result<(), String> {
+        // A candidate that names a DIFFERENT portable input file for a
+        // subject — hashing the substitute's bytes — must not pass
+        // currentness: the pointer's config input must BE the
+        // manifest-declared input path for that subject, and the refusal
+        // names both paths.
+        let (sandbox, args) =
+            prepared_args("input-sub", &["--dispositions", "DISPOSITIONS", "--accept"])?;
+        let mut candidate = read_strict(&sandbox.path("candidate.json"))?;
+        if let Some(alpha) = candidate
+            .get_mut("repos")
+            .and_then(Value::as_array_mut)
+            .and_then(|rows| rows.first_mut())
+            .and_then(|row| row.as_object_mut())
+        {
+            if let Some(config) = alpha.get_mut("config").and_then(Value::as_object_mut) {
+                config.insert("input".to_string(), json!("diffs/evil.diff"));
+            }
+            alpha.insert(
+                "input_digest".to_string(),
+                json!(sha256_hex(b"diff-for-alpha (substituted)\n")),
+            );
+        }
+        write_json(&sandbox.path("candidate.json"), &candidate)?;
+        std::fs::write(
+            sandbox.path("diffs/evil.diff"),
+            "diff-for-alpha (substituted)\n",
+        )
+        .map_err(|error| format!("write substituted diff: {error}"))?;
+        let dispositions = sandbox.dispositions_path()?;
+        run_report(&with_dispositions(&args, &dispositions))?;
+
+        let binary = write_binary_v1(&sandbox)?;
+        expect_fail_all(
+            run_report(&currentness_args(&sandbox, &binary, &[])),
+            &[
+                "STALE",
+                "input path substituted for subject `alpha`",
+                "diffs/evil.diff",
+                "diffs/alpha.diff",
+            ],
+        )
+    }
+
+    #[test]
+    fn missing_input_digest_is_never_current() -> Result<(), String> {
+        // A candidate row that records no input_digest leaves the pointer
+        // with no input identity for that subject; with every other identity
+        // matching, the gate must still refuse `current` — a missing subject
+        // identity is disclosed unverifiable and names the subject.
+        let (sandbox, args) = prepared_args(
+            "missing-input",
+            &["--dispositions", "DISPOSITIONS", "--accept"],
+        )?;
+        let mut candidate = read_strict(&sandbox.path("candidate.json"))?;
+        if let Some(alpha) = candidate
+            .get_mut("repos")
+            .and_then(Value::as_array_mut)
+            .and_then(|rows| rows.first_mut())
+            .and_then(|row| row.as_object_mut())
+        {
+            alpha.remove("input_digest");
+        }
+        write_json(&sandbox.path("candidate.json"), &candidate)?;
+        let dispositions = sandbox.dispositions_path()?;
+        run_report(&with_dispositions(&args, &dispositions))?;
+
+        // Direct comparison: source/binary identities match and every
+        // declared input recomputes, yet alpha's missing input digest must
+        // keep the verdict unverifiable.
+        let pointer = read_strict(&sandbox.path("accepted/current.json"))?;
+        let pointer_object = pointer
+            .as_object()
+            .ok_or_else(|| "pointer object".to_string())?;
+        let (accepted_receipt, receipt_path) = accepted_receipt(&sandbox)?;
+        let receipt_sha = sha256_hex(
+            &std::fs::read(&receipt_path).map_err(|error| format!("read receipt: {error}"))?,
+        );
+        let candidate_binding = accepted_receipt
+            .get("candidate")
+            .and_then(|candidate| candidate.get("sha256"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| "candidate binding".to_string())?
+            .to_string();
+        let candidate_path = sandbox.path(&format!(
+            "accepted/receipts/{candidate_binding}.candidate.json"
+        ));
+        let candidate = read_strict(&candidate_path)?;
+        let candidate_sha = sha256_hex(
+            &std::fs::read(&candidate_path).map_err(|error| format!("read candidate: {error}"))?,
+        );
+        let (manifest_value, manifest_sha) = load_strict_json(&sandbox.manifest_path_string())?;
+        let accepted = validate_accepted_manifest(&manifest_value, manifest_sha.clone())?;
+        let current = CurrentIdentity {
+            ripr_source_sha: Some(SOURCE_SHA.to_string()),
+            ripr_binary_digest: Some(binary_digest_v1()),
+            subject_inputs: recompute_subject_inputs(&accepted, &sandbox.manifest_path_string()),
+        };
+        let comparison = compare_currentness(&CurrentnessInputs {
+            pointer: pointer_object,
+            accepted_receipt: &accepted_receipt,
+            receipt_sha256: &receipt_sha,
+            candidate: &candidate,
+            candidate_sha256: &candidate_sha,
+            accepted: &accepted,
+            current_manifest_sha256: &manifest_sha,
+            current: &current,
+        })?;
+        assert_eq!(
+            comparison.verdict,
+            CurrentnessVerdict::Unverifiable,
+            "a subject with no bound input identity must never read current: stale={:?} unverifiable={:?}",
+            comparison.stale,
+            comparison.unverifiable
+        );
+        assert!(
+            comparison
+                .unverifiable
+                .iter()
+                .any(|reason| reason.contains("alpha") && reason.contains("input")),
+            "the disclosure must name the subject and the input identity: {:?}",
+            comparison.unverifiable
+        );
+
+        // End to end: the command exits 0 with the disclosure (unverifiable
+        // is disclosed in full, never a gate pass dressed as current).
+        let binary = write_binary_v1(&sandbox)?;
+        run_report(&currentness_args(&sandbox, &binary, &[]))?;
+        Ok(())
+    }
+
     // -- derived receipt content ----------------------------------------------
 
     #[test]
@@ -3824,6 +4117,114 @@ mod python_eval_sweep_report {
             !sandbox.path("accepted/current.json").exists(),
             "a hygiene failure must not move the pointer"
         );
+        Ok(())
+    }
+
+    // -- acceptance write-path integrity --------------------------------------
+
+    #[test]
+    fn candidate_modified_after_parse_refuses_acceptance() -> Result<(), String> {
+        // The accept-time window: a candidate file edited between the initial
+        // parse and the acceptance writes must be refused, so the accepted
+        // artifacts can never retain new bytes under the OLD candidate
+        // digest while the pointer moves.
+        let (sandbox, _args) = prepared_args("candidate-edit", &[])?;
+        let candidate_path = sandbox.path("candidate.json");
+        let (_value, parsed_sha) = load_strict_json(&candidate_path.to_string_lossy())?;
+        // The post-parse edit:
+        let mut edited = read_strict(&candidate_path)?;
+        if let Some(rows) = edited.get_mut("repos").and_then(Value::as_array_mut) {
+            rows.pop();
+        }
+        write_json(&candidate_path, &edited)?;
+        let error = match revalidate_candidate_bytes(&candidate_path, &parsed_sha) {
+            Ok(_) => return Err("an edited candidate must be refused at acceptance".to_string()),
+            Err(error) => error,
+        };
+        for needle in ["changed after validation", parsed_sha.as_str()] {
+            assert!(
+                error.contains(needle),
+                "refusal `{error}` must mention `{needle}`"
+            );
+        }
+        // The bytes actually on disk still revalidate: the honest rerun path
+        // re-parses the current bytes and records their digest.
+        let current_bytes =
+            std::fs::read(&candidate_path).map_err(|error| format!("read candidate: {error}"))?;
+        let current_sha = sha256_hex(&current_bytes);
+        let verified = revalidate_candidate_bytes(&candidate_path, &current_sha)?;
+        assert_eq!(
+            verified, current_bytes,
+            "verified bytes are exactly the file bytes"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pointer_replacement_preserves_a_readable_current_pointer() -> Result<(), String> {
+        // Replacing an established pointer must leave a readable current.json
+        // in place after the write: the staged file is written and flushed,
+        // then renamed over the existing pointer without removing it first
+        // (remove+rename is only the documented fallback for hosts that
+        // refuse rename-over-existing, after the staged bytes are durable).
+        let sandbox = TestSandbox::new("pointer-replace")?;
+        let state_dir = sandbox.path("accepted");
+        std::fs::create_dir_all(&state_dir)
+            .map_err(|error| format!("create state dir: {error}"))?;
+        let pointer_path = state_dir.join(POINTER_FILE);
+        write_json(
+            &pointer_path,
+            &json!({"schema_version": POINTER_SCHEMA, "kind": POINTER_KIND, "spec": SPEC}),
+        )?;
+        write_pointer_atomically(&state_dir, "{\"replaced\": true}")?;
+        let replaced = read_strict(&pointer_path)?;
+        assert_eq!(
+            replaced.get("replaced").and_then(Value::as_bool),
+            Some(true),
+            "the new pointer is in place after the replacement"
+        );
+        // A second replacement exercises rename-over-existing again: the
+        // pointer stays readable and parseable throughout.
+        write_pointer_atomically(&state_dir, "{\"replaced\": false}")?;
+        let replaced = read_strict(&pointer_path)?;
+        assert_eq!(
+            replaced.get("replaced").and_then(Value::as_bool),
+            Some(false)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn edited_markdown_refuses_reacceptance_and_matching_is_idempotent() -> Result<(), String> {
+        // An existing accepted Markdown is verified on re-acceptance: edited
+        // bytes under the accepted receipt's digest are a typed refusal (the
+        // mirror of the existing-different-JSON rule); matching bytes are an
+        // idempotent no-op.
+        let (sandbox, args) =
+            prepared_args("md-edit", &["--dispositions", "DISPOSITIONS", "--accept"])?;
+        let dispositions = sandbox.dispositions_path()?;
+        let args = with_dispositions(&args, &dispositions);
+        run_report(&args)?;
+        let pointer = read_strict(&sandbox.path("accepted/current.json"))?;
+        let receipt_sha = pointer
+            .get("receipt_sha256")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "receipt_sha256".to_string())?
+            .to_string();
+        let markdown_path = sandbox.path(&format!("accepted/receipts/{receipt_sha}.md"));
+        let original =
+            std::fs::read_to_string(&markdown_path).map_err(|error| format!("read md: {error}"))?;
+
+        // Corrupt the retained Markdown, then re-accept the same candidate:
+        // the edited artifact is refused, never silently kept or rewritten.
+        std::fs::write(&markdown_path, "# edited after acceptance\n")
+            .map_err(|error| format!("write markdown: {error}"))?;
+        expect_fail(run_report(&args), "different bytes")?;
+
+        // Restored bytes: re-acceptance is an idempotent no-op.
+        std::fs::write(&markdown_path, &original)
+            .map_err(|error| format!("restore markdown: {error}"))?;
+        run_report(&args)?;
         Ok(())
     }
 }

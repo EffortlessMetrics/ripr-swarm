@@ -707,8 +707,14 @@ pub(crate) fn secret_tripwire_match(text: &str) -> Option<String> {
             ));
         }
     }
-    if let Some(offset) = text.find("AKIA")
-        && text[offset..].len() >= 20
+    // Cheap O(1) length gate BEFORE the substring find: a text shorter than
+    // the key shape can never match, so short values skip the scan entirely.
+    // The key-shaped suffix is still measured from the match offset, so a
+    // trailing `AKIA` with too few bytes after it is not a hit.
+    if text.len() >= 20
+        && text
+            .find("AKIA")
+            .is_some_and(|offset| text[offset..].len() >= 20)
     {
         return Some("value must not carry an AWS-access-key-shaped token".to_string());
     }
