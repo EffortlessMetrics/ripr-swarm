@@ -272,6 +272,26 @@ are scoped or reviewed.
   paths, no newlines in line text), and line-number validity (`new_side_line >= 1`).
   This is the first property-based testing infrastructure in the repo (#2751).
 
+- New `cargo xtask eval-sweep check` command: the typed offline validator for
+  the accepted Python eval-sweep artifacts (RIPR-SPEC-0086). It validates the
+  accepted eight-subject manifest under a deny-unknown schema (exactly eight
+  uniquely identified subjects, immutable https/sha pins, portable secret-free
+  diff paths) and retained run receipts in both owned shapes — the historical
+  0.2 report the sweep command writes and the 0.3 currentness shape (binary/
+  features/config/profile/input identity, materialization/detection/
+  corpus-selection/execution states, evidence digests, repeat-run comparison
+  identity, manifest-digest binding) — failing closed on changed denominators,
+  unknown state vocabulary, contradictory status, malformed or stale digest
+  bindings, and hand-edited aggregates that disagree with the derived rows
+  (including a supplied `gate_status` that differs from the gate the rows
+  derive and summary distributions that do not match the row-derived key set
+  exactly); missing identities are typed `incomplete`, never invented. It
+  writes the versioned `eval-sweep-check.{json,md}` reports (kind
+  `python_eval_sweep_check_report`, schema `0.1`) whose verdict vocabulary is
+  `valid` / `incomplete` / `not_run` — a structural currentness-readiness
+  verdict, never a robustness or adequacy claim
+  ([#3565](https://github.com/EffortlessMetrics/ripr-swarm/issues/3565)).
+
 ### Changed
 
 - The 0.11.0 support claim now describes the Rust gap-repair loop as `usable
