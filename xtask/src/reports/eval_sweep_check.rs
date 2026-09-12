@@ -196,13 +196,19 @@ const CLASSIFICATION_VOCABULARY: [&str; 7] = [
     "propagation_unknown",
     "static_unknown",
 ];
-const ALIGNMENT_VOCABULARY: [&str; 6] = [
+const ALIGNMENT_VOCABULARY: [&str; 9] = [
     "direct",
     "alias",
     "changed_sink_token",
     "orthogonal",
     "unknown",
     "absent",
+    // The live 0.2 emitter's AlignmentCounts also writes these three
+    // repair-packet presence counters; a receipt straight from today's
+    // sweep must validate (#3733 review).
+    "repair_placement_present",
+    "verify_command_present",
+    "python_repair_card_present",
 ];
 
 /// Secret tripwire substrings for path/URL fields (case-insensitive). This is
