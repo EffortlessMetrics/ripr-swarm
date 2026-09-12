@@ -9021,8 +9021,6 @@ code = [
   "xtask/src/reports/python_repair_trust.rs",
 ]
 outputs = [
-  "target/ripr/reports/python-repair-trust-check.json",
-  "target/ripr/reports/python-repair-trust-check.md",
 ]
 metrics = [
   "python_repair_trust_check_verdict",
