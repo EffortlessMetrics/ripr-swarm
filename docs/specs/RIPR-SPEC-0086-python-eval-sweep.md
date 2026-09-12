@@ -23,8 +23,11 @@ schema-0.3 producer, self-validated through the #3565 loader before any
 candidate is written, with the refresh-produces-what-check-validates
 symmetry proved offline by the `python_eval_sweep_refresh` tests over
 synthetic local subjects. The live eight-repository network refresh is a
-manual, authorized operation; candidate-to-accepted promotion remains
-#3567.
+manual, authorized operation. #3567 landed the promotion step
+(`cargo xtask eval-sweep report`,
+`xtask/src/reports/eval_sweep_report.rs`): deterministic candidate
+acceptance into immutable content-addressed receipts plus a mechanical
+currentness gate.
 
 Owner: language-adapter / swarm
 
@@ -378,6 +381,107 @@ validates and publishes.
   structural-accuracy, repair-correctness, gate, badge, or support claim is
   inferred from it.
 
+### Accepted-receipt publication and the currentness gate (`eval-sweep report`, #3567)
+
+`cargo xtask eval-sweep report` is the deterministic promotion step that turns
+one #3566 candidate into accepted evidence. Three surfaces, all offline:
+
+- **Dry run.** `report --candidate <receipt.json> [--dispositions <path>]`
+  validates the candidate through the exact `eval-sweep check` semantics
+  (`validate_run_receipt` — one validator owns receipt semantics), then
+  renders the accepted receipt JSON and a bounded Markdown report derived
+  from the SAME validated rows to `target/ripr/reports/`. No accepted state
+  is written.
+- **Acceptance.** `... --accept` appends the immutable accepted receipt
+  `<state-dir>/receipts/<receipt-sha256>.json` (content-addressed over the
+  exact written bytes; an existing file is never overwritten — identical
+  bytes are an idempotent no-op, different bytes are a typed refusal), the
+  paired Markdown, and the retained candidate
+  (`receipts/<candidate-sha256>.candidate.json`, addressed by the
+  candidate's own digest), then atomically updates the current pointer
+  `<state-dir>/current.json`. Previously accepted artifacts are never
+  rewritten, so historical receipts remain immutable and separately
+  addressable by digest. Acceptance refuses non-0.3 candidates with a typed
+  refusal (a 0.2 historical receipt carries no currentness identities to
+  bind).
+- **Currentness gate.** `report --check-currentness
+  [--ripr-bin <path>] [--ripr-source-sha <sha>]` recomputes the identities
+  the pointer binds against current state and reports `current`, `stale`,
+  `unverifiable`, or `not_run` (no pointer; never a pass).
+  `current`/`unverifiable`/`not_run` exit 0 with the non-current verdicts
+  disclosed in full; `stale` exits nonzero — the gate signal that the
+  accepted receipt must be re-accepted before promotion consumption.
+
+The current pointer contains NO independently editable totals — only
+identity: the accepted receipt's digest and portable filename, an optional
+as-of disclosure string, the manifest digest, the toolchain identity block
+(source sha, binary digest, features, build profile), the command-contract
+version, and per-subject bound identities (tree digest, accepted-row digest,
+input digest, config identity).
+
+- **The currentness law is mechanical.** The check recomputes: the accepted
+  receipt's file digest, every retained-candidate row digest, the manifest
+  file digest, the retained-candidate re-validation against the CURRENT
+  accepted manifest (which fails on any tree-pin/license/manifest movement),
+  the pointer's bound toolchain and per-subject identity copies, the
+  analyzer source sha (`--ripr-source-sha`, else bounded
+  `git rev-parse HEAD`), the binary bytes (`--ripr-bin`), the per-subject
+  input bytes (the manifest-declared synthetic diff, resolved
+  manifest-relative then repo-root-relative), and the command-contract
+  version. Any movement flips the verdict to `stale` with the exact reason
+  named. Editing the pointer's as-of string can never repair staleness:
+  as-of is never an input to the comparison. Identities the loader cannot
+  recompute offline are disclosed `unverifiable` — never assumed current —
+  and the check-path policy is fail-closed: the pointer's schema is
+  deny-unknown, its digests are format-checked, and a pointer naming a
+  missing artifact is a typed integrity failure.
+- **Accepted receipt content** (all derived from the validated rows — the
+  receipt never carries a hand-entered total, and every count is emitted as
+  `{numerator, denominator}`): the selected/materialized/available/stale/
+  license-blocked/tempfail counts over the eight-subject denominator; the
+  complete/partial/parse-failed/timed-out/crashed/unsupported/tempfail/stale
+  outcome split; project-detection and corpus-selection health tallies with
+  the unrecorded share disclosed; the runtime envelope where reliable (every
+  run row carries a runtime) and an explicit `unavailable` disclosure
+  otherwise; repeat-run identity stability with the per-subject mismatch
+  list (unstable gap IDs); the classification and oracle-alignment
+  distributions (informational, never gating) plus a named disclosure that
+  no limitation distribution exists (the 0.3 row schema records none);
+  per-subject identity, evidence digests, and dispositions; source/binary/
+  feature/config/input/manifest/candidate/accepted-receipt identities; the
+  candidate's own typed incomplete disclosures (copied verbatim, with the
+  candidate's host display path replaced by a portable subject label); and
+  the promotion-relevant non-claims embedded in the artifact itself.
+- **Dispositions.** Non-complete subjects carry one typed terminal
+  disposition from the owned vocabulary (`reproduced-current`,
+  `dispositioned-current`, `infrastructure-tempfail`,
+  `upstream-pin-unavailable`, `unsupported-input`,
+  `historical-not-reproduced`), supplied through an optional strict-JSON
+  sidecar (`--dispositions`) because the 0.3 row schema is deny-unknown and
+  acceptance-time judgment has no place in it. Every owned disposition type
+  is terminal and actionable by definition, so a non-empty evidence
+  reference, owner, and recovery route are REQUIRED on every disposition;
+  dispositions for complete rows, unknown ids, duplicates, unknown
+  vocabulary, hygiene violations, and notes over a 512-character bound all
+  fail closed. The retained historical two parse failures and one timeout
+  are dispositioned through this machinery when a current candidate lands:
+  a fresh candidate row with the same failure is `reproduced-current`;
+  otherwise the failure is explicitly dispositioned against current source
+  via `dispositioned-current`/`historical-not-reproduced`. The live
+  reproduction run remains the manual, authorized #3566 refresh.
+- **Accepted-artifact hygiene.** The rendered receipt, pointer, and Markdown
+  are scanned before any byte is written: secret-shaped tokens (the shared
+  validator tripwire list, reused — never forked), absolute host paths
+  (a Windows drive-letter prefix whose letter is not preceded by another
+  letter, so URL schemes never trip while a Windows path does; POSIX-absolute
+  JSON string values; `file://`), and
+  oversized free text all fail closed.
+- **Claim boundary.** Acceptance establishes a current, reproducible
+  operational-robustness denominator over the retained eight external
+  Python subjects. It does not establish repair correctness and does not
+  authorize any support-tier change; robustness and distribution metrics
+  stay informational and never become judged accuracy.
+
 ### Policy boundary (load-bearing)
 
 - `--clone` is **opt-in and off the default CI path.** No `.github/workflows`
@@ -451,6 +555,28 @@ validates and publishes.
   host class, network authorization) that passes the full
   `eval-sweep check` artifact path, including a stale-subject run that keeps
   all eight subjects selected.
+- The accepted-receipt publication tests (`python_eval_sweep_report` module
+  in `eval_sweep_report.rs`): a valid candidate's dry run renders JSON and
+  bounded Markdown that agree (same rows, same counts, numerator +
+  denominator on every count); acceptance appends immutably (a second accept
+  adds a content-addressed receipt without mutating the first, the pointer
+  moves to the newest, and re-accepting the same candidate is an idempotent
+  no-op); the pointer's field set is exactly identity fields with no
+  total/rate-shaped field anywhere in the tree; hand-edited candidate totals,
+  missing/duplicate subjects, non-complete rows without dispositions,
+  dispositions without owner/recovery route, dispositions for complete rows,
+  duplicate/unknown disposition ids, unknown disposition vocabulary,
+  absolute-path and secret-bearing notes, and oversized notes all fail
+  closed; a schema-0.2 candidate is refused with a typed historical note and
+  nothing is accepted; and the currentness law is mechanical end to end —
+  binary-digest, manifest-digest, retained-candidate-row, input-bytes,
+  pointer-config-copy, pointer-features-copy, and source-sha movements each
+  flip the verdict to stale with the exact reason, editing the as-of string
+  never repairs staleness (and never breaks a current pointer), a missing
+  binary recompute input leaves the verdict `unverifiable` (never
+  `current`), no pointer is `not_run`, and stability mismatch reasons plus
+  the derived counts/health/runtime envelope are recorded in the accepted
+  receipt.
 
 ## Non-Goals
 
@@ -643,6 +769,22 @@ receipt rows derive repos_run = 8 but the summary claims 7
 - `eval_sweep_refresh::python_eval_sweep_refresh::stale_subject_path_keeps_the_denominator_without_loss`
   -> a stale subject is dispositioned `stale` and all eight rows remain in
   the validatable denominator.
+- `eval_sweep_report::python_eval_sweep_report::valid_candidate_dry_run_renders_agreeing_json_and_markdown`
+  -> JSON and bounded Markdown derive from the same validated rows and agree.
+- `eval_sweep_report::python_eval_sweep_report::accept_appends_immutably_and_moves_pointer`
+  -> acceptance appends content-addressed receipts without mutating prior
+  ones; the pointer identifies exactly the newest; re-accept is idempotent.
+- `eval_sweep_report::python_eval_sweep_report::pointer_contains_no_totals_only_identity`
+  -> the pointer's field set is exactly identity fields.
+- `eval_sweep_report::python_eval_sweep_report::currentness_is_current_with_matching_identities`
+  and `..::editing_as_of_never_repairs_staleness` -> the currentness law is
+  mechanical; the as-of disclosure is never load-bearing.
+- `eval_sweep_report::python_eval_sweep_report::binary_digest_change_flips_stale`,
+  `..::manifest_digest_change_flips_stale`,
+  `..::accepted_row_or_tree_change_flips_stale`, `..::input_change_flips_stale`,
+  `..::pointer_config_edit_flips_stale`, `..::pointer_features_edit_flips_stale`,
+  and `..::source_sha_change_flips_stale` -> each bound identity movement
+  flips the pointer stale with the exact reason named.
 
 ## Implementation Mapping
 
@@ -651,6 +793,7 @@ receipt rows derive repos_run = 8 but the summary claims 7
 | Command logic (arg parse, manifest load, run orchestration, classify, metrics, render) | `xtask/src/reports/eval_sweep.rs` |
 | Accepted-manifest and retained-receipt validator (`eval-sweep check`) | `xtask/src/reports/eval_sweep_check.rs` |
 | Managed candidate refresh (`eval-sweep refresh`) | `xtask/src/reports/eval_sweep_refresh.rs` |
+| Accepted-receipt publication + currentness gate (`eval-sweep report`) | `xtask/src/reports/eval_sweep_report.rs` |
 | Subcommand registration | `xtask/src/command.rs`, `xtask/src/dispatch.rs`, `xtask/src/reports/mod.rs` |
 | Subprocess helpers (build, clone, `ripr check`) | `xtask/src/run.rs` (`run`, `run_with_envs`, `capture_output_with_timeout`) |
 | Pinned manifest + synthetic diff | `fixtures/python-eval-sweep/manifest.json`, `fixtures/python-eval-sweep/synthetic-diff.diff` |
@@ -658,6 +801,8 @@ receipt rows derive repos_run = 8 but the summary claims 7
 | Check verdict report | `target/ripr/reports/eval-sweep-check.{json,md}` |
 | Refresh candidate artifacts (candidate receipt, execution receipt, raw outputs) | `<out>/eval-sweep-refresh-receipt.json`, `<out>/execution-receipt.json`, `<out>/raw/` |
 | Refresh run report | `target/ripr/reports/eval-sweep-refresh.{json,md}` |
+| Accepted state (accepted receipt + markdown + retained candidate, current pointer) | `<state-dir>/receipts/<sha256>.{json,md}`, `<state-dir>/receipts/<sha256>.candidate.json`, `<state-dir>/current.json` (default state dir `fixtures/python-eval-sweep/accepted`) |
+| Accepted-receipt dry-run report | `target/ripr/reports/eval-sweep-report.{json,md}` |
 
 ## Metrics
 
