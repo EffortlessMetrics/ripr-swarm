@@ -29,7 +29,10 @@
 //!
 //! - Fail closed on: duplicate or missing subjects, a changed denominator,
 //!   unsafe (non-portable, absolute, or secret-bearing) paths, unknown state
-//!   vocabulary, contradictory status, malformed or stale digests, and
+//!   vocabulary, contradictory status (including a run-status row whose
+//!   execution state says `not-executed`, and a false stability claim whose
+//!   unstable list is omitted), disagreeing duplicate identity copies within
+//!   one receipt, wrong-typed owned fields, malformed or stale digests, and
 //!   hand-edited aggregates that disagree with the derived rows. Every
 //!   failure names subject/field/reason and the deterministic rerun command.
 //! - Aggregate agreement is checked in both directions. An analyzed
@@ -68,7 +71,12 @@
 //!   explicit null, an empty string, or a malformed value fails, because a
 //!   present-but-garbage identity is not an absent one. Absent
 //!   `ripr.features` / `binary.features` disclose incomplete;
-//!   present-but-malformed feature sets fail.
+//!   present-but-malformed feature sets fail — as does a present `binary`
+//!   block missing any of its owned fields (each is a named incomplete
+//!   disclosure). Within one receipt, duplicate copies of the same identity
+//!   must agree: the row-level `tree_digest`/`snapshot` vs the `repository`
+//!   block, and a row's `binary` identity vs the receipt-level `ripr` block —
+//!   a disagreement fails naming both locations.
 //! - The accepted-manifest schema is closed. The owned top-level keys are
 //!   `schema_version`/`kind`/`spec`/`tier`/`description`/`limits`/
 //!   `synthetic_diff`/`repos`; the owned per-subject keys are
@@ -437,6 +445,21 @@ fn opt_string(
     }
 }
 
+/// Present-and-non-null string that may be empty: `stderr_excerpt`'s emitted
+/// shape is a plain excerpt string that is legitimately empty when a run
+/// wrote no stderr. A present non-string fails; absence is fine.
+fn opt_string_allow_empty(
+    subject: &str,
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, String> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) => Ok(Some(text.clone())),
+        Some(_) => Err(fail(subject, key, "field must be a string when present")),
+    }
+}
+
 fn opt_u64(
     subject: &str,
     object: &serde_json::Map<String, Value>,
@@ -751,6 +774,11 @@ fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedM
         }
     }
 
+    // Owned-but-unchecked top-level fields get their emitted-shape type
+    // checks: `description` is a string, `limits` an array of strings.
+    opt_string("manifest", top, "description")?;
+    opt_string_array("manifest", top, "limits")?;
+
     let repos = value
         .get("repos")
         .and_then(Value::as_array)
@@ -821,6 +849,10 @@ fn validate_accepted_manifest(value: &Value, sha256: String) -> Result<AcceptedM
             .filter(|text| !text.trim().is_empty())
             .ok_or_else(|| fail(&id, "license", "subject must declare its license class"))?
             .to_string();
+
+        // `why` is owned; when recorded it must be a non-empty string (its
+        // emitted shape), not a wrong-typed stand-in. Absent stays data-driven.
+        opt_string(&id, entry, "why")?;
 
         let shape = entry
             .get("shape")
@@ -1144,9 +1176,14 @@ fn validate_run_receipt(
         ));
     }
 
-    if is_current {
+    // The receipt-level toolchain identity block: 0.3 receipts carry it, and
+    // it is the reference side for the row `binary` copy checks (J2 below).
+    let ripr_identity: Option<&serde_json::Map<String, Value>> = if is_current {
         validate_ripr_identity(top, display, &mut incomplete)?;
-    }
+        top.get("ripr").and_then(Value::as_object)
+    } else {
+        None
+    };
 
     let rows = value
         .get("repos")
@@ -1222,7 +1259,7 @@ fn validate_run_receipt(
         let row = rows_by_id
             .get(&subject.id)
             .ok_or_else(|| fail(&subject.id, "id", "missing subject row"))?;
-        let summary = validate_row(row, subject, is_current, &mut incomplete)?;
+        let summary = validate_row(row, subject, is_current, ripr_identity, &mut incomplete)?;
         summaries.push(summary);
     }
 
@@ -1360,6 +1397,7 @@ fn validate_row(
     row: &Value,
     subject: &AcceptedSubject,
     is_current: bool,
+    ripr_identity: Option<&serde_json::Map<String, Value>>,
     incomplete: &mut Vec<Diagnostic>,
 ) -> Result<RowSummary, String> {
     let id = &subject.id;
@@ -1401,7 +1439,16 @@ fn validate_row(
     if is_current {
         validate_row_repository(entry, id, subject, incomplete)?;
         validate_row_currentness(entry, id, &status_label, subject, incomplete)?;
+        // Duplicate copies of one identity inside the receipt must agree;
+        // this runs after the well-formedness checks so a malformed value
+        // fails with its own digest/shape diagnostic first.
+        validate_row_identity_copies(entry, id, ripr_identity)?;
     } else {
+        // Owned-but-unchecked 0.2 fields get their emitted-shape type checks
+        // (`gap_ids` is an array of strings; `stderr_excerpt` a string that
+        // may be empty). A wrong-typed value fails naming the field.
+        opt_string_array(id, entry, "gap_ids")?;
+        opt_string_allow_empty(id, entry, "stderr_excerpt")?;
         match opt_string(id, entry, "sha")? {
             Some(sha) => {
                 check_git_sha(id, "sha", &sha)?;
@@ -1450,25 +1497,33 @@ fn validate_row(
     }
 
     // Stability and contradiction: unstable gap-ID lists cannot coexist with a
-    // stable claim, and an unstable claim cannot carry an empty list (the
-    // sweep derives both fields from the same comparison, so the emitted shape
-    // never produces either pairing). 0.2 rows carry row-level evidence; 0.3
+    // stable claim, an unstable claim cannot carry an empty list, and a false
+    // stability claim cannot omit its list (the sweep derives both fields from
+    // the same comparison, so the emitted shape never produces any of those
+    // pairings). 0.2 rows carry row-level evidence; 0.3
     // rows carry it inside the validated `repeat` block — the row-level
     // stability fields are denied there, so this is the only evidence source.
-    let (stability, unstable_ids, stability_field) = if is_current {
+    let (stability, unstable_ids, stability_field, unstable_list_field) = if is_current {
         match entry.get("repeat") {
             Some(Value::Object(repeat)) => (
                 opt_bool(id, repeat, "gap_ids_stable")?,
                 opt_string_array(id, repeat, "unstable_gap_ids")?,
                 "repeat.gap_ids_stable",
+                "repeat.unstable_gap_ids",
             ),
-            _ => (None, None, "repeat.gap_ids_stable"),
+            _ => (
+                None,
+                None,
+                "repeat.gap_ids_stable",
+                "repeat.unstable_gap_ids",
+            ),
         }
     } else {
         (
             opt_bool(id, entry, "gap_ids_stable")?,
             opt_string_array(id, entry, "unstable_gap_ids")?,
             "gap_ids_stable",
+            "unstable_gap_ids",
         )
     };
     match (stability, unstable_ids.as_ref()) {
@@ -1484,6 +1539,16 @@ fn validate_row(
                 id,
                 stability_field,
                 "contradictory status: row claims unstable gap IDs but lists none",
+            ));
+        }
+        // A false stability claim is a comparison result: the same re-run that
+        // produced it produces the unstable gap-ID list, so an omitted list is
+        // a contradiction, not a quiet pass.
+        (Some(false), None) => {
+            return Err(fail(
+                id,
+                unstable_list_field,
+                "contradictory status: a false stability claim requires the unstable gap-ID list; the comparison evidence is omitted",
             ));
         }
         _ => {}
@@ -1660,6 +1725,92 @@ fn validate_row_repository(
     Ok(())
 }
 
+/// A recorded value with the loader's null-is-absent rule: an explicit null
+/// is not a comparable copy of an identity.
+fn identity_value<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    field: &str,
+) -> Option<&'a Value> {
+    match object.get(field) {
+        Some(Value::Null) | None => None,
+        Some(value) => Some(value),
+    }
+}
+
+/// Two recorded copies of the same identity must agree: when the same
+/// identity appears at two locations in one receipt, the copies describe one
+/// entity, so a disagreement is a hand-edit. A mismatch fails naming both
+/// locations; a one-sided record is not comparable and keeps its own
+/// absent-is-incomplete rule.
+fn require_matching_identity_copies(
+    id: &str,
+    a_location: &str,
+    a: Option<&Value>,
+    b_location: &str,
+    b: Option<&Value>,
+) -> Result<(), String> {
+    if let (Some(a_value), Some(b_value)) = (a, b)
+        && a_value != b_value
+    {
+        return Err(fail(
+            id,
+            a_location,
+            format!(
+                "contradictory identity: `{a_location}` does not match `{b_location}`; both locations record the same identity, and disagreeing copies are a hand-edit"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Duplicate identity copies inside one 0.3 receipt must agree (#3733
+/// review): the row-level `tree_digest`/`snapshot` vs the `repository` block,
+/// and a row's `binary` identity vs the receipt-level `ripr` block.
+fn validate_row_identity_copies(
+    entry: &serde_json::Map<String, Value>,
+    id: &str,
+    ripr: Option<&serde_json::Map<String, Value>>,
+) -> Result<(), String> {
+    if let Some(Value::Object(repository)) = entry.get("repository") {
+        for field in ["tree_digest", "snapshot"] {
+            require_matching_identity_copies(
+                id,
+                field,
+                identity_value(entry, field),
+                &format!("repository.{field}"),
+                identity_value(repository, field),
+            )?;
+        }
+    }
+    if let (Some(Value::Object(binary)), Some(ripr)) = (entry.get("binary"), ripr) {
+        for (row_field, row_location, receipt_field, receipt_location) in [
+            (
+                "digest",
+                "binary.digest",
+                "binary_digest",
+                "ripr.binary_digest",
+            ),
+            ("version", "binary.version", "version", "ripr.version"),
+            ("features", "binary.features", "features", "ripr.features"),
+            (
+                "build_profile",
+                "binary.build_profile",
+                "build_profile",
+                "ripr.build_profile",
+            ),
+        ] {
+            require_matching_identity_copies(
+                id,
+                row_location,
+                identity_value(binary, row_field),
+                receipt_location,
+                identity_value(ripr, receipt_field),
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// 0.3 row currentness: state vocabularies, binary/config/input identity,
 /// evidence digests, repeat-run identity, and the receipt-vs-manifest identity
 /// binding. Unknown states fail; absent states and identities are typed
@@ -1695,6 +1846,10 @@ fn validate_row_currentness(
             "complete" | "parse-failed" => state != "executed",
             "timed-out" => state != "timed-out",
             "crashed" => state != "failed",
+            // A `partial` row is a run-status row: it counts toward
+            // `repos_run`, so `not-executed` contradicts it. The other ran /
+            // failed states stay honest about how the partial attempt went.
+            "partial" => state == "not-executed",
             _ => false,
         };
         if contradiction {
@@ -1809,14 +1964,19 @@ fn validate_row_currentness(
                     "binary version not recorded",
                 ));
             }
-            if let Some(profile) = opt_string(id, binary, "build_profile")? {
-                known_value_or_fail(
+            match opt_string(id, binary, "build_profile")? {
+                Some(profile) => known_value_or_fail(
                     id,
                     "binary.build_profile",
                     &profile,
                     &BUILD_PROFILES,
                     "build profile",
-                )?;
+                )?,
+                None => incomplete.push(Diagnostic::new(
+                    id,
+                    "binary.build_profile",
+                    "build profile not recorded",
+                )),
             }
             match opt_string_array(id, binary, "features")? {
                 Some(_) => {}
@@ -2394,6 +2554,10 @@ fn validate_summary_agreement(
             }
         }
     }
+
+    // `gate_reason` is owned by the emitted summary; when recorded it must be
+    // a non-empty string (its emitted shape), not a wrong-typed stand-in.
+    opt_string(display, summary, "gate_reason")?;
 
     // Gate semantics: the supplied gate_status must EQUAL the gate derived
     // from the rows — `not_run` at zero runs, `pass` only with zero crashes
@@ -4379,6 +4543,204 @@ mod python_eval_sweep {
         expect_fail(
             validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
             "array of strings",
+        )
+    }
+
+    // -- focused fix round: execution/stability contradictions, identity
+    //    copies, binary disclosure, owned-field type checks -------------------
+
+    #[test]
+    fn partial_row_with_not_executed_state_fails() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        // `partial` is a run-status row (it counts toward `repos_run`), so an
+        // execution state of `not-executed` contradicts it.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[1].as_object_mut()
+        {
+            entry.insert("execution".to_string(), json!("not-executed"));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "status `partial` cannot coexist with execution state `not-executed`",
+        )
+    }
+
+    #[test]
+    fn disagreeing_tree_digest_copies_fail_and_matching_copies_pass() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // The `repository` block copy disagrees with the row-level digest:
+        // both locations record one identity, so the mismatch fails naming
+        // both.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+            && let Some(Value::Object(repository)) = entry.get_mut("repository")
+        {
+            repository.insert("tree_digest".to_string(), json!(DIGEST_TWO));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "`tree_digest` does not match `repository.tree_digest`",
+        )?;
+
+        // Matching copies validate (the fixture restates the same digest).
+        let receipt = current_receipt_0_3(&manifest);
+        validate_receipt_value(&receipt, &manifest, &sha)?;
+        Ok(())
+    }
+
+    #[test]
+    fn row_binary_identity_must_match_the_receipt_ripr_block() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+        // The row `binary` block restates the receipt-level `ripr` identity;
+        // a disagreeing copy of any owned field fails naming both locations.
+        for (field, wrong) in [
+            ("digest", json!(DIGEST_ONE)),
+            ("version", json!("ripr 9.9.9")),
+            ("features", json!(["rust"])),
+            ("build_profile", json!("release")),
+        ] {
+            let mut receipt = current_receipt_0_3(&manifest);
+            if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+                && let Some(entry) = rows[0].as_object_mut()
+                && let Some(Value::Object(binary)) = entry.get_mut("binary")
+            {
+                binary.insert(field.to_string(), wrong);
+            }
+            expect_fail(
+                validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+                &format!("`binary.{field}` does not match"),
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn false_stability_claim_requires_the_unstable_list() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // 0.3: a false claim inside `repeat` with the list omitted fails
+        // naming the omitted field.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+            && let Some(Value::Object(repeat)) = entry.get_mut("repeat")
+        {
+            repeat.insert("gap_ids_stable".to_string(), json!(false));
+            repeat.remove("unstable_gap_ids");
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "field=`repeat.unstable_gap_ids`",
+        )?;
+
+        // 0.2: the same omission at the row level fails the same way.
+        let mut receipt = historical_receipt_0_2(&alternate_manifest());
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.insert("gap_ids_stable".to_string(), json!(false));
+            entry.remove("unstable_gap_ids");
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "field=`unstable_gap_ids`",
+        )
+    }
+
+    #[test]
+    fn present_binary_block_without_build_profile_discloses_incomplete() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // A present `binary` block missing `build_profile` is a named
+        // incomplete disclosure, not a silent pass.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+            && let Some(Value::Object(binary)) = entry.get_mut("binary")
+        {
+            binary.remove("build_profile");
+        }
+        let check = validate_receipt_value(&receipt, &manifest, &sha)?;
+        assert!(
+            check.incomplete.iter().any(|diagnostic| {
+                diagnostic.subject == "alpha" && diagnostic.field == "binary.build_profile"
+            }),
+            "missing binary.build_profile must be disclosed incomplete: {:?}",
+            check.incomplete
+        );
+        assert_eq!(check.verdict(), Verdict::Incomplete);
+
+        // A malformed profile value still fails outright.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+            && let Some(Value::Object(binary)) = entry.get_mut("binary")
+        {
+            binary.insert("build_profile".to_string(), json!("ultra"));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "unknown build profile",
+        )
+    }
+
+    #[test]
+    fn owned_fields_get_type_checks_per_emitted_shape() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // Summary: wrong-typed `gate_reason` (number) fails naming the field.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.insert("gate_reason".to_string(), json!(7));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "field=`gate_reason`",
+        )?;
+
+        // 0.2 row: wrong-typed `gap_ids` (object) fails.
+        let mut receipt = historical_receipt_0_2(&alternate_manifest());
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.insert("gap_ids".to_string(), json!({"gap:python:x": 1}));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "field=`gap_ids`",
+        )?;
+
+        // 0.2 row: wrong-typed `stderr_excerpt` (array) fails.
+        let mut receipt = historical_receipt_0_2(&alternate_manifest());
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.insert("stderr_excerpt".to_string(), json!(["boom"]));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "field=`stderr_excerpt`",
+        )?;
+
+        // Manifest: wrong-typed `why` (array) fails naming the subject.
+        let mut value = alternate_manifest();
+        value["repos"][0]["why"] = json!(["because"]);
+        expect_fail(validate_manifest_value(&parsed(&value)?), "subject=`alpha`")?;
+
+        // Manifest: wrong-typed `limits` (object) fails.
+        let mut value = alternate_manifest();
+        value["limits"] = json!({"static": true});
+        expect_fail(validate_manifest_value(&parsed(&value)?), "field=`limits`")?;
+
+        // Manifest: wrong-typed `description` (number) fails.
+        let mut value = alternate_manifest();
+        value["description"] = json!(42);
+        expect_fail(
+            validate_manifest_value(&parsed(&value)?),
+            "field=`description`",
         )
     }
 

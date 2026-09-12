@@ -164,9 +164,17 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   value with no manifest side to bind discloses `incomplete` on the manifest
   side instead of fabricating a binding), unsafe
   (non-portable, absolute, or secret-bearing) paths and URLs, unknown state
-  vocabulary, contradictory status (e.g. `complete` with an execution state
-  that did not run, or stable gap IDs listed as unstable — in either direction,
-  at the 0.2 row level or inside the 0.3 `repeat` block), malformed digests,
+  vocabulary, contradictory status (e.g. `complete`/`partial` with an
+  execution state that did not run — `partial` with `not-executed` included —
+  or stable gap IDs listed as unstable in either direction, or a false
+  stability claim whose `unstable_gap_ids` list is omitted; each at the 0.2
+  row level or inside the 0.3 `repeat` block), duplicate identity copies
+  inside one receipt that disagree (the row-level `tree_digest`/`snapshot` vs
+  the `repository` block, and a row's `binary` identity vs the receipt-level
+  `ripr` block — a mismatch fails naming both locations), a known field whose
+  recorded value has the wrong type or shape for its emitted shape
+  (`description`/`gate_reason`/`why` are strings, `stderr_excerpt` is a
+  possibly-empty string, `gap_ids`/`limits` are arrays of strings), malformed digests,
   a stale manifest digest (receipt bound to different manifest bytes), a
   required summary aggregate missing from an analyzed receipt, a nonzero
   analysis-bearing aggregate on a zero-run receipt, and
@@ -200,11 +208,14 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
 - Missing identities are typed `incomplete` with a per-field disclosure; they
   are not invented and not errors (the retained manifest carries no
   provenance/retention/snapshot identities by design, and historical 0.2 rows
-  carry no currentness fields). Absent `ripr.features` (receipt-level) and
-  `binary.features` (row-level) disclose `incomplete` the same way;
-  present-but-malformed feature sets fail. Validation never upgrades or
-  rewrites a historical receipt. A recorded `alignment_counts` object must
-  keep `absent` (field not emitted) distinct from `unknown` (emitted value).
+  carry no currentness fields). Missing owned identity fields — `ripr.*` at
+  receipt level, and every owned field of a present row-level `binary` block
+  (`digest`/`version`/`features`/`build_profile`) — disclose `incomplete` the
+  same way; present-but-malformed values fail. Validation never upgrades or
+  rewrites a historical receipt. `alignment_counts` is required on every
+  analyzed (run-status) row, and a recorded `alignment_counts` object must
+  always carry both keys — `absent` (field not emitted) and `unknown`
+  (emitted value), zero-filled when empty — so the two never merge.
 - Exit contract: exit 0 when every present artifact is structurally valid —
   including when identities are disclosed `incomplete` or no receipt is
   supplied (`not_run`); nonzero on any fail-closed violation. Top-level
@@ -243,14 +254,21 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   subjects, changed denominator, non-https or credential-bearing URLs,
   absolute and secret-bearing paths, unknown shape tags, malformed SHAs,
   null/empty/malformed optional manifest identities, unknown
-  outcome/status/state values, contradictory status, stale and
+  outcome/status/state values, contradictory status (including `partial` with
+  `not-executed`, and a false stability claim with its `unstable_gap_ids`
+  list omitted), disagreeing duplicate identity copies (row-level
+  tree/snapshot vs the `repository` block, and a row `binary` field vs its
+  receipt-level `ripr` copy), wrong-typed owned fields
+  (`gate_reason`/`gap_ids`/`stderr_excerpt`/`description`/`limits`/`why`),
+  stale and
   malformed digests, a receipt identity contradicting the manifest binding,
   a required summary aggregate missing from an analyzed receipt, a nonzero
   analysis-bearing aggregate on a zero-run receipt, hand-edited aggregates,
   vacuous pass, pass without
   stability evidence, merged absent/unknown distributions) fails with a
   subject/field/reason diagnostic and the rerun command; missing identities
-  (including `ripr.features`/`binary.features`) are typed incomplete, and a
+  (including `ripr.features`/`binary.features`, and a present `binary` block
+  without `build_profile`) are typed incomplete, and a
   receipt value with no manifest side to bind discloses the manifest gap
   instead of fabricating a binding; a zero-run receipt gates `not_run`; the
   historical 0.2 receipt validates with disclosed incompletes and is never
