@@ -42,7 +42,12 @@
 //! config/input bytes, or a different command contract flips the verdict to
 //! `stale` — and editing
 //! the as-of string can never repair it, because staleness derives only from
-//! digest, binding, and vocabulary comparisons; as-of is never an input.
+//! digest, binding, and vocabulary comparisons; as-of is never an input. The
+//! manifest digest is compared over the raw file bytes BEFORE the manifest is
+//! parsed or validated, so a moved manifest whose new bytes also fail
+//! accepted-state validation reaches the promised `stale` verdict with both
+//! reasons named (digest movement plus the validation failure) — a malformed
+//! manifest never aborts the verdict path into a schema error.
 //!
 //! Dispositions are acceptance-time judgment and live OUTSIDE the closed 0.3
 //! row schema (which is deny-unknown): a sidecar file maps each non-complete
@@ -59,8 +64,12 @@
 //!   Robustness and distribution metrics are informational and never become
 //!   judged accuracy; the receipt's `non_claims` section states this inside
 //!   the artifact itself.
-//! - Every count is emitted as `{numerator, denominator}` — no bare rate and
-//!   no denominator-free number.
+//! - Every count is emitted as `{numerator, denominator}` with the
+//!   denominator each contract defines — top-level counts over the subject
+//!   denominator, outcomes and distribution buckets over the selected
+//!   denominator, health tallies over the selected rows they tally, and the
+//!   runtime count over the analyzed rows — no bare rate and no
+//!   denominator-free number.
 //! - Real producers only: what the validated rows record is projected; what
 //!   they do not record is omitted (typed incomplete in the candidate's own
 //!   disclosures, copied into the accepted receipt). A limitation
@@ -953,6 +962,16 @@ fn build_accepted_receipt(
 ) -> Value {
     let total = rows.len();
     let run = rows.iter().filter(|row| row.counts_as_run).count();
+    let detection_count = |state: &str| {
+        rows.iter()
+            .filter(|row| row.detection.as_deref() == Some(state))
+            .count()
+    };
+    let corpus_count = |state: &str| {
+        rows.iter()
+            .filter(|row| row.corpus_state.as_deref() == Some(state))
+            .count()
+    };
     let materialized = rows
         .iter()
         .filter(|row| {
@@ -962,10 +981,7 @@ fn build_accepted_receipt(
             )
         })
         .count();
-    let available = rows
-        .iter()
-        .filter(|row| row.detection.as_deref() == Some("detected"))
-        .count();
+    let available = detection_count("detected");
     let stale = rows.iter().filter(|row| row.status == "stale").count();
     let license_blocked = rows
         .iter()
@@ -977,18 +993,29 @@ fn build_accepted_receipt(
         .count();
     let tempfail = rows.iter().filter(|row| row.status == "tempfail").count();
 
+    // Every accepted-receipt count is emitted as `{numerator, denominator}`
+    // with the denominator each contract defines: outcomes and distribution
+    // buckets over the selected denominator, the runtime count over the
+    // analyzed (run) rows, and each health tally over the selected rows it
+    // tallies. A bucket sum below its denominator (non-run rows contribute
+    // nothing) is the honest shape, not an error.
+    let over_selected = |numerator: usize| {
+        Count {
+            numerator,
+            denominator: total,
+        }
+        .to_json()
+    };
     let outcome_count = |status: &str| rows.iter().filter(|row| row.status == status).count();
     let outcomes = json!({
-        "complete": outcome_count("complete"),
-        "partial": outcome_count("partial"),
-        "parse_failed": outcome_count("parse-failed"),
-        "timed_out": outcome_count("timed-out"),
-        "crashed": outcome_count("crashed"),
-        "unsupported": outcome_count("unsupported"),
-        "tempfail": outcome_count("tempfail"),
-        "stale": outcome_count("stale"),
-        "denominator_selected": total,
-        "denominator_run": run,
+        "complete": over_selected(outcome_count("complete")),
+        "partial": over_selected(outcome_count("partial")),
+        "parse_failed": over_selected(outcome_count("parse-failed")),
+        "timed_out": over_selected(outcome_count("timed-out")),
+        "crashed": over_selected(outcome_count("crashed")),
+        "unsupported": over_selected(outcome_count("unsupported")),
+        "tempfail": over_selected(outcome_count("tempfail")),
+        "stale": over_selected(outcome_count("stale")),
     });
 
     // Runtime envelope: emitted only where reliable — every run row must
@@ -1012,15 +1039,15 @@ fn build_accepted_receipt(
             "median_ms": sorted[sorted.len() / 2],
             "max_ms": sorted[sorted.len() - 1],
             "total_ms": total_ms,
-            "count": run,
-            "denominator_run": run,
+            // The run-row count over the analyzed rows; the min/median/max/
+            // total fields are durations, not counts, so they stay bare.
+            "count": Count { numerator: runtimes.len(), denominator: run }.to_json(),
         })
     } else {
         json!({
             "status": "unavailable",
             "reason": if run == 0 { "no subject reached an analysis attempt" } else { "not every run row records a runtime" },
-            "count": runtimes.len(),
-            "denominator_run": run,
+            "count": Count { numerator: runtimes.len(), denominator: run }.to_json(),
         })
     };
 
@@ -1068,26 +1095,34 @@ fn build_accepted_receipt(
             merge_distribution(&mut alignment, counts);
         }
     }
+    let bucketed = |map: BTreeMap<String, u64>| -> BTreeMap<String, Value> {
+        map.into_iter()
+            .map(|(name, count)| (name, over_selected(count as usize)))
+            .collect()
+    };
 
     // Detection / corpus-selection health tallies, with the unrecorded share
-    // disclosed (an absent state field is not an absent state value).
+    // disclosed (an absent state field is not an absent state value). Each
+    // tally carries its checked dimension: the selected rows.
     let health = json!({
         "project_detection": {
-            "detected": rows.iter().filter(|row| row.detection.as_deref() == Some("detected")).count(),
-            "failed": rows.iter().filter(|row| row.detection.as_deref() == Some("failed")).count(),
-            "unknown": rows.iter().filter(|row| row.detection.as_deref() == Some("unknown")).count(),
-            "absent": rows.iter().filter(|row| row.detection.as_deref() == Some("absent")).count(),
-            "unrecorded": rows.iter().filter(|row| row.detection.is_none()).count(),
-            "denominator_selected": total,
+            "detected": over_selected(detection_count("detected")),
+            "failed": over_selected(detection_count("failed")),
+            "unknown": over_selected(detection_count("unknown")),
+            "absent": over_selected(detection_count("absent")),
+            "unrecorded": over_selected(
+                rows.iter().filter(|row| row.detection.is_none()).count(),
+            ),
         },
         "corpus_selection": {
-            "selected": rows.iter().filter(|row| row.corpus_state.as_deref() == Some("selected")).count(),
-            "partial": rows.iter().filter(|row| row.corpus_state.as_deref() == Some("partial")).count(),
-            "failed": rows.iter().filter(|row| row.corpus_state.as_deref() == Some("failed")).count(),
-            "unknown": rows.iter().filter(|row| row.corpus_state.as_deref() == Some("unknown")).count(),
-            "absent": rows.iter().filter(|row| row.corpus_state.as_deref() == Some("absent")).count(),
-            "unrecorded": rows.iter().filter(|row| row.corpus_state.is_none()).count(),
-            "denominator_selected": total,
+            "selected": over_selected(corpus_count("selected")),
+            "partial": over_selected(corpus_count("partial")),
+            "failed": over_selected(corpus_count("failed")),
+            "unknown": over_selected(corpus_count("unknown")),
+            "absent": over_selected(corpus_count("absent")),
+            "unrecorded": over_selected(
+                rows.iter().filter(|row| row.corpus_state.is_none()).count(),
+            ),
         },
     });
 
@@ -1179,8 +1214,8 @@ fn build_accepted_receipt(
         "runtime_envelope": runtime_envelope,
         "stability": stability,
         "distributions": {
-            "classification": classification,
-            "alignment": alignment,
+            "classification": bucketed(classification),
+            "alignment": bucketed(alignment),
             "limitation": {
                 "disclosure": "no limitation distribution is emitted: the schema-0.3 receipt row records no limitation field (per-phase limitations live in the managed execution receipt), so a limitation taxonomy would be invented, not derived",
             },
@@ -1774,16 +1809,29 @@ struct CurrentnessComparison {
 
 /// Everything one currentness comparison reads: the parsed pointer, the
 /// accepted receipt with its recomputed digest, the retained candidate with
-/// its recomputed digest, the CURRENT accepted manifest, and the recomputed
-/// live identities.
+/// its recomputed digest, the CURRENT accepted manifest (when it loads and
+/// validates — see `manifest_validation_error`), and the recomputed live
+/// identities.
 struct CurrentnessInputs<'a> {
     pointer: &'a serde_json::Map<String, Value>,
     accepted_receipt: &'a Value,
     receipt_sha256: &'a str,
     candidate: &'a Value,
     candidate_sha256: &'a str,
-    accepted: &'a AcceptedManifest,
+    /// The CURRENT accepted manifest after a successful load + validation.
+    /// `None` when the manifest fails either: the comparison then records the
+    /// failure as a stale reason and skips the manifest-dependent re-checks
+    /// (they need the validated manifest and cannot flip an already-stale
+    /// verdict).
+    accepted: Option<&'a AcceptedManifest>,
     current_manifest_sha256: &'a str,
+    /// The manifest load/validation failure, when the current manifest bytes
+    /// do not parse or validate against the accepted-state contract. Never
+    /// aborts the verdict path: the digest comparison runs on the raw bytes,
+    /// so a moved manifest reaches the promised `stale` verdict even when its
+    /// new bytes are malformed, and the failure is named as an additional
+    /// stale reason.
+    manifest_validation_error: Option<&'a str>,
     current: &'a CurrentIdentity,
 }
 
@@ -1798,7 +1846,6 @@ fn compare_currentness(inputs: &CurrentnessInputs) -> Result<CurrentnessComparis
     let receipt_sha256 = inputs.receipt_sha256;
     let candidate = inputs.candidate;
     let candidate_sha256 = inputs.candidate_sha256;
-    let accepted = inputs.accepted;
     let current_manifest_sha256 = inputs.current_manifest_sha256;
     let current = inputs.current;
     let mut stale: Vec<String> = Vec::new();
@@ -1840,6 +1887,16 @@ fn compare_currentness(inputs: &CurrentnessInputs) -> Result<CurrentnessComparis
         stale.push(format!(
             "accepted manifest changed: pointer binds sha256 `{bound_manifest}` but the manifest hashes to `{current_manifest_sha256}`"
         ));
+    }
+
+    // 2b. The manifest must also still load and validate against the
+    // accepted-state contract. The failure never aborts the verdict path:
+    // the digest comparison above ran on the raw bytes, so a moved manifest
+    // is recorded stale even when its new bytes are malformed, and the
+    // failure itself is named as an additional stale reason.
+    if let Some(error) = inputs.manifest_validation_error {
+        let first = error.lines().next().unwrap_or_default();
+        stale.push(format!("accepted manifest failed validation: {first}"));
     }
 
     // 3. The command contract version.
@@ -2089,13 +2146,17 @@ fn compare_currentness(inputs: &CurrentnessInputs) -> Result<CurrentnessComparis
     // licenses, and the manifest digest binding inside the retained candidate
     // are re-checked against the manifest as it exists now. A changed tree
     // pin or any other manifest movement makes the accepted receipt
-    // structurally stale.
-    if let Err(error) = validate_run_receipt(
-        candidate,
-        current_manifest_sha256,
-        accepted,
-        "retained candidate",
-    ) {
+    // structurally stale. Skipped when the manifest itself failed to load or
+    // validate: the 2b stale reason already owns the verdict and this
+    // re-validation needs the validated manifest.
+    if let Some(accepted) = inputs.accepted
+        && let Err(error) = validate_run_receipt(
+            candidate,
+            current_manifest_sha256,
+            accepted,
+            "retained candidate",
+        )
+    {
         let first = error.lines().next().unwrap_or_default().to_string();
         stale.push(format!(
             "accepted receipt no longer validates against the current accepted state: {first}"
@@ -2146,46 +2207,51 @@ fn compare_currentness(inputs: &CurrentnessInputs) -> Result<CurrentnessComparis
     // CURRENT bytes at the manifest-declared path (the recomputation hashes
     // the declared path only). A missing or unrecomputable subject identity
     // is disclosed unverifiable and can never leave the verdict `current`.
-    for (id, bound) in pointer_subjects.iter() {
-        let declared = accepted
-            .subject(id)
-            .map(|subject| subject.synthetic_diff.as_str());
-        let bound_config = bound.get("config_input").and_then(Value::as_str);
-        match (bound_config, declared) {
-            (Some(bound), Some(declared_path)) if bound != declared_path => {
-                stale.push(format!(
-                    "input path substituted for subject `{id}`: pointer binds config_input `{bound}` but the accepted manifest declares `{declared_path}`; the hashed input must be the manifest-declared input"
-                ));
-            }
-            (Some(_), Some(_)) => {}
-            (Some(_), None) => {
-                // Outside the manifest denominator; step 8's re-validation
-                // against the current manifest already reports it stale.
-            }
-            (None, Some(declared_path)) => unverifiable.push(format!(
-                "input path for subject `{id}` could not be verified (the pointer binds no config_input while the accepted manifest declares `{declared_path}`)"
-            )),
-            (None, None) => {}
-        }
-        let bound_input = bound
-            .get("input_digest")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        match (bound_input, current.subject_inputs.get(id)) {
-            (Some(bound), Some(recomputed)) if bound != *recomputed => stale.push(format!(
-                "input moved for subject `{id}`: pointer binds input sha256 `{bound}` but the current input hashes to `{recomputed}`"
-            )),
-            (Some(_), Some(_)) => {}
-            (Some(_), None) => unverifiable.push(format!(
-                "input identity for subject `{id}` could not be recomputed (the manifest-declared input file did not resolve or read)"
-            )),
-            (None, recomputed) => unverifiable.push(format!(
-                "input identity for subject `{id}` could not be verified (the pointer binds no input digest; the manifest-declared input {})",
-                match recomputed {
-                    Some(digest) => format!("currently hashes to `{digest}`"),
-                    None => "did not resolve or read".to_string(),
+    // Skipped when the manifest failed to load or validate: the declared
+    // input paths are unavailable then, and the 2b stale reason already owns
+    // the verdict.
+    if let Some(accepted) = inputs.accepted {
+        for (id, bound) in pointer_subjects.iter() {
+            let declared = accepted
+                .subject(id)
+                .map(|subject| subject.synthetic_diff.as_str());
+            let bound_config = bound.get("config_input").and_then(Value::as_str);
+            match (bound_config, declared) {
+                (Some(bound), Some(declared_path)) if bound != declared_path => {
+                    stale.push(format!(
+                        "input path substituted for subject `{id}`: pointer binds config_input `{bound}` but the accepted manifest declares `{declared_path}`; the hashed input must be the manifest-declared input"
+                    ));
                 }
-            )),
+                (Some(_), Some(_)) => {}
+                (Some(_), None) => {
+                    // Outside the manifest denominator; step 8's re-validation
+                    // against the current manifest already reports it stale.
+                }
+                (None, Some(declared_path)) => unverifiable.push(format!(
+                    "input path for subject `{id}` could not be verified (the pointer binds no config_input while the accepted manifest declares `{declared_path}`)"
+                )),
+                (None, None) => {}
+            }
+            let bound_input = bound
+                .get("input_digest")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            match (bound_input, current.subject_inputs.get(id)) {
+                (Some(bound), Some(recomputed)) if bound != *recomputed => stale.push(format!(
+                    "input moved for subject `{id}`: pointer binds input sha256 `{bound}` but the current input hashes to `{recomputed}`"
+                )),
+                (Some(_), Some(_)) => {}
+                (Some(_), None) => unverifiable.push(format!(
+                    "input identity for subject `{id}` could not be recomputed (the manifest-declared input file did not resolve or read)"
+                )),
+                (None, recomputed) => unverifiable.push(format!(
+                    "input identity for subject `{id}` could not be verified (the pointer binds no input digest; the manifest-declared input {})",
+                    match recomputed {
+                        Some(digest) => format!("currently hashes to `{digest}`"),
+                        None => "did not resolve or read".to_string(),
+                    }
+                )),
+            }
         }
     }
 
@@ -2370,9 +2436,27 @@ fn run_currentness_check(parsed: &ReportArgs) -> Result<(), String> {
         load_strict_json(&candidate_path.to_string_lossy())?;
 
     // The current accepted manifest: the comparison baseline for both the
-    // bound manifest digest and the candidate re-validation.
-    let (manifest_value, current_manifest_sha256) = load_strict_json(&parsed.manifest)?;
-    let accepted = validate_accepted_manifest(&manifest_value, current_manifest_sha256.clone())?;
+    // bound manifest digest and the candidate re-validation. The raw bytes
+    // are hashed FIRST: a moved manifest is itself the promised `stale`
+    // verdict, so the parse/validation is attempted separately and its
+    // failure is carried into the comparison as an additional named stale
+    // reason — a malformed changed manifest must reach the `stale` verdict,
+    // never abort the check with a schema error.
+    let manifest_bytes = std::fs::read(&parsed.manifest).map_err(|error| {
+        fail(
+            &parsed.manifest,
+            "file",
+            format!("accepted manifest cannot be read: {error}"),
+        )
+    })?;
+    let current_manifest_sha256 = sha256_hex(&manifest_bytes);
+    let manifest_state = load_strict_json(&parsed.manifest).and_then(|(manifest_value, _)| {
+        validate_accepted_manifest(&manifest_value, current_manifest_sha256.clone())
+    });
+    let (accepted, manifest_validation_error) = match manifest_state {
+        Ok(accepted) => (Some(accepted), None),
+        Err(error) => (None, Some(error)),
+    };
 
     let current = CurrentIdentity {
         ripr_source_sha: resolve_current_source_sha(parsed.ripr_source_sha.as_deref()),
@@ -2389,7 +2473,13 @@ fn run_currentness_check(parsed: &ReportArgs) -> Result<(), String> {
             }
             None => None,
         },
-        subject_inputs: recompute_subject_inputs(&accepted, &parsed.manifest),
+        // Without a validated manifest the declared input paths are
+        // unavailable; the comparison already carries the manifest failure as
+        // a stale reason, so no per-subject recomputation is attempted.
+        subject_inputs: accepted
+            .as_ref()
+            .map(|accepted| recompute_subject_inputs(accepted, &parsed.manifest))
+            .unwrap_or_default(),
     };
 
     let comparison = compare_currentness(&CurrentnessInputs {
@@ -2398,8 +2488,9 @@ fn run_currentness_check(parsed: &ReportArgs) -> Result<(), String> {
         receipt_sha256: &receipt_sha256,
         candidate: &candidate_value,
         candidate_sha256: &candidate_sha256,
-        accepted: &accepted,
+        accepted: accepted.as_ref(),
         current_manifest_sha256: &current_manifest_sha256,
+        manifest_validation_error: manifest_validation_error.as_deref(),
         current: &current,
     })?;
 
@@ -3626,6 +3717,33 @@ mod python_eval_sweep_report {
     }
 
     #[test]
+    fn moved_malformed_manifest_still_reaches_stale_with_both_reasons() -> Result<(), String> {
+        // A changed manifest whose new bytes ALSO fail accepted-state
+        // validation (an unknown top-level key) must reach the promised
+        // `stale` verdict, never abort with a schema error: the digest
+        // comparison runs on the raw bytes first, so the verdict carries BOTH
+        // the digest-movement reason and the validation failure (named with
+        // the offending key), and the gate still exits nonzero.
+        let sandbox = accepted_sandbox("stale-malformed-manifest")?;
+        let binary = write_binary_v1(&sandbox)?;
+        let manifest_path = sandbox.path("manifest.json");
+        let mut value = read_strict(&manifest_path)?;
+        if let Some(object) = value.as_object_mut() {
+            object.insert("surprise_total".to_string(), json!(9));
+        }
+        write_json(&manifest_path, &value)?;
+        expect_fail_all(
+            run_report(&currentness_args(&sandbox, &binary, &[])),
+            &[
+                "STALE",
+                "accepted manifest changed",
+                "accepted manifest failed validation",
+                "surprise_total",
+            ],
+        )
+    }
+
+    #[test]
     fn accepted_row_or_tree_change_flips_stale() -> Result<(), String> {
         let sandbox = accepted_sandbox("stale-row")?;
         let binary = write_binary_v1(&sandbox)?;
@@ -3823,8 +3941,9 @@ mod python_eval_sweep_report {
             receipt_sha256: &receipt_sha,
             candidate: &candidate,
             candidate_sha256: &candidate_sha,
-            accepted: &accepted,
+            accepted: Some(&accepted),
             current_manifest_sha256: &manifest_sha,
+            manifest_validation_error: None,
             current: &current,
         })?;
         assert_eq!(
@@ -3949,8 +4068,9 @@ mod python_eval_sweep_report {
             receipt_sha256: &receipt_sha,
             candidate: &candidate,
             candidate_sha256: &candidate_sha,
-            accepted: &accepted,
+            accepted: Some(&accepted),
             current_manifest_sha256: &manifest_sha,
+            manifest_validation_error: None,
             current: &current,
         })?;
         assert_eq!(
@@ -4107,8 +4227,9 @@ mod python_eval_sweep_report {
                 receipt_sha256: &receipt_sha,
                 candidate: &candidate,
                 candidate_sha256: &candidate_sha,
-                accepted: &accepted,
+                accepted: Some(&accepted),
                 current_manifest_sha256: &manifest_sha,
+                manifest_validation_error: None,
                 current: &current,
             })?;
             assert_eq!(
@@ -4299,10 +4420,13 @@ mod python_eval_sweep_report {
         assert_eq!(envelope.get("median_ms").and_then(Value::as_u64), Some(300));
         assert_eq!(envelope.get("max_ms").and_then(Value::as_u64), Some(500));
         assert_eq!(envelope.get("total_ms").and_then(Value::as_u64), Some(1500));
-        assert_eq!(
-            envelope.get("denominator_run").and_then(Value::as_u64),
-            Some(5)
-        );
+        // The count carries the analyzed-row denominator (5 run rows).
+        let count = envelope
+            .get("count")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "runtime_envelope.count".to_string())?;
+        assert_eq!(count.get("numerator").and_then(Value::as_u64), Some(5));
+        assert_eq!(count.get("denominator").and_then(Value::as_u64), Some(5));
         Ok(())
     }
 
@@ -4334,22 +4458,40 @@ mod python_eval_sweep_report {
         assert_eq!(numerator("stale")?, 1);
         assert_eq!(numerator("tempfail")?, 1);
         assert_eq!(numerator("license_blocked")?, 0);
+        // Every count in the outcomes/health/distribution blocks carries
+        // numerator + denominator (the selected denominator) — no bare
+        // denominator-free number anywhere.
+        let count_shape = |name: &str, count: &Value| -> Result<(), String> {
+            let shape_ok = count.get("numerator").and_then(Value::as_u64).is_some()
+                && count.get("denominator").and_then(Value::as_u64).is_some();
+            if shape_ok {
+                Ok(())
+            } else {
+                Err(format!(
+                    "count `{name}` must carry numerator and denominator: {count}"
+                ))
+            }
+        };
+        let numerator_in =
+            |block: &serde_json::Map<String, Value>, name: &str| -> Result<u64, String> {
+                block
+                    .get(name)
+                    .and_then(|count| count.get("numerator"))
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| format!("count {name}"))
+            };
         let outcomes = receipt
             .get("outcomes")
             .and_then(Value::as_object)
             .ok_or_else(|| "outcomes".to_string())?;
-        assert_eq!(outcomes.get("complete").and_then(Value::as_u64), Some(1));
-        assert_eq!(outcomes.get("crashed").and_then(Value::as_u64), Some(1));
-        assert_eq!(
-            outcomes.get("parse_failed").and_then(Value::as_u64),
-            Some(1)
-        );
-        assert_eq!(outcomes.get("timed_out").and_then(Value::as_u64), Some(1));
-        assert_eq!(outcomes.get("unsupported").and_then(Value::as_u64), Some(1));
-        assert_eq!(
-            outcomes.get("denominator_selected").and_then(Value::as_u64),
-            Some(8)
-        );
+        for (name, count) in outcomes {
+            count_shape(name, count)?;
+        }
+        assert_eq!(numerator_in(outcomes, "complete")?, 1);
+        assert_eq!(numerator_in(outcomes, "crashed")?, 1);
+        assert_eq!(numerator_in(outcomes, "parse_failed")?, 1);
+        assert_eq!(numerator_in(outcomes, "timed_out")?, 1);
+        assert_eq!(numerator_in(outcomes, "unsupported")?, 1);
         let health = receipt
             .get("health")
             .and_then(Value::as_object)
@@ -4358,14 +4500,17 @@ mod python_eval_sweep_report {
             .get("project_detection")
             .and_then(Value::as_object)
             .ok_or_else(|| "project_detection".to_string())?;
-        assert_eq!(detection.get("detected").and_then(Value::as_u64), Some(5));
-        assert_eq!(detection.get("unrecorded").and_then(Value::as_u64), Some(0));
         let corpus = health
             .get("corpus_selection")
             .and_then(Value::as_object)
             .ok_or_else(|| "corpus_selection".to_string())?;
-        assert_eq!(corpus.get("selected").and_then(Value::as_u64), Some(5));
-        assert_eq!(corpus.get("absent").and_then(Value::as_u64), Some(3));
+        for (name, count) in detection.iter().chain(corpus) {
+            count_shape(name, count)?;
+        }
+        assert_eq!(numerator_in(detection, "detected")?, 5);
+        assert_eq!(numerator_in(detection, "unrecorded")?, 0);
+        assert_eq!(numerator_in(corpus, "selected")?, 5);
+        assert_eq!(numerator_in(corpus, "absent")?, 3);
         // Distributions agree with the rows: weakly_exposed=1, static_unknown=1.
         let distributions = receipt
             .get("distributions")
@@ -4375,20 +4520,26 @@ mod python_eval_sweep_report {
             .get("classification")
             .and_then(Value::as_object)
             .ok_or_else(|| "classification".to_string())?;
-        assert_eq!(
-            classification.get("weakly_exposed").and_then(Value::as_u64),
-            Some(1),
-        );
-        assert_eq!(
-            classification.get("static_unknown").and_then(Value::as_u64),
-            Some(1),
-        );
         let alignment = distributions
             .get("alignment")
             .and_then(Value::as_object)
             .ok_or_else(|| "alignment".to_string())?;
-        assert_eq!(alignment.get("orthogonal").and_then(Value::as_u64), Some(1));
-        assert_eq!(alignment.get("absent").and_then(Value::as_u64), Some(3));
+        for (name, count) in classification.iter().chain(alignment) {
+            count_shape(name, count)?;
+        }
+        assert_eq!(numerator_in(classification, "weakly_exposed")?, 1,);
+        assert_eq!(numerator_in(classification, "static_unknown")?, 1);
+        // Each distribution bucket carries the selected denominator (non-run
+        // rows contribute no buckets, so sums below 8 are the honest shape).
+        assert_eq!(
+            classification
+                .get("weakly_exposed")
+                .and_then(|count| count.get("denominator"))
+                .and_then(Value::as_u64),
+            Some(8),
+        );
+        assert_eq!(numerator_in(alignment, "orthogonal")?, 1);
+        assert_eq!(numerator_in(alignment, "absent")?, 3);
         // The limitation distribution carries a named disclosure, never an
         // invented taxonomy.
         assert!(

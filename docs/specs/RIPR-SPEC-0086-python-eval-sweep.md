@@ -421,7 +421,12 @@ input digest, config identity).
 
 - **The currentness law is mechanical.** The check recomputes: the accepted
   receipt's file digest, every retained-candidate row digest, the manifest
-  file digest, the retained-candidate re-validation against the CURRENT
+  file digest (compared over the raw file bytes BEFORE the manifest is
+  parsed or validated, so a moved manifest whose new bytes also fail
+  accepted-state validation reaches the promised `stale` verdict with both
+  reasons named — the digest movement and the validation failure — instead
+  of aborting the verdict path with a schema error), the
+  retained-candidate re-validation against the CURRENT
   accepted manifest (which fails on any tree-pin/license/manifest movement),
   the pointer's bound toolchain and per-subject identity copies, the
   analyzer source sha (`--ripr-source-sha`, else bounded
@@ -443,7 +448,13 @@ input digest, config identity).
   missing artifact is a typed integrity failure.
 - **Accepted receipt content** (all derived from the validated rows — the
   receipt never carries a hand-entered total, and every count is emitted as
-  `{numerator, denominator}`): the selected/materialized/available/stale/
+  `{numerator, denominator}` with the denominator each count's contract
+  defines and no denominator-free number: the top-level counts over the
+  eight-subject denominator, each outcome and each distribution bucket over
+  the selected denominator, each health tally over the selected rows it
+  tallies, and the runtime-envelope count over the analyzed (run) rows —
+  the `min_ms`/`median_ms`/`max_ms`/`total_ms` fields are duration
+  measurements, not counts): the selected/materialized/available/stale/
   license-blocked/tempfail counts over the eight-subject denominator; the
   complete/partial/parse-failed/timed-out/crashed/unsupported/tempfail/stale
   outcome split; project-detection and corpus-selection health tallies with
@@ -451,8 +462,10 @@ input digest, config identity).
   run row carries a runtime) and an explicit `unavailable` disclosure
   otherwise; repeat-run identity stability with the per-subject mismatch
   list (unstable gap IDs); the classification and oracle-alignment
-  distributions (informational, never gating) plus a named disclosure that
-  no limitation distribution exists (the 0.3 row schema records none);
+  distributions (each bucket a numerator/denominator count; informational,
+  never gating; a bucket sum below its selected denominator is the honest
+  shape, since non-run rows contribute no buckets) plus a named disclosure
+  that no limitation distribution exists (the 0.3 row schema records none);
   per-subject identity, evidence digests, and dispositions; source/binary/
   feature/config/input/manifest/candidate/accepted-receipt identities; the
   candidate's own typed incomplete disclosures (copied verbatim, with the
@@ -567,7 +580,9 @@ input digest, config identity).
 - The accepted-receipt publication tests (`python_eval_sweep_report` module
   in `eval_sweep_report.rs`): a valid candidate's dry run renders JSON and
   bounded Markdown that agree (same rows, same counts, numerator +
-  denominator on every count); acceptance appends immutably (a second accept
+  denominator on every count, including every outcome, health tally,
+  runtime-envelope count, and distribution bucket — no bare denominator-free
+  number); acceptance appends immutably (a second accept
   adds a content-addressed receipt without mutating the first, the pointer
   moves to the newest, and re-accepting the same candidate is an idempotent
   no-op); the pointer's field set is exactly identity fields with no
@@ -580,7 +595,10 @@ input digest, config identity).
   nothing is accepted; and the currentness law is mechanical end to end —
   binary-digest, manifest-digest, retained-candidate-row, input-bytes,
   pointer-config-copy, pointer-features-copy, and source-sha movements each
-  flip the verdict to stale with the exact reason, editing the as-of string
+  flip the verdict to stale with the exact reason, a moved manifest whose
+  new bytes also fail accepted-state validation flips stale with BOTH the
+  digest-movement and validation-failure reasons (never a schema abort),
+  editing the as-of string
   never repairs staleness (and never breaks a current pointer), a missing
   binary recompute input and a pointer binding no toolchain identity field
   (`features`/`build_profile`) each leave the verdict `unverifiable` (never
@@ -795,10 +813,15 @@ receipt rows derive repos_run = 8 but the summary claims 7
   mechanical; the as-of disclosure is never load-bearing.
 - `eval_sweep_report::python_eval_sweep_report::binary_digest_change_flips_stale`,
   `..::manifest_digest_change_flips_stale`,
+  `..::moved_malformed_manifest_still_reaches_stale_with_both_reasons`,
   `..::accepted_row_or_tree_change_flips_stale`, `..::input_change_flips_stale`,
   `..::pointer_config_edit_flips_stale`, `..::pointer_features_edit_flips_stale`,
   and `..::source_sha_change_flips_stale` -> each bound identity movement
-  flips the pointer stale with the exact reason named.
+  flips the pointer stale with the exact reason named; the malformed-manifest
+  movement reaches that stale verdict with BOTH the digest-movement and
+  validation-failure reasons (the digest comparison runs on the raw bytes
+  first, so a schema-invalid changed manifest never aborts into a schema
+  error).
 - `eval_sweep_report::python_eval_sweep_report::split_portable_rejects_traversal_component_shapes`
   and `..::pointer_receipt_file_with_empty_or_dot_components_is_refused` ->
   portable-path containment: empty components (consecutive separators), `.`,
