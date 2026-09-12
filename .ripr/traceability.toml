@@ -5665,6 +5665,9 @@ tests = [
   "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::receipt_keeps_absent_distinct_from_unknown_distributions",
   "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::historical_receipt_validates_incomplete_without_rewrite",
   "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::rejects_absolute_and_secret_bearing_paths",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::emitter_shaped_zero_run_stability_rate_discloses_instead_of_failing",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::present_null_receipt_identities_fail_while_absent_discloses_incomplete",
+  "xtask/src/reports/eval_sweep_check.rs::python_eval_sweep::run_status_split_pins_which_statuses_count_as_run",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

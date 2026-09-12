@@ -62,7 +62,11 @@
 //!   every analysis-bearing aggregate (classification/alignment counts,
 //!   runtime min/median/max/total, stability counts and rate) must be zero
 //!   or absent — any nonzero value is a fabricated claim about rows that
-//!   never ran.
+//!   never ran. One emitter-shape exception: the live emitter records
+//!   `gap_id_stability_rate: 1.0` on zero-run reports (its empty-set
+//!   guard), so exactly that value is accepted as a named `incomplete`
+//!   disclosure (`vacuous zero-run stability rate`) — any other nonzero
+//!   rate fails, and the disclosed receipt verdict is never a pass.
 //! - Identity binding is symmetric (#3733 review). When the accepted
 //!   manifest and the receipt both record a comparable identity (`license`,
 //!   `tree_digest`, `snapshot`, `provenance`, `retention_class`) and both
@@ -71,7 +75,12 @@
 //!   the manifest side instead of fabricating a binding. Optional manifest
 //!   identities are either absent (typed incomplete) or well-formed: an
 //!   explicit null, an empty string, or a malformed value fails, because a
-//!   present-but-garbage identity is not an absent one. Absent
+//!   present-but-garbage identity is not an absent one. The same present-null
+//!   rule governs the receipt-side identity fields the binding and copy
+//!   checks cover — the row-level binding identities, the receipt-level
+//!   `ripr` block, and the fields of a present row `repository`/`binary`
+//!   block: a key left out discloses `incomplete`, an explicit null fails
+//!   naming the field (#3733 review). Absent
 //!   `ripr.features` / `binary.features` disclose incomplete;
 //!   present-but-malformed feature sets fail — as does a present `binary`
 //!   block missing any of its owned fields (each is a named incomplete
@@ -192,7 +201,10 @@ const STATUS_VOCABULARY: [&str; 8] = [
     "tempfail",
     "stale",
 ];
-/// Statuses that evidence an analysis attempt (count toward `repos_run`).
+/// Statuses that evidence an analysis attempt (count toward `repos_run`):
+/// exactly these five. The complement — `unsupported`/`tempfail`/`stale` —
+/// does not count, though every status stays selected in the denominator
+/// (SPEC-0086).
 const RUN_STATUSES: [&str; 5] = [
     "complete",
     "partial",
@@ -1404,6 +1416,9 @@ fn validate_ripr_identity(
         "build_profile",
     ];
     reject_unknown_keys(ripr, &allowed, display, "ripr identity")?;
+    // A present-null identity is garbage, not absent (#3733 review): only a
+    // key left out discloses incomplete below.
+    reject_null_identity_fields(display, "ripr", ripr, &allowed)?;
     match opt_string(display, ripr, "source_sha")? {
         Some(sha) => check_git_sha(display, "ripr.source_sha", &sha)?,
         None => incomplete.push(Diagnostic::new(
@@ -1758,6 +1773,9 @@ fn validate_row_repository(
     };
     let allowed: [&str; 4] = ["url", "sha", "tree_digest", "snapshot"];
     reject_unknown_keys(repository, &allowed, id, "repository identity")?;
+    // A present-null identity inside the block is garbage, not absent
+    // (#3733 review).
+    reject_null_identity_fields(id, "repository", repository, &allowed)?;
     let url = opt_string(id, repository, "url")?;
     let sha = opt_string(id, repository, "sha")?;
     if url.is_none() || sha.is_none() {
@@ -1812,6 +1830,34 @@ fn identity_value<'a>(
         Some(Value::Null) | None => None,
         Some(value) => Some(value),
     }
+}
+
+/// An explicitly null identity field is present-but-garbage, not absent (the
+/// receipt-side twin of the manifest's null-identity rule): it fails naming
+/// the field, while a key left out stays a typed-incomplete disclosure
+/// (#3733 review). `prefix` is the owning block (`""` for top-level row
+/// fields, `ripr`/`repository`/`binary` inside their blocks).
+fn reject_null_identity_fields(
+    subject: &str,
+    prefix: &str,
+    object: &serde_json::Map<String, Value>,
+    fields: &[&str],
+) -> Result<(), String> {
+    for field in fields {
+        if matches!(object.get(*field), Some(Value::Null)) {
+            let named = if prefix.is_empty() {
+                (*field).to_string()
+            } else {
+                format!("{prefix}.{field}")
+            };
+            return Err(fail(
+                subject,
+                &named,
+                "identity is explicitly null; omit the field to record it absent — a present null is not an absent identity",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Two recorded copies of the same identity must agree: when the same
@@ -2026,6 +2072,9 @@ fn validate_row_currentness(
         Some(Value::Object(binary)) => {
             let allowed: [&str; 4] = ["digest", "version", "features", "build_profile"];
             reject_unknown_keys(binary, &allowed, id, "binary identity")?;
+            // A present-null identity inside the block is garbage, not
+            // absent (#3733 review).
+            reject_null_identity_fields(id, "binary", binary, &allowed)?;
             match opt_string(id, binary, "digest")? {
                 Some(digest) => check_sha256_digest(id, "binary.digest", &digest)?,
                 None => incomplete.push(Diagnostic::new(
@@ -2134,7 +2183,22 @@ fn validate_row_currentness(
     // sides record a comparable identity and both are well-formed, they must
     // MATCH — a mismatch fails naming both sides. When only the receipt
     // records it, the value cannot be bound, so the manifest side discloses
-    // incomplete instead of fabricating a binding.
+    // incomplete instead of fabricating a binding. A present-null row
+    // identity is garbage, not absent (#3733 review): it fails naming the
+    // field, exactly like the manifest-side rule; only a key left out
+    // discloses incomplete below.
+    reject_null_identity_fields(
+        id,
+        "",
+        entry,
+        &[
+            "tree_digest",
+            "snapshot",
+            "license",
+            "retention_class",
+            "provenance",
+        ],
+    )?;
     for field in [
         "tree_digest",
         "snapshot",
@@ -2414,16 +2478,29 @@ fn validate_summary_agreement(
                 ));
             }
         }
-        if let Some(value) = opt_number(display, summary, "gap_id_stability_rate")?
-            && value != 0.0
-        {
-            return Err(fail(
-                display,
-                "summary.gap_id_stability_rate",
-                format!(
-                    "repos_run == 0: stability rate must be zero or absent, got {value} — nothing ran, so a nonzero stability claim is fabricated"
-                ),
-            ));
+        if let Some(value) = opt_number(display, summary, "gap_id_stability_rate")? {
+            // The live emitter records `gap_id_stability_rate: 1.0` on every
+            // zero-run report (eval_sweep.rs `compute_metrics` empty-set
+            // guard), so a real untouched receipt must validate. Exactly that
+            // value is accepted as a named incomplete disclosure — a vacuous
+            // zero-run stability rate, not a measured claim — and the
+            // disclosure keeps the receipt verdict `incomplete`, never a
+            // pass. Any other nonzero rate stays a fabricated claim.
+            if (value - 1.0).abs() <= 1e-9 {
+                incomplete.push(Diagnostic::new(
+                    display,
+                    "summary.gap_id_stability_rate",
+                    "vacuous zero-run stability rate: the emitter records 1.0 when repos_run == 0; no stability was measured, typed incomplete, not a pass",
+                ));
+            } else if value != 0.0 {
+                return Err(fail(
+                    display,
+                    "summary.gap_id_stability_rate",
+                    format!(
+                        "repos_run == 0: stability rate must be zero, the emitter's vacuous 1.0, or absent, got {value} — nothing ran, so any other nonzero stability claim is fabricated"
+                    ),
+                ));
+            }
         }
         for (field, vocabulary) in [
             ("classification_counts", &CLASSIFICATION_VOCABULARY[..]),
@@ -3764,8 +3841,10 @@ mod python_eval_sweep {
 
     /// A zero-run receipt: every row is a skipped non-run row with zero
     /// analysis counts, and the hand-entered aggregates are honestly all-zero
-    /// with the not_run gate. The stability rate is 0.0 — nothing ran, so a
-    /// nonzero stability claim is fabricated (#3733 review zero-run law).
+    /// with the not_run gate. The stability rate is 0.0 here; the live
+    /// emitter's own zero-run shape records the vacuous 1.0 instead, which
+    /// validates as a named incomplete disclosure (see
+    /// `emitter_shaped_zero_run_stability_rate_discloses_instead_of_failing`).
     fn zero_run_receipt_0_2(value_manifest: &Value) -> Value {
         let mut receipt = historical_receipt_0_2(value_manifest);
         if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut) {
@@ -3852,12 +3931,15 @@ mod python_eval_sweep {
             "summary.classification_counts.static_unknown",
         )?;
 
-        // The same zero-run law bounds the runtime aggregates, the stability
-        // counts, and the stability rate — any nonzero value is fabricated.
+        // The same zero-run law bounds the runtime aggregates and the
+        // stability counts — any nonzero value is fabricated. For the
+        // stability rate only values OTHER than the emitter's vacuous
+        // zero-run 1.0 fail; exactly 1.0 discloses incomplete instead (the
+        // emitter-shaped receipt is pinned separately below).
         for (field, value) in [
             ("runtime_ms_total", json!(1234)),
             ("gap_id_stable_count", json!(3)),
-            ("gap_id_stability_rate", json!(1.0)),
+            ("gap_id_stability_rate", json!(0.5)),
         ] {
             let mut receipt = zero_run_receipt_0_2(&alternate_manifest());
             if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
@@ -3873,6 +3955,46 @@ mod python_eval_sweep {
         let receipt = zero_run_receipt_0_2(&alternate_manifest());
         validate_receipt_value(&receipt, &manifest, &sha)?;
         Ok(())
+    }
+
+    #[test]
+    fn emitter_shaped_zero_run_stability_rate_discloses_instead_of_failing() -> Result<(), String> {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // A fresh zero-run receipt straight from the live emitter records
+        // `gap_id_stability_rate: 1.0` (eval_sweep.rs `compute_metrics`
+        // empty-set guard), so a real untouched `eval-sweep` report must not
+        // fail check. The rate validates — as a named incomplete disclosure
+        // (`vacuous zero-run stability rate`), which keeps the receipt
+        // verdict `incomplete`, never a pass.
+        let mut receipt = zero_run_receipt_0_2(&alternate_manifest());
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.insert("gap_id_stability_rate".to_string(), json!(1.0));
+        }
+        let check = validate_receipt_value(&receipt, &manifest, &sha)?;
+        assert_eq!(check.denominator_run, 0);
+        assert!(
+            check.incomplete.iter().any(|diagnostic| {
+                diagnostic.field == "summary.gap_id_stability_rate"
+                    && diagnostic
+                        .reason
+                        .contains("vacuous zero-run stability rate")
+            }),
+            "the emitter's zero-run 1.0 rate must be disclosed vacuous, not failed: {:?}",
+            check.incomplete
+        );
+        assert_eq!(check.verdict(), Verdict::Incomplete);
+
+        // Any OTHER nonzero rate at zero runs is still a fabricated claim
+        // about rows that never ran.
+        let mut receipt = zero_run_receipt_0_2(&alternate_manifest());
+        if let Some(summary) = receipt.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.insert("gap_id_stability_rate".to_string(), json!(0.5));
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "summary.gap_id_stability_rate",
+        )
     }
 
     #[test]
@@ -4644,6 +4766,138 @@ mod python_eval_sweep {
             validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
             "array of strings",
         )
+    }
+
+    #[test]
+    fn present_null_receipt_identities_fail_while_absent_discloses_incomplete() -> Result<(), String>
+    {
+        let (manifest, sha) = accepted_manifest(&alternate_manifest())?;
+
+        // Row-level binding identities: an explicit null is a present-but-
+        // garbage identity, not an absent one — it fails naming the field
+        // (the receipt-side twin of the manifest's null-identity rule).
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.insert("provenance".to_string(), Value::Null);
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "field=`provenance`",
+        )?;
+
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.insert("tree_digest".to_string(), Value::Null);
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "field=`tree_digest`",
+        )?;
+
+        // Receipt level: a null field in the `ripr` identity block fails.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(ripr) = receipt.get_mut("ripr").and_then(Value::as_object_mut) {
+            ripr.insert("source_sha".to_string(), Value::Null);
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "field=`ripr.source_sha`",
+        )?;
+
+        // The copy-check blocks fail the same way: a null inside a present
+        // `repository` / `binary` block is garbage, not absence.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+            && let Some(Value::Object(repository)) = entry.get_mut("repository")
+        {
+            repository.insert("url".to_string(), Value::Null);
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "field=`repository.url`",
+        )?;
+
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+            && let Some(Value::Object(binary)) = entry.get_mut("binary")
+        {
+            binary.insert("digest".to_string(), Value::Null);
+        }
+        expect_fail(
+            validate_receipt_value(&receipt, &manifest, &sha).map(|_| ()),
+            "field=`binary.digest`",
+        )?;
+
+        // Key ABSENT keeps the typed-incomplete disclosure, never a failure.
+        let mut receipt = current_receipt_0_3(&manifest);
+        if let Some(rows) = receipt.get_mut("repos").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[0].as_object_mut()
+        {
+            entry.remove("provenance");
+        }
+        let check = validate_receipt_value(&receipt, &manifest, &sha)?;
+        assert!(
+            check.incomplete.iter().any(|diagnostic| {
+                diagnostic.subject == "alpha" && diagnostic.field == "provenance"
+            }),
+            "an absent provenance key must disclose incomplete: {:?}",
+            check.incomplete
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn run_status_split_pins_which_statuses_count_as_run() -> Result<(), String> {
+        // The 0.3 denominator split is exact (SPEC-0086): the five
+        // analysis-attempting statuses count toward `repos_run`, and
+        // `unsupported`/`tempfail`/`stale` do not — while every status stays
+        // selected either way.
+        let subject = AcceptedSubject {
+            id: "alpha".to_string(),
+            url: "https://example.com/alpha".to_string(),
+            sha: VALID_SHA_A.to_string(),
+            license: "MIT".to_string(),
+            shape: "pytest_library".to_string(),
+            tree_digest: None,
+            snapshot: None,
+            provenance: None,
+            retention_class: None,
+        };
+        assert_eq!(STATUS_VOCABULARY.len(), 8);
+        for status in STATUS_VOCABULARY {
+            let counts_as_run = RUN_STATUSES.contains(&status);
+            let mut row = json!({
+                "id": subject.id,
+                "status": status,
+            });
+            if counts_as_run {
+                row["runtime_ms"] = json!(100);
+                row["classification_counts"] = json!({
+                    "exposed": 0, "weakly_exposed": 0, "reachable_unrevealed": 0,
+                    "no_static_path": 0, "infection_unknown": 0,
+                    "propagation_unknown": 0, "static_unknown": 0,
+                });
+                row["alignment_counts"] = json!({
+                    "direct": 0, "alias": 0, "changed_sink_token": 0,
+                    "orthogonal": 0, "unknown": 0, "absent": 0,
+                });
+            }
+            let mut incomplete = Vec::new();
+            let summary = validate_row(&row, &subject, true, None, &mut incomplete)?;
+            assert_eq!(
+                summary.counts_as_run,
+                counts_as_run,
+                "status `{status}` must {} toward repos_run",
+                if counts_as_run { "count" } else { "not count" },
+            );
+        }
+        Ok(())
     }
 
     // -- focused fix round: execution/stability contradictions, identity

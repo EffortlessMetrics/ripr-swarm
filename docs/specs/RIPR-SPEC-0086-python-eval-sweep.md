@@ -201,21 +201,36 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   and runtime totals and distribution merges use checked arithmetic (overflow
   is a structured failure naming the aggregate field, never a panic).
 - Failed, unavailable, timeout, parse-failed, unsupported, partial, and stale
-  rows remain selected: they are valid rows and stay in the denominator. A row
+  rows remain selected: they are valid rows and stay in the denominator. Of
+  the eight 0.3 statuses, exactly `complete`/`partial`/`parse-failed`/
+  `timed-out`/`crashed` evidence an analysis attempt and count toward
+  `repos_run`; `unsupported`/`tempfail`/`stale` do not. A row
   that did not run must carry no analysis counts, and `repos_run == 0` gates to
   `not_run` — never a vacuous `pass`, and a `pass` claim requires per-row
   stability evidence and zero crashes. The not-a-vacuous-pass law extends to
   the summary: with zero run rows every analysis-bearing aggregate
   (classification/alignment counts, runtime min/median/max/total, stability
-  counts and rate) must be zero or absent — any nonzero value is a fabricated
-  claim about rows that never ran.
+  counts) must be zero or absent, and the stability rate must be zero, absent,
+  or exactly the live emitter's zero-run default `1.0` — that one value is
+  what the emitter itself records when nothing ran (its empty-set guard), so
+  it is accepted as a named `incomplete` disclosure (`vacuous zero-run
+  stability rate`) instead of a failure, and the disclosed receipt verdict
+  stays `incomplete`/`not_run`, never a pass; any other nonzero rate is a
+  fabricated claim about rows that never ran.
 - Missing identities are typed `incomplete` with a per-field disclosure; they
   are not invented and not errors (the retained manifest carries no
   provenance/retention/snapshot identities by design, and historical 0.2 rows
   carry no currentness fields). Missing owned identity fields — `ripr.*` at
   receipt level, and every owned field of a present row-level `binary` block
   (`digest`/`version`/`features`/`build_profile`) — disclose `incomplete` the
-  same way; present-but-malformed values fail. Validation never upgrades or
+  same way; present-but-malformed values fail. An explicit null is present,
+  not missing: the receipt-side identity fields the binding and copy checks
+  cover (the row-level binding identities
+  `tree_digest`/`snapshot`/`license`/`retention_class`/`provenance`, the
+  receipt-level `ripr.*` fields, and the fields of a present row
+  `repository`/`binary` block) fail naming the field when null — the same
+  present-but-garbage rule the manifest-side optional identities follow —
+  while a key left out discloses `incomplete`. Validation never upgrades or
   rewrites a historical receipt. `alignment_counts` is required on every
   analyzed (run-status) row, and a recorded `alignment_counts` object must
   always carry both keys — `absent` (field not emitted) and `unknown`
@@ -257,7 +272,9 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   validator is data-driven; each fail-closed shape (duplicate/missing/unknown
   subjects, changed denominator, non-https or credential-bearing URLs,
   absolute and secret-bearing paths, unknown shape tags, malformed SHAs,
-  null/empty/malformed optional manifest identities, unknown
+  null/empty/malformed optional manifest identities, present-null
+  receipt-side identity fields (row-level binding identities, `ripr.*`, and
+  the fields of a present `repository`/`binary` block), unknown
   outcome/status/state values, contradictory status (including `partial` with
   `not-executed`, and a false stability claim with its `unstable_gap_ids`
   list omitted), disagreeing duplicate identity copies (row-level
@@ -267,14 +284,20 @@ materialization, no RIPR execution, no lookups beyond the two artifact files):
   stale and
   malformed digests, a receipt identity contradicting the manifest binding,
   a required summary aggregate missing from an analyzed receipt, a nonzero
-  analysis-bearing aggregate on a zero-run receipt, hand-edited aggregates,
+  analysis-bearing aggregate on a zero-run receipt (the live emitter's vacuous
+  zero-run stability rate `1.0` excepted: exactly that value discloses
+  `incomplete` as a vacuous zero-run rate while any other nonzero rate fails),
+  hand-edited aggregates,
   vacuous pass, pass without
   stability evidence, merged absent/unknown distributions) fails with a
   subject/field/reason diagnostic and the rerun command; missing identities
   (including `ripr.features`/`binary.features`, and a present `binary` block
   without `build_profile`) are typed incomplete, and a
   receipt value with no manifest side to bind discloses the manifest gap
-  instead of fabricating a binding; a zero-run receipt gates `not_run`; the
+  instead of fabricating a binding; a zero-run receipt gates `not_run` (the
+  emitter-shaped zero-run receipt with the vacuous `1.0` rate validates as
+  `incomplete`, never a pass); the run/non-run split over the eight 0.3
+  statuses is pinned per status; the
   historical 0.2 receipt validates with disclosed incompletes and is never
   rewritten.
 
@@ -369,6 +392,16 @@ receipt rows derive repos_run = 8 but the summary claims 7
   -> subject-coverage fail-closed family (with the duplicate-row sibling).
 - `eval_sweep_check::python_eval_sweep::receipt_rejects_hand_edited_aggregates`
   -> row/aggregate denominator agreement.
+- `eval_sweep_check::python_eval_sweep::emitter_shaped_zero_run_stability_rate_discloses_instead_of_failing`
+  -> the live emitter's zero-run `1.0` stability rate validates as a vacuous
+  zero-run disclosure (verdict stays `incomplete`), any other nonzero rate fails.
+- `eval_sweep_check::python_eval_sweep::present_null_receipt_identities_fail_while_absent_discloses_incomplete`
+  -> present-null receipt-side identity fields fail naming the field; the
+  absent key discloses `incomplete`.
+- `eval_sweep_check::python_eval_sweep::run_status_split_pins_which_statuses_count_as_run`
+  -> the exact run/non-run denominator split over the eight 0.3 statuses
+  (`complete`/`partial`/`parse-failed`/`timed-out`/`crashed` count toward
+  `repos_run`; `unsupported`/`tempfail`/`stale` do not).
 - `eval_sweep_check::python_eval_sweep::receipt_rejects_vacuous_pass_and_accepts_not_run`
   -> `repos_run == 0` is `not_run`, never a vacuous pass.
 - `eval_sweep_check::python_eval_sweep::current_receipt_all_eight_statuses_validate_and_stay_selected`
