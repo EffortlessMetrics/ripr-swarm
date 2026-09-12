@@ -1178,6 +1178,10 @@ enum StabilityResult {
         repeat_raw_hex: String,
         /// The retained second-pass stdout, written to the raw evidence dir.
         repeat_stdout: Vec<u8>,
+        /// The retained second-pass stderr, written to the raw evidence dir
+        /// and digested in the row's `repeat.repeat_stderr` (SPEC-0086
+        /// retention covers each pass).
+        repeat_stderr: Vec<u8>,
     },
     NotCompared {
         limitation: String,
@@ -1193,6 +1197,18 @@ fn run_stability_pass(
     subject_id: &str,
     first: &AnalysisPass,
 ) -> StabilityResult {
+    // Fail-closed at the owner: only a complete first result may enter the
+    // repeat phase at all. Equal gap sets of two failures would otherwise
+    // read as `stable`; a non-complete first result never runs a repeat and
+    // never claims stability, whatever the call site does.
+    if !matches!(first.status, RunStatus::Complete) {
+        return StabilityResult::NotCompared {
+            limitation: format!(
+                "first pass ended in status `{}`; the stability pass runs only where the first result is complete, so no repeat is spent and no stability is claimed",
+                first.status.as_str()
+            ),
+        };
+    }
     let second = match run_analysis_pass(
         binary,
         subject_dir,
@@ -1230,6 +1246,7 @@ fn run_stability_pass(
         output_identity_stable,
         repeat_raw_hex,
         repeat_stdout: second.stdout,
+        repeat_stderr: second.stderr,
     }
 }
 
@@ -1408,6 +1425,7 @@ fn assemble_row(inputs: RowInputs) -> CandidateRow {
     if let Some(StabilityResult::Compared {
         gap_stable,
         unstable_gap_ids,
+        repeat_stderr,
         ..
     }) = stability
     {
@@ -1417,6 +1435,7 @@ fn assemble_row(inputs: RowInputs) -> CandidateRow {
                 "comparable_with": REPEAT_COMPARABLE_WITH,
                 "gap_ids_stable": gap_stable,
                 "unstable_gap_ids": unstable_gap_ids,
+                "repeat_stderr": sha256_hex(repeat_stderr),
             }),
         );
     }
@@ -1869,8 +1888,13 @@ fn refresh_subject(
                     id,
                     &first,
                 );
-                if let StabilityResult::Compared { repeat_stdout, .. } = &result {
-                    write_raw_output_bytes(out_abs, id, "pass2-stdout.txt", repeat_stdout)?;
+                if let StabilityResult::Compared {
+                    repeat_stdout,
+                    repeat_stderr,
+                    ..
+                } = &result
+                {
+                    write_repeat_raw_output(out_abs, id, repeat_stdout, repeat_stderr)?;
                 }
                 Some(result)
             } else {
@@ -1963,12 +1987,15 @@ fn write_raw_output(
     Ok(())
 }
 
-/// Retains the stability pass's raw stdout under `raw/<id>/`.
-fn write_raw_output_bytes(
+/// Retains the stability pass's raw stdout AND stderr under `raw/<id>/`
+/// (`pass2-stdout.txt` / `pass2-stderr.txt`): SPEC-0086's retention contract
+/// covers each pass, so the second pass keeps both streams and binds the
+/// stderr digest into the row's `repeat` block.
+fn write_repeat_raw_output(
     out_abs: &Path,
     subject_id: &str,
-    name: &str,
-    bytes: &[u8],
+    stdout: &[u8],
+    stderr: &[u8],
 ) -> Result<(), String> {
     let dir = out_abs.join(RAW_DIR).join(subject_id);
     std::fs::create_dir_all(&dir).map_err(|error| {
@@ -1977,9 +2004,14 @@ fn write_raw_output_bytes(
             dir.display()
         )
     })?;
-    std::fs::write(dir.join(name), bytes).map_err(|error| {
-        format!("eval-sweep refresh cannot retain raw output `{name}` for `{subject_id}`: {error}")
-    })
+    for (name, bytes) in [("pass2-stdout.txt", stdout), ("pass2-stderr.txt", stderr)] {
+        std::fs::write(dir.join(name), bytes).map_err(|error| {
+            format!(
+                "eval-sweep refresh cannot retain raw output `{name}` for `{subject_id}`: {error}"
+            )
+        })?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -2491,6 +2523,7 @@ mod python_eval_sweep_refresh {
             output_identity_stable: true,
             repeat_raw_hex: sha256_hex(b"{\"findings\":[]}"),
             repeat_stdout: b"{\"findings\":[]}".to_vec(),
+            repeat_stderr: Vec::new(),
         }
     }
 
@@ -2818,6 +2851,7 @@ mod python_eval_sweep_refresh {
             output_identity_stable: false,
             repeat_raw_hex: DIGEST_ONE.to_string(),
             repeat_stdout: Vec::new(),
+            repeat_stderr: b"pass2 stderr".to_vec(),
         };
         let row = assemble_row(RowInputs {
             subject: &subject,
@@ -2841,6 +2875,68 @@ mod python_eval_sweep_refresh {
             Some(&json!(["gap:python:app:boundary"])),
             "a false stability claim carries its unstable gap-ID list"
         );
+        assert_eq!(
+            repeat.get("repeat_stderr"),
+            Some(&json!(sha256_hex(b"pass2 stderr"))),
+            "a compared row digests the retained second-pass stderr"
+        );
+        Ok(())
+    }
+
+    /// Non-complete first results never enter the repeat phase and never
+    /// claim stability: the guard lives inside `run_stability_pass`, so no
+    /// call site can compare repeats of crashed/timed-out/partial/
+    /// parse-failed passes (whose equal failure gap sets would otherwise read
+    /// as `stable`). The binary path is deliberately nonexistent: if the
+    /// function attempted a repeat, the limitation would name a spawn
+    /// failure instead of the first-pass status.
+    #[test]
+    fn non_complete_first_results_never_enter_the_repeat_phase() -> Result<(), String> {
+        let binary = BinaryIdentity {
+            absolute: PathBuf::from("definitely-missing-binary-path"),
+            binary_digest: DIGEST_ONE.to_string(),
+            version: "unused".to_string(),
+            build_profile: None,
+        };
+        for status in [
+            RunStatus::Partial,
+            RunStatus::ParseFailed,
+            RunStatus::TimedOut,
+            RunStatus::Crashed,
+            RunStatus::Unsupported,
+            RunStatus::Tempfail,
+            RunStatus::Stale,
+        ] {
+            let first = analysis_pass(status, 10);
+            let result = run_stability_pass(
+                &binary,
+                Path::new("unused"),
+                Path::new("unused"),
+                Path::new("unused"),
+                Duration::from_secs(1),
+                "s",
+                &first,
+            );
+            match result {
+                StabilityResult::NotCompared { limitation } => {
+                    assert!(
+                        limitation.contains(status.as_str()),
+                        "the refusal names the non-complete first status `{}`: {limitation}",
+                        status.as_str()
+                    );
+                    assert!(
+                        limitation.contains("runs only where the first result is complete"),
+                        "the refusal states the complete-first gate, not a spawn failure: {limitation}"
+                    );
+                }
+                StabilityResult::Compared { .. } => {
+                    return Err(format!(
+                        "a non-complete first result (`{}`) must never be compared",
+                        status.as_str()
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2944,6 +3040,36 @@ mod python_eval_sweep_refresh {
             );
         }
         assert_eq!(seen.len(), 8, "all eight subjects received a row");
+
+        // SPEC-0086 retention covers each pass: every compared (complete)
+        // row retains its second-pass stdout AND stderr under raw/, and the
+        // row's `repeat.repeat_stderr` digests exactly the retained bytes.
+        let mut compared = 0usize;
+        for row in &rows {
+            let status = row.get("status").and_then(Value::as_str).unwrap_or("");
+            let repeat = match row.get("repeat") {
+                Some(repeat) => repeat.clone(),
+                None => continue,
+            };
+            compared += 1;
+            let id = row.get("id").and_then(Value::as_str).unwrap_or("?");
+            let raw_dir = out.join(RAW_DIR).join(id);
+            assert!(
+                status == "complete",
+                "only complete rows carry the compared repeat block, got {status}"
+            );
+            let stdout_path = raw_dir.join("pass2-stdout.txt");
+            let stderr_path = raw_dir.join("pass2-stderr.txt");
+            let stderr_bytes = std::fs::read(&stderr_path)
+                .map_err(|error| format!("read {path}: {error}", path = stderr_path.display()))?;
+            assert!(stdout_path.is_file(), "pass2 stdout retained for {id}");
+            assert_eq!(
+                repeat.get("repeat_stderr").and_then(Value::as_str),
+                Some(sha256_hex(&stderr_bytes).as_str()),
+                "the repeat block digests the retained second-pass stderr for {id}"
+            );
+        }
+        assert!(compared > 0, "the synthetic subjects include complete runs");
 
         // The execution receipt names binary, manifest, host class, network
         // authorization, and exact subject identities.

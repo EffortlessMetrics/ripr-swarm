@@ -331,15 +331,20 @@ validates and publishes.
   execution/corpus-selection states with source/test/generated/vendor counts
   from a bounded working-set walk (`partial` at the cap — never a silently
   truncated count); phase status, timeout, exit, completeness, and
-  limitations in the managed execution receipt; raw stdout/stderr retained
-  under `<out>/raw/` with real raw/output/evidence digests; and the
+  limitations in the managed execution receipt; each pass's raw stdout/stderr
+  retained under `<out>/raw/` with real raw/output/evidence digests; and the
   classification/alignment distributions (descriptive, never gating).
 - **Stability law.** The route runs a second pass ONLY where the first result
-  is `complete` — the one state where a comparison is meaningful — and
-  records the gap-ID comparison in the row's `repeat` block (stable, or a
-  typed `unstable_gap_ids` mismatch list). Raw-output identity across passes
-  is compared too; drift with stable gap identity is a typed execution-receipt
-  note, never folded into the gap verdict.
+  is `complete` — the one state where a comparison is meaningful; the gate
+  lives inside the stability pass itself, so a non-complete first result
+  never enters the repeat phase and never claims stability (equal failure
+  gap sets of two crashed passes are not `stable`). It records the gap-ID
+  comparison in the row's `repeat` block (stable, or a typed
+  `unstable_gap_ids` mismatch list). The repeat pass's raw stdout AND stderr
+  are retained under `<out>/raw/`, and the retained second-pass stderr is
+  digested in the row's `repeat.repeat_stderr`. Raw-output identity across
+  passes is compared too; drift with stable gap identity is a typed
+  execution-receipt note, never folded into the gap verdict.
 - **Determinism.** Equivalent managed reruns over the same inputs produce
   identical identities, digests, and rows; wall-clock telemetry is the only
   run-varying field and is declared as such in the execution receipt, which
@@ -590,7 +595,11 @@ receipt rows derive repos_run = 8 but the summary claims 7
   -> producer/validator symmetry over the full 0.3 status vocabulary; every
   terminal state stays selected with the exact run/non-run split.
 - `eval_sweep_refresh::python_eval_sweep_refresh::unstable_repeat_comparison_records_the_mismatch_list`
-  -> a false stability claim carries its typed `unstable_gap_ids` list.
+  -> a false stability claim carries its typed `unstable_gap_ids` list and
+  digests the retained second-pass stderr in `repeat.repeat_stderr`.
+- `eval_sweep_refresh::python_eval_sweep_refresh::non_complete_first_results_never_enter_the_repeat_phase`
+  -> the complete-first gate lives inside the stability pass: a non-complete
+  first result never spawns a repeat and never claims stability.
 - `eval_sweep_refresh::python_eval_sweep_refresh::deterministic_row_and_summary_assembly`
   -> identical inputs assemble identical rows and summary (declared
   telemetry apart).
