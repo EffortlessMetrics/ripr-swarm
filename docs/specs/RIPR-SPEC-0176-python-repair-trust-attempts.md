@@ -73,12 +73,12 @@ selection row carries, with a deny-unknown schema:
 - target: `target_path` (portable repo-relative) and `target_state`
   (`existing`/`proposed`/`ambiguous`/`unavailable`/`unsafe`);
 - provenance: `selected_at` (ISO-like date prefix), `selector`,
-  `manifest_digest` (sha256 of the accepted authority snapshot the row was
-  selected from — well-formed here; binding to external bytes is a runtime
-  concern);
-- immutability: `selection_digest`, which must equal the sha256 of the row's
-  canonical content (the row re-serialized without the digest field). Any
-  replacement or edit of a selected row moves the digest and fails.
+  `manifest_digest` (the canonical manifest-level digest defined below,
+  over the exact authority-snapshot bytes the row was selected from —
+  well-formed here; binding to external bytes is a selection-time concern);
+- immutability: `selection_digest` (the row-content digest defined below),
+  which must equal the checker's recomputation. Any replacement or edit of
+  a selected row moves the digest and fails.
 
 A target path under a denied production/generated/vendor/environment surface
 prefix (`target/`, `dist/`, `build/`, `vendor/`, `vendored/`,
@@ -91,11 +91,30 @@ Optional identities (`tree`, `source_currentness`, `limitation`) are either
 absent (typed `incomplete`, disclosed, never invented) or well-formed: an
 explicit null or a malformed value fails.
 
+### Digest definitions (canonical, each defined once)
+
+Two digest names carry the immutability bindings; each is defined exactly
+once, here, and every other reference uses the name as defined.
+
+- `manifest_digest` is sha256 over the EXACT manifest file bytes — no
+  canonicalization, no reserialization. This one definition covers both
+  uses of the name: the envelope-level binding, where the envelope's
+  recorded value must equal the checker's recomputation over the presented
+  selection-manifest bytes (the stale-digest check), and each selection
+  row's recorded value, the same digest over the exact authority-snapshot
+  bytes the row was selected from, recorded at selection time (its bytes
+  are digested as recorded, never re-read by the offline check).
+- `selection_digest` is distinct: sha256 of the row's canonical content,
+  defined as the JSON serialization the checker recomputes (the row
+  without its digest field, re-serialized with sorted object keys). Any
+  replacement or edit of a selected row moves this digest and fails.
+
 ### Attempt envelopes (the typed lifecycle)
 
 Attempt envelopes (`python_repair_trust_attempts`, schema `0.1`) bind to the
-selection manifest by sha256 `manifest_digest` (a changed manifest fails the
-stale-digest check). `--attempts` accepts one envelope file or a directory of
+selection manifest by `manifest_digest` (the canonical manifest-level digest
+defined below; a changed manifest fails the stale-digest check). `--attempts`
+accepts one envelope file or a directory of
 `*.json` envelopes (sorted); attempt identities are unique across the loaded
 corpus.
 
@@ -131,12 +150,14 @@ Each attempt row carries:
    a manifest changed under a bound envelope fails the stale-digest check.
 2. Native Python behavior identity remains authoritative: `SeamKind`
    appears nowhere in a corpus value.
-3. Source/analyzer/config/input/packet/target/command/patch/after-state
+3. Source/analyzer/config/input/packet/target/command/patch/after_state
    identities are required as lifecycle advances: `started` requires the
    analyzer/config/input identities, `edited` the patch digest, `verified`
-   the command and after-state identities, `reviewed`/`accepted` the packet
+   the command and after_state identities, `reviewed`/`accepted` the packet
    reference. Missing identities at their transition fail closed — they are
-   never invented and never excused.
+   never invented and never excused. A supplied identity block is
+   shape-validated (deny-unknown fields, well-formed value types) at any
+   lifecycle position: only requiredness waits for the transition.
 4. Static movement and command execution cannot imply one another: the axes
    are separate fields with no cross-axis derivation. A recorded movement
    requires an edited lifecycle (movement is a before/after comparison of an
@@ -151,14 +172,17 @@ Each attempt row carries:
    (`closed`/`improved`).
 6. Production/generated/vendor/environment edit surfaces are forbidden: an
    attempt that edits a declared-unsafe target fails.
-7. Aggregates are derived from rows: `attempts_total`, `lifecycle_counts`,
+7. Aggregates are derived from rows: with rows present the full owned
+   aggregate set is required — an omitted field (the selected denominator
+   or a diversity aggregate included) would silently disable its
+   row-agreement check. `attempts_total`, `lifecycle_counts`,
    `movement_counts`, `execution_counts`, and `achieved_strata` must equal
    the row-derived values exactly (both directions; hand-edited totals and
    fabricated keys fail), `selected_denominator` must equal the manifest's
    selection count, and with zero attempt rows a recorded nonzero aggregate
-   is a fabricated claim. `stratum_floor` (optional) with
-   `stratum_floor_met` must equal the derived comparison: achieved diversity
-   is reported without pretending the target floor was met.
+   is a fabricated claim. `stratum_floor` with `stratum_floor_met` must
+   equal the derived comparison: achieved diversity is reported without
+   pretending the target floor was met.
 8. Historical attempts are immutable: duplicate attempt identities fail;
    a refresh appends a new record under a new identity through `supersedes`.
 
@@ -174,6 +198,24 @@ exits nonzero with a diagnostic naming subject/field/reason plus the
 deterministic rerun command. The check writes a versioned report
 (`schema_version` `0.1`, kind `python_repair_trust_check_report`) to
 `target/ripr/reports/python-repair-trust-check.{json,md}` and nothing else.
+
+## Threat model
+
+The checker enforces structural consistency at the accepted manifest state;
+it does not attempt provenance against a fully rewritten corpus.
+
+- The accepted selection manifest's digest must be recorded externally at
+  selection time — in the governing issue or receipt. For the first
+  cohort, that external record lives in the #3557 governed-cohort issue.
+- Validation binds each envelope to the manifest bytes presented to the
+  checker (`manifest_digest`, defined above): any rewrite of the manifest
+  — or of a selected row — changes the canonical digest, so a rewritten
+  corpus no longer equals the externally recorded accepted digest and is
+  detectable against that record.
+- An editor who rewrites the manifest and recomputes every internal digest
+  produces a different, internally consistent corpus; detecting that
+  against the external record requires a signed external anchor, which is
+  out of scope for offline structural validation.
 
 ## Required Evidence
 

@@ -27,6 +27,20 @@
 //!   `passed`/`failed`/`timed_out`/`cancelled`/`unavailable`/`not_run`/
 //!   `invalid`.
 //!
+//! Two digest names carry the immutability bindings, each defined once:
+//! `manifest_digest` is sha256 over the EXACT manifest file bytes — no
+//! canonicalization, no reserialization. That one definition covers both
+//! the envelope-level binding (each envelope's `manifest_digest` must equal
+//! the checker's recomputation over the presented selection-manifest bytes,
+//! so a changed manifest fails the stale-digest check) and each selection
+//! row's recorded `manifest_digest` — the same digest over the exact
+//! authority-snapshot bytes the row was selected from, recorded at
+//! selection time and digested as recorded, never re-read offline. It is
+//! distinct from the row's `selection_digest`: sha256 of the row's
+//! canonical content, defined as the JSON serialization the checker
+//! recomputes (the row without its digest field, re-serialized with sorted
+//! object keys).
+//!
 //! Design laws (issue #3568 acceptance):
 //!
 //! - Selection precedes edit/outcome: every lifecycle starts at `selected`,
@@ -39,10 +53,10 @@
 //!   fails the stale-digest check.
 //! - Native Python behavior identity remains authoritative: `SeamKind` (the
 //!   Rust-side conversion shim vocabulary) appears nowhere in a corpus value.
-//! - Source/analyzer/config/input/packet/target/command/patch/after-state
+//! - Source/analyzer/config/input/packet/target/command/patch/after_state
 //!   identities are required as lifecycle advances: claiming `started`
 //!   requires the analyzer/config/input identities, `edited` the patch
-//!   digest, `verified` the command and after-state identities, and
+//!   digest, `verified` the command and after_state identities, and
 //!   `reviewed`/`accepted` the packet reference. Missing identities at their
 //!   transition fail closed — they are not invented and not excused. The
 //!   source and target identities live on the selection row.
@@ -203,6 +217,57 @@ const PATCH_KEYS: [&str; 1] = ["digest"];
 const COMMAND_KEYS: [&str; 1] = ["verification_command"];
 const AFTER_STATE_KEYS: [&str; 1] = ["tree_digest"];
 const PACKET_KEYS: [&str; 1] = ["reference"];
+
+/// The identity blocks an attempt row can carry. A supplied block is
+/// shape-validated at every lifecycle position; only its *requiredness* is
+/// tied to the lifecycle transition.
+const IDENTITY_BLOCKS: [&str; 7] = [
+    "analyzer",
+    "config",
+    "input",
+    "patch",
+    "command",
+    "after_state",
+    "packet",
+];
+
+/// The per-field value check of one identity block (subject, field, value).
+type BlockValueCheck = fn(&str, &str, &str) -> Result<(), String>;
+
+/// The closed field schema and per-field value check of one identity block —
+/// the same contract at every lifecycle position.
+fn identity_block_schema(block: &str) -> Option<(&'static [&'static str], BlockValueCheck)> {
+    match block {
+        "analyzer" => Some((&ANALYZER_KEYS, analyzer_identity_value)),
+        "config" => Some((&CONFIG_KEYS, require_non_empty_value)),
+        "input" => Some((&INPUT_KEYS, check_sha256_digest)),
+        "patch" => Some((&PATCH_KEYS, check_sha256_digest)),
+        "command" => Some((&COMMAND_KEYS, require_non_empty_value)),
+        "after_state" => Some((&AFTER_STATE_KEYS, check_sha256_digest)),
+        "packet" => Some((&PACKET_KEYS, require_non_empty_value)),
+        _ => None,
+    }
+}
+
+/// A non-empty string identity value (`profile`, `verification_command`,
+/// `reference`).
+fn require_non_empty_value(subject: &str, field: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        Err(fail(subject, field, "required field must be non-empty"))
+    } else {
+        Ok(())
+    }
+}
+
+/// Analyzer identity values: the source pin is a git SHA, every other field
+/// a sha256 digest.
+fn analyzer_identity_value(subject: &str, field: &str, value: &str) -> Result<(), String> {
+    if field.ends_with("source_sha") {
+        check_git_sha(subject, field, value)
+    } else {
+        check_sha256_digest(subject, field, value)
+    }
+}
 
 /// The complete attempt-lifecycle vocabulary (issue #3568). A state outside
 /// this set fails.
@@ -445,8 +510,11 @@ fn parse_check_args(args: &[String]) -> Result<CheckArgs, String> {
 // ---------------------------------------------------------------------------
 
 /// Reads a file and parses it as JSON with duplicate-key rejection (structural
-/// rot fails at load). Returns the parsed value and the sha256 hex of the raw
-/// bytes (used for digest bindings).
+/// rot fails at load). Returns the parsed value and the canonical
+/// `manifest_digest`: sha256 over the exact file bytes — no
+/// canonicalization, no reserialization — the one manifest-level digest
+/// definition; the envelope binding and each selection row's recorded value
+/// are instances of it.
 fn load_strict_json(display: &str) -> Result<(Value, String), String> {
     let bytes = std::fs::read(display)
         .map_err(|error| fail(display, "file", format!("failed to read: {error}")))?;
@@ -1563,102 +1631,103 @@ fn validate_attempt_row(
 
     reject_seam_kind_vocabulary(&Value::Object(entry.clone()), attempt_id, "attempt")?;
 
+    // Supplied identity blocks are shape-validated at every lifecycle
+    // position: an unknown field, a present null, a mistyped value, or a
+    // malformed digest fails when supplied, not only once its transition is
+    // reached — a malformed block cannot hide before its transition. Only
+    // the required-at-transition rule below stays state-dependent.
+    for block in IDENTITY_BLOCKS {
+        let Some((allowed, check)) = identity_block_schema(block) else {
+            continue;
+        };
+        match entry.get(block) {
+            None => {}
+            Some(Value::Object(block_object)) => {
+                validate_supplied_block(attempt_id, block, block_object, allowed, check)?;
+            }
+            Some(Value::Null) => {
+                return Err(fail(
+                    attempt_id,
+                    block,
+                    "identity is explicitly null; omit the field to record it absent — a present null is not an absent identity",
+                ));
+            }
+            Some(_) => {
+                return Err(fail(
+                    attempt_id,
+                    block,
+                    format!("`{block}` identity block must be an object"),
+                ));
+            }
+        }
+    }
+
     // Identities required as lifecycle advances. Each reached state demands
-    // its identities present and well-formed — absent identities at their
-    // transition fail closed (they are never invented).
+    // its identities present — absent identities at their transition fail
+    // closed (they are never invented). The shape of a supplied block is
+    // already validated above at any position.
     if state_set.contains("started") {
-        validate_transition_block(
+        validate_required_block(
             attempt_id,
             entry,
             "analyzer",
             "started",
             &ANALYZER_KEYS,
-            |subject, field, value| {
-                if field.ends_with("source_sha") {
-                    check_git_sha(subject, field, value)
-                } else {
-                    check_sha256_digest(subject, field, value)
-                }
-            },
-            &["source_sha", "binary_digest"],
+            analyzer_identity_value,
         )?;
-        validate_transition_block(
+        validate_required_block(
             attempt_id,
             entry,
             "config",
             "started",
             &CONFIG_KEYS,
-            |subject, field, value| {
-                if value.trim().is_empty() {
-                    Err(fail(subject, field, "required field must be non-empty"))
-                } else {
-                    Ok(())
-                }
-            },
-            &["profile"],
+            require_non_empty_value,
         )?;
-        validate_transition_block(
+        validate_required_block(
             attempt_id,
             entry,
             "input",
             "started",
             &INPUT_KEYS,
             check_sha256_digest,
-            &["digest"],
         )?;
     }
     if state_set.contains("edited") {
-        validate_transition_block(
+        validate_required_block(
             attempt_id,
             entry,
             "patch",
             "edited",
             &PATCH_KEYS,
             check_sha256_digest,
-            &["digest"],
         )?;
     }
     if state_set.contains("verified") {
-        validate_transition_block(
+        validate_required_block(
             attempt_id,
             entry,
             "command",
             "verified",
             &COMMAND_KEYS,
-            |subject, field, value| {
-                if value.trim().is_empty() {
-                    Err(fail(subject, field, "required field must be non-empty"))
-                } else {
-                    Ok(())
-                }
-            },
-            &["verification_command"],
+            require_non_empty_value,
         )?;
-        validate_transition_block(
+        validate_required_block(
             attempt_id,
             entry,
             "after_state",
             "verified",
             &AFTER_STATE_KEYS,
             check_sha256_digest,
-            &["tree_digest"],
         )?;
     }
     if state_set.contains("reviewed") || state_set.contains("accepted") {
-        validate_transition_block(
+        validate_required_block(
             attempt_id,
             entry,
             "packet",
             "reviewed",
             &PACKET_KEYS,
-            |subject, field, value| {
-                if value.trim().is_empty() {
-                    Err(fail(subject, field, "required field must be non-empty"))
-                } else {
-                    Ok(())
-                }
-            },
-            &["reference"],
+            require_non_empty_value,
         )?;
     }
 
@@ -1672,18 +1741,58 @@ fn validate_attempt_row(
     })
 }
 
+/// Shape-validates one supplied identity block, whatever the lifecycle
+/// position: unknown keys are denied and every present field must be a
+/// non-null, well-formed string passing its block's value check. A
+/// malformed supplied block fails here rather than hiding before its
+/// transition; only the required-at-transition rule
+/// (`validate_required_block`) is state-dependent.
+fn validate_supplied_block(
+    attempt_id: &str,
+    block: &str,
+    block_object: &serde_json::Map<String, Value>,
+    allowed: &[&str],
+    check: BlockValueCheck,
+) -> Result<(), String> {
+    let what = format!("`{block}` identity block");
+    reject_unknown_keys(block_object, allowed, attempt_id, &what)?;
+    for field in allowed {
+        let value = match block_object.get(*field) {
+            None => continue,
+            Some(Value::Null) => {
+                return Err(fail(
+                    attempt_id,
+                    &format!("{block}.{field}"),
+                    "identity is explicitly null; a present null is not a value",
+                ));
+            }
+            Some(Value::String(text)) => text.clone(),
+            Some(_) => {
+                return Err(fail(
+                    attempt_id,
+                    &format!("{block}.{field}"),
+                    "identity must be a string when present",
+                ));
+            }
+        };
+        check(attempt_id, &format!("{block}.{field}"), &value)?;
+    }
+    Ok(())
+}
+
 /// Validates one transition-required identity block: the block and every
-/// required field inside it must be present and well-formed when the
-/// lifecycle has reached `state`. Absence at the transition fails closed;
-/// unknown keys and wrong types always fail.
-fn validate_transition_block(
+/// required field inside it must be present when the lifecycle has reached
+/// `state`. Absence at the transition fails closed; the shape of a supplied
+/// block is validated at any lifecycle position (see
+/// `validate_supplied_block`) and is re-checked here so the required path
+/// stands alone.
+fn validate_required_block(
     attempt_id: &str,
     entry: &serde_json::Map<String, Value>,
     block: &str,
     state: &str,
     allowed: &[&str],
-    check: impl Fn(&str, &str, &str) -> Result<(), String>,
-    required_fields: &[&str],
+    check: BlockValueCheck,
 ) -> Result<(), String> {
     let what = format!("`{state}` transition identity");
     let block_object = match entry.get(block) {
@@ -1710,35 +1819,17 @@ fn validate_transition_block(
             ));
         }
     };
-    reject_unknown_keys(block_object, allowed, attempt_id, &what)?;
-    for field in required_fields {
-        let value = match block_object.get(*field) {
-            None => {
-                return Err(fail(
-                    attempt_id,
-                    &format!("{block}.{field}"),
-                    format!(
-                        "required identity is missing: reaching `{state}` requires `{block}.{field}`"
-                    ),
-                ));
-            }
-            Some(Value::Null) => {
-                return Err(fail(
-                    attempt_id,
-                    &format!("{block}.{field}"),
-                    "identity is explicitly null; a present null is not a value",
-                ));
-            }
-            Some(Value::String(text)) => text.clone(),
-            Some(_) => {
-                return Err(fail(
-                    attempt_id,
-                    &format!("{block}.{field}"),
-                    "identity must be a string",
-                ));
-            }
-        };
-        check(attempt_id, &format!("{block}.{field}"), &value)?;
+    validate_supplied_block(attempt_id, block, block_object, allowed, check)?;
+    for field in allowed {
+        if !block_object.contains_key(*field) {
+            return Err(fail(
+                attempt_id,
+                &format!("{block}.{field}"),
+                format!(
+                    "required identity is missing: reaching `{state}` requires `{block}.{field}`"
+                ),
+            ));
+        }
     }
     Ok(())
 }
@@ -1874,20 +1965,20 @@ fn validate_aggregates(
 
     let has_rows = derived.attempts_total > 0;
 
-    // Required-at-rows totals: an omitted field would silently disable its
-    // row-agreement check.
-    for field in [
-        "attempts_total",
-        "lifecycle_counts",
-        "movement_counts",
-        "execution_counts",
-    ] {
-        if has_rows && matches!(aggregates.get(field), None | Some(Value::Null)) {
-            return Err(fail(
-                display,
-                &format!("aggregates.{field}"),
-                "required aggregate is missing: the envelope records the full aggregate set on every corpus, and an omitted field would silently disable its row-agreement check",
-            ));
+    // Required-at-rows (mirror of the eval-sweep SUMMARY_KEYS discipline):
+    // once rows exist the envelope records the full owned aggregate set —
+    // every field in `AGGREGATES_KEYS`, including the selected denominator
+    // and the diversity aggregates. An omitted field would silently disable
+    // its row-agreement check and slip a partial envelope through as valid.
+    if has_rows {
+        for field in AGGREGATES_KEYS {
+            if matches!(aggregates.get(field), None | Some(Value::Null)) {
+                return Err(fail(
+                    display,
+                    &format!("aggregates.{field}"),
+                    "required aggregate is missing: the envelope records the full aggregate set on every corpus with rows, and an omitted field would silently disable its row-agreement check",
+                ));
+            }
         }
     }
 
@@ -2782,7 +2873,9 @@ mod python_repair_trust_semantics {
     fn accepts_a_second_different_cohort() -> Result<(), String> {
         // A different cohort (different ids, strata, directions, two rows)
         // with honestly derived aggregates validates the same way: the
-        // validator is data-driven, not pinned to the first cohort.
+        // validator is data-driven, not pinned to the first cohort. The full
+        // owned aggregate set is required with rows, so this cohort carries
+        // every field too — an empty floor met vacuously, reported met.
         let selections = vec![
             selection_json(
                 "w1",
@@ -2816,10 +2909,14 @@ mod python_repair_trust_semantics {
             }),
         ];
         let aggregates = json!({
+            "selected_denominator": 2,
             "attempts_total": 2,
             "lifecycle_counts": {"eligible": 1, "rejected": 1},
             "movement_counts": {},
             "execution_counts": {},
+            "achieved_strata": {"unittest_library": 2},
+            "stratum_floor": {},
+            "stratum_floor_met": true,
         });
         let envelope = attempts_value(rows, &sha, aggregates);
         let envelopes = validate_envelope_value(&envelope, &manifest, &sha)?;
@@ -3403,6 +3500,60 @@ mod python_repair_trust_semantics {
     }
 
     #[test]
+    fn supplied_identity_blocks_are_shape_validated_before_their_transition() -> Result<(), String>
+    {
+        let (manifest, sha, envelope) = full_valid_envelope()?;
+
+        // An unknown field inside a supplied block fails even though the
+        // row's lifecycle has not reached the block's transition yet: schema
+        // rot is rejected at any lifecycle position, not only at `started`.
+        let mut broken = envelope.clone();
+        if let Some(rows) = broken.get_mut("attempts").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[3].as_object_mut()
+        {
+            entry.insert(
+                "analyzer".to_string(),
+                json!({"source_sha": GIT_SHA_A, "binary_digest": DIGEST_TWO, "hostname": "build-agent-1"}),
+            );
+        }
+        expect_fail(
+            validate_envelope_value(&broken, &manifest, &sha).map(|_| ()),
+            "unknown field `hostname`",
+        )?;
+
+        // A malformed value supplied before its transition fails the same
+        // way: well-formed value types are part of the shape contract.
+        let mut broken = envelope.clone();
+        if let Some(rows) = broken.get_mut("attempts").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[3].as_object_mut()
+        {
+            entry.insert("patch".to_string(), json!({"digest": "nothex"}));
+        }
+        expect_fail(
+            validate_envelope_value(&broken, &manifest, &sha).map(|_| ()),
+            "sha256 hex",
+        )?;
+
+        // A well-formed early block stays representable: att-delta never
+        // reaches `started`, and the well-formed identity records validate
+        // without demanding their transition.
+        let mut early = envelope;
+        if let Some(rows) = early.get_mut("attempts").and_then(Value::as_array_mut)
+            && let Some(entry) = rows[3].as_object_mut()
+        {
+            entry.insert(
+                "analyzer".to_string(),
+                json!({"source_sha": GIT_SHA_A, "binary_digest": DIGEST_TWO}),
+            );
+            entry.insert("config".to_string(), json!({"profile": "ripr-default"}));
+            entry.insert("input".to_string(), json!({"digest": DIGEST_ONE}));
+        }
+        let envelopes = validate_envelope_value(&early, &manifest, &sha)?;
+        assert_eq!(envelopes[0].rows[3].final_state, "stale");
+        Ok(())
+    }
+
+    #[test]
     fn unsafe_edit_surface_attempted_fails() -> Result<(), String> {
         let (manifest, sha, envelope) = full_valid_envelope()?;
 
@@ -3531,12 +3682,15 @@ mod python_repair_trust_semantics {
     #[test]
     fn missing_required_aggregates_with_rows_fail() -> Result<(), String> {
         let (manifest, sha, envelope) = full_valid_envelope()?;
-        for field in [
-            "attempts_total",
-            "lifecycle_counts",
-            "movement_counts",
-            "execution_counts",
-        ] {
+
+        // The full owned aggregate set validates: the pinned base corpus
+        // shape carries every field the envelope owns.
+        validate_envelope_value(&envelope, &manifest, &sha)?;
+
+        // With rows present, every owned aggregate field is required — an
+        // omitted field (the selected denominator or a diversity aggregate
+        // included) would silently disable its row-agreement check.
+        for field in AGGREGATES_KEYS {
             let mut broken = envelope.clone();
             if let Some(aggregates) = broken.get_mut("aggregates").and_then(Value::as_object_mut) {
                 aggregates.remove(field);
@@ -3564,7 +3718,10 @@ mod python_repair_trust_semantics {
             "without pretending the target floor was met",
         )?;
 
-        // Claiming true with no floor recorded at all: forbidden.
+        // Claiming true with no floor recorded at all: forbidden. With rows
+        // present the omission is itself the failure — the full owned
+        // aggregate set is required, so the missing floor fails as a
+        // required aggregate before any met-claim comparison.
         let mut broken = envelope.clone();
         if let Some(aggregates) = broken.get_mut("aggregates").and_then(Value::as_object_mut) {
             aggregates.remove("stratum_floor");
@@ -3572,7 +3729,7 @@ mod python_repair_trust_semantics {
         }
         expect_fail(
             validate_envelope_value(&broken, &manifest, &sha).map(|_| ()),
-            "no floor is recorded",
+            "aggregates.stratum_floor",
         )?;
 
         // The honest disclosure validates: floor not met, reported unmet.
