@@ -44,12 +44,10 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::python_repair_trust::{
-    KNOWN_SPEC, MANIFEST_KIND, SCHEMA_VERSION, SelectionManifest, canonical_selection_digest,
-    check_git_sha, check_portable_path, check_sha256_digest, known_value_or_fail, load_strict_json,
-    opt_string, reject_secret_tokens, reject_unknown_keys, require_string,
-    validate_selection_manifest,
+    KNOWN_SPEC, SelectionManifest, canonical_selection_digest, check_git_sha, check_portable_path,
+    check_sha256_digest, known_value_or_fail, load_strict_json, opt_string, reject_secret_tokens,
+    reject_unknown_keys, require_string, validate_selection_manifest,
 };
-use crate::python_judged_panel_replay::sha256_hex;
 
 const RERUN_COMMAND: &str = "cargo xtask python-repair-trust check-driver";
 const CHECK_REPORT_JSON: &str = "python-repair-driver-check.json";
@@ -929,9 +927,10 @@ fn render_check_driver_markdown(outcome: &DriverCheckOutcome) -> String {
 
 #[cfg(test)]
 mod python_repair_driver_binding {
+    use super::super::python_repair_trust::{MANIFEST_KIND, SCHEMA_VERSION};
     use super::*;
+    use crate::python_judged_panel_replay::sha256_hex;
 
-    const GIT_SHA_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const GIT_SHA_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const GIT_SHA_C: &str = "cccccccccccccccccccccccccccccccccccccccc";
     const DIGEST_ONE: &str = "1010101010101010101010101010101010101010101010101010101010101010";
@@ -1015,7 +1014,7 @@ mod python_repair_driver_binding {
         attempt_id: &str,
         target_path: &str,
     ) -> Result<Value, String> {
-        let mut record = json!({
+        let record = json!({
             "schema_version": BINDING_SCHEMA_VERSION,
             "kind": BINDING_KIND,
             "spec": BINDING_SPEC,

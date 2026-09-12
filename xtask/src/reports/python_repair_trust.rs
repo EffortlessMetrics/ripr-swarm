@@ -413,7 +413,7 @@ const SECRET_TRIPWIRES: [&str; 18] = [
 /// One non-failing disclosure: an optional identity that is absent (typed
 /// `incomplete`, never invented).
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Diagnostic {
+pub(crate) struct Diagnostic {
     subject: String,
     field: String,
     reason: String,
