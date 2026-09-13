@@ -542,7 +542,8 @@ fn movement_state_from_joins(
     match (
         before_headline,
         after_headline,
-        movement_oracle_rank(after_oracle_strength).cmp(&movement_oracle_rank(before_oracle_strength)),
+        movement_oracle_rank(after_oracle_strength)
+            .cmp(&movement_oracle_rank(before_oracle_strength)),
     ) {
         (false, false, _) => "unchanged",
         (false, true, _) => "regressed",
@@ -736,7 +737,11 @@ fn validate_receipt(
     opt_u64_field(execution, "stdout_bytes", display)?;
     opt_u64_field(execution, "stderr_bytes", display)?;
     opt_u64_field(execution, "duration_ms", display)?;
-    for flag_field in ["stdout_truncated", "stderr_truncated", "cancellation_requested"] {
+    for flag_field in [
+        "stdout_truncated",
+        "stderr_truncated",
+        "cancellation_requested",
+    ] {
         opt_bool_field(execution, flag_field, display)?;
     }
     let currentness = opt_receipt_string(execution, "currentness", display)?;
@@ -1942,12 +1947,11 @@ mod python_repair_verification_semantics {
             set(&["movement", "reason"], json!("stale join"))(record);
             set(&["movement", "join", "after_seam_id"], json!(null))(record);
             set(&["movement", "join", "after_grip_class"], json!(null))(record);
-            set(&["movement", "join", "after_oracle_strength"], json!(null))(
-                record,
-            );
-            set(&["movement", "join", "after_headline_eligible"], json!(null))(
-                record,
-            );
+            set(&["movement", "join", "after_oracle_strength"], json!(null))(record);
+            set(
+                &["movement", "join", "after_headline_eligible"],
+                json!(null),
+            )(record);
         })?;
 
         // command passed + wrong target discovered in review: the passed run
@@ -1961,17 +1965,14 @@ mod python_repair_verification_semantics {
                 &["movement", "reason"],
                 json!("stale join: the native identity now resolves to another seam"),
             )(record);
-            set(&["movement", "join", "before_seam_id"], json!("seam-moved"))(
-                record,
-            );
+            set(&["movement", "join", "before_seam_id"], json!("seam-moved"))(record);
             set(&["movement", "join", "after_seam_id"], json!(null))(record);
             set(&["movement", "join", "after_grip_class"], json!(null))(record);
-            set(&["movement", "join", "after_oracle_strength"], json!(null))(
-                record,
-            );
-            set(&["movement", "join", "after_headline_eligible"], json!(null))(
-                record,
-            );
+            set(&["movement", "join", "after_oracle_strength"], json!(null))(record);
+            set(
+                &["movement", "join", "after_headline_eligible"],
+                json!(null),
+            )(record);
         })?;
 
         // gap closed + unrelated findings regressed: both stay visible.
@@ -2285,7 +2286,10 @@ mod python_repair_verification_semantics {
         )?;
         // A before seam the receipt does not bind is `stale`, never confident.
         violation(
-            set(&["movement", "join", "before_seam_id"], json!("seam-elsewhere")),
+            set(
+                &["movement", "join", "before_seam_id"],
+                json!("seam-elsewhere"),
+            ),
             "a different before seam is `stale`",
         )?;
         // A stale join that still names the receipt's own seam is impossible.
@@ -2298,12 +2302,11 @@ mod python_repair_verification_semantics {
                 )(record);
                 set(&["movement", "join", "after_seam_id"], json!(null))(record);
                 set(&["movement", "join", "after_grip_class"], json!(null))(record);
-                set(&["movement", "join", "after_oracle_strength"], json!(null))(
-                    record,
-                );
-                set(&["movement", "join", "after_headline_eligible"], json!(null))(
-                    record,
-                );
+                set(&["movement", "join", "after_oracle_strength"], json!(null))(record);
+                set(
+                    &["movement", "join", "after_headline_eligible"],
+                    json!(null),
+                )(record);
             },
             "requires the identity to have moved",
         )?;
@@ -2316,16 +2319,19 @@ mod python_repair_verification_semantics {
                     &["movement", "reason"],
                     json!("the after analysis was partial"),
                 )(record);
-                set(&["movement", "join"], json!({
-                    "before_seam_id": null,
-                    "after_seam_id": null,
-                    "before_grip_class": null,
-                    "after_grip_class": null,
-                    "before_oracle_strength": null,
-                    "after_oracle_strength": null,
-                    "before_headline_eligible": null,
-                    "after_headline_eligible": null,
-                }))(record);
+                set(
+                    &["movement", "join"],
+                    json!({
+                        "before_seam_id": null,
+                        "after_seam_id": null,
+                        "before_grip_class": null,
+                        "after_grip_class": null,
+                        "before_oracle_strength": null,
+                        "after_oracle_strength": null,
+                        "before_headline_eligible": null,
+                        "after_headline_eligible": null,
+                    }),
+                )(record);
             },
             "requires a partial after analysis",
         )?;
@@ -2352,18 +2358,13 @@ mod python_repair_verification_semantics {
                 )(record);
                 set(&["movement", "join", "after_seam_id"], json!(null))(record);
                 set(&["movement", "join", "after_grip_class"], json!(null))(record);
-                set(&["movement", "join", "after_oracle_strength"], json!(null))(
-                    record,
-                );
-                set(&["movement", "join", "after_headline_eligible"], json!(null))(
-                    record,
-                );
-                set(&["movement", "join", "before_seam_id"], json!("seam-1"))(
-                    record,
-                );
-                set(&["movement", "join", "before_grip_class"], json!(null))(
-                    record,
-                );
+                set(&["movement", "join", "after_oracle_strength"], json!(null))(record);
+                set(
+                    &["movement", "join", "after_headline_eligible"],
+                    json!(null),
+                )(record);
+                set(&["movement", "join", "before_seam_id"], json!("seam-1"))(record);
+                set(&["movement", "join", "before_grip_class"], json!(null))(record);
             },
             "a partial before join is not a producer shape",
         )?;
@@ -2374,19 +2375,23 @@ mod python_repair_verification_semantics {
                 &["movement", "reason"],
                 json!("the after analysis was partial (run_status `seam_limit_applied`)"),
             )(record);
-            set(&["movement", "after_run_status"], json!("seam_limit_applied"))(
-                record,
-            );
-            set(&["movement", "join"], json!({
-                "before_seam_id": null,
-                "after_seam_id": null,
-                "before_grip_class": null,
-                "after_grip_class": null,
-                "before_oracle_strength": null,
-                "after_oracle_strength": null,
-                "before_headline_eligible": null,
-                "after_headline_eligible": null,
-            }))(record);
+            set(
+                &["movement", "after_run_status"],
+                json!("seam_limit_applied"),
+            )(record);
+            set(
+                &["movement", "join"],
+                json!({
+                    "before_seam_id": null,
+                    "after_seam_id": null,
+                    "before_grip_class": null,
+                    "after_grip_class": null,
+                    "before_oracle_strength": null,
+                    "after_oracle_strength": null,
+                    "before_headline_eligible": null,
+                    "after_headline_eligible": null,
+                }),
+            )(record);
         })?;
         Ok(())
     }

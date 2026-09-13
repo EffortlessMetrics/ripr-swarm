@@ -2180,9 +2180,7 @@ mod python_repair_verification_semantics {
     fn rollback_policy() -> Result<crate::edit_cage::EditCagePolicy, String> {
         Ok(crate::edit_cage::EditCagePolicy {
             selected_target: crate::edit_cage::CagePathRule::exact("tests/pricing.rs")?,
-            allowed_edit_surface: vec![crate::edit_cage::CagePathRule::exact(
-                "tests/pricing.rs",
-            )?],
+            allowed_edit_surface: vec![crate::edit_cage::CagePathRule::exact("tests/pricing.rs")?],
             forbidden_paths: Vec::new(),
             expected_operational_writes: Vec::new(),
         })
@@ -2286,7 +2284,9 @@ mod python_repair_verification_semantics {
             .as_deref()
             .ok_or("the destruction refusal must carry a reason")?;
         if !reason.contains("already modified against its index copy") {
-            return Err(format!("the refusal must name the pre-dirty content: {reason}"));
+            return Err(format!(
+                "the refusal must name the pre-dirty content: {reason}"
+            ));
         }
         if outcome.post_rollback_head.is_some() {
             return Err("a refused rollback carries no restored head".to_string());
@@ -2296,9 +2296,7 @@ mod python_repair_verification_semantics {
         let content = std::fs::read_to_string(fixture.root.join("tests/pricing.rs"))
             .map_err(|error| format!("read target after refused rollback: {error}"))?;
         if !content.contains("pre-existing user edit") || !content.contains("assert!(true)") {
-            return Err(
-                "the refused rollback must leave every worktree byte in place".to_string(),
-            );
+            return Err("the refused rollback must leave every worktree byte in place".to_string());
         }
         Ok(())
     }
@@ -2326,7 +2324,9 @@ mod python_repair_verification_semantics {
             &head,
         );
         if outcome.state != "blocked" {
-            return Err(format!("a rollback over a moved index must block, got {outcome:?}"));
+            return Err(format!(
+                "a rollback over a moved index must block, got {outcome:?}"
+            ));
         }
         let reason = outcome
             .reason
