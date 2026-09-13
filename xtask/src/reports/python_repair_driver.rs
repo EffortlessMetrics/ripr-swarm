@@ -16,8 +16,13 @@
 //! - the record binds one selection row by its recomputed canonical
 //!   `selection_digest` over the retained preimage — a replaced or edited row
 //!   makes the record stale;
+//! - every identity the record copies from the selected row (case, subject,
+//!   repository, base, head, optional tree/currentness/limitation, family,
+//!   owner, discriminator, relation, oracle) agrees exactly with the accepted
+//!   row — a rewritten copy fails even while the digest anchors stay valid;
 //! - the record's target identity agrees with the row (`target_path`,
-//!   `target_state`); an attempt is never fabricated or substituted by name;
+//!   `target_state`); the driver binds only `existing` targets, and the
+//!   normalized target path is what is compared and recorded;
 //! - the driver issued the binding only under explicit operator/agent
 //!   authorization (`status: granted`, named authority, the
 //!   explicit-operator-flags method) — an inferred or absent authorization
@@ -28,15 +33,22 @@
 //!   driver record can never appear completed;
 //! - apply-phase records additionally carry the durable attempt identity
 //!   (#2927 shape), the prepare-record digest chain, the patch digest, the
-//!   changed-file set, the edit-cage decision, and the resulting head;
+//!   changed-file set, the edit-cage decision, and the resulting head; every
+//!   apply record must chain to exactly one supplied prepare record by its
+//!   exact-byte digest, and every changed path must sit inside the declared
+//!   edit cage (a compliant record must include the selected target);
 //! - production/generated/vendor/environment edit surfaces fail: a record
 //!   whose target falls under a denied surface prefix is rejected even when
 //!   the row declared it `unsafe`, because the driver binds only test-only,
 //!   existing, unambiguous targets.
 //!
 //! Verdict vocabulary: `valid`/`inconsistent`/`not_run` (no records
-//! supplied). None of the three is a support-tier, repair-correctness, gate,
-//! badge, or promotion claim; #3570 owns the verification phase.
+//! supplied). Violations take precedence: any violation makes the verdict
+//! `inconsistent` and the command exits nonzero — an invalid-only binding
+//! set never passes. `not_run` is reserved for an empty input with no
+//! violations and is not a pass. None of the three is a support-tier,
+//! repair-correctness, gate, badge, or promotion claim; #3570 owns the
+//! verification phase.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -135,6 +147,11 @@ const CAGE_STATUSES: [&str; 3] = ["compliant", "violated", "incomparable"];
 const AUTHORIZATION_STATUSES: [&str; 1] = ["granted"];
 const AUTHORIZATION_METHODS: [&str; 1] = ["explicit-operator-flags"];
 
+/// The only target state a driver binding may declare: the offline check
+/// mirrors the producer, which refuses proposed/ambiguous/unavailable/unsafe
+/// targets before any attempt exists.
+const BINDABLE_TARGET_STATE: &str = "existing";
+
 /// The standing non-claims every driver record must carry verbatim.
 const BINDING_NON_CLAIMS: [&str; 3] = [
     "no verification result is claimed by the driver",
@@ -180,6 +197,19 @@ fn is_denied_edit_surface(path: &str) -> bool {
             .any(|component| component.contains(".generated."))
 }
 
+/// Normalizes a portable repo-relative path: `./` segments dropped, empty
+/// segments collapsed. The normalized form is what is compared against the
+/// accepted row, matched against the edit cage, and recorded, so the raw
+/// spellings `./tests/x.rs` and `tests//x.rs` bind identically to
+/// `tests/x.rs`. Callers run the portability check on the raw spelling
+/// first, so absolute and `..`-carrying paths never reach this function.
+fn normalize_repo_relative_path(path: &str) -> String {
+    path.split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// The durable attempt identity shape (#2927): `repair-attempt-` plus 24
 /// lowercase hexadecimal characters.
 fn check_durable_attempt_id(subject: &str, field: &str, value: &str) -> Result<(), String> {
@@ -204,12 +234,17 @@ fn check_durable_attempt_id(subject: &str, field: &str, value: &str) -> Result<(
     }
 }
 
-/// One validated record, reduced to what the report needs.
+/// One validated record, reduced to what the report and the prepare-to-apply
+/// digest chain need.
 struct DriverBindingRecord {
     display: String,
     phase: String,
     trust_attempt_id: String,
     target_path: String,
+    /// The recomputed exact-byte sha256 of the loaded record file.
+    artifact_sha256: String,
+    /// The apply-phase claim into the prepare-record digest chain.
+    binding_artifact_sha256: Option<String>,
 }
 
 struct DriverCheckOutcome {
@@ -222,13 +257,17 @@ struct DriverCheckOutcome {
 
 impl DriverCheckOutcome {
     fn verdict(&self) -> &'static str {
-        if self.records.is_empty() {
-            return "not_run";
+        // Violations take precedence: a set of ALL-invalid bindings has zero
+        // valid records but must fail closed as `inconsistent` (nonzero
+        // exit), never pass as `not_run`. `not_run` is only an empty input
+        // with no violations at all.
+        if !self.violations.is_empty() {
+            return "inconsistent";
         }
-        if self.violations.is_empty() {
-            "valid"
+        if self.records.is_empty() {
+            "not_run"
         } else {
-            "inconsistent"
+            "valid"
         }
     }
 }
@@ -374,8 +413,14 @@ fn check_driver_artifacts(
     let mut violations = Vec::new();
     for display in &files {
         match load_strict_json(display) {
-            Ok((record, _sha)) => {
-                match validate_binding_record(display, &record, &manifest, &manifest_sha256) {
+            Ok((record, sha256)) => {
+                match validate_binding_record(
+                    display,
+                    &record,
+                    &manifest,
+                    &manifest_sha256,
+                    &sha256,
+                ) {
                     Ok(record) => records.push(record),
                     Err(violation) => violations.push(violation),
                 }
@@ -383,6 +428,7 @@ fn check_driver_artifacts(
             Err(error) => violations.push(error),
         }
     }
+    enforce_prepare_to_apply_chain(&records, &mut violations);
     Ok(DriverCheckOutcome {
         manifest_path: manifest_path.to_string(),
         manifest: Some(manifest),
@@ -390,6 +436,46 @@ fn check_driver_artifacts(
         records,
         violations,
     })
+}
+
+/// The prepare-to-apply digest chain: an apply record's
+/// `binding_artifact_sha256` must be the recomputed exact-byte sha256 of
+/// exactly one supplied prepare record. A fabricated digest, a tampered
+/// prepare artifact (its bytes moved, so the recomputed digest moved), or a
+/// duplicated prepare record (two files share the digest) fails. Prepare-only
+/// records stay valid: they are the `awaiting_edit` state.
+fn enforce_prepare_to_apply_chain(records: &[DriverBindingRecord], violations: &mut Vec<String>) {
+    let mut prepares_by_digest: std::collections::BTreeMap<&str, Vec<&DriverBindingRecord>> =
+        std::collections::BTreeMap::new();
+    for record in records.iter().filter(|record| record.phase == "prepare") {
+        prepares_by_digest
+            .entry(record.artifact_sha256.as_str())
+            .or_default()
+            .push(record);
+    }
+    for record in records.iter().filter(|record| record.phase == "apply") {
+        let Some(claimed) = record.binding_artifact_sha256.as_deref() else {
+            continue;
+        };
+        match prepares_by_digest.get(claimed) {
+            None => violations.push(driver_fail(
+                &record.display,
+                "binding_artifact_sha256",
+                format!(
+                    "prepare-to-apply digest chain broken: no supplied prepare record's exact bytes digest to `{claimed}`; a tampered or missing prepare artifact, or a fabricated digest, fails"
+                ),
+            )),
+            Some(matches) if matches.len() > 1 => violations.push(driver_fail(
+                &record.display,
+                "binding_artifact_sha256",
+                format!(
+                    "ambiguous prepare reference: {} supplied prepare records share the digest `{claimed}`; duplicate phase records fail",
+                    matches.len()
+                ),
+            )),
+            Some(_) => {}
+        }
+    }
 }
 
 /// Validates one driver binding record against the accepted selection
@@ -401,6 +487,7 @@ fn validate_binding_record(
     record: &Value,
     manifest: &SelectionManifest,
     manifest_sha256: &str,
+    artifact_sha256: &str,
 ) -> Result<DriverBindingRecord, String> {
     let top = record.as_object().ok_or_else(|| {
         driver_fail(
@@ -446,11 +533,13 @@ fn validate_binding_record(
     check_git_sha(display, "repository_head", &repository_head)?;
     require_string(display, top, "selection_manifest_path")?;
 
+    let mut binding_artifact_sha256 = None;
     if apply_phase {
         let durable = require_string(display, top, "durable_attempt_id")?;
         check_durable_attempt_id(display, "durable_attempt_id", &durable)?;
         let binding_digest = require_string(display, top, "binding_artifact_sha256")?;
         check_sha256_digest(display, "binding_artifact_sha256", &binding_digest)?;
+        binding_artifact_sha256 = Some(binding_digest);
     }
 
     // Driver identity: the running binary digest and version, recorded from
@@ -524,22 +613,80 @@ fn validate_binding_record(
                 "names an attempt identity outside the accepted selection denominator; selected rows cannot be substituted by name",
             )
         })?;
+    // The accepted row's canonical preimage anchors both the digest recompute
+    // and the identity-agreement checks below.
+    let row_preimage = manifest
+        .row_preimages
+        .get(&trust_attempt_id)
+        .ok_or_else(|| {
+            driver_fail(
+                &trust_attempt_id,
+                "trust.selection_digest",
+                "the accepted selection manifest retained no canonical preimage for this row",
+            )
+        })?;
+    // Identity agreement: every identity the record copies from the selected
+    // row must equal the accepted row's value. The selection digest covers
+    // the row, so a rewritten copy in the record is rejected even while the
+    // digest anchors stay valid.
     for field in [
         "case_id",
         "subject_id",
         "repository",
+        "base",
+        "head",
         "family",
         "owner",
         "discriminator",
         "relation",
         "oracle",
     ] {
-        require_string(display, trust, field)?;
+        let record_value = require_string(display, trust, field)?;
+        let row_value = row_preimage
+            .get(field)
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                driver_fail(
+                    &trust_attempt_id,
+                    &format!("trust.{field}"),
+                    format!("the accepted selection row carries no comparable `{field}`"),
+                )
+            })?;
+        if record_value != row_value {
+            return Err(driver_fail(
+                &trust_attempt_id,
+                &format!("trust.{field}"),
+                format!(
+                    "identity disagreement: the record names `{record_value}` but the accepted selection row names `{row_value}`; a rewritten identity copy is rejected"
+                ),
+            ));
+        }
     }
-    let base = require_string(display, trust, "base")?;
-    check_git_sha(display, "trust.base", &base)?;
-    let head = require_string(display, trust, "head")?;
-    check_git_sha(display, "trust.head", &head)?;
+    for field in ["tree", "source_currentness", "limitation"] {
+        // Optional identities must agree in presence and value: an explicit
+        // JSON null and an absent field are both "absent".
+        let row_present = matches!(row_preimage.get(field), Some(Value::String(_)));
+        let record_present = matches!(trust.get(field), Some(Value::String(_)));
+        if row_present != record_present
+            || (record_present && trust.get(field) != row_preimage.get(field))
+        {
+            return Err(driver_fail(
+                &trust_attempt_id,
+                &format!("trust.{field}"),
+                "identity disagreement: the record's optional identity copy does not match the accepted selection row; presence and value must agree",
+            ));
+        }
+    }
+    check_git_sha(
+        display,
+        "trust.base",
+        &require_string(display, trust, "base")?,
+    )?;
+    check_git_sha(
+        display,
+        "trust.head",
+        &require_string(display, trust, "head")?,
+    )?;
     if let Some(tree) = opt_string(display, trust, "tree")? {
         check_sha256_digest(display, "trust.tree", &tree)?;
     }
@@ -582,8 +729,12 @@ fn validate_binding_record(
         "trust.selection_digest",
         &recorded_selection_digest,
     )?;
-    let target_path = require_string(display, trust, "target_path")?;
-    check_portable_path(display, "trust.target_path", &target_path)?;
+    let raw_target_path = require_string(display, trust, "target_path")?;
+    check_portable_path(display, "trust.target_path", &raw_target_path)?;
+    // The normalized spelling is what is compared and recorded: a raw
+    // `./tests/x.rs` or `tests//x.rs` binds identically to `tests/x.rs`.
+    let target_path = normalize_repo_relative_path(&raw_target_path);
+    let row_target_path = normalize_repo_relative_path(&selection.target_path);
     let target_state = require_string(display, trust, "target_state")?;
     known_value_or_fail(
         display,
@@ -592,13 +743,22 @@ fn validate_binding_record(
         &super::python_repair_trust::TARGET_STATES,
         "target state",
     )?;
-    if target_path != selection.target_path || target_state != selection.target_state {
+    if target_state != BINDABLE_TARGET_STATE {
+        return Err(driver_fail(
+            &trust_attempt_id,
+            "trust.target_state",
+            format!(
+                "driver binding target state must be `{BINDABLE_TARGET_STATE}`, got `{target_state}`; proposed/ambiguous/unavailable/unsafe targets require a new or re-authorized selection"
+            ),
+        ));
+    }
+    if target_path != row_target_path || target_state != selection.target_state {
         return Err(driver_fail(
             &trust_attempt_id,
             "trust.target_path",
             format!(
-                "target identity disagreement: the record names `{target_path}` (`{target_state}`) but the accepted selection row names `{}` (`{}`)",
-                selection.target_path, selection.target_state
+                "target identity disagreement: the record names `{target_path}` (`{target_state}`) but the accepted selection row names `{row_target_path}` (`{}`)",
+                selection.target_state
             ),
         ));
     }
@@ -614,16 +774,6 @@ fn validate_binding_record(
     // The row digest anchor: recompute the canonical content digest of the
     // retained preimage and require equality, so a replaced or edited
     // selected row fails the record that trusted it.
-    let row_preimage = manifest
-        .row_preimages
-        .get(&trust_attempt_id)
-        .ok_or_else(|| {
-            driver_fail(
-                &trust_attempt_id,
-                "trust.selection_digest",
-                "the accepted selection manifest retained no canonical preimage for this row",
-            )
-        })?;
     let recomputed = canonical_selection_digest(row_preimage, &trust_attempt_id)?;
     if recorded_selection_digest != recomputed {
         return Err(driver_fail(
@@ -669,6 +819,7 @@ fn validate_binding_record(
             "must name at least one allowed path",
         ));
     }
+    let mut allowed_set = BTreeSet::new();
     for (index, value) in allowed_paths.iter().enumerate() {
         let path = value.as_str().ok_or_else(|| {
             driver_fail(
@@ -678,6 +829,7 @@ fn validate_binding_record(
             )
         })?;
         check_portable_path(display, &format!("edit_surface.allowed[{index}]"), path)?;
+        allowed_set.insert(normalize_repo_relative_path(path));
     }
     let forbidden_paths = match edit_surface.get("forbidden") {
         Some(Value::Array(values)) => values,
@@ -689,6 +841,7 @@ fn validate_binding_record(
             ));
         }
     };
+    let mut forbidden_set = BTreeSet::new();
     for (index, value) in forbidden_paths.iter().enumerate() {
         let path = value.as_str().ok_or_else(|| {
             driver_fail(
@@ -698,6 +851,7 @@ fn validate_binding_record(
             )
         })?;
         check_portable_path(display, &format!("edit_surface.forbidden[{index}]"), path)?;
+        forbidden_set.insert(normalize_repo_relative_path(path));
     }
 
     // Authorization: the driver applies no edit without the explicit pair,
@@ -738,7 +892,9 @@ fn validate_binding_record(
     )?;
 
     // Non-claims: the standing claim boundary must ride on the record
-    // verbatim.
+    // verbatim. Every element must be a string and the collection must be
+    // EXACTLY the standing list: a dropped non-claim weakens the boundary and
+    // an extra string can smuggle a claim.
     let non_claims = match top.get("non_claims") {
         Some(Value::Array(values)) => values,
         _ => {
@@ -749,18 +905,26 @@ fn validate_binding_record(
             ));
         }
     };
-    let recorded_non_claims = non_claims
-        .iter()
-        .filter_map(Value::as_str)
-        .collect::<BTreeSet<_>>();
-    for expected in BINDING_NON_CLAIMS {
-        if !recorded_non_claims.contains(expected) {
-            return Err(driver_fail(
+    let mut recorded_non_claims = BTreeSet::new();
+    for (index, value) in non_claims.iter().enumerate() {
+        let text = value.as_str().ok_or_else(|| {
+            driver_fail(
                 display,
-                "non_claims",
-                format!("dropped the standing non-claim `{expected}`"),
-            ));
-        }
+                &format!("non_claims[{index}]"),
+                "non-claim must be a string",
+            )
+        })?;
+        recorded_non_claims.insert(text);
+    }
+    let expected_non_claims: BTreeSet<&str> = BINDING_NON_CLAIMS.into_iter().collect();
+    if recorded_non_claims != expected_non_claims {
+        return Err(driver_fail(
+            display,
+            "non_claims",
+            format!(
+                "must be exactly the standing non-claims {BINDING_NON_CLAIMS:?}; a dropped or extra entry fails"
+            ),
+        ));
     }
 
     // Apply block: present exactly on apply-phase records, carrying the
@@ -790,6 +954,13 @@ fn validate_binding_record(
                 ));
             }
         };
+        // The edit cage binds every changed path: a denied production/
+        // generated/vendor/environment surface, a declared forbidden path, or
+        // any path outside the declared allowed surface fails. The offline
+        // promotion check validates clean-edit evidence; a record whose
+        // changed set left the declared cage fails here even when the
+        // producer honestly recorded the escape as a non-compliant verdict.
+        let mut changed_set = BTreeSet::new();
         for (index, value) in changed_paths.iter().enumerate() {
             let path = value.as_str().ok_or_else(|| {
                 driver_fail(
@@ -799,6 +970,36 @@ fn validate_binding_record(
                 )
             })?;
             check_portable_path(display, &format!("apply.changed_paths[{index}]"), path)?;
+            let normalized = normalize_repo_relative_path(path);
+            if is_denied_edit_surface(&normalized) {
+                return Err(driver_fail(
+                    display,
+                    &format!("apply.changed_paths[{index}]"),
+                    format!(
+                        "changed path `{normalized}` falls under a production/generated/vendor/environment edit surface; the driver records only test-only edits"
+                    ),
+                ));
+            }
+            if forbidden_set.contains(normalized.as_str()) {
+                return Err(driver_fail(
+                    display,
+                    &format!("apply.changed_paths[{index}]"),
+                    format!(
+                        "changed path `{normalized}` matches the declared forbidden edit surface"
+                    ),
+                ));
+            }
+            if !allowed_set.contains(normalized.as_str()) {
+                return Err(driver_fail(
+                    display,
+                    &format!("apply.changed_paths[{index}]"),
+                    format!(
+                        "changed path `{normalized}` is outside the declared allowed edit surface {:?}",
+                        allowed_set
+                    ),
+                ));
+            }
+            changed_set.insert(normalized);
         }
         let cage_status = require_string(display, apply, "cage_status")?;
         known_value_or_fail(
@@ -808,6 +1009,15 @@ fn validate_binding_record(
             &CAGE_STATUSES,
             "edit-cage decision",
         )?;
+        if cage_status == "compliant" && !changed_set.contains(&row_target_path) {
+            return Err(driver_fail(
+                &trust_attempt_id,
+                "apply.changed_paths",
+                format!(
+                    "a compliant apply record must include the selected target `{row_target_path}` among its changed paths; the authorized edit moves the selected target, so a compliant record without it records no applied edit"
+                ),
+            ));
+        }
         let head_after = require_string(display, apply, "repository_head_after")?;
         check_git_sha(display, "apply.repository_head_after", &head_after)?;
         if !matches!(apply.get("current"), Some(Value::Bool(_))) {
@@ -823,6 +1033,8 @@ fn validate_binding_record(
         phase: phase_value,
         trust_attempt_id,
         target_path,
+        artifact_sha256: artifact_sha256.to_string(),
+        binding_artifact_sha256,
     })
 }
 
@@ -1040,6 +1252,8 @@ mod python_repair_driver_binding {
                 "repository": "https://example.com/repo",
                 "base": GIT_SHA_B,
                 "head": GIT_SHA_C,
+                "tree": DIGEST_ONE,
+                "source_currentness": "candidate_current",
                 "selection_manifest_sha256": fixture.sha256,
                 "selection_digest": row_digest(fixture, attempt_id)?,
                 "target_path": target_path,
@@ -1121,7 +1335,16 @@ mod python_repair_driver_binding {
 
     fn checked(record: &Value, fixture: &Fixture) -> Result<DriverBindingRecord, String> {
         let manifest = validate_selection_manifest(&fixture.value, fixture.sha256.clone())?;
-        validate_binding_record("record.json", record, &manifest, &fixture.sha256)
+        // The record-file digest is an input of the caller (the artifact
+        // loader); the unit route supplies the digest of a synthetic file so
+        // per-record validation stays the subject under test.
+        validate_binding_record(
+            "record.json",
+            record,
+            &manifest,
+            &fixture.sha256,
+            &sha256_hex(b"record.json"),
+        )
     }
 
     fn expect_rejection(record: &Value, fixture: &Fixture, needle: &str) -> Result<(), String> {
@@ -1213,18 +1436,158 @@ mod python_repair_driver_binding {
     }
 
     #[test]
-    fn rejects_denied_edit_surface_target() -> Result<(), String> {
+    fn rejects_denied_and_unbindable_targets() -> Result<(), String> {
         // The row itself declares the denied surface `unsafe` (accepted by the
         // corpus), but the driver record that names it must still fail: the
-        // driver binds only test-only targets.
-        let fixture = build_fixture(selection_row("att-unsafe", "vendor/lib/ext.py", "unsafe"))?;
-        let mut record = prepare_record(&fixture, "att-unsafe", "vendor/lib/ext.py")?;
-        set_trust_field(&mut record, "target_state", json!("unsafe"));
+        // driver binds only `existing` targets.
+        let unsafe_fixture =
+            build_fixture(selection_row("att-unsafe", "vendor/lib/ext.py", "unsafe"))?;
+        let mut unsafe_record = prepare_record(&unsafe_fixture, "att-unsafe", "vendor/lib/ext.py")?;
+        set_trust_field(&mut unsafe_record, "target_state", json!("unsafe"));
         expect_rejection(
-            &record,
-            &fixture,
-            "production/generated/vendor/environment edit surface",
-        )
+            &unsafe_record,
+            &unsafe_fixture,
+            "driver binding target state must be `existing`",
+        )?;
+        // Every unbindable state fails the driver check even when its path is
+        // not denied.
+        for state in ["proposed", "ambiguous", "unavailable", "unsafe"] {
+            let fixture = build_fixture(selection_row(
+                "att-unbindable",
+                "tests/test_handler.py",
+                state,
+            ))?;
+            let mut record = prepare_record(&fixture, "att-unbindable", "tests/test_handler.py")?;
+            set_trust_field(&mut record, "target_state", json!(state));
+            expect_rejection(
+                &record,
+                &fixture,
+                "driver binding target state must be `existing`",
+            )?;
+        }
+        // An `existing` record naming a denied surface fails the surface
+        // rule. The corpus validator would refuse such a row first (a denied
+        // surface must be declared `unsafe`), so the accepted manifest is
+        // built directly: the driver check owns its own refusal regardless
+        // of how such a row arrived.
+        let denied_record = {
+            let row = json!({
+                "attempt_id": "att-denied",
+                "case_id": "case-att-denied",
+                "subject_id": "subj-att-denied",
+                "repository": "https://example.com/repo",
+                "base": GIT_SHA_B,
+                "head": GIT_SHA_C,
+                "family": "error_path_gating",
+                "owner": "module.handler",
+                "discriminator": "raises ValueError on empty payload",
+                "relation": "case calls owner directly",
+                "oracle": "pytest.raises exact message pin",
+                "target_path": "generated/helper.py",
+                "target_state": "existing",
+            });
+            let mut preimage = row
+                .as_object()
+                .cloned()
+                .ok_or_else(|| "denied row is not an object".to_string())?;
+            let row_digest = canonical_selection_digest(&preimage, "att-denied")?;
+            preimage.insert("selection_digest".to_string(), json!(row_digest));
+            let manifest = SelectionManifest {
+                sha256: sha256_hex(b"denied-manifest"),
+                selections: vec![super::super::python_repair_trust::Selection {
+                    attempt_id: "att-denied".to_string(),
+                    diversity_stratum: "pytest_library".to_string(),
+                    target_path: "generated/helper.py".to_string(),
+                    target_state: "existing".to_string(),
+                }],
+                incomplete: Vec::new(),
+                row_preimages: std::collections::BTreeMap::from([(
+                    "att-denied".to_string(),
+                    preimage,
+                )]),
+            };
+            let mut record = prepare_record_fixture("att-denied", "generated/helper.py")?;
+            if let Some(object) = record.as_object_mut()
+                && let Some(trust) = object.get_mut("trust").and_then(Value::as_object_mut)
+            {
+                trust.insert(
+                    "selection_manifest_sha256".to_string(),
+                    json!(sha256_hex(b"denied-manifest")),
+                );
+                trust.insert("selection_digest".to_string(), json!(row_digest));
+            }
+            let outcome = validate_binding_record(
+                "denied.json",
+                &record,
+                &manifest,
+                &sha256_hex(b"denied-manifest"),
+                &sha256_hex(b"denied.json"),
+            );
+            outcome.map(|_| ())
+        };
+        let error = match denied_record {
+            Err(error) => error,
+            Ok(()) => {
+                return Err("a denied-surface target passed the driver check".to_string());
+            }
+        };
+        if !error.contains("production/generated/vendor/environment edit surface") {
+            return Err(format!("unexpected denied-target failure: {error}"));
+        }
+        Ok(())
+    }
+
+    /// A prepare record fixture that does not depend on a built fixture: the
+    /// digest anchors are filled in by the caller.
+    fn prepare_record_fixture(attempt_id: &str, target_path: &str) -> Result<Value, String> {
+        let record = json!({
+            "schema_version": BINDING_SCHEMA_VERSION,
+            "kind": BINDING_KIND,
+            "spec": BINDING_SPEC,
+            "phase": "prepare",
+            "seam_id": "seam-under-test",
+            "repository_head": GIT_SHA_C,
+            "selection_manifest_path": "target/ripr/trust-manifest.json",
+            "driver": {
+                "binary_sha256": DIGEST_ONE,
+                "version": "0.11.0",
+            },
+            "config": {
+                "profile": "subject-ripr-toml",
+            },
+            "input": {
+                "packet_sha256": DIGEST_ONE,
+                "before_snapshot_sha256": DIGEST_TWO,
+            },
+            "trust": {
+                "attempt_id": attempt_id,
+                "case_id": format!("case-{attempt_id}"),
+                "subject_id": format!("subj-{attempt_id}"),
+                "repository": "https://example.com/repo",
+                "base": GIT_SHA_B,
+                "head": GIT_SHA_C,
+                "selection_manifest_sha256": DIGEST_ONE,
+                "selection_digest": DIGEST_TWO,
+                "target_path": target_path,
+                "target_state": "existing",
+                "family": "error_path_gating",
+                "owner": "module.handler",
+                "discriminator": "raises ValueError on empty payload",
+                "relation": "case calls owner directly",
+                "oracle": "pytest.raises exact message pin",
+            },
+            "edit_surface": {
+                "allowed": [target_path],
+                "forbidden": [],
+            },
+            "authorization": {
+                "status": "granted",
+                "authority": "operator-a",
+                "method": "explicit-operator-flags",
+            },
+            "non_claims": BINDING_NON_CLAIMS,
+        });
+        Ok(record)
     }
 
     #[test]
@@ -1313,20 +1676,211 @@ mod python_repair_driver_binding {
     }
 
     #[test]
-    fn rejects_dropped_non_claims() -> Result<(), String> {
+    fn rejects_dropped_extra_or_non_string_non_claims() -> Result<(), String> {
         let fixture = build_fixture(selection_row(
             "att-claims",
             "tests/test_handler.py",
             "existing",
         ))?;
-        let mut record = prepare_record(&fixture, "att-claims", "tests/test_handler.py")?;
-        if let Some(object) = record.as_object_mut() {
+        // A dropped standing non-claim fails.
+        let mut dropped = prepare_record(&fixture, "att-claims", "tests/test_handler.py")?;
+        if let Some(object) = dropped.as_object_mut() {
             object.insert(
                 "non_claims".to_string(),
                 json!(["no verification result is claimed by the driver"]),
             );
         }
-        expect_rejection(&record, &fixture, "dropped the standing non-claim")
+        expect_rejection(
+            &dropped,
+            &fixture,
+            "must be exactly the standing non-claims",
+        )?;
+        // An extra string can smuggle a claim and fails too.
+        let mut extra = prepare_record(&fixture, "att-claims", "tests/test_handler.py")?;
+        let mut entries = BINDING_NON_CLAIMS
+            .iter()
+            .map(|value| json!(value))
+            .collect::<Vec<_>>();
+        entries.push(json!("repair verified"));
+        if let Some(object) = extra.as_object_mut() {
+            object.insert("non_claims".to_string(), json!(entries));
+        }
+        expect_rejection(&extra, &fixture, "must be exactly the standing non-claims")?;
+        // A non-string element is a typed failure, never a silent skip.
+        let mut non_string = prepare_record(&fixture, "att-claims", "tests/test_handler.py")?;
+        if let Some(object) = non_string.as_object_mut() {
+            object.insert(
+                "non_claims".to_string(),
+                json!(["no closure is claimed by the driver", 1]),
+            );
+        }
+        expect_rejection(&non_string, &fixture, "non-claim must be a string")
+    }
+
+    #[test]
+    fn rejects_rewritten_identity_copies() -> Result<(), String> {
+        // The record can rewrite a copied identity while both digest anchors
+        // stay valid; the row agreement check must reject each rewrite.
+        let fixture = build_fixture(selection_row(
+            "att-identity",
+            "tests/test_handler.py",
+            "existing",
+        ))?;
+        for (field, value, needle) in [
+            (
+                "owner",
+                json!("other.handler"),
+                "identity disagreement: the record names `other.handler`",
+            ),
+            (
+                "case_id",
+                json!("case-rewritten"),
+                "identity disagreement: the record names `case-rewritten`",
+            ),
+            (
+                "head",
+                json!("dddddddddddddddddddddddddddddddddddddddd"),
+                "identity disagreement",
+            ),
+        ] {
+            let mut record = prepare_record(&fixture, "att-identity", "tests/test_handler.py")?;
+            set_trust_field(&mut record, field, value);
+            expect_rejection(&record, &fixture, needle)?;
+        }
+        // An optional identity that silently appears or disappears fails.
+        let mut removed_tree = prepare_record(&fixture, "att-identity", "tests/test_handler.py")?;
+        if let Some(object) = removed_tree.as_object_mut()
+            && let Some(trust) = object.get_mut("trust").and_then(Value::as_object_mut)
+        {
+            trust.remove("tree");
+        }
+        expect_rejection(&removed_tree, &fixture, "optional identity copy")?;
+        Ok(())
+    }
+
+    #[test]
+    fn normalizes_raw_target_path_spellings() -> Result<(), String> {
+        // `./tests/x.rs` and `tests//x.rs` bind identically to `tests/x.rs`:
+        // the normalized form is what is compared and recorded.
+        for spelling in ["./tests/test_handler.py", "tests//test_handler.py"] {
+            let fixture = build_fixture(selection_row("att-spelling", spelling, "existing"))?;
+            let mut record = prepare_record(&fixture, "att-spelling", spelling)?;
+            if let Some(object) = record.as_object_mut()
+                && let Some(edit_surface) = object
+                    .get_mut("edit_surface")
+                    .and_then(Value::as_object_mut)
+            {
+                edit_surface.insert("allowed".to_string(), json!([spelling]));
+            }
+            let validated = checked(&record, &fixture)?;
+            if validated.target_path != "tests/test_handler.py" {
+                return Err(format!(
+                    "raw spelling `{spelling}` was not normalized: `{}`",
+                    validated.target_path
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_compliant_apply_that_omits_the_selected_target() -> Result<(), String> {
+        let fixture = build_fixture(selection_row(
+            "att-omit",
+            "tests/test_handler.py",
+            "existing",
+        ))?;
+        // An empty changed set is not an applied edit.
+        let mut empty = apply_record(&fixture, "att-omit", "tests/test_handler.py")?;
+        if let Some(object) = empty.as_object_mut()
+            && let Some(apply) = object.get_mut("apply").and_then(Value::as_object_mut)
+        {
+            apply.insert("changed_paths".to_string(), json!([]));
+        }
+        expect_rejection(
+            &empty,
+            &fixture,
+            "must include the selected target `tests/test_handler.py`",
+        )?;
+        // An unrelated tests/ path inside the declared surface still omits
+        // the selected target.
+        let mut unrelated = apply_record(&fixture, "att-omit", "tests/test_handler.py")?;
+        if let Some(object) = unrelated.as_object_mut() {
+            if let Some(apply) = object.get_mut("apply").and_then(Value::as_object_mut) {
+                apply.insert("changed_paths".to_string(), json!(["tests/other_test.py"]));
+            }
+            if let Some(edit_surface) = object
+                .get_mut("edit_surface")
+                .and_then(Value::as_object_mut)
+            {
+                edit_surface.insert(
+                    "allowed".to_string(),
+                    json!(["tests/test_handler.py", "tests/other_test.py"]),
+                );
+            }
+        }
+        expect_rejection(
+            &unrelated,
+            &fixture,
+            "must include the selected target `tests/test_handler.py`",
+        )
+    }
+
+    #[test]
+    fn rejects_cage_violating_changed_paths() -> Result<(), String> {
+        let fixture = build_fixture(selection_row(
+            "att-cage-paths",
+            "tests/test_handler.py",
+            "existing",
+        ))?;
+        for (changed, needle) in [
+            (
+                "vendor/lib.py",
+                "production/generated/vendor/environment edit surface",
+            ),
+            (
+                "generated/helper.py",
+                "production/generated/vendor/environment edit surface",
+            ),
+            ("src/lib.py", "outside the declared allowed edit surface"),
+            (
+                "tests/undeclared_test.py",
+                "outside the declared allowed edit surface",
+            ),
+        ] {
+            let mut record = apply_record(&fixture, "att-cage-paths", "tests/test_handler.py")?;
+            if let Some(object) = record.as_object_mut()
+                && let Some(apply) = object.get_mut("apply").and_then(Value::as_object_mut)
+            {
+                apply.insert(
+                    "changed_paths".to_string(),
+                    json!(["tests/test_handler.py", changed]),
+                );
+            }
+            expect_rejection(&record, &fixture, needle)?;
+        }
+        // A declared forbidden path fails even when it is also listed as
+        // allowed.
+        let mut record = apply_record(&fixture, "att-cage-paths", "tests/test_handler.py")?;
+        if let Some(object) = record.as_object_mut() {
+            if let Some(apply) = object.get_mut("apply").and_then(Value::as_object_mut) {
+                apply.insert(
+                    "changed_paths".to_string(),
+                    json!(["tests/test_handler.py", "tests/scratch.py"]),
+                );
+            }
+            if let Some(edit_surface) = object
+                .get_mut("edit_surface")
+                .and_then(Value::as_object_mut)
+            {
+                edit_surface.insert(
+                    "allowed".to_string(),
+                    json!(["tests/test_handler.py", "tests/scratch.py"]),
+                );
+                edit_surface.insert("forbidden".to_string(), json!(["tests/scratch.py"]));
+            }
+        }
+        expect_rejection(&record, &fixture, "declared forbidden edit surface")
     }
 
     #[test]
@@ -1373,8 +1927,18 @@ mod python_repair_driver_binding {
         let manifest_path = manifest_dir.join("manifest.json");
         std::fs::write(&manifest_path, &fixture.text)
             .map_err(|error| format!("write manifest: {error}"))?;
+        // The apply record chains to the supplied prepare record by its
+        // exact-byte digest: the intact chain validates.
+        let prepare = prepare_record(&fixture, "att-e2e", "tests/test_handler.py")?;
+        let prepare_text = serde_json::to_string_pretty(&prepare)
+            .map_err(|error| format!("serialize prepare record: {error}"))?;
+        let prepare_bytes = format!("{prepare_text}\n");
+        std::fs::write(bindings_dir.join("prepare.json"), &prepare_bytes)
+            .map_err(|error| format!("write prepare record: {error}"))?;
+        let prepare_digest = sha256_hex(prepare_bytes.as_bytes());
         let apply = apply_record(&fixture, "att-e2e", "tests/test_handler.py")?;
-        let apply_text = serde_json::to_string_pretty(&apply)
+        let chained = clone_with_binding_digest(&apply, &prepare_digest)?;
+        let apply_text = serde_json::to_string_pretty(&chained)
             .map_err(|error| format!("serialize apply record: {error}"))?;
         std::fs::write(bindings_dir.join("apply.json"), &apply_text)
             .map_err(|error| format!("write apply record: {error}"))?;
@@ -1404,6 +1968,8 @@ mod python_repair_driver_binding {
                 "repository": "https://example.com/repo",
                 "base": GIT_SHA_B,
                 "head": GIT_SHA_C,
+                "tree": DIGEST_ONE,
+                "source_currentness": "candidate_current",
                 "selection_manifest_sha256": DIGEST_ONE,
                 "selection_digest": DIGEST_TWO,
                 "target_path": "tests/test_handler.py",
@@ -1442,6 +2008,238 @@ mod python_repair_driver_binding {
 
         std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"))?;
         Ok(())
+    }
+
+    #[test]
+    fn invalid_only_bindings_fail_closed_with_a_failure_verdict() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock before epoch: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-python-repair-driver-invalid-only-{}-{stamp}",
+            std::process::id()
+        ));
+        let manifest_dir = root.join("corpus");
+        let bindings_dir = root.join("bindings");
+        std::fs::create_dir_all(&manifest_dir)
+            .map_err(|error| format!("create corpus: {error}"))?;
+        std::fs::create_dir_all(&bindings_dir)
+            .map_err(|error| format!("create bindings: {error}"))?;
+
+        let fixture = build_fixture(selection_row(
+            "att-invalid",
+            "tests/test_handler.py",
+            "existing",
+        ))?;
+        let manifest_path = manifest_dir.join("manifest.json");
+        std::fs::write(&manifest_path, &fixture.text)
+            .map_err(|error| format!("write manifest: {error}"))?;
+        // The only supplied record is invalid (fabricated digest anchors): an
+        // all-invalid set must be verdict `inconsistent` with a nonzero exit,
+        // never `not_run`/exit 0.
+        let stale = json!({
+            "schema_version": BINDING_SCHEMA_VERSION,
+            "kind": BINDING_KIND,
+            "spec": BINDING_SPEC,
+            "phase": "prepare",
+            "seam_id": "seam-under-test",
+            "repository_head": GIT_SHA_C,
+            "selection_manifest_path": "target/ripr/trust-manifest.json",
+            "driver": {"binary_sha256": DIGEST_ONE, "version": "0.11.0"},
+            "config": {"profile": "default"},
+            "input": {"packet_sha256": DIGEST_ONE, "before_snapshot_sha256": DIGEST_TWO},
+            "trust": {
+                "attempt_id": "att-invalid",
+                "case_id": "case-att-invalid",
+                "subject_id": "subj-att-invalid",
+                "repository": "https://example.com/repo",
+                "base": GIT_SHA_B,
+                "head": GIT_SHA_C,
+                "tree": DIGEST_ONE,
+                "source_currentness": "candidate_current",
+                "selection_manifest_sha256": DIGEST_ONE,
+                "selection_digest": DIGEST_TWO,
+                "target_path": "tests/test_handler.py",
+                "target_state": "existing",
+                "family": "error_path_gating",
+                "owner": "module.handler",
+                "discriminator": "raises ValueError on empty payload",
+                "relation": "case calls owner directly",
+                "oracle": "pytest.raises exact message pin",
+            },
+            "edit_surface": {"allowed": ["tests/test_handler.py"], "forbidden": []},
+            "authorization": {
+                "status": "granted",
+                "authority": "operator-a",
+                "method": "explicit-operator-flags",
+            },
+            "non_claims": BINDING_NON_CLAIMS,
+        });
+        let stale_text = serde_json::to_string_pretty(&stale)
+            .map_err(|error| format!("serialize invalid record: {error}"))?;
+        std::fs::write(bindings_dir.join("invalid.json"), &stale_text)
+            .map_err(|error| format!("write invalid record: {error}"))?;
+
+        let outcome = check_driver_artifacts(
+            manifest_path.to_string_lossy().as_ref(),
+            bindings_dir.to_string_lossy().as_ref(),
+        )?;
+        if outcome.verdict() != "inconsistent" {
+            return Err(format!(
+                "an all-invalid binding set was verdict `{}`, expected `inconsistent`",
+                outcome.verdict()
+            ));
+        }
+        if !outcome.records.is_empty() || outcome.violations.len() != 1 {
+            return Err(format!(
+                "unexpected invalid-only outcome: {} record(s), {} violation(s)",
+                outcome.records.len(),
+                outcome.violations.len()
+            ));
+        }
+        let failure = run_check_driver(&args_of(
+            manifest_path.to_string_lossy().as_ref(),
+            bindings_dir.to_string_lossy().as_ref(),
+        ));
+        let error = match failure {
+            Err(error) => error,
+            Ok(()) => return Err("an all-invalid binding set exited 0".to_string()),
+        };
+        if !error.contains("1 violation(s)") {
+            return Err(format!("unexpected invalid-only failure: {error}"));
+        }
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_to_apply_digest_chain_is_enforced() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock before epoch: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-python-repair-driver-chain-{}-{stamp}",
+            std::process::id()
+        ));
+        let manifest_dir = root.join("corpus");
+        let bindings_dir = root.join("bindings");
+        std::fs::create_dir_all(&manifest_dir)
+            .map_err(|error| format!("create corpus: {error}"))?;
+        std::fs::create_dir_all(&bindings_dir)
+            .map_err(|error| format!("create bindings: {error}"))?;
+
+        let fixture = build_fixture(selection_row(
+            "att-chain",
+            "tests/test_handler.py",
+            "existing",
+        ))?;
+        let manifest_path = manifest_dir.join("manifest.json");
+        std::fs::write(&manifest_path, &fixture.text)
+            .map_err(|error| format!("write manifest: {error}"))?;
+        let prepare = prepare_record(&fixture, "att-chain", "tests/test_handler.py")?;
+        let prepare_text = serde_json::to_string_pretty(&prepare)
+            .map_err(|error| format!("serialize prepare record: {error}"))?;
+        let prepare_bytes = format!("{prepare_text}\n");
+        let prepare_digest = sha256_hex(prepare_bytes.as_bytes());
+        std::fs::write(bindings_dir.join("prepare.json"), &prepare_bytes)
+            .map_err(|error| format!("write prepare record: {error}"))?;
+        let apply = apply_record(&fixture, "att-chain", "tests/test_handler.py")?;
+
+        // A fabricated digest (no supplied prepare artifact carries it)
+        // breaks the chain and fails.
+        let fabricated = clone_with_binding_digest(&apply, DIGEST_ONE)?;
+        let fabricated_text = serde_json::to_string_pretty(&fabricated)
+            .map_err(|error| format!("serialize fabricated apply: {error}"))?;
+        std::fs::write(bindings_dir.join("apply.json"), &fabricated_text)
+            .map_err(|error| format!("write fabricated apply: {error}"))?;
+        let outcome = check_driver_artifacts(
+            manifest_path.to_string_lossy().as_ref(),
+            bindings_dir.to_string_lossy().as_ref(),
+        )?;
+        if outcome.violations.len() != 1
+            || !outcome.violations[0].contains("prepare-to-apply digest chain broken")
+        {
+            return Err(format!(
+                "a fabricated binding digest did not break the chain: {:?}",
+                outcome.violations
+            ));
+        }
+        if run_check_driver(&args_of(
+            manifest_path.to_string_lossy().as_ref(),
+            bindings_dir.to_string_lossy().as_ref(),
+        ))
+        .is_ok()
+        {
+            return Err("a fabricated binding digest exited 0".to_string());
+        }
+
+        // The intact chain passes.
+        let chained = clone_with_binding_digest(&apply, &prepare_digest)?;
+        let chained_text = serde_json::to_string_pretty(&chained)
+            .map_err(|error| format!("serialize chained apply: {error}"))?;
+        std::fs::write(bindings_dir.join("apply.json"), &chained_text)
+            .map_err(|error| format!("write chained apply: {error}"))?;
+        run_check_driver(&args_of(
+            manifest_path.to_string_lossy().as_ref(),
+            bindings_dir.to_string_lossy().as_ref(),
+        ))?;
+
+        // A tampered prepare artifact moves its recomputed digest away from
+        // the apply record's claim and fails the chain.
+        let tampered_bytes = prepare_bytes.replace("operator-a", "operator-tampered");
+        if tampered_bytes == prepare_bytes {
+            return Err("tampering did not change the prepare bytes".to_string());
+        }
+        std::fs::write(bindings_dir.join("prepare.json"), &tampered_bytes)
+            .map_err(|error| format!("write tampered prepare: {error}"))?;
+        let outcome = check_driver_artifacts(
+            manifest_path.to_string_lossy().as_ref(),
+            bindings_dir.to_string_lossy().as_ref(),
+        )?;
+        if outcome.violations.len() != 1
+            || !outcome.violations[0].contains("prepare-to-apply digest chain broken")
+        {
+            return Err(format!(
+                "a tampered prepare artifact did not break the chain: {:?}",
+                outcome.violations
+            ));
+        }
+        std::fs::write(bindings_dir.join("prepare.json"), &prepare_bytes)
+            .map_err(|error| format!("write prepare record: {error}"))?;
+
+        // Duplicate prepare records sharing one digest make the reference
+        // ambiguous and fail.
+        std::fs::write(bindings_dir.join("prepare-duplicate.json"), &prepare_bytes)
+            .map_err(|error| format!("write duplicate prepare: {error}"))?;
+        let outcome = check_driver_artifacts(
+            manifest_path.to_string_lossy().as_ref(),
+            bindings_dir.to_string_lossy().as_ref(),
+        )?;
+        std::fs::remove_file(bindings_dir.join("prepare-duplicate.json"))
+            .map_err(|error| format!("remove duplicate prepare: {error}"))?;
+        if outcome.violations.len() != 1
+            || !outcome.violations[0].contains("ambiguous prepare reference")
+        {
+            return Err(format!(
+                "a duplicated prepare record was not ambiguous: {:?}",
+                outcome.violations
+            ));
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"))?;
+        Ok(())
+    }
+
+    /// Copies one record and replaces its `binding_artifact_sha256` claim.
+    fn clone_with_binding_digest(record: &Value, digest: &str) -> Result<Value, String> {
+        let mut copy = record.clone();
+        let object = copy
+            .as_object_mut()
+            .ok_or_else(|| "apply record is not an object".to_string())?;
+        object.insert("binding_artifact_sha256".to_string(), json!(digest));
+        Ok(copy)
     }
 
     fn args_of(manifest: &str, bindings: &str) -> Vec<String> {

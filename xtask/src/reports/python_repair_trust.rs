@@ -921,8 +921,12 @@ impl SelectionManifest {
 }
 
 /// Computes the canonical digest of a selection row: sha256 over the row's
-/// JSON with `selection_digest` removed, re-serialized (object keys are
-/// sorted, so the encoding is canonical). This is the immutability anchor —
+/// JSON with `selection_digest` removed, re-serialized compactly. The
+/// preimage is collected into a `BTreeMap` first so the key order is sorted
+/// regardless of any workspace-level serde_json `preserve_order` feature
+/// (with it, `Map` iterates in insertion order and the bytes would vary by
+/// construction order; rows are flat string-valued objects, so top-level
+/// sorting is the whole canonicalization). This is the immutability anchor —
 /// any content change moves the digest.
 pub(crate) fn canonical_selection_digest(
     row: &serde_json::Map<String, Value>,
@@ -930,7 +934,8 @@ pub(crate) fn canonical_selection_digest(
 ) -> Result<String, String> {
     let mut canonical = row.clone();
     canonical.remove("selection_digest");
-    let text = serde_json::to_string(&Value::Object(canonical)).map_err(|error| {
+    let sorted: std::collections::BTreeMap<String, Value> = canonical.into_iter().collect();
+    let text = serde_json::to_string(&sorted).map_err(|error| {
         fail(
             attempt_id,
             "selection_digest",
@@ -1003,8 +1008,12 @@ pub(crate) fn validate_selection_manifest(
         parsed.push(Selection {
             attempt_id,
             diversity_stratum,
-            target_path: entry["target_path"]
-                .as_str()
+            // `.get()` keeps a malformed row (a missing or non-string
+            // `target_path`) a typed diagnostic instead of a panic; the row
+            // validator reports the missing field.
+            target_path: entry
+                .get("target_path")
+                .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
             target_state,
