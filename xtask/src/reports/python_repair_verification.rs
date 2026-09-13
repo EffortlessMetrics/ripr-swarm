@@ -30,9 +30,14 @@
 //!   distinct;
 //! - the movement axis carries the closed movement vocabulary
 //!   (`closed`/`improved`/`unchanged`/`regressed`/`limited`/`stale`/
-//!   `uncertain`) with the native-identity join recorded; `stale`,
-//!   `uncertain`, and `limited` movements must carry a typed reason, so a
-//!   degraded join is never presented as a confident classification;
+//!   `uncertain`) with the native-identity join recorded and typed: a
+//!   confident state requires the complete before/after joins, its recorded
+//!   state must be the one its own headline/oracle evidence implies (the same
+//!   transition table the producing comparison applies), and the documented
+//!   partial shapes for `stale`, `uncertain`, and `limited` are enforced —
+//!   each degraded state carries a typed reason, so a degraded join is never
+//!   presented as a confident classification and a fabricated join never
+//!   validates;
 //! - NEITHER AXIS IMPLIES THE OTHER: every state pair across the two blocks
 //!   validates on its own merits — `passed` with `unchanged`, `failed` with
 //!   `improved`, `unavailable` with `uncertain`, `closed` next to an
@@ -45,7 +50,11 @@
 //! - the rollback block is one of `proved`/`blocked`/`not_run` with its
 //!   evidence: `proved` requires the restored head, `blocked`/`not_run` a
 //!   typed reason;
-//! - the standing non-claims ride on every receipt verbatim.
+//! - the standing non-claims and the standing claim boundary ride on every
+//!   receipt verbatim, and the execution block's producer-owned scalars are
+//!   type-checked (`exit_status`/`exit_signal` signed integers — a Windows
+//!   termination code is negative, `duration_ms` non-negative, truncation
+//!   and cancellation flags booleans).
 //!
 //! Verdict vocabulary: `valid`/`inconsistent`/`not_run` (no receipts
 //! supplied). Violations take precedence: any violation makes the verdict
@@ -75,7 +84,7 @@ const CHECK_REPORT_MD: &str = "python-repair-verification-check.md";
 const RECEIPT_KIND: &str = "python_repair_verification_receipt";
 const RECEIPT_SCHEMA_VERSION: &str = "0.1";
 
-const RECEIPT_KEYS: [&str; 15] = [
+const RECEIPT_KEYS: [&str; 16] = [
     "schema_version",
     "kind",
     "spec",
@@ -91,7 +100,13 @@ const RECEIPT_KEYS: [&str; 15] = [
     "movement",
     "rollback",
     "non_claims",
+    "claim_boundary",
 ];
+
+/// The standing claim boundary every receipt carries verbatim (the same
+/// constant the producing phase renders; the schema is shared by
+/// construction, and a dropped or edited boundary fails validation).
+const RECEIPT_CLAIM_BOUNDARY: &str = "Execution observation and static before/after movement are separate draft evidence axes; real mutation testing confirms behavior-change detection later.";
 
 const IDENTITIES_KEYS: [&str; 8] = [
     "packet_sha256",
@@ -466,6 +481,78 @@ fn opt_u64_field(
     }
 }
 
+/// Signed integer field: the producer records `exit_status`/`exit_signal` as
+/// `Option<i32>`, and a Windows termination code is a negative `i32`, so a
+/// receipt carrying one must validate instead of being misread as malformed.
+fn opt_i64_field(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    display: &str,
+) -> Result<Option<i64>, String> {
+    match object.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value.as_i64().map(Some).ok_or_else(|| {
+            verification_fail(display, field, "field must be an integer when present")
+        }),
+    }
+}
+
+/// Boolean field: present means a JSON boolean; absent or null means `None`.
+fn opt_bool_field(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    display: &str,
+) -> Result<Option<bool>, String> {
+    match object.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(flag)) => Ok(Some(*flag)),
+        Some(_) => Err(verification_fail(
+            display,
+            field,
+            "field must be a boolean when present",
+        )),
+    }
+}
+
+/// The oracle-strength rank the producing movement comparison uses
+/// (strong > medium > weak > smoke > unknown > everything else). An
+/// unrecognized spelling ranks lowest so an unrecognized oracle never counts
+/// as evidence of strength — the same rule on both sides of the schema.
+fn movement_oracle_rank(strength: &str) -> u8 {
+    match strength {
+        "strong" => 5,
+        "medium" => 4,
+        "weak" => 3,
+        "smoke" => 2,
+        "unknown" => 1,
+        _ => 0,
+    }
+}
+
+/// The headline/oracle transition table the producer applies to the joined
+/// before/after seams. The validator re-derives the state from the recorded
+/// joins so a receipt whose state contradicts its own evidence fails.
+fn movement_state_from_joins(
+    before_headline: bool,
+    after_headline: bool,
+    before_oracle_strength: &str,
+    after_oracle_strength: &str,
+) -> &'static str {
+    use std::cmp::Ordering;
+    match (
+        before_headline,
+        after_headline,
+        movement_oracle_rank(after_oracle_strength).cmp(&movement_oracle_rank(before_oracle_strength)),
+    ) {
+        (false, false, _) => "unchanged",
+        (false, true, _) => "regressed",
+        (true, false, _) => "closed",
+        (true, true, Ordering::Greater) => "improved",
+        (true, true, Ordering::Equal) => "unchanged",
+        (true, true, Ordering::Less) => "regressed",
+    }
+}
+
 /// Validates one candidate receipt against the accepted selection manifest.
 /// Every digest anchor is recomputed, every closed field set is deny-unknown,
 /// the execution and movement vocabularies stay closed and disposition-bound,
@@ -501,9 +588,19 @@ fn validate_receipt(
             ));
         }
     }
+    // The standing claim boundary rides on every receipt verbatim; a dropped,
+    // edited, or weakened boundary is a different record, not this schema.
+    let claim_boundary = require_string(display, top, "claim_boundary")?;
+    if claim_boundary != RECEIPT_CLAIM_BOUNDARY {
+        return Err(verification_fail(
+            display,
+            "claim_boundary",
+            format!("expected the standing claim boundary verbatim, got `{claim_boundary}`"),
+        ));
+    }
     let durable_attempt_id = require_string(display, top, "durable_attempt_id")?;
     check_durable_attempt_id(display, "durable_attempt_id", &durable_attempt_id)?;
-    require_string(display, top, "seam_id")?;
+    let seam_id = require_string(display, top, "seam_id")?;
     let repository_head = require_string(display, top, "repository_head")?;
     check_git_sha(display, "repository_head", &repository_head)?;
 
@@ -626,7 +723,8 @@ fn validate_receipt(
         &PROCESS_DISPOSITIONS,
         "process disposition",
     )?;
-    let exit_status = opt_u64_field(execution, "exit_status", display)?;
+    let exit_status = opt_i64_field(execution, "exit_status", display)?;
+    let exit_signal = opt_i64_field(execution, "exit_signal", display)?;
     let stdout_digest = opt_receipt_string(execution, "stdout_sha256", display)?;
     let stderr_digest = opt_receipt_string(execution, "stderr_sha256", display)?;
     if let Some(digest) = &stdout_digest {
@@ -637,6 +735,10 @@ fn validate_receipt(
     }
     opt_u64_field(execution, "stdout_bytes", display)?;
     opt_u64_field(execution, "stderr_bytes", display)?;
+    opt_u64_field(execution, "duration_ms", display)?;
+    for flag_field in ["stdout_truncated", "stderr_truncated", "cancellation_requested"] {
+        opt_bool_field(execution, flag_field, display)?;
+    }
     let currentness = opt_receipt_string(execution, "currentness", display)?;
     if let Some(currentness) = &currentness {
         known_value_or_fail(
@@ -698,6 +800,13 @@ fn validate_receipt(
                     ),
                 ));
             }
+            if exit_signal.is_some() {
+                return Err(verification_fail(
+                    display,
+                    "execution.exit_signal",
+                    "`passed` is a clean exit and carries no termination signal",
+                ));
+            }
             ran_with_commitments("execution.state")?;
             if currentness.as_deref() == Some("historical_noncurrent") {
                 return Err(verification_fail(
@@ -717,12 +826,19 @@ fn validate_receipt(
                     ),
                 ));
             }
-            if exit_status.is_none() || exit_status == Some(0) {
-                return Err(verification_fail(
-                    display,
-                    "execution.exit_status",
-                    "`failed` requires a non-zero exit status",
-                ));
+            // A completed observation is failed on a non-zero exit or on a
+            // termination signal (exit status null, signal retained); exactly
+            // one of the two is present, so a fabricated pair fails closed.
+            match (exit_status, exit_signal) {
+                (Some(code), None) if code != 0 => {}
+                (None, Some(_)) => {}
+                _ => {
+                    return Err(verification_fail(
+                        display,
+                        "execution.exit_status",
+                        "`failed` requires a non-zero exit status or a retained termination signal",
+                    ));
+                }
             }
             ran_with_commitments("execution.state")?;
         }
@@ -744,6 +860,13 @@ fn validate_receipt(
                     format!("`{}` carries no exit status", execution_state),
                 ));
             }
+            if exit_signal.is_some() {
+                return Err(verification_fail(
+                    display,
+                    "execution.exit_signal",
+                    format!("`{}` carries no termination signal", execution_state),
+                ));
+            }
             ran_with_commitments("execution.state")?;
         }
         "unavailable" => {
@@ -761,6 +884,13 @@ fn validate_receipt(
                     display,
                     "execution.exit_status",
                     "`unavailable` carries no exit status",
+                ));
+            }
+            if exit_signal.is_some() {
+                return Err(verification_fail(
+                    display,
+                    "execution.exit_signal",
+                    "`unavailable` carries no termination signal",
                 ));
             }
             if execution_reason.is_none() {
@@ -790,6 +920,13 @@ fn validate_receipt(
                     display,
                     "execution.state",
                     "`not_run` retains no exit status, no output commitments, and no currentness",
+                ));
+            }
+            if exit_signal.is_some() {
+                return Err(verification_fail(
+                    display,
+                    "execution.exit_signal",
+                    "`not_run` carries no termination signal",
                 ));
             }
             if route_recorded {
@@ -823,6 +960,13 @@ fn validate_receipt(
                     display,
                     "execution.exit_status",
                     "`invalid` carries no exit status",
+                ));
+            }
+            if exit_signal.is_some() {
+                return Err(verification_fail(
+                    display,
+                    "execution.exit_signal",
+                    "`invalid` carries no termination signal",
                 ));
             }
             if execution_reason.is_none() {
@@ -927,16 +1071,169 @@ fn validate_receipt(
         ));
     }
     let join = block(movement, "movement", "join", &JOIN_KEYS, display)?;
-    for field in JOIN_KEYS {
+    // Typed join fields: seam ids and oracle strengths are non-empty strings,
+    // headline eligibility is a boolean, and an absent join is an explicit
+    // null — never a mistyped scalar.
+    let join_string = |field: &str| -> Result<Option<String>, String> {
         match join.get(field) {
-            None | Some(Value::Null) => {}
-            Some(Value::String(text)) if !text.trim().is_empty() => {}
-            Some(Value::Bool(_)) => {}
-            Some(_) => {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(text)) if !text.trim().is_empty() => Ok(Some(text.clone())),
+            Some(Value::String(_)) => Err(verification_fail(
+                display,
+                &format!("movement.join.{field}"),
+                "join field must be a non-empty string when present",
+            )),
+            Some(_) => Err(verification_fail(
+                display,
+                &format!("movement.join.{field}"),
+                "join field must be a string when present",
+            )),
+        }
+    };
+    let join_bool = |field: &str| -> Result<Option<bool>, String> {
+        opt_bool_field(join, field, display).map_err(|error| {
+            error.replace(
+                &format!("field=`{field}`"),
+                &format!("field=`movement.join.{field}`"),
+            )
+        })
+    };
+    let before_seam_id = join_string("before_seam_id")?;
+    let after_seam_id = join_string("after_seam_id")?;
+    let before_grip_class = join_string("before_grip_class")?;
+    let after_grip_class = join_string("after_grip_class")?;
+    let before_oracle_strength = join_string("before_oracle_strength")?;
+    let after_oracle_strength = join_string("after_oracle_strength")?;
+    let before_headline_eligible = join_bool("before_headline_eligible")?;
+    let after_headline_eligible = join_bool("after_headline_eligible")?;
+    let before_join = (
+        &before_seam_id,
+        &before_grip_class,
+        &before_oracle_strength,
+        &before_headline_eligible,
+    );
+    let after_join = (
+        &after_seam_id,
+        &after_grip_class,
+        &after_oracle_strength,
+        &after_headline_eligible,
+    );
+    let before_complete = before_join.0.is_some()
+        && before_join.1.is_some()
+        && before_join.2.is_some()
+        && before_join.3.is_some();
+    let before_absent = before_join.0.is_none()
+        && before_join.1.is_none()
+        && before_join.2.is_none()
+        && before_join.3.is_none();
+    let after_complete = after_join.0.is_some()
+        && after_join.1.is_some()
+        && after_join.2.is_some()
+        && after_join.3.is_some();
+    let after_absent = after_join.0.is_none()
+        && after_join.1.is_none()
+        && after_join.2.is_none()
+        && after_join.3.is_none();
+    // The join shapes mirror the producer exactly: a confident classification
+    // resolves both joins and its recorded state must be the one its own
+    // headline/oracle evidence implies (the same transition table the
+    // producing comparison applies); the degraded shapes carry only what the
+    // producer can record for them.
+    match movement_state.as_str() {
+        "closed" | "improved" | "unchanged" | "regressed" => {
+            if !before_complete || !after_complete {
                 return Err(verification_fail(
                     display,
-                    &format!("movement.join.{field}"),
-                    "join field must be a non-empty string, a boolean, or null (absent join)",
+                    "movement.join",
+                    format!(
+                        "a confident `{movement_state}` movement retains the complete before and after joins; a partial or null join cannot locate a confident classification"
+                    ),
+                ));
+            }
+            if before_seam_id.as_deref() != Some(seam_id.as_str()) {
+                return Err(verification_fail(
+                    display,
+                    "movement.join.before_seam_id",
+                    format!(
+                        "a confident `{movement_state}` movement's before join names `{before_seam_id:?}` but the receipt binds seam `{seam_id}`; a different before seam is `stale`, not confident"
+                    ),
+                ));
+            }
+            let derived = movement_state_from_joins(
+                before_headline_eligible.unwrap_or(false),
+                after_headline_eligible.unwrap_or(false),
+                before_oracle_strength.as_deref().unwrap_or_default(),
+                after_oracle_strength.as_deref().unwrap_or_default(),
+            );
+            if derived != movement_state {
+                return Err(verification_fail(
+                    display,
+                    "movement.state",
+                    format!(
+                        "the recorded `{movement_state}` movement contradicts its own joins (before headline {before_headline_eligible:?} / `{before_oracle_strength:?}`, after headline {after_headline_eligible:?} / `{after_oracle_strength:?}`), which resolve to `{derived}`"
+                    ),
+                ));
+            }
+        }
+        "stale" => {
+            if !before_complete || !after_absent {
+                return Err(verification_fail(
+                    display,
+                    "movement.join",
+                    "a `stale` movement retains the complete before join and no after join (the stale identity never resolved after the edit)",
+                ));
+            }
+            if before_seam_id.as_deref() == Some(seam_id.as_str()) {
+                return Err(verification_fail(
+                    display,
+                    "movement.join.before_seam_id",
+                    format!(
+                        "the `stale` movement's before join names the receipt's own seam `{seam_id}`; a stale join requires the identity to have moved to a different seam"
+                    ),
+                ));
+            }
+        }
+        "limited" => {
+            if after_run_status == "complete" {
+                return Err(verification_fail(
+                    display,
+                    "movement.state",
+                    "a `limited` movement requires a partial after analysis (`seam_limit_applied`); a complete analysis resolves the join or fails closed to `uncertain`",
+                ));
+            }
+            if !before_absent || !after_absent {
+                return Err(verification_fail(
+                    display,
+                    "movement.join",
+                    "a `limited` movement carries no join (the comparison never resolves joins over a partial analysis)",
+                ));
+            }
+        }
+        _ => {
+            // `uncertain`: the comparison can stop before the before join
+            // (zero/multiple/empty identity — no join fields at all) or after
+            // it (zero/multiple after join — the complete before join only).
+            if !after_absent {
+                return Err(verification_fail(
+                    display,
+                    "movement.join",
+                    "an `uncertain` movement never retains an after join (a resolved after join is a confident classification)",
+                ));
+            }
+            if !before_absent && !before_complete {
+                return Err(verification_fail(
+                    display,
+                    "movement.join",
+                    "an `uncertain` movement carries either no before join or the complete before join; a partial before join is not a producer shape",
+                ));
+            }
+            if before_complete && before_seam_id.as_deref() != Some(seam_id.as_str()) {
+                return Err(verification_fail(
+                    display,
+                    "movement.join.before_seam_id",
+                    format!(
+                        "the `uncertain` movement's before join names `{before_seam_id:?}` but the receipt binds seam `{seam_id}`; a resolved before join must be the receipt's own seam"
+                    ),
                 ));
             }
         }
@@ -1348,8 +1645,8 @@ mod python_repair_verification_semantics {
                     "oracle": "assert exact boundary value",
                 },
                 "join": {
-                    "before_seam_id": "s1",
-                    "after_seam_id": "s1",
+                    "before_seam_id": "seam-1",
+                    "after_seam_id": "seam-1",
                     "before_grip_class": "weakly_gripped",
                     "after_grip_class": "weakly_gripped",
                     "before_oracle_strength": "weak",
@@ -1372,6 +1669,7 @@ mod python_repair_verification_semantics {
                 "post_rollback_head": null,
             },
             "non_claims": VERIFICATION_NON_CLAIMS,
+            "claim_boundary": RECEIPT_CLAIM_BOUNDARY,
         }))
     }
 
@@ -1622,7 +1920,9 @@ mod python_repair_verification_semantics {
             )(record);
         })?;
 
-        // command unavailable + movement uncertain.
+        // command unavailable + movement uncertain: the comparison resolved
+        // the before join and found no after join, so the receipt carries the
+        // complete before join and no after join (the producer shape).
         valid(|record| {
             let mut body = execution_body("unavailable", "route_unavailable", json!(null));
             let Ok(object) = object_mut(&mut body, "execution body") else {
@@ -1640,17 +1940,38 @@ mod python_repair_verification_semantics {
             set(&["command", "display"], json!(null))(record);
             set(&["movement", "state"], json!("uncertain"))(record);
             set(&["movement", "reason"], json!("stale join"))(record);
+            set(&["movement", "join", "after_seam_id"], json!(null))(record);
+            set(&["movement", "join", "after_grip_class"], json!(null))(record);
+            set(&["movement", "join", "after_oracle_strength"], json!(null))(
+                record,
+            );
+            set(&["movement", "join", "after_headline_eligible"], json!(null))(
+                record,
+            );
         })?;
 
         // command passed + wrong target discovered in review: the passed run
         // rides a stale movement without the receipt becoming invalid — the
-        // review dimension lives in the corpus, not here.
+        // review dimension lives in the corpus, not here. The stale shape
+        // carries the moved before seam (a different seam than the receipt
+        // binds) and no after join.
         valid(|record| {
             set(&["movement", "state"], json!("stale"))(record);
             set(
                 &["movement", "reason"],
                 json!("stale join: the native identity now resolves to another seam"),
             )(record);
+            set(&["movement", "join", "before_seam_id"], json!("seam-moved"))(
+                record,
+            );
+            set(&["movement", "join", "after_seam_id"], json!(null))(record);
+            set(&["movement", "join", "after_grip_class"], json!(null))(record);
+            set(&["movement", "join", "after_oracle_strength"], json!(null))(
+                record,
+            );
+            set(&["movement", "join", "after_headline_eligible"], json!(null))(
+                record,
+            );
         })?;
 
         // gap closed + unrelated findings regressed: both stay visible.
@@ -1914,6 +2235,227 @@ mod python_repair_verification_semantics {
         violation(
             set(&["movement", "after_run_status"], json!("partial")),
             "unknown after-analysis run status",
+        )?;
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Fabricated joins, scalar types, signal termination, claim boundary.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn requires_the_standing_claim_boundary_verbatim() -> Result<(), String> {
+        violation(
+            set(&["claim_boundary"], json!("a softened boundary")),
+            "expected the standing claim boundary verbatim",
+        )?;
+        violation(
+            set(&["claim_boundary"], json!(null)),
+            "a present null is not a value",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_fabricated_or_contradictory_movement_joins() -> Result<(), String> {
+        // The review's exact example: a confident state over null joins.
+        violation(
+            |record| {
+                set(&["movement", "state"], json!("closed"))(record);
+                set(
+                    &["movement", "join"],
+                    json!({
+                        "before_seam_id": null,
+                        "after_seam_id": null,
+                        "before_grip_class": null,
+                        "after_grip_class": null,
+                        "before_oracle_strength": null,
+                        "after_oracle_strength": null,
+                        "before_headline_eligible": null,
+                        "after_headline_eligible": null,
+                    }),
+                )(record);
+            },
+            "retains the complete before and after joins",
+        )?;
+        // A confident state its own headline/oracle evidence contradicts.
+        violation(
+            set(&["movement", "state"], json!("closed")),
+            "contradicts its own joins",
+        )?;
+        // A before seam the receipt does not bind is `stale`, never confident.
+        violation(
+            set(&["movement", "join", "before_seam_id"], json!("seam-elsewhere")),
+            "a different before seam is `stale`",
+        )?;
+        // A stale join that still names the receipt's own seam is impossible.
+        violation(
+            |record| {
+                set(&["movement", "state"], json!("stale"))(record);
+                set(
+                    &["movement", "reason"],
+                    json!("stale join: the identity moved"),
+                )(record);
+                set(&["movement", "join", "after_seam_id"], json!(null))(record);
+                set(&["movement", "join", "after_grip_class"], json!(null))(record);
+                set(&["movement", "join", "after_oracle_strength"], json!(null))(
+                    record,
+                );
+                set(&["movement", "join", "after_headline_eligible"], json!(null))(
+                    record,
+                );
+            },
+            "requires the identity to have moved",
+        )?;
+        // `limited` over a complete analysis is impossible: the producer
+        // either resolves the join or degrades to `uncertain`.
+        violation(
+            |record| {
+                set(&["movement", "state"], json!("limited"))(record);
+                set(
+                    &["movement", "reason"],
+                    json!("the after analysis was partial"),
+                )(record);
+                set(&["movement", "join"], json!({
+                    "before_seam_id": null,
+                    "after_seam_id": null,
+                    "before_grip_class": null,
+                    "after_grip_class": null,
+                    "before_oracle_strength": null,
+                    "after_oracle_strength": null,
+                    "before_headline_eligible": null,
+                    "after_headline_eligible": null,
+                }))(record);
+            },
+            "requires a partial after analysis",
+        )?;
+        // An uncertain movement never retains an after join (the fixture's
+        // after join stays present, which the producer cannot record for a
+        // degraded state).
+        violation(
+            |record| {
+                set(&["movement", "state"], json!("uncertain"))(record);
+                set(
+                    &["movement", "reason"],
+                    json!("the native identity joins zero seams in the after analysis"),
+                )(record);
+            },
+            "never retains an after join",
+        )?;
+        // A partial before join is not a producer shape.
+        violation(
+            |record| {
+                set(&["movement", "state"], json!("uncertain"))(record);
+                set(
+                    &["movement", "reason"],
+                    json!("the native identity joins zero seams in the before analysis"),
+                )(record);
+                set(&["movement", "join", "after_seam_id"], json!(null))(record);
+                set(&["movement", "join", "after_grip_class"], json!(null))(record);
+                set(&["movement", "join", "after_oracle_strength"], json!(null))(
+                    record,
+                );
+                set(&["movement", "join", "after_headline_eligible"], json!(null))(
+                    record,
+                );
+                set(&["movement", "join", "before_seam_id"], json!("seam-1"))(
+                    record,
+                );
+                set(&["movement", "join", "before_grip_class"], json!(null))(
+                    record,
+                );
+            },
+            "a partial before join is not a producer shape",
+        )?;
+        // The documented `limited` shape itself stays representable.
+        valid(|record| {
+            set(&["movement", "state"], json!("limited"))(record);
+            set(
+                &["movement", "reason"],
+                json!("the after analysis was partial (run_status `seam_limit_applied`)"),
+            )(record);
+            set(&["movement", "after_run_status"], json!("seam_limit_applied"))(
+                record,
+            );
+            set(&["movement", "join"], json!({
+                "before_seam_id": null,
+                "after_seam_id": null,
+                "before_grip_class": null,
+                "after_grip_class": null,
+                "before_oracle_strength": null,
+                "after_oracle_strength": null,
+                "before_headline_eligible": null,
+                "after_headline_eligible": null,
+            }))(record);
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_mistyped_producer_execution_scalars() -> Result<(), String> {
+        violation(
+            set(&["execution", "exit_signal"], json!({})),
+            "field must be an integer when present",
+        )?;
+        violation(
+            set(&["execution", "exit_signal"], json!("6")),
+            "field must be an integer when present",
+        )?;
+        violation(
+            set(&["execution", "duration_ms"], json!("fast")),
+            "field must be a non-negative integer when present",
+        )?;
+        violation(
+            set(&["execution", "stdout_truncated"], json!("yes")),
+            "field must be a boolean when present",
+        )?;
+        violation(
+            set(&["execution", "cancellation_requested"], json!(1)),
+            "field must be a boolean when present",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn keeps_signal_termination_and_negative_exit_codes_representable() -> Result<(), String> {
+        // A completed observation terminated by signal: exit status null, the
+        // signal retained, execution state `failed`.
+        valid(|record| {
+            set(&["execution", "state"], json!("failed"))(record);
+            set(&["execution", "exit_status"], json!(null))(record);
+            set(&["execution", "exit_signal"], json!(6))(record);
+        })?;
+        // A Windows access violation is a negative exit code, not a malformed
+        // receipt: the signed producer type must validate.
+        valid(|record| {
+            set(&["execution", "state"], json!("failed"))(record);
+            set(&["execution", "exit_status"], json!(-1073741819))(record);
+        })?;
+        // An exit status paired with a signal is not a producer shape.
+        violation(
+            |record| {
+                set(&["execution", "state"], json!("failed"))(record);
+                set(&["execution", "exit_status"], json!(1))(record);
+                set(&["execution", "exit_signal"], json!(6))(record);
+            },
+            "`failed` requires a non-zero exit status or a retained termination signal",
+        )?;
+        // A clean exit paired with a signal is not a producer shape.
+        violation(
+            set(&["execution", "exit_signal"], json!(6)),
+            "`passed` is a clean exit and carries no termination signal",
+        )?;
+        // A timed-out run carries no signal (the rails drop it off the
+        // completed disposition only).
+        violation(
+            |record| {
+                set(
+                    &["execution"],
+                    execution_body("timed_out", "timed_out", json!(null)),
+                )(record);
+                set(&["execution", "exit_signal"], json!(9))(record);
+            },
+            "`timed_out` carries no termination signal",
         )?;
         Ok(())
     }
