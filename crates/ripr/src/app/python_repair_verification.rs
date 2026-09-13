@@ -812,14 +812,6 @@ fn rejected_before_execution_observation(disposition: &str, reason: String) -> O
     }
 }
 
-fn outcome_reason(rendered: &str) -> Option<String> {
-    let value: Value = serde_json::from_str(rendered.trim()).ok()?;
-    value
-        .get("reason")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-}
-
 /// The closed mapping from the bounded observation to the execution
 /// vocabulary. `completed` with the route's accepted exit code (0) is the
 /// only pass; every other terminal state keeps its own name so timeout,
