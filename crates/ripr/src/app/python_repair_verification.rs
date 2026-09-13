@@ -672,6 +672,7 @@ fn detect_config_profile(root: &Path) -> String {
 /// rails' committed response. Host-local paths (the root identity, the
 /// artifact paths) are deliberately dropped here; the digests are the
 /// commitments.
+#[derive(Debug)]
 struct ObservedExecution {
     state: &'static str,
     process_disposition: String,
@@ -714,7 +715,12 @@ fn unavailable_route_observation() -> ObservedExecution {
 }
 
 /// Executes ONLY the packet's producer-owned verify route through the bounded
-/// rails and maps the observation onto the closed execution vocabulary.
+/// rails and maps the observation onto the closed execution vocabulary. The
+/// rails' typed response is the single source: when the rails executed the
+/// route but could not commit the observation artifact, the observation and
+/// its commitments are still retained here and the commit failure is named in
+/// the execution reason — a run that happened is never recorded as one that
+/// did not.
 fn execute_packet_route(root: &Path, packet_path: &Path) -> Result<ObservedExecution, String> {
     let result_path = root.join(EXECUTION_RESULT_COMPAT_PATH);
     let outcome = crate::app::verification_execution::execute_verify_packet(
@@ -726,31 +732,16 @@ fn execute_packet_route(root: &Path, packet_path: &Path) -> Result<ObservedExecu
         true,
         None,
     );
-    if outcome.failed {
-        let state = match outcome.disposition {
-            "verification_command_not_found" => "unavailable",
-            _ => "invalid",
-        };
-        let reason =
-            outcome_reason(&outcome.rendered).unwrap_or_else(|| outcome.disposition.to_string());
-        return Ok(ObservedExecution {
-            state,
-            process_disposition: "rejected_before_execution".to_string(),
-            exit_status: None,
-            exit_signal: None,
-            stdout_sha256: None,
-            stderr_sha256: None,
-            stdout_bytes: None,
-            stderr_bytes: None,
-            stdout_truncated: false,
-            stderr_truncated: false,
-            currentness: None,
-            duration_ms: None,
-            cancellation_requested: false,
-            reason: Some(reason),
-        });
-    }
-    let response: Value = serde_json::from_str(outcome.rendered.trim()).map_err(|error| {
+    map_execution_response(&outcome.rendered)
+}
+
+/// Maps the bounded rails' typed JSON response onto the receipt's execution
+/// observation. A response with `executed: true` and a `result` object keeps
+/// its full observation even when the rails could not commit the artifact
+/// (the reason names the commit failure); every other response is a typed
+/// pre-execution rejection with no observation to retain.
+fn map_execution_response(rendered: &str) -> Result<ObservedExecution, String> {
+    let response: Value = serde_json::from_str(rendered.trim()).map_err(|error| {
         format!(
             "python repair verification: the committed execution response is not well-formed JSON: {error}"
         )
@@ -758,35 +749,67 @@ fn execute_packet_route(root: &Path, packet_path: &Path) -> Result<ObservedExecu
     let result = response
         .get("result")
         .and_then(Value::as_object)
-        .ok_or_else(|| {
-            "python repair verification: the committed execution response carries no result"
-                .to_string()
-        })?;
-    let disposition = require_string("execution result", result, "process_disposition")?;
-    let exit_status = result.get("exit_status").and_then(Value::as_i64);
-    let state = map_execution_state(&disposition, exit_status)?;
-    Ok(ObservedExecution {
+        .filter(|_| response.get("executed").and_then(Value::as_bool) == Some(true));
+    if let Some(result) = result {
+        let disposition = require_string("execution result", result, "process_disposition")?;
+        let exit_status = result.get("exit_status").and_then(Value::as_i64);
+        let exit_signal = result.get("exit_signal").and_then(Value::as_i64);
+        let state = map_execution_state(&disposition, exit_status, exit_signal)?;
+        return Ok(ObservedExecution {
+            state,
+            process_disposition: disposition,
+            exit_status: exit_status.map(|value| value as i32),
+            exit_signal: exit_signal.map(|value| value as i32),
+            stdout_sha256: opt_string(result, "stdout_sha256"),
+            stderr_sha256: opt_string(result, "stderr_sha256"),
+            stdout_bytes: opt_u64(result, "stdout_bytes"),
+            stderr_bytes: opt_u64(result, "stderr_bytes"),
+            stdout_truncated: opt_bool(result, "stdout_truncated").unwrap_or(false),
+            stderr_truncated: opt_bool(result, "stderr_truncated").unwrap_or(false),
+            currentness: opt_string(result, "currentness"),
+            duration_ms: opt_u64(result, "duration_ms"),
+            cancellation_requested: opt_bool(result, "cancellation_requested").unwrap_or(false),
+            reason: response
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        });
+    }
+    let disposition = response
+        .get("disposition")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let reason = response
+        .get("reason")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("the bounded execution rails reported `{disposition}`"));
+    Ok(rejected_before_execution_observation(disposition, reason))
+}
+
+/// The typed observation for a pre-execution rejection: nothing ran, no
+/// exit status, no output commitments.
+fn rejected_before_execution_observation(disposition: &str, reason: String) -> ObservedExecution {
+    let state = match disposition {
+        "verification_command_not_found" => "unavailable",
+        _ => "invalid",
+    };
+    ObservedExecution {
         state,
-        process_disposition: disposition,
-        exit_status: exit_status.map(|value| value as i32),
-        exit_signal: result
-            .get("exit_signal")
-            .and_then(Value::as_i64)
-            .map(|value| value as i32),
-        stdout_sha256: opt_string(result, "stdout_sha256"),
-        stderr_sha256: opt_string(result, "stderr_sha256"),
-        stdout_bytes: opt_u64(result, "stdout_bytes"),
-        stderr_bytes: opt_u64(result, "stderr_bytes"),
-        stdout_truncated: opt_bool(result, "stdout_truncated").unwrap_or(false),
-        stderr_truncated: opt_bool(result, "stderr_truncated").unwrap_or(false),
-        currentness: opt_string(result, "currentness"),
-        duration_ms: opt_u64(result, "duration_ms"),
-        cancellation_requested: opt_bool(result, "cancellation_requested").unwrap_or(false),
-        reason: response
-            .get("reason")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    })
+        process_disposition: "rejected_before_execution".to_string(),
+        exit_status: None,
+        exit_signal: None,
+        stdout_sha256: None,
+        stderr_sha256: None,
+        stdout_bytes: None,
+        stderr_bytes: None,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        currentness: None,
+        duration_ms: None,
+        cancellation_requested: false,
+        reason: Some(reason),
+    }
 }
 
 fn outcome_reason(rendered: &str) -> Option<String> {
@@ -801,17 +824,22 @@ fn outcome_reason(rendered: &str) -> Option<String> {
 /// vocabulary. `completed` with the route's accepted exit code (0) is the
 /// only pass; every other terminal state keeps its own name so timeout,
 /// cancellation, spawn failure, non-zero exit, and unobservable runs stay
-/// distinct.
+/// distinct. A completed process terminated by signal carries no exit code
+/// but retains the signal, and maps to `failed` — dropping the observation
+/// would lose a real terminal run. A completed observation carrying neither
+/// status nor signal is malformed and fails closed.
 fn map_execution_state(
     disposition: &str,
     exit_status: Option<i64>,
+    exit_signal: Option<i64>,
 ) -> Result<&'static str, String> {
     match disposition {
         "completed" => match exit_status {
             Some(0) => Ok("passed"),
             Some(_) => Ok("failed"),
+            None if exit_signal.is_some() => Ok("failed"),
             None => Err(
-                "python repair verification: a completed execution carries no exit status"
+                "python repair verification: a completed execution carries neither an exit status nor a termination signal"
                     .to_string(),
             ),
         },
@@ -1543,27 +1571,124 @@ mod python_repair_verification_semantics {
     #[test]
     fn execution_mapping_keeps_every_terminal_state_distinct() -> Result<(), String> {
         let cases = [
-            ("completed", Some(0i64), "passed"),
-            ("completed", Some(1), "failed"),
-            ("completed", Some(-2), "failed"),
-            ("timed_out", None, "timed_out"),
-            ("cancelled", None, "cancelled"),
-            ("failed_to_start", None, "unavailable"),
-            ("output_limit_exceeded", None, "invalid"),
+            ("completed", Some(0i64), None, "passed"),
+            ("completed", Some(1), None, "failed"),
+            ("completed", Some(-2), None, "failed"),
+            // A completed process terminated by signal retains the signal as
+            // a real failed terminal run instead of losing the observation.
+            ("completed", None, Some(6), "failed"),
+            ("timed_out", None, None, "timed_out"),
+            ("cancelled", None, None, "cancelled"),
+            ("failed_to_start", None, None, "unavailable"),
+            ("output_limit_exceeded", None, None, "invalid"),
         ];
-        for (disposition, exit_status, expected) in cases {
-            let mapped = map_execution_state(disposition, exit_status)?;
+        for (disposition, exit_status, exit_signal, expected) in cases {
+            let mapped = map_execution_state(disposition, exit_status, exit_signal)?;
             if mapped != expected {
                 return Err(format!(
-                    "execution mapping of `{disposition}` with {exit_status:?} produced `{mapped}`, expected `{expected}`"
+                    "execution mapping of `{disposition}` with {exit_status:?}/{exit_signal:?} produced `{mapped}`, expected `{expected}`"
                 ));
             }
         }
-        if map_execution_state("completed", None).is_ok() {
-            return Err("a completed execution without an exit status must be refused".to_string());
+        if map_execution_state("completed", None, None).is_ok() {
+            return Err(
+                "a completed execution with neither an exit status nor a signal must be refused"
+                    .to_string(),
+            );
         }
-        if map_execution_state("mystery", Some(0)).is_ok() {
+        if map_execution_state("mystery", Some(0), None).is_ok() {
             return Err("an unknown disposition must be refused".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_write_failed_observation_still_retains_its_run() -> Result<(), String> {
+        // The rails executed the route and validated the observation but could
+        // not commit the observation artifact: the receipt keeps the real run
+        // (state, disposition, exit status, commitments) and the commit
+        // failure is named in the reason — it must never be recorded as
+        // `rejected_before_execution` with the commitments dropped.
+        let rendered = json!({
+            "schema_version": "0.1",
+            "disposition": "verification_result_write_failed",
+            "reason": "commit result failed: target/ripr/workflow/execution.json is a directory",
+            "executed": true,
+            "result_committed": false,
+            "result": {
+                "process_disposition": "completed",
+                "exit_status": 0,
+                "exit_signal": null,
+                "stdout_sha256": "1010101010101010101010101010101010101010101010101010101010101010",
+                "stderr_sha256": "2020202020202020202020202020202020202020202020202020202020202020",
+                "stdout_bytes": 10,
+                "stderr_bytes": 0,
+                "stdout_truncated": false,
+                "stderr_truncated": false,
+                "currentness": "current",
+                "duration_ms": 25,
+                "cancellation_requested": false,
+            },
+        })
+        .to_string();
+        let observed = map_execution_response(&rendered)?;
+        if observed.state != "passed" {
+            return Err(format!(
+                "a write-failed run must retain its real state, got `{}`",
+                observed.state
+            ));
+        }
+        if observed.process_disposition != "completed" {
+            return Err("the run's process disposition must be retained".to_string());
+        }
+        if observed.exit_status != Some(0) || observed.stdout_sha256.is_none() {
+            return Err("the run's commitments must be retained".to_string());
+        }
+        let reason = observed
+            .reason
+            .as_deref()
+            .ok_or("the commit failure must be named in the reason")?;
+        if !reason.contains("commit result failed") {
+            return Err(format!("the reason must name the commit failure: {reason}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_pre_execution_refusal_keeps_its_typed_rejection() -> Result<(), String> {
+        // A policy refusal (executed=false, no result) records no exit status
+        // and no commitments, and names the refusal reason.
+        let rendered = json!({
+            "schema_version": "0.1",
+            "disposition": "verification_rejected_policy",
+            "reason": "execution requires explicit --authorize",
+            "executed": false,
+            "result_committed": false,
+        })
+        .to_string();
+        let observed = map_execution_response(&rendered)?;
+        if observed.state != "invalid"
+            || observed.process_disposition != "rejected_before_execution"
+        {
+            return Err(format!(
+                "a refusal must stay a typed pre-execution rejection, got {observed:?}"
+            ));
+        }
+        if observed.exit_status.is_some() || observed.stdout_sha256.is_some() {
+            return Err("a refusal retains no run commitments".to_string());
+        }
+        let reason = observed
+            .reason
+            .as_deref()
+            .ok_or("the refusal must retain its reason")?;
+        if !reason.contains("--authorize") {
+            return Err(format!("the refusal reason must be retained: {reason}"));
+        }
+        // A malformed response (no executed flag, no result, no disposition)
+        // is a typed invalid observation, never a panic and never a pass.
+        let observed = map_execution_response("{}")?;
+        if observed.state != "invalid" {
+            return Err("an unrecognizable rails response must map to invalid".to_string());
         }
         Ok(())
     }
