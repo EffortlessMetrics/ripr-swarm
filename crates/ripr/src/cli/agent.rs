@@ -420,7 +420,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 .to_string(),
         );
     }
-    if verify_authorized && phase != AgentRepairPhase::Verify {
+    // The rollback demand belongs to the verify phase exactly like the
+    // authorization pair: accepting it on another phase would silently drop
+    // the operator's requested rollback.
+    if (verify_authorized || verify_rollback) && phase != AgentRepairPhase::Verify {
         return Err(
             "agent repair --verify-authorized/--verify-authority/--verify-rollback are only valid with --phase verify"
                 .to_string(),
@@ -445,7 +448,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     match phase {
         AgentRepairPhase::Before => {
             if attempt_id.is_some() {
-                return Err("agent repair --attempt is only valid with --phase after".to_string());
+                return Err(
+                    "agent repair --attempt is only valid with --phase after or --phase verify"
+                        .to_string(),
+                );
             }
             if seam_id.is_none() {
                 return Err("agent repair --phase before requires --seam-id <id>".to_string());
@@ -1271,6 +1277,58 @@ mod tests {
     }
 
     #[test]
+    fn agent_repair_refuses_verify_rollback_outside_the_verify_phase() -> Result<(), String> {
+        // A rollback demand on another phase must be refused at parse time,
+        // never silently consumed and dropped.
+        for argv in [
+            vec![
+                "repair",
+                "--seam-id",
+                "seam:sample",
+                "--phase",
+                "before",
+                "--verify-rollback",
+            ],
+            vec![
+                "repair",
+                "--attempt",
+                "repair-attempt-0123456789abcdef01234567",
+                "--phase",
+                "after",
+                "--verify-rollback",
+            ],
+            vec!["repair", "--seam-id", "seam:sample", "--verify-rollback"],
+        ] {
+            let error = match parse_agent_args(&args(&argv)) {
+                Ok(parsed) => return Err(format!("expected {argv:?} to fail, got {parsed:?}")),
+                Err(error) => error,
+            };
+            assert!(
+                error.contains("only valid with --phase verify"),
+                "{argv:?} reported {error}"
+            );
+        }
+        // On the verify phase itself, a rollback without the authorization
+        // pair still refuses with its own named guard.
+        let error = match parse_agent_args(&args(&[
+            "repair",
+            "--attempt",
+            "repair-attempt-0123456789abcdef01234567",
+            "--phase",
+            "verify",
+            "--verify-rollback",
+        ])) {
+            Ok(parsed) => return Err(format!("expected verify rollback to fail, got {parsed:?}")),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("--verify-rollback requires --verify-authorized"),
+            "verify-phase rollback reported {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn agent_repair_rejects_ambiguous_or_phase_wrong_identity() -> Result<(), String> {
         for (argv, needle) in [
             (vec!["repair", "--phase", "before"], "requires --seam-id"),
@@ -1280,7 +1338,7 @@ mod tests {
                     "--attempt",
                     "repair-attempt-0123456789abcdef01234567",
                 ],
-                "only valid with --phase after",
+                "only valid with --phase after or --phase verify",
             ),
             (
                 vec!["repair", "--phase", "after"],
