@@ -1164,6 +1164,7 @@ fn compare_movement(
 // Rollback
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 struct RollbackOutcome {
     state: &'static str,
     reason: Option<String>,
@@ -1173,14 +1174,24 @@ struct RollbackOutcome {
 /// Rolls the applied edit back through the bounded git rail and demonstrates
 /// the result: after restoring the changed paths, the re-evaluated edit cage
 /// must be compliant with NO changed paths left on the declared edit surface,
-/// at an unchanged HEAD. Paths outside the cage (the driver's own workflow
-/// artifacts) are not edit residue. Any failure is a typed `blocked`
+/// at the attempt's unchanged HEAD. Paths outside the cage (the driver's own
+/// workflow artifacts) are not edit residue. Any failure is a typed `blocked`
 /// disposition — never a silent skip.
+///
+/// The restore is refused BEFORE any destructive command when it would not
+/// reproduce the baseline: `git checkout --` restores the index copy, so a
+/// path the baseline records as already modified against its index entry (a
+/// pre-attempt dirty target the cage deliberately tolerates) carries
+/// pre-attempt worktree bytes that exist nowhere git can restore, and a
+/// checkout would destroy them. The proof additionally requires the
+/// post-rollback HEAD to equal `expected_head` — the head the revalidation
+/// pinned — so a head moved mid-phase can never ride into a proved rollback.
 fn run_rollback(
     root: &Path,
     changed_paths: &[String],
     allowed_paths: &std::collections::BTreeSet<String>,
     baseline: &crate::edit_cage::AttemptBaseline,
+    expected_head: &str,
 ) -> RollbackOutcome {
     // Only the edit surface is restored: the applied edit is the surface
     // change set, while paths outside the cage are the driver's own workflow
@@ -1200,6 +1211,19 @@ fn run_rollback(
             ),
             post_rollback_head: None,
         };
+    }
+    // Destruction guard: verify per path that the index copy a checkout would
+    // restore is exactly the baseline content. A guard that cannot complete
+    // its check refuses the restore — an unverifiable restore is treated like
+    // a destructive one.
+    for path in changed_paths {
+        if let Some(reason) = checkout_loss_reason(root, path, baseline) {
+            return RollbackOutcome {
+                state: "blocked",
+                reason: Some(reason),
+                post_rollback_head: None,
+            };
+        }
     }
     let mut args: Vec<&str> = Vec::with_capacity(changed_paths.len() + 2);
     args.push("checkout");
@@ -1257,23 +1281,36 @@ fn run_rollback(
         Err(_) => Vec::new(),
     };
     match (proof, head) {
-        (Ok((delta, _)), Ok(head)) if delta.comparable && surface_residue.is_empty() => {
+        (Ok((delta, _)), Ok(head))
+            if delta.comparable && surface_residue.is_empty() && head == expected_head =>
+        {
             RollbackOutcome {
                 state: "proved",
                 reason: None,
                 post_rollback_head: Some(head),
             }
         }
-        (Ok((delta, _)), head_outcome) => RollbackOutcome {
-            state: "blocked",
-            reason: Some(format!(
-                "the worktree still carries edit residue after the restore: [{residue}] (comparable {comparable}, head {post_rollback_head:?})",
-                residue = surface_residue.join(", "),
-                comparable = delta.comparable,
-                post_rollback_head = head_outcome
-            )),
-            post_rollback_head: head_outcome.ok(),
-        },
+        (Ok((delta, _)), head_outcome) => {
+            let head_note = match &head_outcome {
+                Ok(head) if head == expected_head => format!("head {head}"),
+                Ok(head) => format!(
+                    "head {head} does not match the attempt's pinned head {expected_head}; a moved head can never prove a rollback"
+                ),
+                Err(error) => format!("head unreadable: {error}"),
+            };
+            RollbackOutcome {
+                state: "blocked",
+                reason: Some(format!(
+                    "the worktree still carries edit residue after the restore: [{residue}] (comparable {comparable}, {head_note})",
+                    residue = surface_residue.join(", "),
+                    comparable = delta.comparable,
+                )),
+                // The blocked disposition carries no restored head; the head
+                // observation rides in the reason text instead, matching the
+                // offline validator's rollback contract.
+                post_rollback_head: None,
+            }
+        }
         (Err(error), _) => RollbackOutcome {
             state: "blocked",
             reason: Some(format!(
@@ -1282,6 +1319,109 @@ fn run_rollback(
             post_rollback_head: None,
         },
     }
+}
+
+/// The destruction guard for one surface path: returns a typed refusal reason
+/// when `git checkout -- <path>` would not reproduce the baseline content, or
+/// `None` when the restore is exact. `git checkout --` restores the index
+/// copy, so the guard requires the current index entry to still be the
+/// baseline's entry and that entry's blob content to equal the baseline
+/// worktree content (a path already modified against the index at baseline
+/// carries pre-attempt bytes that exist nowhere git can restore).
+fn checkout_loss_reason(
+    root: &Path,
+    path: &str,
+    baseline: &crate::edit_cage::AttemptBaseline,
+) -> Option<String> {
+    let baseline_entry = match baseline.index_entry(path) {
+        None => {
+            return Some(format!(
+                "rollback refuses to restore `{path}`: the baseline records no git index entry for it, so `git checkout --` cannot restore it; restore the exact pre-attempt content manually"
+            ));
+        }
+        Some(entry) => entry.to_string(),
+    };
+    let baseline_digest = baseline.worktree_digest(path);
+    let stage = match git_text_with_limit(root, &["ls-files", "--stage", "--", path]) {
+        Ok(stage) => stage,
+        Err(error) => {
+            return Some(format!(
+                "rollback refuses to restore `{path}`: the current git index entry could not be read ({error}); an unverifiable restore is treated like a destructive one"
+            ));
+        }
+    };
+    let current_entry = stage
+        .split('\n')
+        .next()
+        .and_then(|line| line.split_once('\t'))
+        .map(|(metadata, _)| metadata.trim().to_string())
+        .unwrap_or_default();
+    if current_entry != baseline_entry {
+        return Some(format!(
+            "rollback refuses to restore `{path}`: the git index moved since the baseline (baseline entry `{baseline_entry}`, current `{current_entry}`), so a checkout would restore something that is not the pre-edit state"
+        ));
+    }
+    let Some(digest) = baseline_digest else {
+        // The baseline worktree state was not a regular file (missing,
+        // symlink, or unprobeable): nothing of it exists only in the
+        // worktree, and the checkout restores the index copy.
+        return None;
+    };
+    let Some(object) = baseline_entry.split_ascii_whitespace().nth(1) else {
+        return Some(format!(
+            "rollback refuses to restore `{path}`: the baseline index entry `{baseline_entry}` is malformed"
+        ));
+    };
+    let blob = match git_bytes_with_limit(root, &["cat-file", "blob", object]) {
+        Ok(blob) => blob,
+        Err(error) => {
+            return Some(format!(
+                "rollback refuses to restore `{path}`: the baseline index blob `{object}` could not be read ({error}); an unverifiable restore is treated like a destructive one"
+            ));
+        }
+    };
+    if sha256_hex(&blob) != digest {
+        return Some(format!(
+            "rollback refuses to restore `{path}`: the baseline records the path as already modified against its index copy before the attempt, so the pre-attempt worktree content exists nowhere git can restore and a checkout would destroy it; restore the exact pre-attempt content manually"
+        ));
+    }
+    None
+}
+
+fn git_text_with_limit(root: &Path, args: &[&str]) -> Result<String, String> {
+    let command = args.first().copied().unwrap_or("git");
+    let output = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        args,
+        Duration::from_mins(1),
+        4 * 1024 * 1024,
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {command} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    String::from_utf8(output.stdout)
+        .map(|text| text.trim_end().to_string())
+        .map_err(|error| format!("git {command} emitted non-UTF-8 output: {error}"))
+}
+
+fn git_bytes_with_limit(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let command = args.first().copied().unwrap_or("git");
+    let output = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        args,
+        Duration::from_mins(1),
+        4 * 1024 * 1024,
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {command} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(output.stdout)
 }
 
 // ---------------------------------------------------------------------------
@@ -1483,7 +1623,8 @@ pub(crate) fn run_verification_phase(options: VerificationOptions<'_>) -> Result
         &revalidated.manifest_seam_id,
     )?;
 
-    // 8. Rollback proof or an explicit blocked/not_run disposition.
+    // 8. Rollback proof or an explicit blocked/not_run disposition. The proof
+    // must land on the exact head the revalidation pinned.
     let rollback = if options.rollback {
         let baseline = load_baseline(
             &root,
@@ -1495,6 +1636,7 @@ pub(crate) fn run_verification_phase(options: VerificationOptions<'_>) -> Result
             &revalidated.changed_paths,
             &revalidated.allowed_surface,
             &baseline,
+            &revalidated.repository_head,
         )
     } else {
         RollbackOutcome {
@@ -1969,5 +2111,224 @@ mod python_repair_verification_semantics {
                 );
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Rollback destruction guard and head pin (real git fixtures).
+    // ------------------------------------------------------------------
+
+    struct RollbackFixture {
+        root: PathBuf,
+    }
+
+    impl Drop for RollbackFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn rollback_git(root: &Path, args: &[&str]) -> Result<(), String> {
+        let output = std::process::Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .output()
+            .map_err(|error| format!("spawn git {args:?} failed: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(())
+    }
+
+    fn rollback_fixture(label: &str) -> Result<RollbackFixture, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-verify-rollback-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("create fixture tests: {error}"))?;
+        std::fs::write(root.join("tests/pricing.rs"), "fn boundary() {}\n")
+            .map_err(|error| format!("write selected test: {error}"))?;
+        rollback_git(&root, &["-c", "init.templateDir=", "init", "-q"])?;
+        rollback_git(&root, &["config", "user.email", "ripr@example.invalid"])?;
+        rollback_git(&root, &["config", "user.name", "RIPR Test"])?;
+        rollback_git(&root, &["config", "commit.gpgSign", "false"])?;
+        rollback_git(&root, &["config", "core.autocrlf", "false"])?;
+        rollback_git(&root, &["config", "core.hooksPath", ".no-hooks"])?;
+        rollback_git(&root, &["add", "."])?;
+        rollback_git(&root, &["commit", "-qm", "baseline"])?;
+        Ok(RollbackFixture { root })
+    }
+
+    fn rollback_policy() -> Result<crate::edit_cage::EditCagePolicy, String> {
+        Ok(crate::edit_cage::EditCagePolicy {
+            selected_target: crate::edit_cage::CagePathRule::exact("tests/pricing.rs")?,
+            allowed_edit_surface: vec![crate::edit_cage::CagePathRule::exact(
+                "tests/pricing.rs",
+            )?],
+            forbidden_paths: Vec::new(),
+            expected_operational_writes: Vec::new(),
+        })
+    }
+
+    fn rollback_allowed() -> std::collections::BTreeSet<String> {
+        let mut allowed = std::collections::BTreeSet::new();
+        allowed.insert("tests/pricing.rs".to_string());
+        allowed
+    }
+
+    #[test]
+    fn rollback_proves_only_on_the_pinned_head() -> Result<(), String> {
+        let fixture = rollback_fixture("head-pin")?;
+        let head = crate::agent::artifact::current_git_head(&fixture.root)?;
+        let baseline =
+            crate::edit_cage::capture_attempt_baseline(&fixture.root, &rollback_policy()?)?;
+        std::fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            "fn boundary() { assert!(true); }\n",
+        )
+        .map_err(|error| format!("write applied edit: {error}"))?;
+
+        let proved = run_rollback(
+            &fixture.root,
+            &["tests/pricing.rs".to_string()],
+            &rollback_allowed(),
+            &baseline,
+            &head,
+        );
+        if proved.state != "proved" {
+            return Err(format!(
+                "a clean restore at the pinned head must prove, got {proved:?}"
+            ));
+        }
+        if proved.post_rollback_head.as_deref() != Some(head.as_str()) {
+            return Err("a proved rollback must record the pinned head".to_string());
+        }
+
+        // A different expected head can never ride into a proof: the same
+        // clean tree blocks with the head mismatch named.
+        let wrong_head = "b".repeat(40);
+        let blocked = run_rollback(
+            &fixture.root,
+            &["tests/pricing.rs".to_string()],
+            &rollback_allowed(),
+            &baseline,
+            &wrong_head,
+        );
+        if blocked.state != "blocked" {
+            return Err("a rollback against a different pinned head must block".to_string());
+        }
+        let reason = blocked
+            .reason
+            .as_deref()
+            .ok_or("the head-mismatch block must carry a reason")?;
+        if !reason.contains("does not match the attempt's pinned head") {
+            return Err(format!("the block must name the head mismatch: {reason}"));
+        }
+        if blocked.post_rollback_head.is_some() {
+            return Err("a blocked rollback carries no restored head".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rollback_refuses_to_destroy_pre_attempt_dirty_content() -> Result<(), String> {
+        let fixture = rollback_fixture("pre-dirty")?;
+        // The selected target is already modified (unstaged) BEFORE the
+        // attempt: the cage deliberately tolerates this, and the baseline
+        // captures the dirty content.
+        std::fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            "fn boundary() { /* pre-existing user edit */ }\n",
+        )
+        .map_err(|error| format!("write pre-existing dirty target: {error}"))?;
+        let baseline =
+            crate::edit_cage::capture_attempt_baseline(&fixture.root, &rollback_policy()?)?;
+        // The applied edit lands on top of the pre-existing dirty content.
+        std::fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            "fn boundary() { /* pre-existing user edit */ assert!(true); }\n",
+        )
+        .map_err(|error| format!("write applied edit: {error}"))?;
+        let head = crate::agent::artifact::current_git_head(&fixture.root)?;
+
+        let outcome = run_rollback(
+            &fixture.root,
+            &["tests/pricing.rs".to_string()],
+            &rollback_allowed(),
+            &baseline,
+            &head,
+        );
+        if outcome.state != "blocked" {
+            return Err(format!(
+                "a rollback that cannot reproduce the baseline must block, got {outcome:?}"
+            ));
+        }
+        let reason = outcome
+            .reason
+            .as_deref()
+            .ok_or("the destruction refusal must carry a reason")?;
+        if !reason.contains("already modified against its index copy") {
+            return Err(format!("the refusal must name the pre-dirty content: {reason}"));
+        }
+        if outcome.post_rollback_head.is_some() {
+            return Err("a refused rollback carries no restored head".to_string());
+        }
+        // The refusal happens BEFORE any destructive command: both the
+        // pre-existing edit and the applied edit are still on disk.
+        let content = std::fs::read_to_string(fixture.root.join("tests/pricing.rs"))
+            .map_err(|error| format!("read target after refused rollback: {error}"))?;
+        if !content.contains("pre-existing user edit") || !content.contains("assert!(true)") {
+            return Err(
+                "the refused rollback must leave every worktree byte in place".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rollback_refuses_a_moved_index() -> Result<(), String> {
+        let fixture = rollback_fixture("moved-index")?;
+        let baseline =
+            crate::edit_cage::capture_attempt_baseline(&fixture.root, &rollback_policy()?)?;
+        std::fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            "fn boundary() { assert!(true); }\n",
+        )
+        .map_err(|error| format!("write applied edit: {error}"))?;
+        // Staging the applied edit moves the index: a checkout would restore
+        // the staged edit itself, not roll anything back.
+        rollback_git(&fixture.root, &["add", "tests/pricing.rs"])?;
+        let head = crate::agent::artifact::current_git_head(&fixture.root)?;
+
+        let outcome = run_rollback(
+            &fixture.root,
+            &["tests/pricing.rs".to_string()],
+            &rollback_allowed(),
+            &baseline,
+            &head,
+        );
+        if outcome.state != "blocked" {
+            return Err(format!("a rollback over a moved index must block, got {outcome:?}"));
+        }
+        let reason = outcome
+            .reason
+            .as_deref()
+            .ok_or("the moved-index refusal must carry a reason")?;
+        if !reason.contains("the git index moved since the baseline") {
+            return Err(format!("the refusal must name the moved index: {reason}"));
+        }
+        let content = std::fs::read_to_string(fixture.root.join("tests/pricing.rs"))
+            .map_err(|error| format!("read target after refused rollback: {error}"))?;
+        if !content.contains("assert!(true)") {
+            return Err("the refused rollback must leave the worktree untouched".to_string());
+        }
+        Ok(())
     }
 }
