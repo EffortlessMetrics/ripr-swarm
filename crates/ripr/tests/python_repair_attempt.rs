@@ -1555,6 +1555,20 @@ fn write_verify_trust_manifest(
     attempt_id: &str,
     target_path: &str,
 ) -> Result<(), String> {
+    write_verify_trust_manifest_named(
+        root,
+        attempt_id,
+        target_path,
+        "target/ripr/trust-manifest.json",
+    )
+}
+
+fn write_verify_trust_manifest_named(
+    root: &Path,
+    attempt_id: &str,
+    target_path: &str,
+    manifest_path: &str,
+) -> Result<(), String> {
     let head = current_head(root)?;
     let row = serde_json::json!({
         "attempt_id": attempt_id,
@@ -1592,7 +1606,7 @@ fn write_verify_trust_manifest(
     });
     let text = serde_json::to_string_pretty(&manifest)
         .map_err(|error| format!("serialize fixture manifest: {error}"))?;
-    let path = root.join("target/ripr/trust-manifest.json");
+    let path = root.join(manifest_path);
     std::fs::write(&path, text).map_err(|error| format!("write {}: {error}", path.display()))
 }
 
@@ -1739,6 +1753,25 @@ fn verification_phase_records_execution_and_movement_separately() -> Result<(), 
             non_claims.len()
         ));
     }
+
+    // The verification run leaves no intermediate staging residue: the fresh
+    // after snapshot is published atomically and its staging file is removed.
+    let workflow = fixture.root.join("target/ripr/workflow");
+    let mut residue = Vec::new();
+    for entry in std::fs::read_dir(&workflow)
+        .map_err(|error| format!("read {}: {error}", workflow.display()))?
+    {
+        let entry = entry.map_err(|error| format!("read workflow entry: {error}"))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with("after-verification.repo-exposure.json.tmp-") {
+            residue.push(name);
+        }
+    }
+    if !residue.is_empty() {
+        return Err(format!(
+            "the verification run left staging residue: {residue:?}"
+        ));
+    }
     Ok(())
 }
 
@@ -1874,6 +1907,21 @@ fn verification_rollback_restores_the_tree_and_records_the_proof() -> Result<(),
             "the rollback proof was not recorded as proved: {rollback:?}"
         ));
     }
+    // The proof must land on the exact head the receipt pins: a proof at any
+    // other head is not a rollback demonstration.
+    let recorded_head = rollback
+        .get("post_rollback_head")
+        .and_then(Value::as_str)
+        .ok_or("the rollback proof does not name the restored head")?;
+    let receipt_head = receipt
+        .get("repository_head")
+        .and_then(Value::as_str)
+        .ok_or("the receipt carries no repository head")?;
+    if recorded_head != receipt_head {
+        return Err(format!(
+            "the rollback proof head {recorded_head} does not match the receipt's pinned head {receipt_head}"
+        ));
+    }
     if rollback
         .get("post_rollback_head")
         .and_then(Value::as_str)
@@ -1894,6 +1942,63 @@ fn verification_rollback_restores_the_tree_and_records_the_proof() -> Result<(),
             "the rollback left worktree residue: {}",
             String::from_utf8_lossy(&status.stdout)
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn verification_refuses_an_earlier_attempt_after_a_later_apply() -> Result<(), String> {
+    let fixture = build_fixture("verify-latest-apply")?;
+    // Both attempts are prepared on the same seam BEFORE any edit, so each
+    // binds the same packet-selected target from the same clean tree. Each
+    // attempt keeps its own manifest file: the retained binding pins the
+    // manifest digest, so the file one binding points at must never change
+    // under it.
+    let seam_id = find_seam_for_target(&fixture.root, TARGET_TEST_FILE)?;
+    for (label, manifest_path) in [
+        ("att-a", "target/ripr/trust-manifest-a.json"),
+        ("att-b", "target/ripr/trust-manifest-b.json"),
+    ] {
+        write_verify_trust_manifest_named(&fixture.root, label, TARGET_TEST_FILE, manifest_path)?;
+        let prepared = run_ripr(
+            &fixture.root,
+            &prepare_args(&seam_id, manifest_path, label)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        )?;
+        require_success(&prepared, &format!("bound before phase for {label}"))?;
+    }
+    let attempt_a = attempt_ids(&fixture)?
+        .first()
+        .cloned()
+        .ok_or("attempt A was not published")?;
+    let attempt_b = attempt_ids(&fixture)?
+        .into_iter()
+        .find(|id| id != &attempt_a)
+        .ok_or("attempt B was not published")?;
+
+    // Apply A, then apply B: each finish measures only its own edit against
+    // its own baseline, and the global apply record now names B.
+    edit_target_file(&fixture)?;
+    let applied_a = run_apply(&fixture, &attempt_a, Some(AUTHORITY))?;
+    require_success(&applied_a, "bound after phase for attempt A")?;
+    edit_target_file(&fixture)?;
+    let applied_b = run_apply(&fixture, &attempt_b, Some(AUTHORITY))?;
+    require_success(&applied_b, "bound after phase for attempt B")?;
+
+    // Verifying A refuses: the latest-apply projection no longer names A.
+    // The refusal is the documented fail-closed boundary (the phase verifies
+    // only the repository's latest applied attempt), and it never writes a
+    // receipt for an attempt it could not revalidate.
+    let refused = run_verify(&fixture, &attempt_a, Some(AUTHORITY), false)?;
+    require_failure(
+        &refused,
+        "verify of an earlier attempt after a later apply",
+        "the apply record names durable attempt",
+    )?;
+    if fixture.root.join(RECEIPT_PATH).exists() {
+        return Err("a refused earlier-attempt verification wrote a receipt".to_string());
     }
     Ok(())
 }

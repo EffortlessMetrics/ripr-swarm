@@ -381,7 +381,19 @@ and optionally `--verify-rollback`. The phase, in order:
    and command identities against the retained #3569 apply record and the
    #3568 binding — digest recomputes plus exact identity agreement,
    re-affirming the retained authorization; any drift refuses with a typed
-   error naming the drifted identity BEFORE anything runs;
+   error naming the drifted identity BEFORE anything runs. The apply record
+   is a repository-global compatibility projection of the LATEST apply, so
+   the phase verifies only the repository's latest applied attempt: verifying
+   an earlier ready attempt after a later apply refuses with the typed
+   apply-record identity error (fail-closed; per-attempt immutable apply
+   records would be a new #3569 publication model). The patch identity is an
+   agreement between retained records — the durable verdict digest and the
+   apply-record pin — not a fresh content re-derivation: the finish-time
+   digest binds the whole-repository delta, which the attempt's own workflow
+   artifacts legitimately change afterwards, so the applied surface is
+   re-derived by exact path names plus cage compliance, and the fresh
+   after-snapshot digest (step 4) is the verify-time content binding. This
+   is a disclosed limit, not a claimed content equality;
 2. executes ONLY the producer-owned typed `CommandSpec` the retained packet
    declares, through the bounded execution rails (cwd/root confinement,
    disclosed environment floor, timeout, bounded output, owned-child
@@ -390,7 +402,13 @@ and optionally `--verify-rollback`. The phase, in order:
    typed `unavailable` execution and runs nothing;
 3. retains the exit/disposition plus stdout/stderr commitments (sha256 over
    the bounded captured bytes; no secrets, no host-local semantic identity
-   in the receipt);
+   in the receipt). The rails' typed response is the single mapping source:
+   when the rails executed the route but could not commit the observation
+   artifact, the observation and its commitments stay in the receipt and the
+   commit failure is named in the execution reason — a run that happened is
+   never recorded as one that did not. A completed observation terminated by
+   signal retains `failed` with the exit signal; a completed observation
+   carrying neither an exit status nor a signal is a typed failure;
 4. reruns the current RIPR analysis against the exact post-edit state,
    binding the current binary/config/input identities;
 5. compares the intended native Python behavior/gap evidence before and
@@ -406,18 +424,30 @@ and optionally `--verify-rollback`. The phase, in order:
    its own block;
 7. supports a rollback proof: the applied edit is restored through the
    bounded git rail and the proof requires the re-evaluated edit surface to
-   carry no residue at an unchanged head; any failure is a typed `blocked`
-   disposition, and an unrequested rollback records `not_run`.
+   carry no residue at the attempt's unchanged head (the post-rollback HEAD
+   must equal the head the revalidation pinned). Before any destructive
+   command, the restore refuses — typed `blocked`, worktree untouched — any
+   path whose baseline the cage records as already modified against its
+   index entry (a pre-attempt dirty target whose pre-attempt worktree bytes
+   exist nowhere git can restore) or whose index entry moved since the
+   baseline; any other failure is a typed `blocked` disposition, and an
+   unrequested rollback records `not_run`.
 
 The offline `python-repair-trust check-verification` validator re-checks the
 manifest/selection digest anchors, the native-identity and target agreement,
 the closed execution (`passed`/`failed`/`timed_out`/`cancelled`/
 `unavailable`/`not_run`/`invalid`) and movement (`closed`/`improved`/
 `unchanged`/`regressed`/`limited`/`stale`/`uncertain`) vocabularies bound to
-their retained process dispositions, output commitments on real runs, typed
-reasons for `stale`/`uncertain`/`limited` movements, the unrelated-finding
-block's row-derived consistency, the rollback evidence, and the standing
-non-claims. No rule derives movement from execution or execution from
+their retained process dispositions, output commitments on real runs, the
+producer-owned execution scalars' types (signed `exit_status`/`exit_signal`,
+non-negative `duration_ms`, boolean truncation/cancellation flags), the
+movement join shapes (a confident state requires the complete before/after
+joins on the receipt's own seam and a recorded state equal to the one its
+headline/oracle transition table implies; `stale`, `uncertain`, and
+`limited` carry only their documented partial shapes with typed reasons),
+the unrelated-finding block's row-derived consistency, the rollback
+evidence, and the standing non-claims plus the standing claim boundary
+verbatim. No rule derives movement from execution or execution from
 movement: `passed`+`unchanged`, `failed`+`improved`,
 `unavailable`+`uncertain`, `passed` riding a stale join, and `closed` next
 to an unrelated regression all remain representable, and a passing execution
@@ -457,9 +487,10 @@ no lifecycle state at all.
   missing or mismatched authorization, tampered retained binding, cage escape
   and production/generated edits, deterministic preparation, state
   distinctness) plus the verification-phase case matrix (execution/movement
-  separation, authorization refusals, stale tree, stale command packet,
-  receipt immutability, rollback proof). Listed in
-  `.ripr/traceability.toml` under this spec.
+  separation with staging-residue cleanliness, authorization refusals, stale
+  tree, stale command packet, receipt immutability, rollback proof with head
+  pin and worktree preservation, the latest-apply verification boundary).
+  Listed in `.ripr/traceability.toml` under this spec.
 - `xtask/src/reports/python_repair_verification.rs::python_repair_verification_semantics`
   — the verification-receipt validator test module (the issue's example
   execution/movement pairs, every execution state, disposition agreement,

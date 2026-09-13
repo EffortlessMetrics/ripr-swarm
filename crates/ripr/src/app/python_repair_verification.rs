@@ -910,7 +910,13 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
     let bytes = std::fs::read(&temporary)
         .map_err(|error| format!("read {} failed: {error}", temporary.display()))?;
     let digest = sha256_hex(&bytes);
-    replace_file_atomically(&path, &bytes)?;
+    let published = replace_file_atomically(&path, &bytes);
+    // The intermediate staging file has served its purpose once its bytes are
+    // read (the publication writes its own temporary and renames); remove it
+    // on both the success and failure paths so verification runs leave no
+    // residue under the workflow directory.
+    let _ = std::fs::remove_file(&temporary);
+    published?;
     Ok((digest, run_status))
 }
 
