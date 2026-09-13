@@ -1,4 +1,4 @@
-# Specs
+| [RIPR-SPEC-0175](RIPR-SPEC-0175-guarded-result-match-observations.md) | proposed | Guarded Result match observations: a test-body `match <direct-call> { Ok(..) => .., Err(..) => guard }` whose scrutinee directly calls the changed owner produces a `guarded_result_match` oracle bound to that callee — strong for an exact error-variant pin in the guard, medium for a concrete downcast pin — with wildcard/no-op arms, message-only diagnostics, non-direct scrutinees, and shadowed callees failing closed (#3709); #3727 Slice A adds parser-backed shadow facts (`nested_fn_names`/`let_bindings`) with a flag-law shadow authority whose fact path is scanner-equivalent and whose lexical fallback runs the byte scanners byte-identically |# Specs
 
 Specs define externally meaningful behavior for `ripr`. They are the source of
 truth for the spec-test-code traceability loop.

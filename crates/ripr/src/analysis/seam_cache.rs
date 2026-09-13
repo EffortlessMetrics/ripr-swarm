@@ -320,6 +320,14 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// WITHOUT the decision — return-value confirmations would read the
 /// missing decision as unobserved and silently under-credit (or, worse,
 /// a future default flip would over-credit) — as live facts.
+/// `1.7` -> `1.8`: the parser-backed shadow facts (#3727 Slice A,
+/// RIPR-SPEC-0175): `FunctionFact`/`TestFact` gain `nested_fn_names` and
+/// `let_bindings`, and both shadow consumers (the `SeamCalleeCall`
+/// relation and the guarded-match scanner) switch their shadow authority
+/// on `used_lexical_fallback` — a warm pre-bump hit would serve
+/// parser-backed files WITHOUT the fact fields, and on those files the
+/// flag law reads empty facts as real "no shadow", so the pre-extension
+/// envelope could silently retire the lexical scanners' defeats.
 ///
 /// Still no bump for #3603/#3608/#3636 themselves: per-file parser
 /// facts are unchanged by the harness registry — it applies
@@ -327,7 +335,7 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// build against the current manifests, and the #3636 reachability
 /// authority runs inside that re-application — so a warm hit cannot
 /// bypass either validation or reachability classification.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.7";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.8";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2779,7 +2787,14 @@ mod tests {
         // decision (RIPR-SPEC-0175), so a warm pre-bump hit would serve
         // routing-form and payload-ignoring facts without the decision as
         // live facts.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.7");
+        // 1.7 -> 1.8: the parser-backed shadow facts (#3727 Slice A,
+        // RIPR-SPEC-0175) — `nested_fn_names`/`let_bindings` on
+        // `FunctionFact`/`TestFact` plus the flag-law shadow-authority
+        // switch in both consumers. A warm pre-bump hit would serve
+        // parser-backed files without the fact fields, and the flag law
+        // reads empty facts on those files as real "no shadow" — silently
+        // retiring the lexical scanners' defeats.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.8");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
