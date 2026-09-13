@@ -68,10 +68,29 @@ fn run_ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
         .map_err(|error| format!("spawn ripr {args:?} failed: {error}"))
 }
 
+/// An empty hooks directory passed via `-c core.hooksPath` on every fixture
+/// git invocation: a host-configured `core.hooksPath` must never run inside
+/// the fixture repository, because a host hook could reject or mutate a
+/// fixture commit. The directory is created empty and portable across
+/// platforms.
+fn hooks_disabled_config(root: &Path) -> Result<Vec<String>, String> {
+    let hooks_dir = root.join("ripr-empty-hooks");
+    std::fs::create_dir_all(&hooks_dir)
+        .map_err(|error| format!("create {} failed: {error}", hooks_dir.display()))?;
+    Ok(vec![
+        "-c".to_string(),
+        format!("core.hooksPath={}", hooks_dir.display()),
+    ])
+}
+
 fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
-    let output = Command::new("git")
-        .current_dir(root)
-        .args(args)
+    let mut command = Command::new("git");
+    command.current_dir(root);
+    for value in hooks_disabled_config(root)? {
+        command.arg(value);
+    }
+    command.args(args);
+    let output = command
         .output()
         .map_err(|error| format!("spawn git {args:?} failed: {error}"))?;
     if output.status.success() {
@@ -620,6 +639,21 @@ fn clean_test_only_edit_binds_prepare_and_apply() -> Result<(), String> {
             "prepared attempt state is not awaiting_edit: {manifest:?}"
         ));
     }
+    // A trust-bound attempt always re-verifies the explicit authorization at
+    // apply time, so the published follow-up command must name the required
+    // flags with an explicit placeholder identity — executing it verbatim
+    // cannot bypass the authorization pair.
+    let next_command = manifest
+        .get("next_command")
+        .and_then(Value::as_str)
+        .ok_or("attempt manifest carries no next command")?;
+    for fragment in ["--edit-authorized", "--edit-authority"] {
+        if !next_command.contains(fragment) {
+            return Err(format!(
+                "trust-bound next command does not name `{fragment}`: {next_command}"
+            ));
+        }
+    }
     let record = prepare_record(&fixture, &attempt_id)?;
     assert_prepare_record_identity(&record)?;
     if record
@@ -1111,6 +1145,48 @@ fn cage_escape_production_and_generated_edits_fail_closed_and_are_retained() -> 
         != Some("violated")
     {
         return Err("apply record does not retain the violated cage decision".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn failed_apply_record_publication_stays_retryable() -> Result<(), String> {
+    let fixture = build_fixture("record-retry")?;
+    let seam_id = find_seam_for_target(&fixture.root, TARGET_TEST_FILE)?;
+    let prepared = run_prepare(&fixture, &seam_id, "att-retry")?;
+    require_success(&prepared, "bound before phase")?;
+    let attempt_id = sole_attempt(&fixture)?;
+    edit_target_file(&fixture)?;
+
+    // Block the apply-record destination with a directory: the record write
+    // fails after the durable finish has advanced, and the attempt must be
+    // restored to awaiting_edit instead of being stranded unrecoverably.
+    let apply_record_path = fixture
+        .root
+        .join("target/ripr/workflow/python-repair-driver-after.json");
+    std::fs::create_dir_all(&apply_record_path)
+        .map_err(|error| format!("create blocking directory: {error}"))?;
+    let blocked = run_apply(&fixture, &attempt_id, Some(AUTHORITY))?;
+    require_failure(
+        &blocked,
+        "apply with a blocked record destination",
+        "python-repair-driver-after",
+    )?;
+    let manifest = attempt_manifest(&fixture, &attempt_id)?;
+    if manifest.get("state").and_then(Value::as_str) != Some("awaiting_edit") {
+        return Err(format!(
+            "a failed record publication left the attempt non-retryable: {manifest:?}"
+        ));
+    }
+
+    // Unblock the destination: the identical retry completes with the record.
+    std::fs::remove_dir_all(&apply_record_path)
+        .map_err(|error| format!("remove blocking directory: {error}"))?;
+    let retried = run_apply(&fixture, &attempt_id, Some(AUTHORITY))?;
+    require_success(&retried, "retry after a failed record publication")?;
+    let apply = apply_record(&fixture)?;
+    if apply.get("phase").and_then(Value::as_str) != Some("apply") {
+        return Err("the retried apply record carries the wrong phase".to_string());
     }
     Ok(())
 }

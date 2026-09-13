@@ -229,10 +229,11 @@ With the Python repair-trust flags, the before phase verifies the selection
 row by digest (manifest digest, row selection digest, current HEAD, exact
 test-only target agreement with the packet) and stages the binding into the
 durable attempt; the after phase re-verifies the same digests before recording
-the applied edit and requires the same explicit authorization. A drift,
-ambiguity, unsafe surface, or missing authorization fails before any edit is
-recorded. The driver records no verification result, no static movement, and
-no closure.
+the applied edit and requires the same explicit authorization. A binding
+drift, ambiguity, unsafe surface, or missing authorization fails before any
+edit is recorded; repository HEAD drift between the phases is instead owned
+by the durable finish, which records the typed stale state. The driver
+records no verification result, no static movement, and no closure.
 
 Lower-level `start`, `brief`, `packet`, `verify`, `receipt`, `status`, and
 `review-summary` commands remain available for explicit control and debugging.

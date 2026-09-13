@@ -297,12 +297,41 @@ pub(crate) struct ResolvedRepairAttempt {
     pub(crate) packet_path: PathBuf,
 }
 
-pub(crate) fn begin_repair_attempt(
-    root: &Path,
-    root_argument: &Path,
-    seam_id: &str,
-    sources: &[BeforeArtifactSource<'_>],
+/// Inputs of one durable before-phase attempt publication.
+///
+/// `expected_repository_head` pins the repository head the caller verified
+/// immediately before publication (for a trust-bound attempt, the binding's
+/// head pin). The gate runs BEFORE anything is reserved or published, so a
+/// HEAD move between preparation and publication refuses with a typed error
+/// and no attempt record exists — a mismatched tree never strands an
+/// `awaiting_edit` attempt.
+///
+/// `next_command_suffix` extends the published follow-up command. A
+/// trust-bound attempt always re-verifies the explicit authorization at
+/// apply time, so its follow-up must name the authorization pair with an
+/// explicit placeholder identity; the driver never persists a granted
+/// authorization.
+#[derive(Clone, Copy)]
+pub(crate) struct BeginRepairAttemptOptions<'a> {
+    pub(crate) root: &'a Path,
+    pub(crate) root_argument: &'a Path,
+    pub(crate) seam_id: &'a str,
+    pub(crate) sources: &'a [BeforeArtifactSource<'a>],
+    pub(crate) expected_repository_head: Option<&'a str>,
+    pub(crate) next_command_suffix: Option<&'a str>,
+}
+
+pub(crate) fn begin_repair_attempt_with(
+    options: BeginRepairAttemptOptions<'_>,
 ) -> Result<BeginRepairAttemptResult, String> {
+    let BeginRepairAttemptOptions {
+        root,
+        root_argument,
+        seam_id,
+        sources,
+        expected_repository_head,
+        next_command_suffix,
+    } = options;
     if seam_id.trim().is_empty() {
         return Err("repair attempt requires a non-empty seam ID".to_string());
     }
@@ -315,6 +344,16 @@ pub(crate) fn begin_repair_attempt(
         .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
     let repository_head = crate::agent::artifact::current_git_head(&canonical_root)
         .map_err(|error| format!("repair attempt requires a concrete repository HEAD: {error}"))?;
+    // Pre-publication head gate: compare the caller's verified pin against
+    // the repository HEAD this publication would record, before the attempt
+    // directory is reserved. On mismatch nothing exists to clean up.
+    if let Some(expected) = expected_repository_head
+        && expected != repository_head
+    {
+        return Err(format!(
+            "python repair-trust binding head moved during attempt publication; the binding pins head `{expected}` but the repository HEAD is now `{repository_head}`; re-run the before phase to prepare a fresh binding"
+        ));
+    }
     let created_unix_ms = current_unix_ms()?;
     let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
     let repair_attempt_id = repair_attempt_id_from_parts(
@@ -336,6 +375,7 @@ pub(crate) fn begin_repair_attempt(
             created_unix_ms,
             repair_attempt_id,
             sources,
+            next_command_suffix,
         },
     )
 }
@@ -347,6 +387,7 @@ struct AttemptPublication<'a> {
     created_unix_ms: u64,
     repair_attempt_id: RepairAttemptId,
     sources: &'a [BeforeArtifactSource<'a>],
+    next_command_suffix: Option<&'a str>,
 }
 
 /// Stage artifacts and publish the manifest inside a reserved attempt
@@ -360,9 +401,10 @@ fn complete_repair_attempt(
     let result = stage_before_artifacts(canonical_root, attempt_directory, publication.sources)
         .and_then(|artifacts| {
             let next_command = format!(
-                "ripr agent repair --root {} --attempt {} --phase after",
+                "ripr agent repair --root {} --attempt {} --phase after{}",
                 shell_arg(&display_path(publication.root_argument)),
-                shell_arg(publication.repair_attempt_id.as_str())
+                shell_arg(publication.repair_attempt_id.as_str()),
+                publication.next_command_suffix.unwrap_or_default()
             );
             let manifest = RepairAttemptManifest {
                 schema_version: REPAIR_ATTEMPT_SCHEMA_VERSION.to_string(),
@@ -669,6 +711,45 @@ pub(crate) fn resolve_awaiting_repair_attempt(
     })
 }
 
+/// Restores a finished attempt to `awaiting_edit` so a failed apply-record
+/// publication stays retryable. `finish_repair_attempt` commits the terminal
+/// after state before the compatibility apply record is rendered, so a record
+/// write failure would otherwise strand the attempt: the identical retry is
+/// rejected (`after phase requires awaiting_edit`) and the record can never
+/// be recreated. The restore is the inverse transition owned by this
+/// authority: it requires the committed after state and rewrites exactly
+/// `state = awaiting_edit, after = None`, which the immutable before
+/// commitment re-verifies on the next load — any other drift fails closed.
+pub(crate) fn restore_repair_attempt_to_awaiting_edit(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<(), String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let (manifest_path, mut manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    if manifest.state == RepairAttemptState::AwaitingEdit {
+        return Err(format!(
+            "repair attempt {} is already awaiting_edit; no restore is needed",
+            attempt_id.as_str()
+        ));
+    }
+    if manifest.after.is_none() {
+        return Err(format!(
+            "repair attempt {} carries no after verdict; only a finished attempt can be restored for a retry",
+            attempt_id.as_str()
+        ));
+    }
+    manifest.state = RepairAttemptState::AwaitingEdit;
+    manifest.after = None;
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize restored repair attempt failed: {error}"))?;
+    bytes.push(b'\n');
+    replace_manifest_bytes(&manifest_path, &bytes)?;
+    Ok(())
+}
+
 pub(crate) fn finish_repair_attempt(
     root: &Path,
     attempt_id: &RepairAttemptId,
@@ -835,17 +916,44 @@ fn find_manifest_artifact<'a>(
 }
 
 fn replace_manifest_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let temporary = path.with_extension(format!("after-tmp-{}", std::process::id()));
-    write_bytes_atomic(&temporary, bytes)?;
-    #[cfg(windows)]
-    if path.exists() {
-        std::fs::remove_file(path)
-            .map_err(|error| format!("replace {} failed: {error}", path.display()))?;
-    }
-    std::fs::rename(&temporary, path).map_err(|error| {
+    replace_file_atomically(path, bytes)
+}
+
+/// Replaces a shared compatibility file through the staged atomic-rename
+/// pattern: the bytes are written and synced to a temporary file, then moved
+/// onto the destination. A concurrent reader never observes partial bytes.
+/// Unix rename replaces atomically; on Windows the existing target must be
+/// unlinked first. Unlike the exclusive `write_bytes_atomic` this replaces an
+/// existing destination, so it is only for files that are refreshed in place
+/// (attempt destinations stay immutable).
+pub(crate) fn replace_file_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = path.with_extension(format!("tmp-{}-{nonce}", std::process::id()));
+    let write_result = (|| -> Result<(), String> {
+        let mut file = File::create(&temporary)
+            .map_err(|error| format!("create {} failed: {error}", temporary.display()))?;
+        file.write_all(bytes)
+            .map_err(|error| format!("write {} failed: {error}", temporary.display()))?;
+        file.sync_all()
+            .map_err(|error| format!("sync {} failed: {error}", temporary.display()))?;
+        Ok(())
+    })();
+    if let Err(error) = write_result {
         let _ = std::fs::remove_file(&temporary);
-        format!("replace {} failed: {error}", path.display())
-    })
+        return Err(error);
+    }
+    #[cfg(windows)]
+    if path.exists()
+        && let Err(error) = std::fs::remove_file(path)
+    {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(format!("replace {} failed: {error}", path.display()));
+    }
+    if let Err(error) = std::fs::rename(&temporary, path) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(format!("replace {} failed: {error}", path.display()));
+    }
+    Ok(())
 }
 
 fn stage_before_artifacts(
@@ -1551,15 +1659,17 @@ mod tests {
     fn failed_begin_leaves_no_orphan_attempt_directory() -> Result<(), String> {
         let root = test_repo_root("orphan")?;
         let missing = root.join("missing-before.json");
-        let result = begin_repair_attempt(
-            &root,
-            &root,
-            "seam:sample",
-            &[BeforeArtifactSource {
+        let result = begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root: &root,
+            root_argument: &root,
+            seam_id: "seam:sample",
+            sources: &[BeforeArtifactSource {
                 role: "before_snapshot",
                 path: &missing,
             }],
-        );
+            expected_repository_head: None,
+            next_command_suffix: None,
+        });
         if result.is_ok() {
             return Err("begin_repair_attempt accepted a missing artifact source".to_string());
         }
@@ -1610,6 +1720,7 @@ mod tests {
                     role: "before_snapshot",
                     path: &source,
                 }],
+                next_command_suffix: None,
             },
         );
         let attempt_remaining = attempt_directory.exists();
@@ -1722,6 +1833,132 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn expected_head_mismatch_refuses_before_any_attempt_is_published() -> Result<(), String> {
+        let root = test_repo_root("head-gate")?;
+        let actual_head = crate::agent::artifact::current_git_head(&root)?;
+        let source = root.join("before.json");
+        std::fs::write(&source, b"{}")
+            .map_err(|error| format!("write {} failed: {error}", source.display()))?;
+
+        // The binding's head pin no longer matches the repository HEAD (HEAD
+        // moved after the binding was read): the publication refuses with a
+        // typed error BEFORE the attempt directory is reserved, so no
+        // awaiting_edit attempt from a mismatched tree can survive.
+        let drifted_pin = "1111111111111111111111111111111111111111";
+        let mismatch = begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root: &root,
+            root_argument: &root,
+            seam_id: "seam:sample",
+            sources: &[BeforeArtifactSource {
+                role: "before_snapshot",
+                path: &source,
+            }],
+            expected_repository_head: Some(drifted_pin),
+            next_command_suffix: None,
+        });
+        match mismatch {
+            Err(error) if error.contains("head moved") => {}
+            other => {
+                return Err(format!(
+                    "a drifted head pin was not refused before publication: {other:?}"
+                ));
+            }
+        }
+        let attempts_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+        let survivors = if attempts_root.is_dir() {
+            std::fs::read_dir(&attempts_root)
+                .map_err(|error| format!("read {} failed: {error}", attempts_root.display()))?
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(REPAIR_ATTEMPT_ID_PREFIX)
+                })
+                .count()
+        } else {
+            0
+        };
+        if survivors != 0 {
+            return Err(format!(
+                "a head-mismatch refusal left {survivors} attempt directories behind"
+            ));
+        }
+
+        // The matching pin publishes, and the trust-bound suffix rides in the
+        // published follow-up command.
+        let published = begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root: &root,
+            root_argument: &root,
+            seam_id: "seam:sample",
+            sources: &[BeforeArtifactSource {
+                role: "before_snapshot",
+                path: &source,
+            }],
+            expected_repository_head: Some(&actual_head),
+            next_command_suffix: Some(
+                " --edit-authorized --edit-authority <operator-or-agent-identity>",
+            ),
+        })?;
+        for fragment in ["--edit-authorized", "--edit-authority"] {
+            if !published.manifest.next_command.contains(fragment) {
+                return Err(format!(
+                    "the trust-bound follow-up command does not name `{fragment}`: {}",
+                    published.manifest.next_command
+                ));
+            }
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn restore_returns_a_finished_attempt_to_retryable_awaiting_edit() -> Result<(), String> {
+        let root = test_repo_root("restore")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "restore")?;
+        let attempt_id = prepared.manifest.repair_attempt_id.clone();
+        let resolved = resolve_awaiting_repair_attempt(&root, Some(attempt_id.as_str()), None)?;
+
+        // Finish without the focused edit: a terminal after state the apply
+        // path can no longer retry through.
+        finish_repair_attempt(&root, &attempt_id, &resolved.packet_path)?;
+        let (_, finished) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        if finished.state == RepairAttemptState::AwaitingEdit || finished.after.is_none() {
+            return Err(format!(
+                "the sample attempt did not finish into a terminal state: {:?}",
+                finished.state
+            ));
+        }
+
+        // Restoring returns the exact before state, so the identical retry
+        // resolves the attempt again.
+        restore_repair_attempt_to_awaiting_edit(&root, &attempt_id)?;
+        let (_, restored) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        if restored.state != RepairAttemptState::AwaitingEdit || restored.after.is_some() {
+            return Err(format!(
+                "the restored attempt is not awaiting_edit without an after block: {:?}",
+                restored.state
+            ));
+        }
+        resolve_awaiting_repair_attempt(&root, Some(attempt_id.as_str()), None)?;
+
+        // Restoring an already-awaiting attempt is a typed refusal.
+        let again = restore_repair_attempt_to_awaiting_edit(&root, &attempt_id);
+        match again {
+            Err(error) if error.contains("already awaiting_edit") => {}
+            other => {
+                return Err(format!(
+                    "restoring an awaiting attempt was not refused: {other:?}"
+                ));
+            }
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
     fn prepare_sample_attempt(
         root: &Path,
         seam_id: &str,
@@ -1746,11 +1983,11 @@ mod tests {
             .map_err(|error| format!("write {} failed: {error}", packet.display()))?;
         let policy = edit_cage_policy_from_packet(&packet_text, seam_id)?;
         write_edit_cage_baseline(root, &baseline, &policy)?;
-        begin_repair_attempt(
+        begin_repair_attempt_with(BeginRepairAttemptOptions {
             root,
-            root,
+            root_argument: root,
             seam_id,
-            &[
+            sources: &[
                 BeforeArtifactSource {
                     role: "before_snapshot",
                     path: &before,
@@ -1764,7 +2001,9 @@ mod tests {
                     path: &baseline,
                 },
             ],
-        )
+            expected_repository_head: None,
+            next_command_suffix: None,
+        })
     }
 
     fn test_repo_root(label: &str) -> Result<PathBuf, String> {

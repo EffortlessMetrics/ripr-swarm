@@ -556,6 +556,15 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             write_text_file(&verify_json, &rendered_verify)?;
             print!("{rendered_verify}");
 
+            // The retained binding's manifest bytes are confirmed again
+            // immediately before the durable finish: the apply verification
+            // ran before several expensive operations, and a manifest
+            // replaced inside that window must refuse instead of silently
+            // advancing the attempt against replaced trust data.
+            if let Some(binding) = &retained_binding {
+                crate::app::python_repair_binding::confirm_manifest_unchanged(binding)?;
+            }
+
             // Finish only after all command-owned after artifacts exist. This
             // makes the durable delta the exact delta the receipt binds, while
             // the receipt itself remains outside the measured edit window.
@@ -613,7 +622,28 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                             apply_record_path.display()
                         );
                     }
-                    Err(error) => apply_record_result = Err(error),
+                    Err(error) => {
+                        // Finish already advanced the durable state, so a
+                        // failed record publication must restore the attempt
+                        // to awaiting_edit: the identical retry is otherwise
+                        // rejected and the record could never be recreated.
+                        match crate::app::repair_attempt::restore_repair_attempt_to_awaiting_edit(
+                            &root,
+                            &attempt.attempt_id,
+                        ) {
+                            Ok(()) => {
+                                eprintln!(
+                                    "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
+                                );
+                                apply_record_result = Err(error);
+                            }
+                            Err(restore_error) => {
+                                apply_record_result = Err(format!(
+                                    "{error}; rolling the attempt back for a retry also failed: {restore_error}"
+                                ));
+                            }
+                        }
+                    }
                 }
             }
             receipt_result?;

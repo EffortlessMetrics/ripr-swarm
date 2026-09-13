@@ -390,6 +390,20 @@ fn check_portable_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Normalizes a portable repo-relative path: `./` segments dropped, empty
+/// segments collapsed. The normalized form is what is bound: it is compared
+/// against the packet's selected edit target, matched in the repository
+/// inventory, and recorded, so the raw spellings `./tests/x.rs` and
+/// `tests//x.rs` bind identically to `tests/x.rs`. Callers run the
+/// portability check on the raw spelling first, so absolute and
+/// `..`-carrying paths never reach this function.
+fn normalize_repo_relative_path(path: &str) -> String {
+    path.split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 // ---------------------------------------------------------------------------
 // Small strict-object accessors
 // ---------------------------------------------------------------------------
@@ -451,13 +465,18 @@ fn opt_string(object: &Map<String, Value>, field: &str) -> Result<Option<String>
 }
 
 /// Canonical selection-row digest: sha256 over the row JSON with only
-/// `selection_digest` removed, re-serialized as compact UTF-8 JSON with
-/// sorted object keys (serde_json's default map orders keys, so the encoding
-/// is canonical). This is the same preimage the corpus validator recomputes.
+/// `selection_digest` removed, re-serialized as compact UTF-8 JSON. The
+/// preimage is collected into a `BTreeMap` first, so the key order is sorted
+/// regardless of any workspace-level serde_json `preserve_order` feature
+/// (with it, `Map` iterates in insertion order and the bytes would vary by
+/// construction order; rows are flat string-valued objects, so top-level
+/// sorting is the whole canonicalization). This is the same preimage the
+/// corpus validator recomputes.
 fn canonical_selection_digest(row: &Map<String, Value>) -> Result<String, String> {
     let mut canonical = row.clone();
     canonical.remove(SELECTION_DIGEST_FIELD);
-    let text = serde_json::to_string(&Value::Object(canonical))
+    let sorted: std::collections::BTreeMap<String, Value> = canonical.into_iter().collect();
+    let text = serde_json::to_string(&sorted)
         .map_err(|error| format!("canonical selection serialization failed: {error}"))?;
     Ok(sha256_hex(text.as_bytes()))
 }
@@ -590,9 +609,13 @@ fn verify_row_binding(
         ));
     }
 
-    let target_path = require_string(&attempt_id, row, "target_path")?;
-    check_portable_path(&target_path)
+    let raw_target_path = require_string(&attempt_id, row, "target_path")?;
+    check_portable_path(&raw_target_path)
         .map_err(|error| format!("selection row `{attempt_id}` target_path: {error}"))?;
+    // The normalized spelling is what is bound: it is compared against the
+    // packet's selected target, matched in the repository inventory, and
+    // recorded.
+    let target_path = normalize_repo_relative_path(&raw_target_path);
     let target_state = require_string(&attempt_id, row, "target_state")?;
     if target_state != BINDABLE_TARGET_STATE {
         return Err(format!(
@@ -915,15 +938,11 @@ fn write_record_file(path: &Path, record: &Value) -> Result<(), String> {
     let mut rendered = serde_json::to_vec_pretty(record)
         .map_err(|error| format!("serialize python repair-trust binding record failed: {error}"))?;
     rendered.push(b'\n');
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("create {} failed: {error}", parent.display()))?;
-    }
-    std::fs::write(path, rendered)
-        .map_err(|error| format!("write {} failed: {error}", path.display()))
+    // Compatibility projections are shared repository-global files, so they
+    // publish through the staged atomic-rename pattern (the same semantics as
+    // the eval-sweep report's accepted writes): a concurrent reader never
+    // observes partial bytes.
+    crate::app::repair_attempt::replace_file_atomically(path, &rendered)
 }
 
 // ---------------------------------------------------------------------------
@@ -1161,16 +1180,21 @@ pub(crate) fn reverify_for_apply(
         Some(Value::Array(values)) => values,
         _ => return Err("retained binding record must carry its non_claims".to_string()),
     };
-    let recorded_non_claims = record_non_claims
-        .iter()
-        .filter_map(Value::as_str)
-        .collect::<BTreeSet<_>>();
-    for non_claim in BINDING_NON_CLAIMS {
-        if !recorded_non_claims.contains(non_claim) {
-            return Err(format!(
-                "retained binding record dropped the standing non-claim `{non_claim}`"
-            ));
-        }
+    // The standing claim boundary must ride verbatim: every element must be a
+    // string and the collection must be exactly the standing list — a dropped
+    // non-claim weakens the boundary and an extra string can smuggle a claim.
+    let mut recorded_non_claims = BTreeSet::new();
+    for (index, value) in record_non_claims.iter().enumerate() {
+        let text = value.as_str().ok_or_else(|| {
+            format!("retained binding record non_claims[{index}]: non-claim must be a string")
+        })?;
+        recorded_non_claims.insert(text);
+    }
+    let expected_non_claims: BTreeSet<&str> = BINDING_NON_CLAIMS.into_iter().collect();
+    if recorded_non_claims != expected_non_claims {
+        return Err(format!(
+            "retained binding record must carry exactly the standing non-claims {BINDING_NON_CLAIMS:?}; a dropped or extra entry fails"
+        ));
     }
 
     let trust = as_object(
@@ -1247,6 +1271,49 @@ pub(crate) fn reverify_for_apply(
     Ok(verified)
 }
 
+/// The apply record's digest chain: the claimed `binding_artifact_sha256`
+/// must be the retained prepare artifact's staged digest, which the durable
+/// attempt authority byte-verifies against the staged file. A claimed digest
+/// that leaves the retained prepare artifact is a fabricated chain and fails.
+fn check_binding_artifact_chain(staged_sha256_prefixed: &str, claimed: &str) -> Result<(), String> {
+    let staged = staged_sha256_prefixed.trim_start_matches("sha256:");
+    if !is_sha256_hex(staged) || staged != claimed {
+        return Err(format!(
+            "apply record refuses a binding-artifact digest that does not match the retained prepare artifact (staged `{staged_sha256_prefixed}`)"
+        ));
+    }
+    Ok(())
+}
+
+/// Re-reads the selection manifest at its recorded telemetry path and
+/// requires the pinned digest. This closes the late publication window: the
+/// apply verification runs before several expensive after-phase operations,
+/// so the exact manifest bytes are confirmed again immediately before the
+/// durable attempt advances. A manifest replaced inside that window refuses
+/// here, leaving the attempt `awaiting_edit` instead of recording an edit
+/// against silently replaced trust data.
+pub(crate) fn confirm_manifest_unchanged(retained: &RetainedBinding) -> Result<(), String> {
+    let record = as_object(&retained.value, "retained binding record")?;
+    let trust = record
+        .get("trust")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "retained binding record is missing trust".to_string())?;
+    let pinned = require_string("retained binding trust", trust, "selection_manifest_sha256")?;
+    let path = require_string(
+        "retained binding record",
+        record,
+        TELEMETRY_MANIFEST_PATH_FIELD,
+    )?;
+    let (current, _) = load_selection_manifest(Path::new(&path))
+        .map_err(|error| format!("stale packet rejected before the durable finish: {error}"))?;
+    if current != pinned {
+        return Err(format!(
+            "stale selection manifest: the retained binding pins manifest sha256 `{pinned}` but {path} now digests to `{current}`; a changed manifest requires a new re-authorized attempt"
+        ));
+    }
+    Ok(())
+}
+
 /// Renders and publishes the apply-phase record after the durable attempt
 /// recorded its after verdict. The record carries the changed-file set, the
 /// patch digest, the edit-cage decision, and the resulting repository head —
@@ -1263,6 +1330,29 @@ pub(crate) fn write_apply_record(
 ) -> Result<PathBuf, String> {
     let manifest = crate::app::repair_attempt::load_repair_attempt_manifest(root, attempt_id)?;
     let policy = crate::app::repair_attempt::load_edit_cage_policy(root, attempt_id)?;
+    // The digest chain is verified against the staged prepare artifact before
+    // anything is rendered: a claimed digest that leaves the retained binding
+    // fails here instead of being published into the record.
+    let binding_artifact = crate::app::repair_attempt::find_manifest_artifact_by_role(
+        &manifest,
+        BINDING_ARTIFACT_ROLE,
+    )
+    .ok_or_else(|| {
+        "durable attempt is missing its retained python repair-trust binding".to_string()
+    })?;
+    let binding_bytes = std::fs::read(root.join(&binding_artifact.path)).map_err(|error| {
+        format!(
+            "read retained python repair-trust binding {} failed: {error}",
+            binding_artifact.path
+        )
+    })?;
+    if sha256_hex(&binding_bytes) != binding_artifact.sha256.trim_start_matches("sha256:") {
+        return Err(
+            "apply record refuses a retained prepare artifact whose bytes leave its digest"
+                .to_string(),
+        );
+    }
+    check_binding_artifact_chain(&binding_artifact.sha256, retained_artifact_sha256)?;
     let packet_artifact =
         crate::app::repair_attempt::find_manifest_artifact_by_role(&manifest, "agent_packet")
             .ok_or_else(|| "durable attempt is missing its retained agent packet".to_string())?;
@@ -1513,6 +1603,146 @@ mod tests {
         }
         if !is_git_sha(&"a".repeat(40)) {
             return Err("40-hex commit SHA failed the git-shape check".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn normalized_target_paths_bind_identically() -> Result<(), String> {
+        // `./tests/x.rs` and `tests//x.rs` bind identically to `tests/x.rs`:
+        // the row digest covers the raw accepted bytes, and the bound target
+        // is the normalized spelling.
+        for spelling in ["./tests/test_pricing.py", "tests//test_pricing.py"] {
+            let mut row = sample_row()?;
+            {
+                let object = row
+                    .as_object_mut()
+                    .ok_or_else(|| "sample row is not an object".to_string())?;
+                object.insert(
+                    "target_path".to_string(),
+                    Value::String(spelling.to_string()),
+                );
+                let digest = canonical_selection_digest(object)?;
+                object.insert(SELECTION_DIGEST_FIELD.to_string(), Value::String(digest));
+            }
+            let object = as_object(&row, "sample row")?;
+            let verified = verify_row_binding(object, "att-test-1")
+                .map_err(|error| format!("spelling `{spelling}` was refused: {error}"))?;
+            if verified.target_path != "tests/test_pricing.py" {
+                return Err(format!(
+                    "raw spelling `{spelling}` was not normalized: `{}`",
+                    verified.target_path
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn binding_artifact_chain_refuses_fabricated_digests() -> Result<(), String> {
+        // The staged digest of a real artifact bytes passes the chain.
+        let staged = format!("sha256:{}", sha256_hex(b"retained prepare artifact bytes"));
+        check_binding_artifact_chain(&staged, staged.trim_start_matches("sha256:"))
+            .map_err(|error| format!("a real staged digest was refused: {error}"))?;
+        // A fabricated 64-hex digest that no retained artifact carries fails.
+        let fabricated = "0".repeat(64);
+        let error = match check_binding_artifact_chain(&staged, &fabricated) {
+            Err(error) => error,
+            Ok(()) => return Err("a fabricated binding digest passed the chain".to_string()),
+        };
+        if !error.contains("does not match the retained prepare artifact") {
+            return Err(format!("unexpected chain refusal: {error}"));
+        }
+        // A malformed staged digest fails too.
+        if check_binding_artifact_chain("sha256:0123", &"0".repeat(64)).is_ok() {
+            return Err("a malformed staged digest passed the chain".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn confirm_manifest_unchanged_detects_a_replaced_manifest() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("test clock failed: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-binding-confirm-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root)
+            .map_err(|error| format!("create temp dir failed: {error}"))?;
+        let result = (|| -> Result<(), String> {
+            let manifest_path = root.join("trust-manifest.json");
+            let manifest = serde_json::json!({
+                "schema_version": MANIFEST_SCHEMA_VERSION,
+                "kind": MANIFEST_KIND,
+                "spec": BINDING_SPEC,
+                "description": "confirm fixture",
+                "selections": [],
+            });
+            let text = serde_json::to_string_pretty(&manifest)
+                .map_err(|error| format!("serialize manifest: {error}"))?;
+            std::fs::write(&manifest_path, &text)
+                .map_err(|error| format!("write manifest: {error}"))?;
+            let pinned = sha256_hex(text.as_bytes());
+            let retained = RetainedBinding {
+                artifact_sha256: pinned.clone(),
+                // The telemetry path field is spelled literally because the
+                // json! macro takes literal keys.
+                value: serde_json::json!({
+                    "trust": {
+                        "selection_manifest_sha256": pinned,
+                    },
+                    "selection_manifest_path": manifest_path.display().to_string(),
+                }),
+            };
+            confirm_manifest_unchanged(&retained)
+                .map_err(|error| format!("intact manifest was refused: {error}"))?;
+
+            // A manifest replaced inside the late publication window refuses.
+            let replaced = serde_json::json!({
+                "schema_version": MANIFEST_SCHEMA_VERSION,
+                "kind": MANIFEST_KIND,
+                "spec": BINDING_SPEC,
+                "description": "replaced after prepare",
+                "selections": [],
+            });
+            let replaced_text = serde_json::to_string_pretty(&replaced)
+                .map_err(|error| format!("serialize replaced manifest: {error}"))?;
+            std::fs::write(&manifest_path, &replaced_text)
+                .map_err(|error| format!("write replaced manifest: {error}"))?;
+            let error = match confirm_manifest_unchanged(&retained) {
+                Err(error) => error,
+                Ok(()) => {
+                    return Err("a replaced manifest passed the late-window confirm".to_string());
+                }
+            };
+            if !error.contains("stale selection manifest") {
+                return Err(format!("unexpected confirm refusal: {error}"));
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove temp dir failed: {error}"))?;
+        result
+    }
+
+    #[test]
+    fn canonical_digest_is_order_independent() -> Result<(), String> {
+        // The canonical preimage is built through a BTreeMap, so two rows
+        // whose keys were inserted in different orders digest identically
+        // regardless of any serde_json `preserve_order` feature state.
+        let mut first = Map::new();
+        first.insert("attempt_id".to_string(), Value::String("a".to_string()));
+        first.insert("case_id".to_string(), Value::String("c".to_string()));
+        let mut second = Map::new();
+        second.insert("case_id".to_string(), Value::String("c".to_string()));
+        second.insert("attempt_id".to_string(), Value::String("a".to_string()));
+        let left = canonical_selection_digest(&first)?;
+        let right = canonical_selection_digest(&second)?;
+        if left != right {
+            return Err("insertion order changed the canonical digest".to_string());
         }
         Ok(())
     }

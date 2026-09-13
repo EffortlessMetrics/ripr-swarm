@@ -112,7 +112,9 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
     // BEFORE the durable attempt is published: every drift, ambiguity, unsafe
     // surface, or missing authorization fails here, before any edit
     // transaction can begin. The verified record is then staged into the
-    // attempt as a digest-pinned artifact.
+    // attempt as a digest-pinned artifact. The binding's head pin is passed
+    // into the publication transaction, so a HEAD move between preparation
+    // and publication refuses before any attempt record exists.
     let binding = match &options.python_repair_trust {
         Some(selection) => Some(crate::app::python_repair_binding::prepare_binding(
             root,
@@ -158,22 +160,25 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
             path: &binding.record_path,
         });
     }
-    let result = crate::app::repair_attempt::begin_repair_attempt(root, root, seam_id, &sources)?;
+    let result = crate::app::repair_attempt::begin_repair_attempt_with(
+        crate::app::repair_attempt::BeginRepairAttemptOptions {
+            root,
+            root_argument: root,
+            seam_id,
+            sources: &sources,
+            expected_repository_head: binding
+                .as_ref()
+                .map(|binding| binding.verified.head.as_str()),
+            // The after phase of a trust-bound attempt always re-verifies the
+            // explicit authorization, so the published follow-up must name
+            // the required flags with an explicit placeholder identity — the
+            // driver never persists a granted authorization.
+            next_command_suffix: binding
+                .as_ref()
+                .map(|_| " --edit-authorized --edit-authority <operator-or-agent-identity>"),
+        },
+    )?;
     if let Some(binding) = &binding {
-        // The record was rendered with the HEAD observed before publication;
-        // the published attempt must carry exactly that repository identity.
-        if result.manifest.repository_head
-            != binding
-                .record
-                .get("repository_head")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-        {
-            return Err(
-                "python repair-trust binding head moved during attempt publication; re-run the before phase to prepare a fresh binding"
-                    .to_string(),
-            );
-        }
         eprintln!(
             "ripr: python repair-trust binding staged for selection attempt `{}` (selection digest {})",
             binding.verified.attempt_id, binding.verified.selection_digest
