@@ -214,14 +214,7 @@ Options:
   --edit-authority ID  The operator or agent identity the authorization is
                        recorded under; requires --edit-authorized.
   --verify-authorized  Explicitly authorize the bounded verification run for
-                       this attempt; `verify` only.
-  --verify-authority ID
-                       The identity the verification authorization is
-                       recorded under; requires --verify-authorized.
-  --verify-rollback    Restore the edit surface after the verification run;
-                       requires the verify authorization flags.
-  --verify-authorized  Explicitly authorize the verification phase; requires
-                       an authority; `verify` only.
+                       this attempt; `verify` only; requires an authority.
   --verify-authority ID
                        The operator or agent identity the verification is
                        re-affirmed under (the same authority that authorized
