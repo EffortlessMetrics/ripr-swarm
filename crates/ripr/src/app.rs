@@ -19,6 +19,7 @@ pub use pr_evidence::reject_pr_evidence_error_packet;
 /// Shared PR-evidence summary projection used by the `ripr` binary and the
 /// compatibility `xtask` route.
 pub mod pr_summary;
+pub(crate) mod python_repair_binding;
 pub(crate) mod receipt;
 pub(crate) mod repair_attempt;
 pub(crate) mod ripr_plus;

@@ -14,6 +14,7 @@ Linked plan:
 
 Linked issues:
 
+- #3569 (bind the two-phase repair driver to durable attempt identity)
 - #3568 (define immutable repair-trust selection and attempt semantics)
 - #3557 (parent capability)
 - #3555 / #3556 (the judged-panel case authority and the eval-sweep subject
@@ -34,8 +35,13 @@ Policy impact:
 - New xtask command `python-repair-trust check` registered in the command
   mutability catalog as a non-mutating check writing only
   `target/ripr/reports/python-repair-trust-check.{json,md}`.
-- No product (`ripr` crate) surface changes; the validator lives in the
-  unpublished automation crate.
+- The product (`ripr` crate) gains the driver binding surface only:
+  `agent repair` trust/authorization flags, the staged binding artifact, and
+  the apply record. No new public API items; the binding module is
+  crate-private.
+- New `python-repair-trust check-driver` subcommand registered in the command
+  mutability catalog as a non-mutating check writing only
+  `target/ripr/reports/python-repair-driver-check.{json,md}`.
 
 ## Problem
 
@@ -253,6 +259,113 @@ it does not attempt provenance against a fully rewritten corpus.
 - No unification with the Rust repair-trust corpus format; the Rust
   predecessor keeps its own report shape.
 
+## Driver Binding (issue #3569)
+
+The two-phase external-edit driver (`ripr agent repair`, #2443) binds one
+durable repair attempt (#2927) to one accepted selection row by digests, never
+by names. The bridge extends the driver; it does not create a Python-only
+lifecycle and does not add a second attempt ledger: the durable attempt
+manifest remains the sole ledger, and the binding rides in it as a staged,
+digest-pinned artifact (role `python_repair_trust_binding`).
+
+### Prepare phase (binding before editing)
+
+`ripr agent repair --phase before` accepts
+`--python-repair-trust-manifest <path>`, `--python-repair-trust-attempt <id>`,
+and the authorization pair `--edit-authorized` + `--edit-authority <identity>`
+(both flags or neither; an authorization without a binding, or a binding
+without an authorization, is refused). A relative manifest path resolves
+against the selected `--root` (the same semantics as every other workflow
+artifact path), never against the process working directory. Before the
+durable attempt is published, the driver verifies, failing closed:
+
+- the manifest envelope (`schema_version` `0.1`, `kind`
+  `python_repair_trust_manifest`, spec `RIPR-SPEC-0176`) parses as strict JSON
+  (duplicate keys fail) and its exact bytes digest to the recorded
+  `selection_manifest_sha256`;
+- the requested row exists in the selection denominator and its canonical
+  `selection_digest` recomputes to the recorded value (a replaced or edited
+  row requires a new selection);
+- the row pins `head` equal to the repository's current HEAD (a stale
+  selection fails before editing);
+- `target_state` is `existing` (proposed/ambiguous/unavailable/unsafe targets
+  require a new or re-authorized selection) and the target path is portable
+  and test-only: a target under a production/generated/vendor/environment
+  surface prefix, or any component carrying `.generated.`, is refused;
+- the row target agrees exactly with the repair packet's selected edit target
+  (identity alignment, never name similarity), and resolves to exactly one
+  file in the repository inventory (zero matches and multiple case-insensitive
+  matches both fail before editing);
+- the authorization is explicit (`granted` under the
+  `explicit-operator-flags` method with a named authority).
+
+The verified record is staged into the durable attempt as a digest-pinned
+artifact and mirrored at
+`target/ripr/workflow/python-repair-trust-binding.json`. It retains the
+trust identity (attempt, case, subject, repository, base, head, optional tree
+and source-currentness, family, owner, discriminator, relation, oracle,
+optional limitation), the digest anchors, the analyzer identity (running
+binary digest and producer version), the config profile (real producer: the
+analyzed root's `ripr.toml` presence), the input digests (packet, before
+snapshot), the declared edit surface (allowed and forbidden paths), the
+authorization, and the standing non-claims. The record carries no timestamps:
+equivalent preparation is byte-identical, and the manifest location is the
+declared telemetry.
+
+### Apply phase (recording the applied edit)
+
+`ripr agent repair --phase after` re-verifies the retained binding by digest
+immediately before the applied edit is recorded: the selection manifest must
+still digest to the pinned value, the row must still digest to its recorded
+`selection_digest`, the target must still agree with the packet, the retained
+packet must still digest to the pinned value, and the invocation must
+re-affirm the retained authorization with the same authority. Any drift fails
+before the durable attempt advances. Repository drift (HEAD movement) is
+deliberately NOT re-refused here: it is owned by the durable attempt
+authority, whose finish records the typed `stale` state.
+
+After the durable finish, the apply record
+(`target/ripr/workflow/python-repair-driver-after.json`) is published last
+(the receipt re-evaluates the edit cage over the exact delta finish measured,
+so no artifact write may land between finish and the receipt binding; a
+receipt refusal still publishes the record). The retained binding's manifest
+digest and the repository head are re-verified inside each finalize path —
+the before phase re-reads HEAD immediately before the durable attempt
+manifest is written, and the after phase re-confirms the manifest digest
+immediately before the apply record is written — so publication verifies
+current state rather than trusting the earlier read. A residual race inside
+each final read-to-write window (bounded to the single durable write) is a
+disclosed limit, not a claimed atomicity. It carries the durable attempt
+identity, the prepare-record digest chain, the patch digest, the actual
+changed-file set, the edit-cage decision, the resulting repository head, and
+the same non-claims. The apply record is a compatibility projection; the
+durable `after` block in the attempt manifest remains the authority.
+
+The offline `check-driver` validator distinguishes the two cage outcomes it
+retains: a `compliant` apply record must cover the selected target inside its
+declared cage, while a `violated` apply record is the producer's typed failed
+result — its escaped paths are validated structurally (portable spellings)
+and retained verbatim as failure evidence, never re-caged, so the offline
+corpus can hold the failure without erasing it.
+
+### State discipline and claim boundary
+
+The driver keeps the durable states distinct and maps them onto the #3568
+lifecycle vocabulary without claiming any of its completed states:
+`awaiting_edit` is prepared-but-not-applied (the corpus `started` identity
+inputs ride in the binding record), `ready_to_finish` is
+applied-but-unverified, `failed` with a violated cage verdict is rejected and
+retained, and `stale` is drifted. The driver claims no verification result,
+no static movement, and no closure; lifecycle, movement, and execution fields
+never appear in a driver record (the `check-driver` validator denies them),
+and #3570 owns the verification phase. No verification result, static
+movement, closure, support, gate, or badge is inferred from any driver
+record.
+
+The driver executes no arbitrary command: its edits are performed by the
+human or external agent between the phases, and the driver itself only
+writes its own artifacts.
+
 ## Acceptance Examples
 
 - A corpus with six selections across four strata and six attempt rows —
@@ -275,6 +388,17 @@ it does not attempt provenance against a fully rewritten corpus.
   validator test module (data-driven acceptance, every fail-closed rule,
   verdict precedence, deterministic report rendering). Listed in
   `.ripr/traceability.toml` under this spec.
+- `xtask/src/reports/python_repair_driver.rs::python_repair_driver_binding` —
+  the driver binding validator test module (digest anchors, target identity
+  agreement, denied surfaces, authorization, non-claims, apply-phase shapes,
+  end-to-end file and directory inputs). Listed in
+  `.ripr/traceability.toml` under this spec.
+- `crates/ripr/tests/python_repair_attempt.rs` — the end-to-end driver
+  binding case matrix (clean test-only positive, stale packet, wrong target,
+  zero and ambiguous target matches, denied surfaces, outside-root manifest,
+  missing or mismatched authorization, tampered retained binding, cage escape
+  and production/generated edits, deterministic preparation, state
+  distinctness). Listed in `.ripr/traceability.toml` under this spec.
 
 ## Implementation Mapping
 
@@ -284,6 +408,13 @@ it does not attempt provenance against a fully rewritten corpus.
 - `xtask/src/command.rs` — `python-repair-trust` parse arm, command-catalog
   entry, and help listing.
 - `xtask/src/dispatch.rs` — dispatch to the reports adapter.
+- `crates/ripr/src/app/python_repair_binding.rs` — the crate-side binding
+  authority: selection-manifest verification, prepare-record rendering,
+  apply-phase re-verification and apply-record publication.
+- `crates/ripr/src/cli/agent.rs`, `crates/ripr/src/cli/mod.rs`,
+  `crates/ripr/src/cli/commands/agent.rs` — the driver CLI surface (trust and
+  authorization flags, before-phase publication hook, after-phase
+  re-verification and record publication).
 
 ## Metrics
 

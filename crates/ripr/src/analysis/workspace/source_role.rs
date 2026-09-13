@@ -138,6 +138,38 @@ pub(crate) fn classify_with(path: &Path, context: &SourceRoleContext) -> SourceR
     classify(&normalized)
 }
 
+/// Bounded positive test-surface recognition over a portable repo-relative
+/// path, for consumers that must authorize test-only edit surfaces (the
+/// repair driver's edit-cage gate). It reuses the analyzer's existing
+/// test-file notions rather than forking them: the `tests`/`test` layout
+/// component shared by `rust_index::is_test_file` and the Python adapter's
+/// `is_test_file`, plus the per-language file-name conventions — `test_*.py`
+/// prefixes and `*_test.py`/`*_tests.py`/`*_test.rs`/`*_tests.rs` suffixes.
+///
+/// The recognition is deliberately bounded and case-sensitive so lookalike
+/// names fail closed: `src/testing.py`, `lib/testutil.py`, and unusual
+/// casing are refused. This is role-derived evidence for an authorization
+/// decision; consumers keep the policy (what to refuse and what to name in
+/// the diagnostic) on their side.
+pub(crate) fn is_test_surface_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    if normalized
+        .split('/')
+        .any(|component| component == "tests" || component == "test")
+    {
+        return true;
+    }
+    let file_name = normalized.rsplit('/').next().unwrap_or_default();
+    if file_name.ends_with("_test.rs")
+        || file_name.ends_with("_tests.rs")
+        || file_name.ends_with("_test.py")
+        || file_name.ends_with("_tests.py")
+    {
+        return true;
+    }
+    file_name.starts_with("test_") && file_name.ends_with(".py")
+}
+
 /// Layout-only classification (context-free base shared by every
 /// consumer, including surfaces without Cargo metadata at hand).
 ///
@@ -235,6 +267,41 @@ mod tests {
 
     fn role(path: &str) -> SourceRole {
         classify(Path::new(path))
+    }
+
+    #[test]
+    fn test_surface_recognition_is_bounded_and_fail_closed() {
+        // The bounded edit-surface recognition reuses the analyzer's
+        // test-file notions: `tests`/`test` layout components plus the
+        // per-language file-name conventions. Lookalike names fail closed.
+        for accepted in [
+            "tests/pricing.rs",
+            "tests/helpers/mod.rs",
+            "test/smoke.py",
+            "src/test_login.py",
+            "src/login_test.py",
+            "src/login_test.rs",
+            "src/login_tests.rs",
+            "src/login_tests.py",
+        ] {
+            assert!(
+                is_test_surface_path(accepted),
+                "test surface `{accepted}` was refused"
+            );
+        }
+        for rejected in [
+            "src/production.rs",
+            "src/testing.py",
+            "lib/testutil.py",
+            "atest/helper.py",
+            "src/mod.rs",
+            "tests.rs",
+        ] {
+            assert!(
+                !is_test_surface_path(rejected),
+                "non-test path `{rejected}` was accepted"
+            );
+        }
     }
 
     #[test]

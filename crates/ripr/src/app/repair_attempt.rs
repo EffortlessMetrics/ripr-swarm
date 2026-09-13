@@ -6,6 +6,7 @@
 //! that exact attempt.
 
 use crate::agent::loop_commands::{display_path, shell_arg};
+use crate::analysis::is_test_surface_path;
 use crate::edit_cage::{
     AttemptBaseline, EditCagePolicy, EditCageVerdict, evaluate_repository_edit_cage_with_delta,
 };
@@ -297,12 +298,41 @@ pub(crate) struct ResolvedRepairAttempt {
     pub(crate) packet_path: PathBuf,
 }
 
-pub(crate) fn begin_repair_attempt(
-    root: &Path,
-    root_argument: &Path,
-    seam_id: &str,
-    sources: &[BeforeArtifactSource<'_>],
+/// Inputs of one durable before-phase attempt publication.
+///
+/// `expected_repository_head` pins the repository head the caller verified
+/// immediately before publication (for a trust-bound attempt, the binding's
+/// head pin). The gate runs BEFORE anything is reserved or published, so a
+/// HEAD move between preparation and publication refuses with a typed error
+/// and no attempt record exists — a mismatched tree never strands an
+/// `awaiting_edit` attempt.
+///
+/// `next_command_suffix` extends the published follow-up command. A
+/// trust-bound attempt always re-verifies the explicit authorization at
+/// apply time, so its follow-up must name the authorization pair with an
+/// explicit placeholder identity; the driver never persists a granted
+/// authorization.
+#[derive(Clone, Copy)]
+pub(crate) struct BeginRepairAttemptOptions<'a> {
+    pub(crate) root: &'a Path,
+    pub(crate) root_argument: &'a Path,
+    pub(crate) seam_id: &'a str,
+    pub(crate) sources: &'a [BeforeArtifactSource<'a>],
+    pub(crate) expected_repository_head: Option<&'a str>,
+    pub(crate) next_command_suffix: Option<&'a str>,
+}
+
+pub(crate) fn begin_repair_attempt_with(
+    options: BeginRepairAttemptOptions<'_>,
 ) -> Result<BeginRepairAttemptResult, String> {
+    let BeginRepairAttemptOptions {
+        root,
+        root_argument,
+        seam_id,
+        sources,
+        expected_repository_head,
+        next_command_suffix,
+    } = options;
     if seam_id.trim().is_empty() {
         return Err("repair attempt requires a non-empty seam ID".to_string());
     }
@@ -315,6 +345,16 @@ pub(crate) fn begin_repair_attempt(
         .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
     let repository_head = crate::agent::artifact::current_git_head(&canonical_root)
         .map_err(|error| format!("repair attempt requires a concrete repository HEAD: {error}"))?;
+    // Pre-publication head gate: compare the caller's verified pin against
+    // the repository HEAD this publication would record, before the attempt
+    // directory is reserved. On mismatch nothing exists to clean up.
+    if let Some(expected) = expected_repository_head
+        && expected != repository_head
+    {
+        return Err(format!(
+            "python repair-trust binding head moved during attempt publication; the binding pins head `{expected}` but the repository HEAD is now `{repository_head}`; re-run the before phase to prepare a fresh binding"
+        ));
+    }
     let created_unix_ms = current_unix_ms()?;
     let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
     let repair_attempt_id = repair_attempt_id_from_parts(
@@ -333,9 +373,11 @@ pub(crate) fn begin_repair_attempt(
             root_argument,
             seam_id,
             repository_head,
+            expected_repository_head,
             created_unix_ms,
             repair_attempt_id,
             sources,
+            next_command_suffix,
         },
     )
 }
@@ -344,9 +386,14 @@ struct AttemptPublication<'a> {
     root_argument: &'a Path,
     seam_id: &'a str,
     repository_head: String,
+    /// The caller's verified head pin, when the publication is trust-bound.
+    /// Re-checked immediately before the durable manifest write, so the
+    /// finalize path verifies rather than trusting the earlier read.
+    expected_repository_head: Option<&'a str>,
     created_unix_ms: u64,
     repair_attempt_id: RepairAttemptId,
     sources: &'a [BeforeArtifactSource<'a>],
+    next_command_suffix: Option<&'a str>,
 }
 
 /// Stage artifacts and publish the manifest inside a reserved attempt
@@ -360,10 +407,33 @@ fn complete_repair_attempt(
     let result = stage_before_artifacts(canonical_root, attempt_directory, publication.sources)
         .and_then(|artifacts| {
             let next_command = format!(
-                "ripr agent repair --root {} --attempt {} --phase after",
+                "ripr agent repair --root {} --attempt {} --phase after{}",
                 shell_arg(&display_path(publication.root_argument)),
-                shell_arg(publication.repair_attempt_id.as_str())
+                shell_arg(publication.repair_attempt_id.as_str()),
+                publication.next_command_suffix.unwrap_or_default()
             );
+            // Finalize-path head re-verification: the earlier pre-publication
+            // gate read HEAD before the artifacts were staged; the durable
+            // manifest is the authority, so HEAD is re-read immediately
+            // before it is written and any move in the window aborts with the
+            // typed refusal instead of publishing a mismatched attempt.
+            let final_head = crate::agent::artifact::current_git_head(canonical_root)
+                .map_err(|error| {
+                    format!("repair attempt finalize head verification failed: {error}")
+                })?;
+            if let Some(expected) = publication.expected_repository_head
+                && expected != final_head
+            {
+                return Err(format!(
+                    "python repair-trust binding head moved during attempt publication; the binding pins head `{expected}` but the repository HEAD is now `{final_head}`; re-run the before phase to prepare a fresh binding"
+                ));
+            }
+            if final_head != publication.repository_head {
+                return Err(format!(
+                    "repository HEAD moved during attempt publication; the attempt pins head `{}` but the repository HEAD is now `{final_head}`; re-run the before phase to prepare a fresh attempt",
+                    publication.repository_head
+                ));
+            }
             let manifest = RepairAttemptManifest {
                 schema_version: REPAIR_ATTEMPT_SCHEMA_VERSION.to_string(),
                 kind: "repair_attempt".to_string(),
@@ -402,6 +472,56 @@ fn complete_repair_attempt(
 pub(crate) fn repair_attempt_directory(root: &Path, attempt_id: &RepairAttemptId) -> PathBuf {
     root.join(REPAIR_ATTEMPT_DIRECTORY)
         .join(attempt_id.as_str())
+}
+
+/// Loads and fully validates one durable attempt manifest by identity,
+/// including its before commitment and artifact digest bindings. Consumers
+/// that extend the attempt (the Python repair-trust binding) read the
+/// retained provenance through this authority instead of re-parsing files.
+pub(crate) fn load_repair_attempt_manifest(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<RepairAttemptManifest, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let (_, manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    Ok(manifest)
+}
+
+/// Finds one staged artifact by role, if the attempt carries it.
+pub(crate) fn find_manifest_artifact_by_role<'a>(
+    manifest: &'a RepairAttemptManifest,
+    role: &str,
+) -> Option<&'a RepairAttemptArtifact> {
+    manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.role == role)
+}
+
+/// Loads the retained edit-cage policy of a durable attempt from its staged
+/// baseline artifact, re-verifying the artifact digest first.
+pub(crate) fn load_edit_cage_policy(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<crate::edit_cage::EditCagePolicy, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let (_, manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    let artifact = find_manifest_artifact(&manifest, "edit_cage_baseline")?;
+    let path = root.join(&artifact.path);
+    let bytes =
+        std::fs::read(&path).map_err(|error| format!("read {} failed: {error}", path.display()))?;
+    if u64::try_from(bytes.len()).map_err(|error| error.to_string())? != artifact.bytes
+        || sha256_bytes(&bytes) != artifact.sha256
+    {
+        return Err("repair attempt edit-cage baseline binding failed".to_string());
+    }
+    let baseline: crate::edit_cage::AttemptBaseline = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
+    Ok(baseline.policy().clone())
 }
 
 /// Reserve the attempt transaction exclusively. Creating the directory with
@@ -460,6 +580,16 @@ fn manifest_before_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, St
         .map_err(|error| format!("serialize repair attempt commitment failed: {error}"))
 }
 
+/// Constructs the edit-cage policy from a repair packet, refusing any packet
+/// whose selected edit target (the first `allowed_edit_surface` path, or the
+/// `recommended_test.file` when the packet names one instead) is not a
+/// recognized test surface. The positive test-surface gate runs on the raw
+/// packet text BEFORE any `CagePathRule` is constructed, so a production file
+/// can never become the authored edit target: a non-test selected target
+/// fails closed with a named diagnostic and no cage policy exists. The
+/// recognition itself is the producer-owned typed fact
+/// (`analysis::workspace::is_test_surface_path`); this layer owns only the
+/// policy decision and its diagnostic.
 pub(crate) fn edit_cage_policy_from_packet(
     packet: &str,
     seam_id: &str,
@@ -510,6 +640,30 @@ pub(crate) fn edit_cage_policy_from_packet(
         } else {
             value
         };
+    // Positive test-surface gate on the selected edit target, checked on the
+    // raw packet text before any cage rule is constructed: path-shaped
+    // allowed values can name production files (`src/...`), and the
+    // denied-surface denylist only refuses generated/vendor/environment
+    // prefixes, so without this gate a production file could become the
+    // authored edit target of a bound attempt.
+    let selected_target_text = match value.get("allowed_edit_surface") {
+        Some(_) => value
+            .get("allowed_edit_surface")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|paths| paths.first())
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "repair packet has no selected edit target".to_string())?,
+        None => value
+            .get("recommended_test")
+            .and_then(|test| test.get("file"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?,
+    };
+    if !is_test_surface_path(selected_target_text) {
+        return Err(format!(
+            "repair packet selected edit target `{selected_target_text}` is not a test surface (a `tests` or `test` path component, or a `test_*.py`/`*_test.py`/`*_tests.py`/`*_test.rs`/`*_tests.rs` file-name convention, is required); a production file is never the authored edit target and no edit cage is constructed"
+        ));
+    }
     let paths = |name: &str| -> Result<Vec<crate::edit_cage::CagePathRule>, String> {
         let values = value
             .get(name)
@@ -525,13 +679,35 @@ pub(crate) fn edit_cage_policy_from_packet(
             .collect()
     };
     let allowed = match value.get("allowed_edit_surface") {
-        Some(_) => paths("allowed_edit_surface")?,
+        Some(surface) => {
+            let entries = surface
+                .as_array()
+                .ok_or_else(|| "repair packet allowed_edit_surface must be an array".to_string())?;
+            let mut allowed = Vec::new();
+            for entry in entries {
+                let path = entry.as_str().ok_or_else(|| {
+                    "repair packet allowed_edit_surface contains a non-string path".to_string()
+                })?;
+                if !is_test_surface_path(path) {
+                    return Err(format!(
+                        "repair packet allowed edit surface `{path}` is not a test surface; a production file is never an allowed edit path"
+                    ));
+                }
+                allowed.push(crate::edit_cage::CagePathRule::exact(path)?);
+            }
+            allowed
+        }
         None => {
             let file = value
                 .get("recommended_test")
                 .and_then(|test| test.get("file"))
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?;
+            if !is_test_surface_path(file) {
+                return Err(format!(
+                    "repair packet recommended test `{file}` is not a test surface"
+                ));
+            }
             vec![crate::edit_cage::CagePathRule::exact(file)?]
         }
     };
@@ -551,14 +727,26 @@ pub(crate) fn edit_cage_policy_from_packet(
     })
 }
 
+/// Captures the edit-cage baseline and writes it to a workflow compatibility
+/// path. Unlike the immutable attempt destinations, this copy is refreshed on
+/// every before phase (the durable authority is the baseline staged inside
+/// the attempt), so an existing projection is replaced. The captured baseline
+/// is dropped before the replacement so its Windows write authorities cannot
+/// block the removal of the file it just probed.
 pub(crate) fn write_edit_cage_baseline(
     root: &Path,
     path: &Path,
     policy: &EditCagePolicy,
 ) -> Result<(), String> {
-    let baseline = crate::edit_cage::capture_attempt_baseline(root, policy)?;
-    let bytes = serde_json::to_vec_pretty(&baseline)
-        .map_err(|error| format!("serialize edit-cage baseline failed: {error}"))?;
+    let bytes = {
+        let baseline = crate::edit_cage::capture_attempt_baseline(root, policy)?;
+        serde_json::to_vec_pretty(&baseline)
+            .map_err(|error| format!("serialize edit-cage baseline failed: {error}"))?
+    };
+    if path.exists() {
+        std::fs::remove_file(path)
+            .map_err(|error| format!("replace {} failed: {error}", path.display()))?;
+    }
     write_bytes_atomic(path, &bytes)
 }
 
@@ -605,6 +793,45 @@ pub(crate) fn resolve_awaiting_repair_attempt(
         before_snapshot_path,
         packet_path,
     })
+}
+
+/// Restores a finished attempt to `awaiting_edit` so a failed apply-record
+/// publication stays retryable. `finish_repair_attempt` commits the terminal
+/// after state before the compatibility apply record is rendered, so a record
+/// write failure would otherwise strand the attempt: the identical retry is
+/// rejected (`after phase requires awaiting_edit`) and the record can never
+/// be recreated. The restore is the inverse transition owned by this
+/// authority: it requires the committed after state and rewrites exactly
+/// `state = awaiting_edit, after = None`, which the immutable before
+/// commitment re-verifies on the next load — any other drift fails closed.
+pub(crate) fn restore_repair_attempt_to_awaiting_edit(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<(), String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let (manifest_path, mut manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    if manifest.state == RepairAttemptState::AwaitingEdit {
+        return Err(format!(
+            "repair attempt {} is already awaiting_edit; no restore is needed",
+            attempt_id.as_str()
+        ));
+    }
+    if manifest.after.is_none() {
+        return Err(format!(
+            "repair attempt {} carries no after verdict; only a finished attempt can be restored for a retry",
+            attempt_id.as_str()
+        ));
+    }
+    manifest.state = RepairAttemptState::AwaitingEdit;
+    manifest.after = None;
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize restored repair attempt failed: {error}"))?;
+    bytes.push(b'\n');
+    replace_manifest_bytes(&manifest_path, &bytes)?;
+    Ok(())
 }
 
 pub(crate) fn finish_repair_attempt(
@@ -773,17 +1000,40 @@ fn find_manifest_artifact<'a>(
 }
 
 fn replace_manifest_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let temporary = path.with_extension(format!("after-tmp-{}", std::process::id()));
-    write_bytes_atomic(&temporary, bytes)?;
-    #[cfg(windows)]
-    if path.exists() {
-        std::fs::remove_file(path)
-            .map_err(|error| format!("replace {} failed: {error}", path.display()))?;
-    }
-    std::fs::rename(&temporary, path).map_err(|error| {
+    replace_file_atomically(path, bytes)
+}
+
+/// Replaces a shared compatibility file through the staged atomic-rename
+/// pattern: the bytes are written and synced to a temporary file, then moved
+/// onto the destination. A concurrent reader never observes partial bytes and
+/// never observes the destination missing: `std::fs::rename` replaces an
+/// existing destination on every supported platform (POSIX semantics on Unix;
+/// `MoveFileExW`/POSIX-rename semantics on Windows), so no delete step runs
+/// before the rename — a failed replacement leaves the previous content in
+/// place. Unlike the exclusive `write_bytes_atomic` this replaces an existing
+/// destination, so it is only for files that are refreshed in place (attempt
+/// destinations stay immutable).
+pub(crate) fn replace_file_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = path.with_extension(format!("tmp-{}-{nonce}", std::process::id()));
+    let write_result = (|| -> Result<(), String> {
+        let mut file = File::create(&temporary)
+            .map_err(|error| format!("create {} failed: {error}", temporary.display()))?;
+        file.write_all(bytes)
+            .map_err(|error| format!("write {} failed: {error}", temporary.display()))?;
+        file.sync_all()
+            .map_err(|error| format!("sync {} failed: {error}", temporary.display()))?;
+        Ok(())
+    })();
+    if let Err(error) = write_result {
         let _ = std::fs::remove_file(&temporary);
-        format!("replace {} failed: {error}", path.display())
-    })
+        return Err(error);
+    }
+    if let Err(error) = std::fs::rename(&temporary, path) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(format!("replace {} failed: {error}", path.display()));
+    }
+    Ok(())
 }
 
 fn stage_before_artifacts(
@@ -1222,6 +1472,71 @@ mod tests {
     }
 
     #[test]
+    fn cage_policy_refuses_a_non_test_selected_edit_target_before_any_cage() -> Result<(), String> {
+        // A gap route's path-shaped `target_file` (`src/...`) can arrive as
+        // the packet's allowed surface; the positive test-surface gate must
+        // refuse it with a named diagnostic before any cage policy exists,
+        // so a production file can never become the authored edit target.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["src/production.rs"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let error = match edit_cage_policy_from_packet(&rendered, "seam:sample") {
+            Err(error) => error,
+            Ok(_) => {
+                return Err(
+                    "a production selected edit target constructed a cage policy".to_string(),
+                );
+            }
+        };
+        for needle in [
+            "src/production.rs",
+            "is not a test surface",
+            "no edit cage is constructed",
+        ] {
+            if !error.contains(needle) {
+                return Err(format!("refusal did not name `{needle}`: {error}"));
+            }
+        }
+        // The recommended-test construction route is gated identically.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "recommended_test": { "file": "src/production.rs" }
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        if edit_cage_policy_from_packet(&rendered, "seam:sample").is_ok() {
+            return Err("a production recommended test constructed a cage policy".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cage_policy_proceeds_for_test_surface_selected_edit_targets() -> Result<(), String> {
+        // A focused test file under `tests/` proceeds, and so does a
+        // test-surface helper: the `tests` path component is the positive
+        // signal, independent of the file-name convention.
+        for target in ["tests/pricing.rs", "tests/helpers/mod.rs", "test/smoke.py"] {
+            let packet = serde_json::json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": [target],
+                "forbidden_files": []
+            });
+            let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+            let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")
+                .map_err(|error| format!("test target `{target}` was refused: {error}"))?;
+            if policy.selected_target.path() != target {
+                return Err(format!(
+                    "selected target `{}` does not match `{target}`",
+                    policy.selected_target.path()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn repair_attempt_schema_carries_terminal_after_contract() -> Result<(), String> {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../schemas/ripr/repair-attempt.schema.json");
@@ -1486,18 +1801,61 @@ mod tests {
     }
 
     #[test]
+    fn replace_file_atomically_swaps_in_place_and_fails_without_destroying() -> Result<(), String> {
+        let root = test_root("replace")?;
+        // An existing destination is replaced in place by the rename itself:
+        // no delete step runs, so a reader never observes the path missing
+        // and a failed replacement leaves the previous content in place.
+        let path = root.join("projection.json");
+        replace_file_atomically(&path, b"first")?;
+        replace_file_atomically(&path, b"second")?;
+        let contents = std::fs::read(&path)
+            .map_err(|error| format!("read {} failed: {error}", path.display()))?;
+        if contents != b"second" {
+            return Err("replace_file_atomically did not swap the destination bytes".to_string());
+        }
+        // No staging residue: every temporary sibling is cleaned up.
+        let residue = std::fs::read_dir(&root)
+            .map_err(|error| format!("read {} failed: {error}", root.display()))?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+            .count();
+        if residue != 0 {
+            return Err(format!("replace_file_atomically left {residue} temp files"));
+        }
+        // A failed replacement (the destination is a directory, so the rename
+        // cannot land) returns an error and does not destroy the destination.
+        let blocked = root.join("blocked.json");
+        std::fs::create_dir(&blocked)
+            .map_err(|error| format!("create blocking directory failed: {error}"))?;
+        let result = replace_file_atomically(&blocked, b"unlandable");
+        let blocked_still_there = blocked.is_dir();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        if result.is_ok() {
+            return Err("a rename onto a directory destination succeeded".to_string());
+        }
+        if !blocked_still_there {
+            return Err("a failed replacement destroyed the pre-existing destination".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn failed_begin_leaves_no_orphan_attempt_directory() -> Result<(), String> {
         let root = test_repo_root("orphan")?;
         let missing = root.join("missing-before.json");
-        let result = begin_repair_attempt(
-            &root,
-            &root,
-            "seam:sample",
-            &[BeforeArtifactSource {
+        let result = begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root: &root,
+            root_argument: &root,
+            seam_id: "seam:sample",
+            sources: &[BeforeArtifactSource {
                 role: "before_snapshot",
                 path: &missing,
             }],
-        );
+            expected_repository_head: None,
+            next_command_suffix: None,
+        });
         if result.is_ok() {
             return Err("begin_repair_attempt accepted a missing artifact source".to_string());
         }
@@ -1524,7 +1882,11 @@ mod tests {
 
     #[test]
     fn failed_manifest_write_removes_staged_attempt_and_artifacts() -> Result<(), String> {
-        let root = test_root("publish")?;
+        // A real repository: the finalize-path head re-verification must pass
+        // so the occupied manifest path is what actually forces the publish
+        // failure.
+        let root = test_repo_root("publish")?;
+        let head = crate::agent::artifact::current_git_head(&root)?;
         let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
         let attempt_directory = reserve_attempt_directory(&root, &attempt_id)?;
         let source = root.join("before.json");
@@ -1541,13 +1903,15 @@ mod tests {
             AttemptPublication {
                 root_argument: &root,
                 seam_id: "seam:sample",
-                repository_head: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                repository_head: head,
+                expected_repository_head: None,
                 created_unix_ms: 1,
                 repair_attempt_id: attempt_id,
                 sources: &[BeforeArtifactSource {
                     role: "before_snapshot",
                     path: &source,
                 }],
+                next_command_suffix: None,
             },
         );
         let attempt_remaining = attempt_directory.exists();
@@ -1660,6 +2024,132 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn expected_head_mismatch_refuses_before_any_attempt_is_published() -> Result<(), String> {
+        let root = test_repo_root("head-gate")?;
+        let actual_head = crate::agent::artifact::current_git_head(&root)?;
+        let source = root.join("before.json");
+        std::fs::write(&source, b"{}")
+            .map_err(|error| format!("write {} failed: {error}", source.display()))?;
+
+        // The binding's head pin no longer matches the repository HEAD (HEAD
+        // moved after the binding was read): the publication refuses with a
+        // typed error BEFORE the attempt directory is reserved, so no
+        // awaiting_edit attempt from a mismatched tree can survive.
+        let drifted_pin = "1111111111111111111111111111111111111111";
+        let mismatch = begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root: &root,
+            root_argument: &root,
+            seam_id: "seam:sample",
+            sources: &[BeforeArtifactSource {
+                role: "before_snapshot",
+                path: &source,
+            }],
+            expected_repository_head: Some(drifted_pin),
+            next_command_suffix: None,
+        });
+        match mismatch {
+            Err(error) if error.contains("head moved") => {}
+            other => {
+                return Err(format!(
+                    "a drifted head pin was not refused before publication: {other:?}"
+                ));
+            }
+        }
+        let attempts_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+        let survivors = if attempts_root.is_dir() {
+            std::fs::read_dir(&attempts_root)
+                .map_err(|error| format!("read {} failed: {error}", attempts_root.display()))?
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(REPAIR_ATTEMPT_ID_PREFIX)
+                })
+                .count()
+        } else {
+            0
+        };
+        if survivors != 0 {
+            return Err(format!(
+                "a head-mismatch refusal left {survivors} attempt directories behind"
+            ));
+        }
+
+        // The matching pin publishes, and the trust-bound suffix rides in the
+        // published follow-up command.
+        let published = begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root: &root,
+            root_argument: &root,
+            seam_id: "seam:sample",
+            sources: &[BeforeArtifactSource {
+                role: "before_snapshot",
+                path: &source,
+            }],
+            expected_repository_head: Some(&actual_head),
+            next_command_suffix: Some(
+                " --edit-authorized --edit-authority <operator-or-agent-identity>",
+            ),
+        })?;
+        for fragment in ["--edit-authorized", "--edit-authority"] {
+            if !published.manifest.next_command.contains(fragment) {
+                return Err(format!(
+                    "the trust-bound follow-up command does not name `{fragment}`: {}",
+                    published.manifest.next_command
+                ));
+            }
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn restore_returns_a_finished_attempt_to_retryable_awaiting_edit() -> Result<(), String> {
+        let root = test_repo_root("restore")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "restore")?;
+        let attempt_id = prepared.manifest.repair_attempt_id.clone();
+        let resolved = resolve_awaiting_repair_attempt(&root, Some(attempt_id.as_str()), None)?;
+
+        // Finish without the focused edit: a terminal after state the apply
+        // path can no longer retry through.
+        finish_repair_attempt(&root, &attempt_id, &resolved.packet_path)?;
+        let (_, finished) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        if finished.state == RepairAttemptState::AwaitingEdit || finished.after.is_none() {
+            return Err(format!(
+                "the sample attempt did not finish into a terminal state: {:?}",
+                finished.state
+            ));
+        }
+
+        // Restoring returns the exact before state, so the identical retry
+        // resolves the attempt again.
+        restore_repair_attempt_to_awaiting_edit(&root, &attempt_id)?;
+        let (_, restored) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        if restored.state != RepairAttemptState::AwaitingEdit || restored.after.is_some() {
+            return Err(format!(
+                "the restored attempt is not awaiting_edit without an after block: {:?}",
+                restored.state
+            ));
+        }
+        resolve_awaiting_repair_attempt(&root, Some(attempt_id.as_str()), None)?;
+
+        // Restoring an already-awaiting attempt is a typed refusal.
+        let again = restore_repair_attempt_to_awaiting_edit(&root, &attempt_id);
+        match again {
+            Err(error) if error.contains("already awaiting_edit") => {}
+            other => {
+                return Err(format!(
+                    "restoring an awaiting attempt was not refused: {other:?}"
+                ));
+            }
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
     fn prepare_sample_attempt(
         root: &Path,
         seam_id: &str,
@@ -1684,11 +2174,11 @@ mod tests {
             .map_err(|error| format!("write {} failed: {error}", packet.display()))?;
         let policy = edit_cage_policy_from_packet(&packet_text, seam_id)?;
         write_edit_cage_baseline(root, &baseline, &policy)?;
-        begin_repair_attempt(
+        begin_repair_attempt_with(BeginRepairAttemptOptions {
             root,
-            root,
+            root_argument: root,
             seam_id,
-            &[
+            sources: &[
                 BeforeArtifactSource {
                     role: "before_snapshot",
                     path: &before,
@@ -1702,7 +2192,9 @@ mod tests {
                     path: &baseline,
                 },
             ],
-        )
+            expected_repository_head: None,
+            next_command_suffix: None,
+        })
     }
 
     fn test_repo_root(label: &str) -> Result<PathBuf, String> {

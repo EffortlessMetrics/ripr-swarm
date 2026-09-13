@@ -98,6 +98,15 @@ pub(super) struct AgentRepairOptions {
     pub(super) seam_id: Option<String>,
     pub(super) attempt_id: Option<String>,
     pub(super) phase: AgentRepairPhase,
+    /// Optional digest-bound reference into the accepted Python repair-trust
+    /// selection manifest (#3568). Present only with the explicit trust flags
+    /// and only for the before phase; the after phase consumes the retained
+    /// binding artifact instead.
+    pub(super) python_repair_trust:
+        Option<crate::app::python_repair_binding::PythonRepairTrustSelection>,
+    /// Explicit operator/agent edit authorization. Both signals are required
+    /// together whenever a trust binding is prepared or re-verified.
+    pub(super) edit_authorization: crate::app::python_repair_binding::EditAuthorization,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -215,6 +224,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     let mut seam_id: Option<String> = None;
     let mut attempt_id: Option<String> = None;
     let mut phase: Option<AgentRepairPhase> = None;
+    let mut trust_manifest: Option<PathBuf> = None;
+    let mut trust_attempt: Option<String> = None;
+    let mut edit_authorized = false;
+    let mut edit_authority: Option<String> = None;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -238,6 +251,42 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 }
                 attempt_id = Some(value.to_string());
             }
+            "--python-repair-trust-manifest" => {
+                i += 1;
+                let value = expect_value(args, i, "--python-repair-trust-manifest")?;
+                if value.trim().is_empty() {
+                    return Err(
+                        "agent repair --python-repair-trust-manifest requires a non-empty path"
+                            .to_string(),
+                    );
+                }
+                trust_manifest = Some(PathBuf::from(value));
+            }
+            "--python-repair-trust-attempt" => {
+                i += 1;
+                let value = expect_value(args, i, "--python-repair-trust-attempt")?;
+                if value.trim().is_empty() {
+                    return Err(
+                        "agent repair --python-repair-trust-attempt requires a non-empty attempt identity"
+                            .to_string(),
+                    );
+                }
+                trust_attempt = Some(value.to_string());
+            }
+            "--edit-authorized" => {
+                edit_authorized = true;
+            }
+            "--edit-authority" => {
+                i += 1;
+                let value = expect_value(args, i, "--edit-authority")?;
+                if value.trim().is_empty() {
+                    return Err(
+                        "agent repair --edit-authority requires a non-empty operator or agent identity"
+                            .to_string(),
+                    );
+                }
+                edit_authority = Some(value.to_string());
+            }
             "--phase" => {
                 i += 1;
                 let value = expect_value(args, i, "--phase")?;
@@ -256,6 +305,75 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         i += 1;
     }
     let phase = phase.unwrap_or(AgentRepairPhase::Before);
+
+    // The trust flags are a pair and belong to the before phase only: the
+    // after phase consumes the retained binding artifact, never a fresh
+    // manifest path.
+    let python_repair_trust = match (trust_manifest, trust_attempt) {
+        (Some(manifest_path), Some(trust_attempt_id)) => {
+            if phase == AgentRepairPhase::After {
+                return Err(
+                    "agent repair --python-repair-trust-manifest/--python-repair-trust-attempt are only valid with --phase before; the after phase re-verifies the attempt's retained binding"
+                        .to_string(),
+                );
+            }
+            Some(
+                crate::app::python_repair_binding::PythonRepairTrustSelection {
+                    manifest_path,
+                    attempt_id: trust_attempt_id,
+                },
+            )
+        }
+        (Some(_), None) => {
+            return Err(
+                "agent repair --python-repair-trust-manifest requires --python-repair-trust-attempt <id>"
+                    .to_string(),
+            );
+        }
+        (None, Some(_)) => {
+            return Err(
+                "agent repair --python-repair-trust-attempt requires --python-repair-trust-manifest <path>"
+                    .to_string(),
+            );
+        }
+        (None, None) => None,
+    };
+
+    // The authorization signals are a pair; an authorization without a
+    // binding to authorize (or a binding without authorization) is refused
+    // rather than silently downgraded.
+    let edit_authorization = crate::app::python_repair_binding::EditAuthorization {
+        authorized: edit_authorized,
+        authority: edit_authority,
+    };
+    if edit_authorization.authority.is_some() && !edit_authorization.authorized {
+        return Err(
+            "agent repair --edit-authority requires --edit-authorized; the driver accepts only the explicit pair"
+                .to_string(),
+        );
+    }
+    if edit_authorization.authorized && edit_authorization.authority.is_none() {
+        return Err(
+            "agent repair --edit-authorized requires --edit-authority <identity>; the driver never authorizes an edit automatically"
+                .to_string(),
+        );
+    }
+    match (&python_repair_trust, &phase) {
+        (None, AgentRepairPhase::Before) if edit_authorization.authorized => {
+            return Err(
+                "agent repair --edit-authorized/--edit-authority require --python-repair-trust-manifest and --python-repair-trust-attempt; the unbound driver flow retains no edit authorization"
+                    .to_string(),
+            );
+        }
+        (Some(_), AgentRepairPhase::Before) if !edit_authorization.authorized => {
+            return Err(
+                "agent repair --python-repair-trust-manifest/--python-repair-trust-attempt require --edit-authorized and --edit-authority <identity>; the driver never authorizes an edit automatically"
+                    .to_string(),
+            );
+        }
+        _ => {}
+    }
+
     match phase {
         AgentRepairPhase::Before => {
             if attempt_id.is_some() {
@@ -286,6 +404,8 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         seam_id,
         attempt_id,
         phase,
+        python_repair_trust,
+        edit_authorization,
     }))
 }
 
@@ -904,6 +1024,12 @@ mod tests {
                 seam_id: Some("seam:sample".to_string()),
                 attempt_id: None,
                 phase: AgentRepairPhase::Before,
+                python_repair_trust: None,
+                edit_authorization:
+                    super::super::super::app::python_repair_binding::EditAuthorization {
+                        authorized: false,
+                        authority: None,
+                    },
             }))
         );
         assert_eq!(
@@ -921,8 +1047,105 @@ mod tests {
                 seam_id: None,
                 attempt_id: Some("repair-attempt-0123456789abcdef01234567".to_string()),
                 phase: AgentRepairPhase::After,
+                python_repair_trust: None,
+                edit_authorization:
+                    super::super::super::app::python_repair_binding::EditAuthorization {
+                        authorized: false,
+                        authority: None,
+                    },
             }))
         );
+    }
+
+    #[test]
+    fn agent_repair_parses_the_python_repair_trust_binding_flags() -> Result<(), String> {
+        let authorized =
+            |authority: Option<&str>| crate::app::python_repair_binding::EditAuthorization {
+                authorized: true,
+                authority: authority.map(str::to_string),
+            };
+        let parsed = parse_agent_args(&args(&[
+            "repair",
+            "--root",
+            "repo",
+            "--seam-id",
+            "seam:sample",
+            "--phase",
+            "before",
+            "--python-repair-trust-manifest",
+            "target/ripr/manifest.json",
+            "--python-repair-trust-attempt",
+            "att-trust-1",
+            "--edit-authorized",
+            "--edit-authority",
+            "operator-a",
+        ]));
+        let Ok(AgentCommand::Repair(options)) = parsed else {
+            return Err("trust-flag invocation did not parse".to_string());
+        };
+        let Some(trust) = &options.python_repair_trust else {
+            return Err("trust flags were dropped during parsing".to_string());
+        };
+        if trust.manifest_path != std::path::Path::new("target/ripr/manifest.json")
+            || trust.attempt_id != "att-trust-1"
+            || options.edit_authorization != authorized(Some("operator-a"))
+        {
+            return Err(format!("trust binding options parsed wrong: {options:?}"));
+        }
+
+        for (argv, needle) in [
+            (
+                vec!["--python-repair-trust-manifest", "m.json"],
+                "--python-repair-trust-attempt",
+            ),
+            (
+                vec!["--python-repair-trust-attempt", "att"],
+                "--python-repair-trust-manifest",
+            ),
+            (vec!["--edit-authority", "op"], "--edit-authorized"),
+            (vec!["--edit-authorized"], "--edit-authority"),
+            (
+                vec![
+                    "--python-repair-trust-manifest",
+                    "m.json",
+                    "--python-repair-trust-attempt",
+                    "att",
+                ],
+                "--edit-authorized",
+            ),
+            (
+                vec![
+                    "--python-repair-trust-manifest",
+                    "m.json",
+                    "--python-repair-trust-attempt",
+                    "att",
+                    "--edit-authorized",
+                    "--edit-authority",
+                    "op",
+                    "--phase",
+                    "after",
+                    "--attempt",
+                    "repair-attempt-0123456789abcdef01234567",
+                ],
+                "only valid with --phase before",
+            ),
+            (
+                vec!["--edit-authorized", "--edit-authority", "op"],
+                "--python-repair-trust-manifest",
+            ),
+        ] {
+            let mut full = vec!["repair", "--root", "repo", "--seam-id", "seam:sample"];
+            full.extend(argv.iter().copied());
+            match parse_agent_args(&args(&full)) {
+                Err(error) if error.contains(needle) => {}
+                other => {
+                    return Err(format!(
+                        "expected rejection containing `{needle}` for {argv:?}, got {other:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -940,6 +1163,11 @@ mod tests {
                 seam_id: Some("seam:sample".to_string()),
                 attempt_id: None,
                 phase: AgentRepairPhase::After,
+                python_repair_trust: None,
+                edit_authorization: crate::app::python_repair_binding::EditAuthorization {
+                    authorized: false,
+                    authority: None,
+                },
             }))
         );
     }

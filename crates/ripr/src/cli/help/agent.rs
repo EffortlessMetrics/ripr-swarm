@@ -199,6 +199,16 @@ Options:
                        the compatibility selector for `after`.
   --attempt ID         Select one durable repair attempt; valid only for `after`.
   --phase before|after Which half of the repair loop to run.
+  --python-repair-trust-manifest PATH
+                       Bind this attempt to an accepted Python repair-trust
+                       selection manifest (RIPR-SPEC-0176); `before` only.
+  --python-repair-trust-attempt ID
+                       The selection attempt identity to bind; requires the
+                       manifest flag.
+  --edit-authorized    Explicitly authorize the bounded test-only edit for
+                       this attempt; requires an authority.
+  --edit-authority ID  The operator or agent identity the authorization is
+                       recorded under; requires --edit-authorized.
 
 The ordinary repair path is:
 
@@ -214,6 +224,16 @@ The before phase writes the pre-edit repo-exposure snapshot and repair packet.
 The after phase writes the post-edit snapshot, persists static verification
 JSON, and emits a receipt. RIPR owns the evidence plumbing; the human or
 external agent owns the test edit.
+
+With the Python repair-trust flags, the before phase verifies the selection
+row by digest (manifest digest, row selection digest, current HEAD, exact
+test-only target agreement with the packet) and stages the binding into the
+durable attempt; the after phase re-verifies the same digests before recording
+the applied edit and requires the same explicit authorization. A binding
+drift, ambiguity, unsafe surface, or missing authorization fails before any
+edit is recorded; repository HEAD drift between the phases is instead owned
+by the durable finish, which records the typed stale state. The driver
+records no verification result, no static movement, and no closure.
 
 Lower-level `start`, `brief`, `packet`, `verify`, `receipt`, `status`, and
 `review-summary` commands remain available for explicit control and debugging.

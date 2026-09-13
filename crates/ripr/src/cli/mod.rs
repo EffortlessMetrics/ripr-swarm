@@ -100,42 +100,90 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
     let agent_brief = root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT);
     let before_snapshot = root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT);
     let agent_packet = root.join(WORKFLOW_AGENT_PACKET_ARTIFACT);
-    let packet_text = std::fs::read_to_string(&agent_packet)
+    let packet_bytes = std::fs::read(&agent_packet)
         .map_err(|error| format!("read {} failed: {error}", agent_packet.display()))?;
+    let packet_text = String::from_utf8(packet_bytes.clone())
+        .map_err(|error| format!("agent packet is not UTF-8: {error}"))?;
     let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
     crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
-    let result = crate::app::repair_attempt::begin_repair_attempt(
-        root,
-        root,
-        seam_id,
-        &[
-            BeforeArtifactSource {
-                role: "workflow_manifest",
-                path: &workflow_manifest,
-            },
-            BeforeArtifactSource {
-                role: "commands_markdown",
-                path: &commands_markdown,
-            },
-            BeforeArtifactSource {
-                role: "agent_brief",
-                path: &agent_brief,
-            },
-            BeforeArtifactSource {
-                role: "before_snapshot",
-                path: &before_snapshot,
-            },
-            BeforeArtifactSource {
-                role: "agent_packet",
-                path: &agent_packet,
-            },
-            BeforeArtifactSource {
-                role: "edit_cage_baseline",
-                path: &edit_cage_baseline,
-            },
-        ],
+
+    // The Python repair-trust binding (#3568, RIPR-SPEC-0176) is verified
+    // BEFORE the durable attempt is published: every drift, ambiguity, unsafe
+    // surface, or missing authorization fails here, before any edit
+    // transaction can begin. The verified record is then staged into the
+    // attempt as a digest-pinned artifact. The binding's head pin is passed
+    // into the publication transaction, so a HEAD move between preparation
+    // and publication refuses before any attempt record exists.
+    let binding = match &options.python_repair_trust {
+        Some(selection) => Some(crate::app::python_repair_binding::prepare_binding(
+            root,
+            seam_id,
+            &policy,
+            &before_snapshot,
+            &packet_bytes,
+            selection,
+            &options.edit_authorization,
+        )?),
+        None => None,
+    };
+
+    let mut sources = vec![
+        BeforeArtifactSource {
+            role: "workflow_manifest",
+            path: &workflow_manifest,
+        },
+        BeforeArtifactSource {
+            role: "commands_markdown",
+            path: &commands_markdown,
+        },
+        BeforeArtifactSource {
+            role: "agent_brief",
+            path: &agent_brief,
+        },
+        BeforeArtifactSource {
+            role: "before_snapshot",
+            path: &before_snapshot,
+        },
+        BeforeArtifactSource {
+            role: "agent_packet",
+            path: &agent_packet,
+        },
+        BeforeArtifactSource {
+            role: "edit_cage_baseline",
+            path: &edit_cage_baseline,
+        },
+    ];
+    if let Some(binding) = &binding {
+        sources.push(crate::app::repair_attempt::BeforeArtifactSource {
+            role: crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+            path: &binding.record_path,
+        });
+    }
+    let result = crate::app::repair_attempt::begin_repair_attempt_with(
+        crate::app::repair_attempt::BeginRepairAttemptOptions {
+            root,
+            root_argument: root,
+            seam_id,
+            sources: &sources,
+            expected_repository_head: binding
+                .as_ref()
+                .map(|binding| binding.verified.head.as_str()),
+            // The after phase of a trust-bound attempt always re-verifies the
+            // explicit authorization, so the published follow-up must name
+            // the required flags with an explicit placeholder identity — the
+            // driver never persists a granted authorization.
+            next_command_suffix: binding
+                .as_ref()
+                .map(|_| " --edit-authorized --edit-authority <operator-or-agent-identity>"),
+        },
     )?;
+    if let Some(binding) = &binding {
+        eprintln!(
+            "ripr: python repair-trust binding staged for selection attempt `{}` (selection digest {})",
+            binding.verified.attempt_id, binding.verified.selection_digest
+        );
+    }
     eprintln!(
         "ripr: repair attempt {} is awaiting the focused test edit",
         result.manifest.repair_attempt_id.as_str()

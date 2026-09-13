@@ -377,6 +377,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "python-judged-panel feedback [--records <dir>] [--adjudications <dir>] [--out <dir>] [--check]",
         "check-python-judged-panel",
         "python-repair-trust check [--manifest <path>] [--attempts <dir-or-file>]",
+        "python-repair-trust check-driver [--manifest <path>] --bindings <dir-or-file>",
         "test-oracle-report",
         "check-test-oracles",
         "test-efficiency-report",
@@ -807,6 +808,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates the accepted Python repair-trust selection manifest and retained attempt envelopes offline (RIPR-SPEC-0176): immutable selection digests, lifecycle state machine, movement/execution separation, transition-required identities, unsafe edit surfaces, and row-derived aggregates. With no corpus the check reports not_run and never a vacuous pass; it executes no external command and makes no support-tier or repair-correctness claim.",
+        ),
+        command_entry(
+            "python-repair-trust check-driver [--manifest <path>] --bindings <dir-or-file>",
+            "non_mutating_check",
+            "target/ripr/reports/python-repair-driver-check.{json,md}",
+            false,
+            false,
+            "Validates retained two-phase driver binding records (#3569) against the accepted selection manifest offline (RIPR-SPEC-0176): manifest digest staleness, canonical selection digest anchors, target identity agreement, explicit-operator-flags authorization, the standing no-verification/no-movement/no-closure non-claims, denied edit surfaces, and the apply-phase durable-attempt and patch identities. It executes no external command and makes no support-tier or repair-correctness claim.",
         ),
         command_entry(
             "test-oracle-report",
