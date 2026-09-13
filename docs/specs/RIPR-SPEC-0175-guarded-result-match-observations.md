@@ -41,7 +41,11 @@ Policy impact:
   another file-fact cache generation bump keeps warm pre-extension caches
   from serving parser-backed files WITHOUT the fact fields (on such files
   the flag law reads empty facts as real "no shadow", so a stale envelope
-  could silently retire the lexical scanners' defeats).
+  could silently retire the lexical scanners' defeats). The classified-seam
+  generations move with it (outer `1.12`, sharded `0.18`, compact `0.19`):
+  the classified cache loads BEFORE any file-fact rebuild, so only its own
+  generation bump can keep a warm hit from replaying pre-#3727 shadow
+  classification.
 
 ## Problem
 
