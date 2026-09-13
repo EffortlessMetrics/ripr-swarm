@@ -35,8 +35,16 @@
 //!   (#2927 shape), the prepare-record digest chain, the patch digest, the
 //!   changed-file set, the edit-cage decision, and the resulting head; every
 //!   apply record must chain to exactly one supplied prepare record by its
-//!   exact-byte digest, and every changed path must sit inside the declared
-//!   edit cage (a compliant record must include the selected target);
+//!   exact-byte digest AND agree with that prepare record on every
+//!   prepare-bound identity field (trust attempt, selection digest, seam,
+//!   prepare-time head, target, input digests, edit surface, authorization) —
+//!   an apply that names another attempt's prepare digest fails, naming both
+//!   records and the disagreeing field. A compliant record must include the
+//!   selected target within the declared cage. A `violated` record is
+//!   accepted as the producer's typed failed result: its escaped paths are
+//!   validated structurally (portable spellings) and retained verbatim as
+//!   failure evidence, and the report renders the cage decision so
+//!   `compliant` and failed(`violated`) dispositions stay distinguishable.
 //! - production/generated/vendor/environment edit surfaces fail: a record
 //!   whose target falls under a denied surface prefix is rejected even when
 //!   the row declared it `unsafe`, because the driver binds only test-only,
@@ -235,12 +243,30 @@ fn check_durable_attempt_id(subject: &str, field: &str, value: &str) -> Result<(
 }
 
 /// One validated record, reduced to what the report and the prepare-to-apply
-/// digest chain need.
+/// digest chain need. The prepare-bound identity fields (seam, head, target,
+/// selection digest, input digests, edit surface, authorization) are retained
+/// so the chain can require the apply record to agree with ITS prepare record,
+/// not merely to name a valid prepare digest.
 struct DriverBindingRecord {
     display: String,
     phase: String,
     trust_attempt_id: String,
     target_path: String,
+    selection_digest: String,
+    seam_id: String,
+    repository_head: String,
+    packet_sha256: String,
+    before_snapshot_sha256: String,
+    allowed_surface: BTreeSet<String>,
+    forbidden_surface: BTreeSet<String>,
+    authorization_status: String,
+    authorization_authority: String,
+    authorization_method: String,
+    /// The apply block's edit-cage decision, verbatim (`None` on prepare
+    /// records). `violated` records are typed failed results: the offline
+    /// validator accepts them as retained failure evidence while a
+    /// `compliant` record must still cover the selected target in-cage.
+    cage_status: Option<String>,
     /// The recomputed exact-byte sha256 of the loaded record file.
     artifact_sha256: String,
     /// The apply-phase claim into the prepare-record digest chain.
@@ -440,10 +466,18 @@ fn check_driver_artifacts(
 
 /// The prepare-to-apply digest chain: an apply record's
 /// `binding_artifact_sha256` must be the recomputed exact-byte sha256 of
-/// exactly one supplied prepare record. A fabricated digest, a tampered
-/// prepare artifact (its bytes moved, so the recomputed digest moved), or a
-/// duplicated prepare record (two files share the digest) fails. Prepare-only
-/// records stay valid: they are the `awaiting_edit` state.
+/// exactly one supplied prepare record, AND the apply record must agree with
+/// that prepare record on every prepare-bound identity field (trust attempt,
+/// selection digest, seam, prepare-time repository head, target path, input
+/// digests, edit surface, and authorization). A fabricated digest, a tampered
+/// prepare artifact (its bytes moved, so the recomputed digest moved), a
+/// duplicated prepare record (two files share the digest), or an apply that
+/// copies an unrelated attempt's prepare digest while carrying its own
+/// identities fails, naming both records and the disagreeing field. The apply
+/// must also agree on its own `durable_attempt_id` boundary only indirectly:
+/// the trusted binding is the digest chain plus the identity agreement, so a
+/// cross-attempt reference cannot validate. Prepare-only records stay valid:
+/// they are the `awaiting_edit` state.
 fn enforce_prepare_to_apply_chain(records: &[DriverBindingRecord], violations: &mut Vec<String>) {
     let mut prepares_by_digest: std::collections::BTreeMap<&str, Vec<&DriverBindingRecord>> =
         std::collections::BTreeMap::new();
@@ -457,7 +491,7 @@ fn enforce_prepare_to_apply_chain(records: &[DriverBindingRecord], violations: &
         let Some(claimed) = record.binding_artifact_sha256.as_deref() else {
             continue;
         };
-        match prepares_by_digest.get(claimed) {
+        match prepares_by_digest.get(claimed).map(Vec::as_slice) {
             None => violations.push(driver_fail(
                 &record.display,
                 "binding_artifact_sha256",
@@ -473,7 +507,72 @@ fn enforce_prepare_to_apply_chain(records: &[DriverBindingRecord], violations: &
                     matches.len()
                 ),
             )),
-            Some(_) => {}
+            Some([prepare]) => {
+                let subject = format!("{} -> {}", record.display, prepare.display);
+                let pairs: [(&str, &str, &str); 10] = [
+                    ("trust.attempt_id", &record.trust_attempt_id, &prepare.trust_attempt_id),
+                    ("trust.selection_digest", &record.selection_digest, &prepare.selection_digest),
+                    ("seam_id", &record.seam_id, &prepare.seam_id),
+                    ("repository_head", &record.repository_head, &prepare.repository_head),
+                    ("trust.target_path", &record.target_path, &prepare.target_path),
+                    ("input.packet_sha256", &record.packet_sha256, &prepare.packet_sha256),
+                    (
+                        "input.before_snapshot_sha256",
+                        &record.before_snapshot_sha256,
+                        &prepare.before_snapshot_sha256,
+                    ),
+                    (
+                        "authorization.status",
+                        &record.authorization_status,
+                        &prepare.authorization_status,
+                    ),
+                    (
+                        "authorization.authority",
+                        &record.authorization_authority,
+                        &prepare.authorization_authority,
+                    ),
+                    (
+                        "authorization.method",
+                        &record.authorization_method,
+                        &prepare.authorization_method,
+                    ),
+                ];
+                for (field, apply_value, prepare_value) in pairs {
+                    if apply_value != prepare_value {
+                        violations.push(driver_fail(
+                            &subject,
+                            field,
+                            format!(
+                                "prepare-to-apply identity disagreement: the apply record names `{apply_value}` but its prepare record names `{prepare_value}`; an apply bound to another attempt's prepare fails"
+                            ),
+                        ));
+                    }
+                }
+                if record.allowed_surface != prepare.allowed_surface {
+                    violations.push(driver_fail(
+                        &subject,
+                        "edit_surface.allowed",
+                        format!(
+                            "prepare-to-apply identity disagreement: the apply record declares {:?} but its prepare record declares {:?}; a changed edit surface breaks the binding",
+                            record.allowed_surface, prepare.allowed_surface
+                        ),
+                    ));
+                }
+                if record.forbidden_surface != prepare.forbidden_surface {
+                    violations.push(driver_fail(
+                        &subject,
+                        "edit_surface.forbidden",
+                        format!(
+                            "prepare-to-apply identity disagreement: the apply record declares {:?} but its prepare record declares {:?}; a changed edit surface breaks the binding",
+                            record.forbidden_surface, prepare.forbidden_surface
+                        ),
+                    ));
+                }
+            }
+            Some(_) => {
+                // Unreachable: map values are always non-empty, and the
+                // single-entry case matched `Some([prepare])` above.
+            }
         }
     }
 }
@@ -528,7 +627,7 @@ fn validate_binding_record(
             ));
         }
     }
-    require_string(display, top, "seam_id")?;
+    let record_seam_id = require_string(display, top, "seam_id")?;
     let repository_head = require_string(display, top, "repository_head")?;
     check_git_sha(display, "repository_head", &repository_head)?;
     require_string(display, top, "selection_manifest_path")?;
@@ -881,7 +980,7 @@ fn validate_binding_record(
         &AUTHORIZATION_STATUSES,
         "authorization status",
     )?;
-    require_string(display, authorization, "authority")?;
+    let authority = require_string(display, authorization, "authority")?;
     let method = require_string(display, authorization, "method")?;
     known_value_or_fail(
         display,
@@ -930,6 +1029,7 @@ fn validate_binding_record(
     // Apply block: present exactly on apply-phase records, carrying the
     // applied-edit evidence and nothing beyond it — no verification verdict,
     // no movement, no closure.
+    let mut apply_cage_status = None;
     if apply_phase {
         let apply = match top.get("apply") {
             Some(Value::Object(map)) => map,
@@ -954,12 +1054,24 @@ fn validate_binding_record(
                 ));
             }
         };
-        // The edit cage binds every changed path: a denied production/
-        // generated/vendor/environment surface, a declared forbidden path, or
-        // any path outside the declared allowed surface fails. The offline
-        // promotion check validates clean-edit evidence; a record whose
-        // changed set left the declared cage fails here even when the
-        // producer honestly recorded the escape as a non-compliant verdict.
+        let cage_status = require_string(display, apply, "cage_status")?;
+        known_value_or_fail(
+            display,
+            "apply.cage_status",
+            &cage_status,
+            &CAGE_STATUSES,
+            "edit-cage decision",
+        )?;
+        // The edit cage binds every changed path of a COMPLIANT record: a
+        // denied production/generated/vendor/environment surface, a declared
+        // forbidden path, or any path outside the declared allowed surface
+        // fails. A `violated` record is the producer's typed failed result:
+        // the escaped paths ARE the retained evidence, so they are validated
+        // structurally (strings, portable spellings) but not against the cage
+        // — rejecting them would erase the producer's only durable failure
+        // record. `incomparable` records stay outside this offline
+        // acceptance: their cage truth lives in the durable attempt authority.
+        let violated_cage = cage_status == "violated";
         let mut changed_set = BTreeSet::new();
         for (index, value) in changed_paths.iter().enumerate() {
             let path = value.as_str().ok_or_else(|| {
@@ -971,44 +1083,38 @@ fn validate_binding_record(
             })?;
             check_portable_path(display, &format!("apply.changed_paths[{index}]"), path)?;
             let normalized = normalize_repo_relative_path(path);
-            if is_denied_edit_surface(&normalized) {
-                return Err(driver_fail(
-                    display,
-                    &format!("apply.changed_paths[{index}]"),
-                    format!(
-                        "changed path `{normalized}` falls under a production/generated/vendor/environment edit surface; the driver records only test-only edits"
-                    ),
-                ));
-            }
-            if forbidden_set.contains(normalized.as_str()) {
-                return Err(driver_fail(
-                    display,
-                    &format!("apply.changed_paths[{index}]"),
-                    format!(
-                        "changed path `{normalized}` matches the declared forbidden edit surface"
-                    ),
-                ));
-            }
-            if !allowed_set.contains(normalized.as_str()) {
-                return Err(driver_fail(
-                    display,
-                    &format!("apply.changed_paths[{index}]"),
-                    format!(
-                        "changed path `{normalized}` is outside the declared allowed edit surface {:?}",
-                        allowed_set
-                    ),
-                ));
+            if !violated_cage {
+                if is_denied_edit_surface(&normalized) {
+                    return Err(driver_fail(
+                        display,
+                        &format!("apply.changed_paths[{index}]"),
+                        format!(
+                            "changed path `{normalized}` falls under a production/generated/vendor/environment edit surface; the driver records only test-only edits"
+                        ),
+                    ));
+                }
+                if forbidden_set.contains(normalized.as_str()) {
+                    return Err(driver_fail(
+                        display,
+                        &format!("apply.changed_paths[{index}]"),
+                        format!(
+                            "changed path `{normalized}` matches the declared forbidden edit surface"
+                        ),
+                    ));
+                }
+                if !allowed_set.contains(normalized.as_str()) {
+                    return Err(driver_fail(
+                        display,
+                        &format!("apply.changed_paths[{index}]"),
+                        format!(
+                            "changed path `{normalized}` is outside the declared allowed edit surface {:?}",
+                            allowed_set
+                        ),
+                    ));
+                }
             }
             changed_set.insert(normalized);
         }
-        let cage_status = require_string(display, apply, "cage_status")?;
-        known_value_or_fail(
-            display,
-            "apply.cage_status",
-            &cage_status,
-            &CAGE_STATUSES,
-            "edit-cage decision",
-        )?;
         if cage_status == "compliant" && !changed_set.contains(&row_target_path) {
             return Err(driver_fail(
                 &trust_attempt_id,
@@ -1018,6 +1124,7 @@ fn validate_binding_record(
                 ),
             ));
         }
+        apply_cage_status = Some(cage_status);
         let head_after = require_string(display, apply, "repository_head_after")?;
         check_git_sha(display, "apply.repository_head_after", &head_after)?;
         if !matches!(apply.get("current"), Some(Value::Bool(_))) {
@@ -1033,6 +1140,17 @@ fn validate_binding_record(
         phase: phase_value,
         trust_attempt_id,
         target_path,
+        selection_digest: recorded_selection_digest,
+        seam_id: record_seam_id,
+        repository_head,
+        packet_sha256: packet_digest,
+        before_snapshot_sha256: before_digest,
+        allowed_surface: allowed_set,
+        forbidden_surface: forbidden_set,
+        authorization_status: status,
+        authorization_authority: authority,
+        authorization_method: method,
+        cage_status: apply_cage_status,
         artifact_sha256: artifact_sha256.to_string(),
         binding_artifact_sha256,
     })
@@ -1057,6 +1175,7 @@ fn render_check_driver_json(outcome: &DriverCheckOutcome) -> Result<String, Stri
                 "phase": record.phase,
                 "trust_attempt_id": record.trust_attempt_id,
                 "target_path": record.target_path,
+                "cage_status": record.cage_status,
             })
         })
         .collect();
@@ -1113,8 +1232,12 @@ fn render_check_driver_markdown(outcome: &DriverCheckOutcome) -> String {
             ));
             for record in &outcome.records {
                 out.push_str(&format!(
-                    "  - {} phase={} trust attempt `{}` target `{}`\n",
-                    record.display, record.phase, record.trust_attempt_id, record.target_path
+                    "  - {} phase={} trust attempt `{}` target `{}` cage {}\n",
+                    record.display,
+                    record.phase,
+                    record.trust_attempt_id,
+                    record.target_path,
+                    record.cage_status.as_deref().unwrap_or("n/a (prepare)"),
                 ));
             }
         }
@@ -2240,6 +2363,250 @@ mod python_repair_driver_binding {
             .ok_or_else(|| "apply record is not an object".to_string())?;
         object.insert("binding_artifact_sha256".to_string(), json!(digest));
         Ok(copy)
+    }
+
+    /// A two-row manifest fixture so an apply can reference another attempt's
+    /// prepare record.
+    fn build_two_row_fixture() -> Result<Fixture, String> {
+        let mut rows = Vec::new();
+        for attempt in ["att-one", "att-two"] {
+            let mut row = json!({
+                "attempt_id": attempt,
+                "case_id": format!("case-{attempt}"),
+                "subject_id": format!("subj-{attempt}"),
+                "repository": "https://example.com/repo",
+                "base": GIT_SHA_B,
+                "head": GIT_SHA_C,
+                "tree": DIGEST_ONE,
+                "source_currentness": "candidate_current",
+                "selection_reason": "behavior changed in the diff and the case discriminates it",
+                "diversity_stratum": "pytest_library",
+                "family": "error_path_gating",
+                "owner": "module.handler",
+                "discriminator": "raises ValueError on empty payload",
+                "relation": "case calls owner directly",
+                "oracle": "pytest.raises exact message pin",
+                "expected_direction": "should_gap",
+                "claim_boundary": "static exposure evidence only",
+                "target_path": "tests/test_handler.py",
+                "target_state": "existing",
+                "selected_at": "2026-09-10T00:00:00Z",
+                "selector": "campaign-selector",
+                "authority_snapshot_digest": DIGEST_TWO,
+            });
+            if let Some(object) = row.as_object_mut() {
+                let digest = canonical_selection_digest(object, attempt)?;
+                object.insert("selection_digest".to_string(), json!(digest));
+            }
+            rows.push(row);
+        }
+        let manifest = json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": MANIFEST_KIND,
+            "spec": KNOWN_SPEC,
+            "description": "driver binding two-row fixture",
+            "selections": rows,
+        });
+        let text = serde_json::to_string_pretty(&manifest)
+            .map_err(|error| format!("serialize two-row manifest: {error}"))?;
+        let sha256 = sha256_hex(text.as_bytes());
+        let value =
+            serde_json::from_str(&text).map_err(|error| format!("reparse two-row: {error}"))?;
+        Ok(Fixture {
+            text,
+            sha256,
+            value,
+        })
+    }
+
+    /// The recomputed canonical digest of one row, selected by attempt
+    /// identity (the shared `row_digest` helper reads only the first row).
+    fn row_digest_by_attempt(fixture: &Fixture, attempt_id: &str) -> Result<String, String> {
+        let rows = fixture
+            .value
+            .get("selections")
+            .and_then(Value::as_array)
+            .ok_or("two-row fixture carries no selections")?;
+        let row = rows
+            .iter()
+            .find(|row| row.get("attempt_id").and_then(Value::as_str) == Some(attempt_id))
+            .ok_or_else(|| format!("two-row fixture carries no row for `{attempt_id}`"))?;
+        let canonical = row.as_object().cloned().ok_or("row is not an object")?;
+        canonical_selection_digest(&canonical, attempt_id)
+    }
+
+    #[test]
+    fn prepare_to_apply_chain_requires_identity_agreement() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock before epoch: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-python-repair-driver-chain-identity-{}-{stamp}",
+            std::process::id()
+        ));
+        let manifest_dir = root.join("corpus");
+        let bindings_dir = root.join("bindings");
+        std::fs::create_dir_all(&manifest_dir)
+            .map_err(|error| format!("create corpus: {error}"))?;
+        std::fs::create_dir_all(&bindings_dir)
+            .map_err(|error| format!("create bindings: {error}"))?;
+
+        let fixture_one = build_two_row_fixture()?;
+        let manifest_path = manifest_dir.join("manifest.json");
+        std::fs::write(&manifest_path, &fixture_one.text)
+            .map_err(|error| format!("write manifest: {error}"))?;
+
+        // Prepare records for BOTH attempts, plus a valid apply for att-one.
+        let prepare_one = prepare_record(&fixture_one, "att-one", "tests/test_handler.py")?;
+        let mut prepare_two = prepare_record(&fixture_one, "att-one", "tests/test_handler.py")?;
+        set_trust_field(&mut prepare_two, "attempt_id", json!("att-two"));
+        set_trust_field(&mut prepare_two, "case_id", json!("case-att-two"));
+        set_trust_field(&mut prepare_two, "subject_id", json!("subj-att-two"));
+        set_trust_field(
+            &mut prepare_two,
+            "selection_digest",
+            json!(row_digest_by_attempt(&fixture_one, "att-two")?),
+        );
+        let write_record = |name: &str, record: &Value| -> Result<String, String> {
+            let text = serde_json::to_string_pretty(record)
+                .map_err(|error| format!("serialize {name}: {error}"))?;
+            let bytes = format!("{text}\n");
+            std::fs::write(bindings_dir.join(name), &bytes)
+                .map_err(|error| format!("write {name}: {error}"))?;
+            Ok(sha256_hex(bytes.as_bytes()))
+        };
+        let digest_two = write_record("prepare-two.json", &prepare_two)?;
+        write_record("prepare-one.json", &prepare_one)?;
+
+        // Cross-attempt digest reference: the att-one apply claims
+        // prepare-two's exact digest. Both records validate individually, so
+        // only the identity agreement can catch the splice.
+        let apply_one = apply_record(&fixture_one, "att-one", "tests/test_handler.py")?;
+        let spliced = clone_with_binding_digest(&apply_one, &digest_two)?;
+        let spliced_text = serde_json::to_string_pretty(&spliced)
+            .map_err(|error| format!("serialize spliced apply: {error}"))?;
+        std::fs::write(bindings_dir.join("apply.json"), &spliced_text)
+            .map_err(|error| format!("write spliced apply: {error}"))?;
+        let outcome = check_driver_artifacts(
+            manifest_path.to_string_lossy().as_ref(),
+            bindings_dir.to_string_lossy().as_ref(),
+        )?;
+        // The splice disagrees on every identity that differs between the two
+        // attempts (the attempt id and the row digest); every violation must
+        // be an identity disagreement naming both records and its field.
+        if outcome.violations.is_empty()
+            || !outcome.violations.iter().all(|violation| {
+                violation.contains("prepare-to-apply identity disagreement")
+                    && violation.contains("apply.json")
+                    && violation.contains("->")
+                    && violation.contains("prepare-two.json")
+            })
+            || !outcome
+                .violations
+                .iter()
+                .any(|violation| violation.contains("field=`trust.attempt_id`"))
+        {
+            return Err(format!(
+                "a cross-attempt prepare reference did not fail on identity: {:?}",
+                outcome.violations
+            ));
+        }
+
+        // A modified edit surface on an otherwise intact chain fails too.
+        let mut modified = apply_record(&fixture_one, "att-one", "tests/test_handler.py")?;
+        if let Some(object) = modified.as_object_mut()
+            && let Some(edit_surface) = object
+                .get_mut("edit_surface")
+                .and_then(Value::as_object_mut)
+        {
+            edit_surface.insert(
+                "allowed".to_string(),
+                json!(["tests/test_handler.py", "tests/extra_test.py"]),
+            );
+        }
+        let digest_one = sha256_hex(
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&prepare_one)
+                    .map_err(|error| format!("re-serialize prepare-one: {error}"))?
+            )
+            .as_bytes(),
+        );
+        let chained = clone_with_binding_digest(&modified, &digest_one)?;
+        let chained_text = serde_json::to_string_pretty(&chained)
+            .map_err(|error| format!("serialize surface-drift apply: {error}"))?;
+        std::fs::write(bindings_dir.join("apply.json"), &chained_text)
+            .map_err(|error| format!("write surface-drift apply: {error}"))?;
+        let outcome = check_driver_artifacts(
+            manifest_path.to_string_lossy().as_ref(),
+            bindings_dir.to_string_lossy().as_ref(),
+        )?;
+        if outcome.violations.len() != 1
+            || !outcome.violations[0].contains("field=`edit_surface.allowed`")
+        {
+            return Err(format!(
+                "a modified edit surface did not break the chain: {:?}",
+                outcome.violations
+            ));
+        }
+
+        // The matching chain (same attempt, same identities) passes.
+        let intact = clone_with_binding_digest(&apply_one, &digest_one)?;
+        let intact_text = serde_json::to_string_pretty(&intact)
+            .map_err(|error| format!("serialize intact apply: {error}"))?;
+        std::fs::write(bindings_dir.join("apply.json"), &intact_text)
+            .map_err(|error| format!("write intact apply: {error}"))?;
+        let outcome = check_driver_artifacts(
+            manifest_path.to_string_lossy().as_ref(),
+            bindings_dir.to_string_lossy().as_ref(),
+        )?;
+        if !outcome.violations.is_empty() || outcome.verdict() != "valid" {
+            return Err(format!(
+                "a matching prepare-to-apply chain was rejected: {:?}",
+                outcome.violations
+            ));
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn violated_apply_record_validates_as_typed_failed_result() -> Result<(), String> {
+        let fixture = build_fixture(selection_row(
+            "att-violated",
+            "tests/test_handler.py",
+            "existing",
+        ))?;
+        // The producer's typed failed result: the edit escaped the cage, and
+        // the record retains the escaped paths as evidence. The offline
+        // validator accepts it (structure validated) instead of rejecting the
+        // only durable failure record.
+        let mut violated = apply_record(&fixture, "att-violated", "tests/test_handler.py")?;
+        if let Some(object) = violated.as_object_mut()
+            && let Some(apply) = object.get_mut("apply").and_then(Value::as_object_mut)
+        {
+            apply.insert(
+                "changed_paths".to_string(),
+                json!(["tests/test_handler.py", "vendor/lib.py", "src/smuggled.py"]),
+            );
+            apply.insert("cage_status".to_string(), json!("violated"));
+        }
+        let validated = checked(&violated, &fixture)?;
+        if validated.cage_status.as_deref() != Some("violated") {
+            return Err("the violated disposition was not carried".to_string());
+        }
+        // A non-portable escaped path still fails structurally: the
+        // acceptance covers cage membership, not path hygiene.
+        let mut malformed = violated.clone();
+        if let Some(object) = malformed.as_object_mut()
+            && let Some(apply) = object.get_mut("apply").and_then(Value::as_object_mut)
+        {
+            apply.insert("changed_paths".to_string(), json!(["../outside.py"]));
+        }
+        expect_rejection(&malformed, &fixture, "must not contain `..` components")?;
+        Ok(())
     }
 
     fn args_of(manifest: &str, bindings: &str) -> Vec<String> {

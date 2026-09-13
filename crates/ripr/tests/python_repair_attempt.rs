@@ -68,6 +68,24 @@ fn run_ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
         .map_err(|error| format!("spawn ripr {args:?} failed: {error}"))
 }
 
+/// Runs `ripr agent repair` with a working directory that is NOT the
+/// workspace root, so cwd-relative path resolution bugs surface. `root_arg`
+/// is the value passed as `--root`; `args` are the flags after it.
+fn run_ripr_repair_from(cwd: &Path, root_arg: &Path, args: &[&str]) -> Result<Output, String> {
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let mut command = Command::new(bin);
+    command
+        .current_dir(cwd)
+        .args(["agent", "repair", "--root"])
+        .arg(root_arg);
+    for value in args {
+        command.arg(value);
+    }
+    command
+        .output()
+        .map_err(|error| format!("spawn ripr agent repair {args:?} failed: {error}"))
+}
+
 /// An empty hooks directory passed via `-c core.hooksPath` on every fixture
 /// git invocation: a host-configured `core.hooksPath` must never run inside
 /// the fixture repository, because a host hook could reject or mutate a
@@ -727,6 +745,52 @@ fn clean_test_only_edit_binds_prepare_and_apply() -> Result<(), String> {
     {
         return Err("apply record binding artifact digest is not 64 hex".to_string());
     }
+    Ok(())
+}
+
+#[test]
+fn relative_manifest_resolves_against_the_selected_root() -> Result<(), String> {
+    let fixture = build_fixture("relative-manifest")?;
+    let seam_id = find_seam_for_target(&fixture.root, TARGET_TEST_FILE)?;
+    write_trust_manifest(&fixture.root, "att-rel", TARGET_TEST_FILE, "existing")?;
+
+    // Launch from a working directory that is NOT the workspace: the
+    // root-relative manifest argument must resolve against --root (the same
+    // semantics as every other workflow artifact path), never against the
+    // process working directory.
+    let launcher = unique_root("relative-cwd")?;
+    std::fs::create_dir_all(&launcher).map_err(|error| format!("create launcher: {error}"))?;
+    let guard = TempFixture {
+        root: launcher.clone(),
+    };
+    let args: Vec<String> = vec![
+        "--seam-id".to_string(),
+        seam_id.clone(),
+        "--phase".to_string(),
+        "before".to_string(),
+        "--python-repair-trust-manifest".to_string(),
+        "target/ripr/trust-manifest.json".to_string(),
+        "--python-repair-trust-attempt".to_string(),
+        "att-rel".to_string(),
+        "--edit-authorized".to_string(),
+        "--edit-authority".to_string(),
+        AUTHORITY.to_string(),
+    ];
+    let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+    let prepared = run_ripr_repair_from(&launcher, &fixture.root, &borrowed)?;
+    require_success(
+        &prepared,
+        "prepare with a root-relative manifest from another working directory",
+    )?;
+
+    // The attempt (and its staged binding record) landed inside the selected
+    // workspace, proving the manifest was read from the root-relative
+    // location.
+    let attempt_id = sole_attempt(&fixture)?;
+    let record = prepare_record(&fixture, &attempt_id)?;
+    assert_prepare_record_identity(&record)?;
+
+    drop(guard);
     Ok(())
 }
 

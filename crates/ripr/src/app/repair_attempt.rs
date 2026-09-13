@@ -372,6 +372,7 @@ pub(crate) fn begin_repair_attempt_with(
             root_argument,
             seam_id,
             repository_head,
+            expected_repository_head,
             created_unix_ms,
             repair_attempt_id,
             sources,
@@ -384,6 +385,10 @@ struct AttemptPublication<'a> {
     root_argument: &'a Path,
     seam_id: &'a str,
     repository_head: String,
+    /// The caller's verified head pin, when the publication is trust-bound.
+    /// Re-checked immediately before the durable manifest write, so the
+    /// finalize path verifies rather than trusting the earlier read.
+    expected_repository_head: Option<&'a str>,
     created_unix_ms: u64,
     repair_attempt_id: RepairAttemptId,
     sources: &'a [BeforeArtifactSource<'a>],
@@ -406,6 +411,28 @@ fn complete_repair_attempt(
                 shell_arg(publication.repair_attempt_id.as_str()),
                 publication.next_command_suffix.unwrap_or_default()
             );
+            // Finalize-path head re-verification: the earlier pre-publication
+            // gate read HEAD before the artifacts were staged; the durable
+            // manifest is the authority, so HEAD is re-read immediately
+            // before it is written and any move in the window aborts with the
+            // typed refusal instead of publishing a mismatched attempt.
+            let final_head = crate::agent::artifact::current_git_head(canonical_root)
+                .map_err(|error| {
+                    format!("repair attempt finalize head verification failed: {error}")
+                })?;
+            if let Some(expected) = publication.expected_repository_head
+                && expected != final_head
+            {
+                return Err(format!(
+                    "python repair-trust binding head moved during attempt publication; the binding pins head `{expected}` but the repository HEAD is now `{final_head}`; re-run the before phase to prepare a fresh binding"
+                ));
+            }
+            if final_head != publication.repository_head {
+                return Err(format!(
+                    "repository HEAD moved during attempt publication; the attempt pins head `{}` but the repository HEAD is now `{final_head}`; re-run the before phase to prepare a fresh attempt",
+                    publication.repository_head
+                ));
+            }
             let manifest = RepairAttemptManifest {
                 schema_version: REPAIR_ATTEMPT_SCHEMA_VERSION.to_string(),
                 kind: "repair_attempt".to_string(),
@@ -921,11 +948,14 @@ fn replace_manifest_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 /// Replaces a shared compatibility file through the staged atomic-rename
 /// pattern: the bytes are written and synced to a temporary file, then moved
-/// onto the destination. A concurrent reader never observes partial bytes.
-/// Unix rename replaces atomically; on Windows the existing target must be
-/// unlinked first. Unlike the exclusive `write_bytes_atomic` this replaces an
-/// existing destination, so it is only for files that are refreshed in place
-/// (attempt destinations stay immutable).
+/// onto the destination. A concurrent reader never observes partial bytes and
+/// never observes the destination missing: `std::fs::rename` replaces an
+/// existing destination on every supported platform (POSIX semantics on Unix;
+/// `MoveFileExW`/POSIX-rename semantics on Windows), so no delete step runs
+/// before the rename — a failed replacement leaves the previous content in
+/// place. Unlike the exclusive `write_bytes_atomic` this replaces an existing
+/// destination, so it is only for files that are refreshed in place (attempt
+/// destinations stay immutable).
 pub(crate) fn replace_file_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
     let temporary = path.with_extension(format!("tmp-{}-{nonce}", std::process::id()));
@@ -941,13 +971,6 @@ pub(crate) fn replace_file_atomically(path: &Path, bytes: &[u8]) -> Result<(), S
     if let Err(error) = write_result {
         let _ = std::fs::remove_file(&temporary);
         return Err(error);
-    }
-    #[cfg(windows)]
-    if path.exists()
-        && let Err(error) = std::fs::remove_file(path)
-    {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(format!("replace {} failed: {error}", path.display()));
     }
     if let Err(error) = std::fs::rename(&temporary, path) {
         let _ = std::fs::remove_file(&temporary);
@@ -1656,6 +1679,47 @@ mod tests {
     }
 
     #[test]
+    fn replace_file_atomically_swaps_in_place_and_fails_without_destroying() -> Result<(), String> {
+        let root = test_root("replace")?;
+        // An existing destination is replaced in place by the rename itself:
+        // no delete step runs, so a reader never observes the path missing
+        // and a failed replacement leaves the previous content in place.
+        let path = root.join("projection.json");
+        replace_file_atomically(&path, b"first")?;
+        replace_file_atomically(&path, b"second")?;
+        let contents = std::fs::read(&path)
+            .map_err(|error| format!("read {} failed: {error}", path.display()))?;
+        if contents != b"second" {
+            return Err("replace_file_atomically did not swap the destination bytes".to_string());
+        }
+        // No staging residue: every temporary sibling is cleaned up.
+        let residue = std::fs::read_dir(&root)
+            .map_err(|error| format!("read {} failed: {error}", root.display()))?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+            .count();
+        if residue != 0 {
+            return Err(format!("replace_file_atomically left {residue} temp files"));
+        }
+        // A failed replacement (the destination is a directory, so the rename
+        // cannot land) returns an error and does not destroy the destination.
+        let blocked = root.join("blocked.json");
+        std::fs::create_dir(&blocked)
+            .map_err(|error| format!("create blocking directory failed: {error}"))?;
+        let result = replace_file_atomically(&blocked, b"unlandable");
+        let blocked_still_there = blocked.is_dir();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        if result.is_ok() {
+            return Err("a rename onto a directory destination succeeded".to_string());
+        }
+        if !blocked_still_there {
+            return Err("a failed replacement destroyed the pre-existing destination".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn failed_begin_leaves_no_orphan_attempt_directory() -> Result<(), String> {
         let root = test_repo_root("orphan")?;
         let missing = root.join("missing-before.json");
@@ -1696,7 +1760,11 @@ mod tests {
 
     #[test]
     fn failed_manifest_write_removes_staged_attempt_and_artifacts() -> Result<(), String> {
-        let root = test_root("publish")?;
+        // A real repository: the finalize-path head re-verification must pass
+        // so the occupied manifest path is what actually forces the publish
+        // failure.
+        let root = test_repo_root("publish")?;
+        let head = crate::agent::artifact::current_git_head(&root)?;
         let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
         let attempt_directory = reserve_attempt_directory(&root, &attempt_id)?;
         let source = root.join("before.json");
@@ -1713,7 +1781,8 @@ mod tests {
             AttemptPublication {
                 root_argument: &root,
                 seam_id: "seam:sample",
-                repository_head: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                repository_head: head,
+                expected_repository_head: None,
                 created_unix_ms: 1,
                 repair_attempt_id: attempt_id,
                 sources: &[BeforeArtifactSource {

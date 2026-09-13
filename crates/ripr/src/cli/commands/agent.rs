@@ -606,16 +606,28 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             // The apply record is published last: the receipt re-evaluates the
             // edit cage over the exact delta finish measured, so no artifact
             // write may land between finish and the receipt binding.
+            // The retained binding's manifest bytes are confirmed once more
+            // immediately before the record write: the earlier confirmation
+            // ran before the durable finish, so a manifest replaced inside
+            // that finalize window must refuse here instead of publishing an
+            // apply record against replaced trust data. The refusal restores
+            // the attempt to awaiting_edit, so the identical retry
+            // re-verifies everything.
             let mut apply_record_result = Ok(());
             if let (Some(binding), Some(verified)) = (&retained_binding, &verified_binding) {
-                match crate::app::python_repair_binding::write_apply_record(
-                    &root,
-                    &attempt.attempt_id,
-                    &binding.artifact_sha256,
-                    verified,
-                    edit_authorization.authority.as_deref().unwrap_or_default(),
-                    &cage_after,
-                ) {
+                let record_outcome =
+                    crate::app::python_repair_binding::confirm_manifest_unchanged(binding)
+                        .and_then(|()| {
+                            crate::app::python_repair_binding::write_apply_record(
+                                &root,
+                                &attempt.attempt_id,
+                                &binding.artifact_sha256,
+                                verified,
+                                edit_authorization.authority.as_deref().unwrap_or_default(),
+                                &cage_after,
+                            )
+                        });
+                match record_outcome {
                     Ok(apply_record_path) => {
                         eprintln!(
                             "ripr: python repair-trust apply record: {}",

@@ -274,8 +274,10 @@ digest-pinned artifact (role `python_repair_trust_binding`).
 `--python-repair-trust-manifest <path>`, `--python-repair-trust-attempt <id>`,
 and the authorization pair `--edit-authorized` + `--edit-authority <identity>`
 (both flags or neither; an authorization without a binding, or a binding
-without an authorization, is refused). Before the durable attempt is
-published, the driver verifies, failing closed:
+without an authorization, is refused). A relative manifest path resolves
+against the selected `--root` (the same semantics as every other workflow
+artifact path), never against the process working directory. Before the
+durable attempt is published, the driver verifies, failing closed:
 
 - the manifest envelope (`schema_version` `0.1`, `kind`
   `python_repair_trust_manifest`, spec `RIPR-SPEC-0176`) parses as strict JSON
@@ -326,11 +328,25 @@ After the durable finish, the apply record
 (`target/ripr/workflow/python-repair-driver-after.json`) is published last
 (the receipt re-evaluates the edit cage over the exact delta finish measured,
 so no artifact write may land between finish and the receipt binding; a
-receipt refusal still publishes the record). It carries the durable attempt
+receipt refusal still publishes the record). The retained binding's manifest
+digest and the repository head are re-verified inside each finalize path —
+the before phase re-reads HEAD immediately before the durable attempt
+manifest is written, and the after phase re-confirms the manifest digest
+immediately before the apply record is written — so publication verifies
+current state rather than trusting the earlier read. A residual race inside
+each final read-to-write window (bounded to the single durable write) is a
+disclosed limit, not a claimed atomicity. It carries the durable attempt
 identity, the prepare-record digest chain, the patch digest, the actual
 changed-file set, the edit-cage decision, the resulting repository head, and
 the same non-claims. The apply record is a compatibility projection; the
 durable `after` block in the attempt manifest remains the authority.
+
+The offline `check-driver` validator distinguishes the two cage outcomes it
+retains: a `compliant` apply record must cover the selected target inside its
+declared cage, while a `violated` apply record is the producer's typed failed
+result — its escaped paths are validated structurally (portable spellings)
+and retained verbatim as failure evidence, never re-caged, so the offline
+corpus can hold the failure without erasing it.
 
 ### State discipline and claim boundary
 

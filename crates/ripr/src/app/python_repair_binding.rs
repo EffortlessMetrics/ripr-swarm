@@ -15,6 +15,15 @@
 //! closure; RIPR-SPEC-0176's `verified`/`reviewed`/`accepted` lifecycle
 //! states and the movement/execution axes stay owned by the later phase
 //! (#3570) and the corpus, never by this driver.
+//!
+//! Test-only edit-surface guarantee: this module's guarantee is bounded by
+//! two authorities rather than a positive test-path allowlist — the repair
+//! packet producer's test-selection authority (the packet names the focused
+//! test as the selected edit target, and the cage is derived from it) plus
+//! the production/generated/vendor/environment denial families
+//! (`is_denied_edit_surface`). A general positive allowlist of test paths is
+//! the follow-up; it folds into #3727's parser-backed facts if it lands
+//! there.
 
 use crate::edit_cage::EditCagePolicy;
 use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
@@ -963,10 +972,20 @@ pub(crate) fn prepare_binding(
     authorization: &EditAuthorization,
 ) -> Result<PreparedBinding, String> {
     let authority = authorization.verify("prepare the edit transaction")?;
-    // Resolve the cited manifest to its absolute location before the root
-    // containment check, so a repo-relative path is judged by where it
+    // Resolve the cited manifest relative to the selected workspace root (the
+    // same semantics as every other workflow artifact path), never relative to
+    // the process working directory: `ripr agent repair --root <ws>
+    // --python-repair-trust-manifest target/ripr/trust-manifest.json` must
+    // read `<ws>/target/ripr/trust-manifest.json` regardless of where the
+    // driver was launched. The resolved location is then canonicalized before
+    // the root containment check, so the manifest is judged by where it
     // actually lives, not by how it was spelled.
-    let manifest_location = std::fs::canonicalize(&request.manifest_path).map_err(|error| {
+    let cited_manifest = if request.manifest_path.is_absolute() {
+        request.manifest_path.clone()
+    } else {
+        root.join(&request.manifest_path)
+    };
+    let manifest_location = std::fs::canonicalize(&cited_manifest).map_err(|error| {
         format!(
             "python repair-trust selection manifest {} is not readable: {error}",
             request.manifest_path.display()
@@ -1156,7 +1175,15 @@ pub(crate) fn reverify_for_apply(
 
     // The closed nested blocks are shape-checked on the retained record so a
     // tampered or future-schema record cannot slip a field past the digest
-    // anchors.
+    // anchors. Where the emitted shape is known, the VALUES are validated too
+    // (digest-shaped digests, non-empty strings, portable edit-surface paths),
+    // consistent with the binding checks the prepare phase ran on the same
+    // fields. Two fields stay deliberately shape-only: `driver.binary_sha256`
+    // is provenance, not a pin (the driver binary may be rebuilt between the
+    // phases, so it is never compared to the running binary), and
+    // `input.before_snapshot_sha256` binds its bytes through the durable
+    // attempt loader's manifest artifact digests, which re-verify the staged
+    // file before this function runs.
     let nested_blocks: [(&str, &str, &[&str]); 4] = [
         ("driver", "retained binding driver", &DRIVER_KEYS),
         ("config", "retained binding config", &CONFIG_KEYS),
@@ -1175,6 +1202,62 @@ pub(crate) fn reverify_for_apply(
             subject,
         )?;
         reject_unknown_keys(block, allowed, subject)?;
+        match field {
+            "driver" => {
+                let binary = require_string(subject, block, "binary_sha256")?;
+                if !is_sha256_hex(&binary) {
+                    return Err(format!(
+                        "python repair-trust binding: subject=`{subject}` field=`binary_sha256`: must be bare lowercase sha256 hex"
+                    ));
+                }
+                require_string(subject, block, "version")?;
+            }
+            "config" => {
+                require_string(subject, block, "profile")?;
+            }
+            "input" => {
+                for digest_field in ["packet_sha256", "before_snapshot_sha256"] {
+                    let digest = require_string(subject, block, digest_field)?;
+                    if !is_sha256_hex(&digest) {
+                        return Err(format!(
+                            "python repair-trust binding: subject=`{subject}` field=`{digest_field}`: must be bare lowercase sha256 hex"
+                        ));
+                    }
+                }
+            }
+            "edit_surface" => {
+                for surface_field in ["allowed", "forbidden"] {
+                    let paths = match block.get(surface_field) {
+                        Some(Value::Array(values)) => values,
+                        _ => {
+                            return Err(format!(
+                                "python repair-trust binding: subject=`{subject}` field=`{surface_field}`: must be an array of paths"
+                            ));
+                        }
+                    };
+                    if surface_field == "allowed" && paths.is_empty() {
+                        return Err(format!(
+                            "python repair-trust binding: subject=`{subject}` field=`allowed`: must name at least one allowed path"
+                        ));
+                    }
+                    for (index, value) in paths.iter().enumerate() {
+                        let path = value.as_str().ok_or_else(|| {
+                            format!(
+                                "python repair-trust binding: subject=`{subject}` field=`{surface_field}[{index}]`: path must be a string"
+                            )
+                        })?;
+                        check_portable_path(path).map_err(|error| {
+                            format!(
+                                "python repair-trust binding: subject=`{subject}` field=`{surface_field}[{index}]`: {error}"
+                            )
+                        })?;
+                    }
+                }
+            }
+            _ => {
+                // Unreachable: the block list above is closed.
+            }
+        }
     }
     let record_non_claims = match record.get("non_claims") {
         Some(Value::Array(values)) => values,
@@ -1420,6 +1503,9 @@ pub(crate) fn write_apply_record(
 mod tests {
     use super::*;
 
+    /// The authority identity the retained-record fixture grants.
+    const AUTHORITY_IDENTITY: &str = "test-operator";
+
     fn sample_row() -> Result<Value, String> {
         let mut value: Value = serde_json::from_str(
             r#"{
@@ -1632,6 +1718,151 @@ mod tests {
                 return Err(format!(
                     "raw spelling `{spelling}` was not normalized: `{}`",
                     verified.target_path
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A minimal retained prepare record whose early re-verification checks
+    /// pass, so the bounded value validation of the nested blocks is the first
+    /// stage under test. The trust block is a stub: value tampering fails
+    /// before the telemetry manifest is ever read.
+    fn retained_record_fixture() -> Value {
+        serde_json::json!({
+            "schema_version": BINDING_SCHEMA_VERSION,
+            "kind": BINDING_KIND,
+            "spec": BINDING_SPEC,
+            "phase": "prepare",
+            "seam_id": "seam-under-test",
+            "repository_head": "cccccccccccccccccccccccccccccccccccccccc",
+            "selection_manifest_path": "unused-manifest.json",
+            "driver": {
+                "binary_sha256": sha256_hex(b"driver binary bytes"),
+                "version": "0.11.0",
+            },
+            "config": {
+                "profile": "subject-ripr-toml",
+            },
+            "input": {
+                "packet_sha256": sha256_hex(b"packet bytes"),
+                "before_snapshot_sha256": sha256_hex(b"before snapshot bytes"),
+            },
+            "trust": {
+                "attempt_id": "att-reverify",
+            },
+            "edit_surface": {
+                "allowed": ["tests/test_pricing.py"],
+                "forbidden": [],
+            },
+            "authorization": {
+                "status": AUTHORIZATION_STATUS,
+                "authority": AUTHORITY_IDENTITY,
+                "method": AUTHORIZATION_METHOD,
+            },
+            "non_claims": BINDING_NON_CLAIMS,
+        })
+    }
+
+    #[test]
+    fn reverify_rejects_tampered_retained_values() -> Result<(), String> {
+        let authorization = EditAuthorization {
+            authorized: true,
+            authority: Some(AUTHORITY_IDENTITY.to_string()),
+        };
+        let policy = EditCagePolicy {
+            selected_target: crate::edit_cage::CagePathRule::exact("tests/test_pricing.py")?,
+            allowed_edit_surface: vec![crate::edit_cage::CagePathRule::exact(
+                "tests/test_pricing.py",
+            )?],
+            forbidden_paths: Vec::new(),
+            expected_operational_writes: vec![crate::edit_cage::CagePathRule::subtree(
+                "target/ripr",
+            )?],
+        };
+        // Positive control: with intact values the bounded value stage passes
+        // and verification proceeds to the telemetry manifest, which does not
+        // exist in the test environment — the failure must name the manifest,
+        // proving the record reached the later stage.
+        let intact = RetainedBinding {
+            artifact_sha256: String::new(),
+            value: retained_record_fixture(),
+        };
+        let error = match reverify_for_apply(
+            "seam-under-test",
+            &policy,
+            b"packet bytes",
+            &intact,
+            &authorization,
+        ) {
+            Err(error) => error,
+            Ok(_) => return Err("a record naming no manifest passed re-verification".to_string()),
+        };
+        if !error.contains("selection manifest") {
+            return Err(format!(
+                "intact retained values did not reach the manifest stage: {error}"
+            ));
+        }
+        // Bounded value tampering is detected at the value stage, before any
+        // manifest is read.
+        let cases: [(&str, Value, &str); 6] = [
+            (
+                "driver.binary_sha256",
+                serde_json::json!("not-a-digest"),
+                "must be bare lowercase sha256 hex",
+            ),
+            ("driver.version", serde_json::json!(""), "must be non-empty"),
+            ("config.profile", serde_json::json!(""), "must be non-empty"),
+            (
+                "input.packet_sha256",
+                serde_json::json!("0123"),
+                "must be bare lowercase sha256 hex",
+            ),
+            (
+                "edit_surface.allowed",
+                serde_json::json!([]),
+                "must name at least one allowed path",
+            ),
+            (
+                "edit_surface.forbidden",
+                serde_json::json!(["../escape.py"]),
+                "must not contain `..` components",
+            ),
+        ];
+        for (field, replacement, needle) in cases {
+            let mut record = retained_record_fixture();
+            let object = record
+                .as_object_mut()
+                .ok_or_else(|| "retained fixture is not an object".to_string())?;
+            let (block_name, key) = field
+                .split_once('.')
+                .ok_or_else(|| format!("test case `{field}` does not name a nested block field"))?;
+            let block = object
+                .get_mut(block_name)
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| format!("retained fixture is missing `{block_name}`"))?;
+            block.insert(key.to_string(), replacement);
+            let tampered = RetainedBinding {
+                artifact_sha256: String::new(),
+                value: record,
+            };
+            let error = match reverify_for_apply(
+                "seam-under-test",
+                &policy,
+                b"packet bytes",
+                &tampered,
+                &authorization,
+            ) {
+                Err(error) => error,
+                Ok(_) => {
+                    return Err(format!(
+                        "tampered retained `{field}` passed re-verification"
+                    ));
+                }
+            };
+            if !error.contains(needle) || !error.contains(&format!("field=`{key}")) {
+                return Err(format!(
+                    "tampered retained `{field}` was not the typed failure (`{needle}`): {error}"
                 ));
             }
         }
