@@ -457,7 +457,13 @@ fn collect_body_shadow_facts(
 /// parse cleanly: the descent only ever sees real syntax, and the
 /// consumers' flag law routes fallback decisions off these fields.
 pub(crate) fn shadow_facts_for_body_text(body: &str) -> (Vec<String>, Vec<LetBindingFact>) {
-    let wrapped = format!("fn __ripr_shadow_facts__() {{ {body}");
+    // The wrapper must be a COMPLETE fn item: an unclosed brace makes
+    // `SourceFile::parse` report errors and the fail-closed branch below
+    // return empty facts for every body — the exact producer regression
+    // the non-empty-facts tests pin (#3739 review). The closing brace sits
+    // on its own line after the body, so the opening line — and every
+    // body-relative offset — is unchanged.
+    let wrapped = format!("fn __ripr_shadow_facts__() {{ {body}\n}}");
     let parse = SourceFile::parse(&wrapped, Edition::CURRENT);
     if !parse.errors().is_empty() {
         return (Vec::new(), Vec::new());
@@ -1170,23 +1176,20 @@ fn extract_parser_oracles(
     }
     // #3727 Slice A: parser-backed shadow facts over the scanned text. The
     // guarded scan runs over `function_text` (the AST node text, which
-    // includes the attribute lines), so the facts are computed against a
-    // local line index of that same text and stay aligned with the scan's
-    // body-relative offsets. The parser path therefore defeats shadows from
-    // real `fn`/`let` nodes — the #3727 flag law's parser-backed authority.
+    // includes the attribute lines) and its use-site coordinate counts
+    // 0-based lines from the TOP of that text, so the facts must share
+    // that base: `line_of` maps to function_text lines and the base is
+    // line 1, making `LetBindingFact.line` a 0-based function_text line —
+    // the same verdict the lexical scanner over the same text would reach
+    // (#3739 review, coderabbit h6cfG: with a fn-keyword base, attribute
+    // lines shifted the let coordinates and a binding AFTER a guarded
+    // match could suppress that earlier oracle).
     let node_start = function.syntax().text_range().start();
     let local_line_index = LineIndex::new(&function_text);
-    let local_fn_line = local_line_index.line(
-        function
-            .fn_token()
-            .map(|token| token.text_range().start())
-            .unwrap_or(node_start)
-            - node_start,
-    );
     let (nested_fn_names, let_bindings) = collect_body_shadow_facts(
         function,
         &|offset| local_line_index.line(offset - node_start),
-        local_fn_line,
+        1,
     );
     // #3709: guarded Result matches over direct callee results are extracted
     // by the dedicated scanner, which owns the whole statement — the
@@ -1995,10 +1998,11 @@ mod guard_pipeline_debug_tests {
 
     /// #3727 Slice A: on the parser path the guarded-match shadow defeat
     /// derives from the parser-produced body facts. The `let` shadow sits
-    /// AFTER the attribute lines, so this also pins the local line-index
-    /// alignment between the facts and the scan's body-relative offsets
-    /// (`function_text` includes the attributes; the facts must not be
-    /// shifted by them). The clean control above proves the same shape
+    /// BEFORE the match, so the positional rule defeats under either
+    /// coordinate base; the base itself is pinned by
+    /// `parser_path_shadow_facts_share_the_scan_text_coordinate_base`,
+    /// which puts the binding after a compact match under the same
+    /// attribute lines. The clean control above proves the same shape
     /// credits when no shadow exists.
     #[test]
     fn parser_path_shadow_defeats_guarded_match_through_facts() -> Result<(), String> {
@@ -2035,6 +2039,56 @@ mod guard_pipeline_debug_tests {
                 .iter()
                 .any(|oracle| oracle.kind == crate::domain::OracleKind::GuardedResultMatch),
             "a fact-shadowed bare scrutinee must not credit through the parser path: {:?}",
+            test.assertions
+        );
+        Ok(())
+    }
+
+    /// #3739 review (coderabbit h6cfG): the guarded scan's use-site
+    /// coordinate counts 0-based lines from the TOP of `function_text`
+    /// (attributes included), so the parser facts fed to the shadow
+    /// authority must share that base. The pre-fix fn-keyword base made a
+    /// `let` AFTER a guarded match defeat that earlier oracle whenever
+    /// attribute lines sat above the `fn` — one attribute line suffices
+    /// when the match is compact enough for the binding to follow within
+    /// the attribute count. The positional rule must keep crediting the
+    /// match here; the sibling test above pins the let-BEFORE defeat.
+    #[test]
+    fn parser_path_shadow_facts_share_the_scan_text_coordinate_base() -> Result<(), String> {
+        let source = concat!(
+            "use routes_fixture::expect_ready;\n",
+            "\n",
+            "#[test]\n",
+            "fn rejects_unready_kind() {\n",
+            "    match expect_ready(\"busy\", 12) { Err(error) if error.kind() == io::ErrorKind::InvalidData => {} result => bail!(\"accepted: {result:?}\") }\n",
+            "    let expect_ready = build();\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(std::path::Path::new("tests/routes.rs"), source)
+            .map_err(|error| error.to_string())?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "rejects_unready_kind")
+            .ok_or_else(|| format!("test missing: {:?}", facts.tests))?;
+        assert!(
+            test.let_bindings
+                .iter()
+                .any(|binding| binding.name == "expect_ready" && binding.line == 2),
+            "the summarizer's binding fact is fn-relative line 2: {:?}",
+            test.let_bindings
+        );
+        let guarded: Vec<_> = test
+            .assertions
+            .iter()
+            .filter(|oracle| oracle.kind == crate::domain::OracleKind::GuardedResultMatch)
+            .collect();
+        assert_eq!(
+            guarded.len(),
+            1,
+            "a binding AFTER the match must never suppress the earlier oracle \
+             (shadow coordinates share the scan text's base): {:?}",
             test.assertions
         );
         Ok(())
@@ -2288,6 +2342,37 @@ mod shadow_fact_equivalence_tests {
                 .any(|binding| binding.name == "expect_response" && binding.line == 2)
         );
         Ok(())
+    }
+
+    /// #3739 review (devin h0fZ1, codex h6Z9y, gemini h6ZRp, coderabbit
+    /// h6cfM): the synthetic wrapper in [`shadow_facts_for_body_text`] must
+    /// CLOSE the fn item it opens. The pre-fix wrapper left the brace
+    /// unterminated, `SourceFile::parse` reported errors on every input,
+    /// and the fail-closed branch returned empty facts for every harness
+    /// body — parser-backed harness subjects then read "no shadow" and a
+    /// closure-local binding could impersonate the wrapper seam's callee.
+    /// These controls fail empty: a harness-style closure body with a
+    /// shadow-bearing `let` and a nested `fn` must produce the non-empty
+    /// facts its consumers' flag law reads.
+    #[test]
+    fn body_text_wrapper_produces_non_empty_facts_for_harness_bodies() {
+        let (nested, bindings) = shadow_facts_for_body_text(
+            "|| {\n    let try_parse_summary = fake;\n    try_parse_summary(input)\n}",
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.name == "try_parse_summary" && binding.line == 1),
+            "the harness body's shadow-bearing let must become a fact: {bindings:?}"
+        );
+        assert!(nested.is_empty(), "a closure body defines no fn items");
+
+        let (nested, bindings) = shadow_facts_for_body_text("{\n    fn fake_helper() {}\n}");
+        assert!(
+            nested.contains(&"fake_helper".to_string()),
+            "a nested fn item in a harness body must become a fact: {nested:?}"
+        );
+        assert!(bindings.is_empty(), "no let bindings in this body");
     }
 
     /// The stored `TestFact` fields are body-relative to the `fn` keyword
