@@ -95,6 +95,7 @@ fn agent_help_makes_repair_primary_without_removing_control_surfaces() -> Result
         let stdout = rendered_help(args)?;
         let collapsed = normalized(&stdout);
         assert_contains("agent help", &collapsed, "Primary workflow:")?;
+
         assert_contains(
             "agent help",
             &collapsed,
