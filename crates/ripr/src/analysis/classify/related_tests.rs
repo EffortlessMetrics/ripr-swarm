@@ -2788,7 +2788,14 @@ let r = try_parse_summary(\"x\");",
         Ok((index, probe))
     }
 
-    const SHADOWING_TEST_SOURCE: &str = "fn build() -> usize { 0 }\n\n#[test]\nfn misc_edge_case() {\n    let try_parse_summary = build();\n    let r = try_parse_summary;\n}\n";
+    // #3739 review (coderabbit h6ce-): the shadowing binding's use must be
+    // a CAPTURED CALL (`try_parse_summary()`), not a bare read —
+    // `extract_call_facts` records only call expressions, so a bare read
+    // never reaches the exact-name call gate and the negative tests below
+    // would pass vacuously, before either shadow authority runs. The
+    // binding stays initialized and names the callee, so the gate is
+    // reached and BOTH authorities must then defeat it.
+    const SHADOWING_TEST_SOURCE: &str = "fn build() -> usize { 0 }\n\n#[test]\nfn misc_edge_case() {\n    let try_parse_summary = || build();\n    let r = try_parse_summary();\n}\n";
 
     #[test]
     fn given_parser_backed_file_when_facts_shadow_callee_then_no_seam_callee_call()

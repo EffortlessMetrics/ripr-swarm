@@ -123,7 +123,11 @@ pub(crate) fn extract_pattern_words(pattern: &str) -> Vec<String> {
         if character.is_ascii_alphanumeric() || character == '_' {
             current.push(character);
         } else if !current.is_empty() {
-            words.push(std::mem::take(&mut current));
+            // Clone-and-clear, not `mem::take`: `take` leaves a
+            // zero-capacity accumulator that reallocates on every word
+            // (#3739 review, gemini h6ZRu). The output is identical.
+            words.push(current.clone());
+            current.clear();
         }
     }
     if !current.is_empty() {
