@@ -2134,11 +2134,16 @@ mod python_repair_verification_semantics {
     }
 
     fn rollback_git(root: &Path, args: &[&str]) -> Result<(), String> {
-        let output = std::process::Command::new("git")
-            .current_dir(root)
-            .args(args)
-            .output()
-            .map_err(|error| format!("spawn git {args:?} failed: {error}"))?;
+        // Fixture git runs go through the crate's bounded git adapter (the
+        // same surface the edit-cage fixtures use), never a raw process
+        // spawn.
+        let output = crate::git::run_git_output_with_deadline_and_limit_isolated(
+            root,
+            args,
+            Duration::from_secs(30),
+            4 * 1024 * 1024,
+        )
+        .map_err(|error| format!("git {args:?} failed: {error}"))?;
         if !output.status.success() {
             return Err(format!(
                 "git {args:?} failed: {}",
