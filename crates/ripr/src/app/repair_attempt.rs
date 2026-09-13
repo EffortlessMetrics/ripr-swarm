@@ -679,13 +679,35 @@ pub(crate) fn edit_cage_policy_from_packet(
             .collect()
     };
     let allowed = match value.get("allowed_edit_surface") {
-        Some(_) => paths("allowed_edit_surface")?,
+        Some(surface) => {
+            let entries = surface
+                .as_array()
+                .ok_or_else(|| "repair packet allowed_edit_surface must be an array".to_string())?;
+            let mut allowed = Vec::new();
+            for entry in entries {
+                let path = entry.as_str().ok_or_else(|| {
+                    "repair packet allowed_edit_surface contains a non-string path".to_string()
+                })?;
+                if !is_test_surface_path(path) {
+                    return Err(format!(
+                        "repair packet allowed edit surface `{path}` is not a test surface; a production file is never an allowed edit path"
+                    ));
+                }
+                allowed.push(crate::edit_cage::CagePathRule::exact(path)?);
+            }
+            allowed
+        }
         None => {
             let file = value
                 .get("recommended_test")
                 .and_then(|test| test.get("file"))
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?;
+            if !is_test_surface_path(file) {
+                return Err(format!(
+                    "repair packet recommended test `{file}` is not a test surface"
+                ));
+            }
             vec![crate::edit_cage::CagePathRule::exact(file)?]
         }
     };
