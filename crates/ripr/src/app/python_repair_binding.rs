@@ -16,14 +16,19 @@
 //! states and the movement/execution axes stay owned by the later phase
 //! (#3570) and the corpus, never by this driver.
 //!
-//! Test-only edit-surface guarantee: this module's guarantee is bounded by
-//! two authorities rather than a positive test-path allowlist — the repair
-//! packet producer's test-selection authority (the packet names the focused
-//! test as the selected edit target, and the cage is derived from it) plus
-//! the production/generated/vendor/environment denial families
-//! (`is_denied_edit_surface`). A general positive allowlist of test paths is
-//! the follow-up; it folds into #3727's parser-backed facts if it lands
-//! there.
+//! Test-only edit-surface guarantee: this module's guarantee is layered —
+//! the repair packet producer's test-selection authority (the packet names
+//! the focused test as the selected edit target, and the cage is derived
+//! from it), the positive test-surface gate enforced where the cage policy
+//! is constructed (`edit_cage_policy_from_packet` refuses any selected
+//! target that is not a recognized test surface — a `tests`/`test` path
+//! component or a bounded `test_*`/`*_test`/`*_tests` file-name convention —
+//! before any cage exists, so a production path-shaped value can never
+//! become the authored edit target), plus the production/generated/vendor/
+//! environment denial families (`is_denied_edit_surface`) kept as defense in
+//! depth on every row bind. A parser-backed positive allowlist of test paths
+//! remains the later refinement; it folds into #3727's parser-backed facts
+//! if it lands there.
 
 use crate::edit_cage::EditCagePolicy;
 use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
@@ -1571,9 +1576,12 @@ mod tests {
     fn denied_edit_surface_vocabulary_rejects_generated_and_environment_paths() -> Result<(), String>
     {
         // The prefix matcher covers the generated/vendor/environment/cache
-        // vocabulary; a production path such as `src/pricing.py` is denied
-        // earlier, by the `existing` target-state requirement and the packet's
-        // forbidden-path rules, exactly as the corpus declares it `unsafe`.
+        // vocabulary; a production path such as `src/pricing.py` is not a
+        // denial-family match and is refused earlier, by the positive
+        // test-surface gate on the packet's selected edit target
+        // (`edit_cage_policy_from_packet`) plus the `existing` target-state
+        // requirement and the packet's forbidden-path rules, exactly as the
+        // corpus declares it `unsafe`.
         for allowed in ["tests/test_pricing.py", "tests/unit/test_x.py"] {
             if is_denied_edit_surface(allowed) {
                 return Err(format!("test path `{allowed}` was denied"));

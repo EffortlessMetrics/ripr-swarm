@@ -6,6 +6,7 @@
 //! that exact attempt.
 
 use crate::agent::loop_commands::{display_path, shell_arg};
+use crate::analysis::is_test_surface_path;
 use crate::edit_cage::{
     AttemptBaseline, EditCagePolicy, EditCageVerdict, evaluate_repository_edit_cage_with_delta,
 };
@@ -579,6 +580,16 @@ fn manifest_before_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, St
         .map_err(|error| format!("serialize repair attempt commitment failed: {error}"))
 }
 
+/// Constructs the edit-cage policy from a repair packet, refusing any packet
+/// whose selected edit target (the first `allowed_edit_surface` path, or the
+/// `recommended_test.file` when the packet names one instead) is not a
+/// recognized test surface. The positive test-surface gate runs on the raw
+/// packet text BEFORE any `CagePathRule` is constructed, so a production file
+/// can never become the authored edit target: a non-test selected target
+/// fails closed with a named diagnostic and no cage policy exists. The
+/// recognition itself is the producer-owned typed fact
+/// (`analysis::workspace::is_test_surface_path`); this layer owns only the
+/// policy decision and its diagnostic.
 pub(crate) fn edit_cage_policy_from_packet(
     packet: &str,
     seam_id: &str,
@@ -629,6 +640,30 @@ pub(crate) fn edit_cage_policy_from_packet(
         } else {
             value
         };
+    // Positive test-surface gate on the selected edit target, checked on the
+    // raw packet text before any cage rule is constructed: path-shaped
+    // allowed values can name production files (`src/...`), and the
+    // denied-surface denylist only refuses generated/vendor/environment
+    // prefixes, so without this gate a production file could become the
+    // authored edit target of a bound attempt.
+    let selected_target_text = match value.get("allowed_edit_surface") {
+        Some(_) => value
+            .get("allowed_edit_surface")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|paths| paths.first())
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "repair packet has no selected edit target".to_string())?,
+        None => value
+            .get("recommended_test")
+            .and_then(|test| test.get("file"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?,
+    };
+    if !is_test_surface_path(selected_target_text) {
+        return Err(format!(
+            "repair packet selected edit target `{selected_target_text}` is not a test surface (a `tests` or `test` path component, or a `test_*.py`/`*_test.py`/`*_tests.py`/`*_test.rs`/`*_tests.rs` file-name convention, is required); a production file is never the authored edit target and no edit cage is constructed"
+        ));
+    }
     let paths = |name: &str| -> Result<Vec<crate::edit_cage::CagePathRule>, String> {
         let values = value
             .get(name)
@@ -1410,6 +1445,71 @@ mod tests {
         }
         if edit_cage_policy_from_packet(&rendered, "missing-seam").is_ok() {
             return Err("packet policy accepted a missing seam".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cage_policy_refuses_a_non_test_selected_edit_target_before_any_cage() -> Result<(), String> {
+        // A gap route's path-shaped `target_file` (`src/...`) can arrive as
+        // the packet's allowed surface; the positive test-surface gate must
+        // refuse it with a named diagnostic before any cage policy exists,
+        // so a production file can never become the authored edit target.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["src/production.rs"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let error = match edit_cage_policy_from_packet(&rendered, "seam:sample") {
+            Err(error) => error,
+            Ok(_) => {
+                return Err(
+                    "a production selected edit target constructed a cage policy".to_string(),
+                );
+            }
+        };
+        for needle in [
+            "src/production.rs",
+            "is not a test surface",
+            "no edit cage is constructed",
+        ] {
+            if !error.contains(needle) {
+                return Err(format!("refusal did not name `{needle}`: {error}"));
+            }
+        }
+        // The recommended-test construction route is gated identically.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "recommended_test": { "file": "src/production.rs" }
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        if edit_cage_policy_from_packet(&rendered, "seam:sample").is_ok() {
+            return Err("a production recommended test constructed a cage policy".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cage_policy_proceeds_for_test_surface_selected_edit_targets() -> Result<(), String> {
+        // A focused test file under `tests/` proceeds, and so does a
+        // test-surface helper: the `tests` path component is the positive
+        // signal, independent of the file-name convention.
+        for target in ["tests/pricing.rs", "tests/helpers/mod.rs", "test/smoke.py"] {
+            let packet = serde_json::json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": [target],
+                "forbidden_files": []
+            });
+            let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+            let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")
+                .map_err(|error| format!("test target `{target}` was refused: {error}"))?;
+            if policy.selected_target.path() != target {
+                return Err(format!(
+                    "selected target `{}` does not match `{target}`",
+                    policy.selected_target.path()
+                ));
+            }
         }
         Ok(())
     }

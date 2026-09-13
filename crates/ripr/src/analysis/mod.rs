@@ -53,6 +53,7 @@ pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
 pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
+pub(crate) use workspace::is_test_surface_path;
 
 /// Re-export workspace discovery helpers for the output layer so it can
 /// detect TS-predominant workspaces without importing through analysis::workspace
