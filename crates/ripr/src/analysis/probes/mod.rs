@@ -20,3 +20,5 @@ pub use repo::probes_for_repo_file;
 
 #[cfg(test)]
 mod parameter_boundary_tests;
+#[cfg(test)]
+mod record_field_boundary_tests;
