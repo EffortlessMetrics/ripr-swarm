@@ -1874,7 +1874,9 @@ mod tests {
 
     fn assert_text_fixture(case: &str, file: &str, rendered: &str) -> Result<(), String> {
         let path = pr_guidance_fixture(case, file);
-        if std::env::var("RIPR_UPDATE_FIXTURES").is_ok() {
+        // #3742 class (e): only the explicit RIPR_UPDATE_FIXTURES=1 opt-in
+        // rewrites; a leaked bare variable must assert, never re-bless.
+        if crate::testing::rebless::fixture_rebless_enabled() {
             fs::write(&path, rendered)
                 .map_err(|err| format!("write fixture {}: {err}", path.display()))?;
             return Ok(());

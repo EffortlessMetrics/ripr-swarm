@@ -3,6 +3,40 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-09-16: Parallel-build test flakes are shared-state mechanisms (#3742)
+
+A rotating family of suite failures under parallel cargo builds (observed
+2026-09-10..13 across `doctor`, `edit_cage`, `repair_attempt`, git-deadline,
+`cli_smoke`, and `output::gate` fixture-matrix members) classified into five
+shared-state mechanisms, each with a fixed shape:
+
+- (a) Fixed-path collisions: tests reading/writing fixed `target/` paths or
+  spawning `target/debug/` binaries race concurrent cargo builds. Fix at the
+  spawn site: stage a private copy under the test's temp root
+  (`xtask/src/reports/eval_sweep_refresh.rs`, `staged_ripr_binary`); fix at
+  the read site: root evaluations at an explicit temp dir, never the CWD
+  (`crates/ripr/src/output/gate/tests.rs`, slice 3 for CWD-rooted inputs).
+- (b) Live-repo dependence: the gate fixture matrix roots at `repo_root()`,
+  so worktree git state leaks into compared outputs. Mitigated slice by
+  slice; the corpus-relative matrix still requires its root (residual).
+- (c) Wall-clock assertions: assert kill-completion via process probes, not
+  human-time bounds; keep the short discriminating deadline as the input
+  (`crates/ripr/src/git.rs`, slice 2).
+- (d) Unhardened fixture git: bare `Command::output()` git spawns starve
+  under load. Route every fixture-git call through the shared deadline +
+  idempotent-retry + reconcile helper
+  (`crates/ripr/src/testing/fixture_git.rs`, slice 1).
+- (e) Env-triggered re-bless: `RIPR_UPDATE_FIXTURES` bare presence silently
+  converted asserts into rewrites. Only the explicit value `=1` opts in
+  (`crates/ripr/src/testing/rebless.rs`); the crate forbids `unsafe_code`
+  and `set_var` is `unsafe` in edition 2024, so the leak simulation runs
+  through the ambient environment, never in-test mutation.
+
+Lesson: classify first by shared-state mechanism, then fix one mechanism per
+slice with a discriminating control. New family members get their own
+investigation per the escalation rule (same operation green in isolation and
+red only under concurrency = structural).
+
 ## 2026-07-29: Property tests and lexical fallback disclosure
 
 Added the first property-based tests (`proptest`) for the diff parser. The
