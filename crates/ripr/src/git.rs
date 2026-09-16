@@ -597,7 +597,10 @@ mod tests {
                 .try_wait(),
             Ok(Some(_))
         );
-        guard.disarm();
+        // The guard stays armed through both checks: on either failure
+        // path Drop still terminates and reaps the child, so a failed
+        // proof can never orphan the 2-minute sleeper. Disarm only after
+        // the reap proof succeeds.
         if !arm_ok {
             return Err(format!(
                 "hung child wait took the wrong arm for cancelled={cancelled}: {}",
@@ -614,6 +617,7 @@ mod tests {
                     .to_string(),
             );
         }
+        guard.disarm();
         Ok(())
     }
 
