@@ -36,9 +36,11 @@ pub(super) fn parameter_declaration_shape<'a>(
     }
     let root = parse.tree();
     let declaration = parameter_line_span(root.syntax(), line_range)?;
-    for parameter in root.syntax().descendants().filter(|node| {
-        ast::Param::can_cast(node.kind()) || ast::SelfParam::can_cast(node.kind())
-    }) {
+    for parameter in root
+        .syntax()
+        .descendants()
+        .filter(|node| ast::Param::can_cast(node.kind()) || ast::SelfParam::can_cast(node.kind()))
+    {
         let Some(list) = parameter.parent().and_then(ast::ParamList::cast) else {
             continue;
         };

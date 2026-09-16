@@ -140,7 +140,8 @@ fn typed_receiver_parameters_remain_explicit_unknowns() -> Result<(), String> {
 
 #[test]
 fn unsafe_parameter_retains_both_declaration_and_boundary_identity() -> Result<(), String> {
-    let source = "struct Path;\nunsafe fn project(\n    out: &Path, // preserve both subjects\n) {}\n";
+    let source =
+        "struct Path;\nunsafe fn project(\n    out: &Path, // preserve both subjects\n) {}\n";
     let path = PathBuf::from("src/lib.rs");
     let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
     let boundary = facts
