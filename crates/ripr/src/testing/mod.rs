@@ -6,3 +6,4 @@
 //! `tests/common/fixture_git.rs` and keeps the same contract.
 
 pub(crate) mod fixture_git;
+pub(crate) mod rebless;

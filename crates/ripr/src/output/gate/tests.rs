@@ -3268,6 +3268,49 @@ fn temp_dir(name: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// #3742 class (e): a leaked bare `RIPR_UPDATE_FIXTURES` (present but
+/// without the explicit opt-in value) must not convert the fixture assert
+/// into a silent re-bless. Only `RIPR_UPDATE_FIXTURES=1` rewrites.
+///
+/// The leak is simulated through the ambient environment — run this test as
+/// `RIPR_UPDATE_FIXTURES= cargo test -p ripr --lib gate_rebless` — because
+/// the crate forbids `unsafe_code` and `set_var` is `unsafe` in edition
+/// 2024. With the variable unset the assert path runs and the test passes
+/// on both sides of the repair; with a bare value present it fails
+/// pre-repair (silent rewrite) and passes post-repair.
+#[test]
+fn gate_rebless_requires_the_explicit_opt_in_value() -> Result<(), String> {
+    // The probe lives under the ignored target/ tree so even a rewrite
+    // leaves no tracked residue.
+    let path = Path::new("target/ripr-test-rebless-probe.tmp");
+    let resolved = repo_root().join(path);
+    let _ = fs::remove_file(&resolved);
+    let outcome = assert_repo_fixture(path, "probe-rendered", "re-bless probe");
+    let written = resolved.exists();
+    let content = fs::read_to_string(&resolved).unwrap_or_default();
+    let _ = fs::remove_file(&resolved);
+    if crate::testing::rebless::fixture_rebless_enabled() {
+        // Explicit opt-in: the rewrite is authorized and must carry the
+        // rendered content.
+        assert!(
+            outcome.is_ok(),
+            "explicit opt-in must still re-bless: {outcome:?}"
+        );
+        assert!(written, "opt-in rewrite must write the probe file");
+        assert_eq!(content, "probe-rendered");
+        return Ok(());
+    }
+    assert!(
+        outcome.is_err(),
+        "bare RIPR_UPDATE_FIXTURES presence must assert, not re-bless: {outcome:?}"
+    );
+    assert!(
+        !written,
+        "no fixture file may be written without the explicit opt-in"
+    );
+    Ok(())
+}
+
 fn write_temp_json(dir: &Path, name: &str, contents: &str) -> Result<PathBuf, String> {
     let path = dir.join(name);
     fs::write(&path, contents).map_err(|err| format!("write {name} failed: {err}"))?;
@@ -3333,7 +3376,9 @@ fn require_not_contains(actual: &str, unexpected: &str, label: &str) -> Result<(
 
 fn assert_repo_fixture(path: &Path, rendered: &str, label: &str) -> Result<(), String> {
     let resolved = repo_root().join(path);
-    if std::env::var("RIPR_UPDATE_FIXTURES").is_ok() {
+    // #3742 class (e): only the explicit RIPR_UPDATE_FIXTURES=1 opt-in
+    // rewrites; a leaked bare variable must assert, never re-bless.
+    if crate::testing::rebless::fixture_rebless_enabled() {
         fs::write(&resolved, rendered)
             .map_err(|err| format!("write {} failed: {err}", resolved.display()))?;
         return Ok(());
