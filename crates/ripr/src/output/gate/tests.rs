@@ -968,7 +968,10 @@ fn exception_input(dir: &Path, ledger: &str) -> Result<GateEvaluateInput, String
     let policy = dir.join("quality-gate-exceptions.toml");
     fs::write(&policy, ledger).map_err(|err| format!("write ledger failed: {err}"))?;
     Ok(GateEvaluateInput {
-        root: PathBuf::from("."),
+        // Root at the hermetic temp dir, never the process working
+        // directory: the default-path causal loads resolve against the root,
+        // so a CWD root would couple these tests to ambient generated state.
+        root: dir.to_path_buf(),
         repo_exposure: None,
         pr_guidance: Some(guidance),
         gap_ledger: None,
@@ -999,6 +1002,10 @@ fn gate_exception_policy_active_ledger_reports_section_without_blocking() -> Res
     let json = render_gate_decision_json(&report)?;
     let markdown = render_gate_decision_markdown(&report);
 
+    // The gate evaluates against the explicit root, never the process CWD:
+    // the report echoes the temp root the inputs were resolved against
+    // (slash-normalized like display_path, so the echo holds on Windows).
+    assert_eq!(report.root, dir.display().to_string().replace('\\', "/"));
     assert_ne!(report.status, "blocked");
     assert_ne!(report.status, "config_error");
     let value: Value =
@@ -1092,7 +1099,9 @@ fn gate_exception_policy_missing_or_malformed_ledger_is_config_error() -> Result
     let dir = temp_dir("gate-exception-config-error")?;
     let guidance = write_temp_json(&dir, "comments.json", PR_GUIDANCE_JSON)?;
     let mut input = GateEvaluateInput {
-        root: PathBuf::from("."),
+        // Hermetic temp-dir root (see exception_input): a CWD root would
+        // resolve the default-path causal loads against ambient state.
+        root: dir.to_path_buf(),
         repo_exposure: None,
         pr_guidance: Some(guidance),
         gap_ledger: None,
@@ -1337,6 +1346,66 @@ fn gate_acknowledgeable_blocks_complete_gap_ledger_route_with_typed_seam_identit
         value["decisions"][0]["evidence"]["candidate_values"],
         Value::Array(Vec::new()),
         "gap ledger records do not carry test input variants"
+    );
+    let _ = fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// Root-honoring control: the gate resolves the producer-owned canonical
+/// delta against the explicit root, never the process working directory. A
+/// root-planted complete delta attributing the ledger gap to a causal class
+/// keeps the acknowledgeable blocker and renders the attribution; the same
+/// gap re-attributed to a non-causal class flips the decision advisory. An
+/// implementation that ignored the artifact (or read it from the CWD) would
+/// report blocking in both arms.
+#[test]
+fn gate_reads_root_planted_canonical_delta_for_causal_decisions() -> Result<(), String> {
+    let dir = temp_dir("gate-root-planted-delta")?;
+    let gap_ledger = write_temp_json(&dir, "gap-ledger.json", GAP_LEDGER_BLOCKING_JSON)?;
+    plant_canonical_delta(&dir, "introduced_by_change")?;
+    let input = GateEvaluateInput {
+        root: dir.clone(),
+        repo_exposure: None,
+        pr_guidance: None,
+        gap_ledger: Some(
+            gap_ledger
+                .strip_prefix(&dir)
+                .map_err(|err| err.to_string())?
+                .to_path_buf(),
+        ),
+        sarif_policy: None,
+        labels_json: None,
+        labels: Vec::new(),
+        agent_verify: None,
+        agent_receipt: None,
+        recommendation_calibration: None,
+        mutation_calibration: None,
+        baseline: None,
+        mode: GateMode::Acknowledgeable,
+        acknowledgement_labels: Vec::new(),
+        exception_policy: None,
+    };
+
+    let report = build_gate_decision_report(&input)?;
+    assert!(
+        report.config_errors.is_empty(),
+        "root-planted delta must load cleanly: {:?}",
+        report.config_errors
+    );
+    assert_eq!(report.decisions[0].decision, "blocking");
+    let rendered = render_gate_decision_json(&report)?;
+    let value: Value = serde_json::from_str(&rendered)
+        .map_err(|err| format!("gate decision JSON should parse: {err}"))?;
+    assert_eq!(
+        value["decisions"][0]["delta_attribution"], "introduced_by_change",
+        "the blocker must carry the root-planted causal attribution: {rendered}"
+    );
+
+    plant_canonical_delta(&dir, "baseline_existing")?;
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(
+        report.decisions[0].decision, "advisory",
+        "a non-causal root-planted attribution must suppress blocking"
     );
     let _ = fs::remove_dir_all(dir);
     Ok(())
@@ -3203,6 +3272,37 @@ fn write_temp_json(dir: &Path, name: &str, contents: &str) -> Result<PathBuf, St
     let path = dir.join(name);
     fs::write(&path, contents).map_err(|err| format!("write {name} failed: {err}"))?;
     Ok(path)
+}
+
+/// Plant a producer-shaped canonical delta at the default location under an
+/// explicit root (`<root>/target/ripr/pr/canonical-delta.json`), covering
+/// both gate readers (the blocking authority and the rendered projection).
+fn plant_canonical_delta(dir: &Path, attribution: &str) -> Result<(), String> {
+    let path = dir.join("target/ripr/pr/canonical-delta.json");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("create delta dir failed: {err}"))?;
+    }
+    let contents = format!(
+        r#"{{
+          "schema_version": "0.1",
+          "coverage": {{
+            "base_items": 1, "head_items": 1, "matched_items": 1,
+            "ambiguous_items": 0, "unknown_items": 0
+          }},
+          "deltas": [
+            {{
+              "canonical_gap_id": "pricing::discount::threshold",
+              "delta_attribution": "{attribution}",
+              "base_state": null,
+              "head_state": null,
+              "attribution_basis": [],
+              "comparison_confidence": "high"
+            }}
+          ]
+        }}"#
+    );
+    fs::write(&path, contents).map_err(|err| format!("write canonical delta failed: {err}"))?;
+    Ok(())
 }
 
 fn read_repo_fixture(path: &Path) -> Result<String, String> {
