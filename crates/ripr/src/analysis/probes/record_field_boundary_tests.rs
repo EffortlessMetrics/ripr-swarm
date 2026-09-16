@@ -48,7 +48,7 @@ fn record_field_declaration_retains_exact_unknown_subject() -> Result<(), String
         ProbeFamily::StaticUnknown,
         "a field declaration is not an executable initializer"
     );
-    assert_eq!(probes[0].line, 3);
+    assert_eq!(probes[0].location.line, 3);
     assert_eq!(probes[0].expression, "value: Marker,");
     Ok(())
 }
@@ -59,7 +59,7 @@ fn identical_record_initializer_retains_executable_subject() -> Result<(), Strin
     assert!(
         probes.iter().any(|probe| {
             probe.family == ProbeFamily::FieldConstruction
-                && probe.line == 7
+                && probe.location.line == 7
                 && probe.expression.contains("value: Marker")
         }),
         "record declaration handling erased an actual initializer: {probes:?}"
