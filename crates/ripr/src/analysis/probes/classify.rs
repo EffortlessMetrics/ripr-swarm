@@ -6,7 +6,7 @@ use ra_ap_syntax::{AstNode, Edition, SourceFile, ast};
 use std::ops::Range;
 use std::path::Path;
 
-mod parameters;
+mod declarations;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ParserProbeShape<'a> {
@@ -81,8 +81,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
         }
     }
     if selected.iter().all(|shape| shape.unsafe_boundary)
-        && let Some(declaration) =
-            parameters::parameter_declaration_shape(facts, line, changed_text)
+        && let Some(declaration) = declarations::declaration_shape(facts, line, changed_text)
     {
         // Keep the enclosing unsafe obligation as well as the exact declaration.
         // They share a family, but their source identities are not interchangeable.
