@@ -6,6 +6,8 @@ use ra_ap_syntax::{AstNode, Edition, SourceFile, ast};
 use std::ops::Range;
 use std::path::Path;
 
+mod parameters;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ParserProbeShape<'a> {
     pub(crate) family: ProbeFamily,
@@ -77,6 +79,12 @@ pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
         } else {
             selected.push(candidate);
         }
+    }
+    if selected.is_empty()
+        && let Some(declaration) =
+            parameters::parameter_declaration_shape(facts, line, changed_text)
+    {
+        selected.push(declaration);
     }
     selected.sort_by(|left, right| {
         left.family
