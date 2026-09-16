@@ -1379,6 +1379,7 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::fixture_git::fixture_git_ok as run_git;
 
     fn test_root(label: &str) -> Result<PathBuf, String> {
         let stamp = SystemTime::now()
@@ -2211,20 +2212,5 @@ mod tests {
         run_git(&root, &["add", "."])?;
         run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
         Ok(root)
-    }
-
-    fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(root)
-            .output()
-            .map_err(|error| format!("run git {args:?} failed: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "git {args:?} failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        Ok(())
     }
 }

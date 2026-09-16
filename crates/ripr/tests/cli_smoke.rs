@@ -8,6 +8,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "common/mod.rs"]
+mod common;
+
+// All plain fixture-setup git invocations below route through the shared
+// hardened helper (deadline + one idempotent retry + commit reconcile,
+// #3742 Slice 1). Raw `run_command("git", …)` remains only where a test
+// needs the raw `Output` (commit identity probes, failure-shape asserts).
+use common::fixture_git::fixture_git_ok as run_git;
+
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn run_ripr(args: &[&str]) -> Output {
@@ -136,19 +145,6 @@ fn snapshot_diff(before: &[String], after: &[String]) -> String {
         .chain(added)
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
-    let output = run_command("git", Some(root), args)
-        .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(format!(
-        "git {args:?} failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    ))
 }
 
 fn is_concrete_commit_id(value: &str) -> bool {

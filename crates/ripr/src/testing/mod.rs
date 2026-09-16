@@ -1,0 +1,8 @@
+//! Test-only shared helpers for the `ripr` unit-test suite.
+//!
+//! This module is compiled for `cargo test` targets only and never ships in
+//! the library surface. Integration tests under `tests/` cannot see
+//! `pub(crate)` items; their harness-local mirror lives in
+//! `tests/common/fixture_git.rs` and keeps the same contract.
+
+pub(crate) mod fixture_git;

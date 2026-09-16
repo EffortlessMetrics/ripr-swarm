@@ -76,6 +76,9 @@ mod edit_cage;
     )
 )]
 mod repair_guidance;
+// Test-only shared helpers (#3742); never part of the library surface.
+#[cfg(test)]
+pub(crate) mod testing;
 
 #[cfg(not(feature = "lang-rust"))]
 compile_error!(
