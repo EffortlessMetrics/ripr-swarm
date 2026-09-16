@@ -180,7 +180,10 @@ fn fixture_paths_remain_inside_the_ephemeral_root() -> Result<(), String> {
     for relative in ["Cargo.toml", "src/lib.rs", "tests/route.rs", "diff.patch"] {
         let path = repo.root.join(relative);
         if !path.starts_with(&repo.root) || !path.is_file() {
-            return Err(format!("fixture path escaped or is missing: {}", path.display()));
+            return Err(format!(
+                "fixture path escaped or is missing: {}",
+                path.display()
+            ));
         }
     }
     Ok(())
