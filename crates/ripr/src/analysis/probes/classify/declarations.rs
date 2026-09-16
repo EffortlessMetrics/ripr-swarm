@@ -286,11 +286,7 @@ mod tests {
                 2,
                 "value: u8,",
             ),
-            (
-                "union Packet {\n    value: u8,\n}\n",
-                2,
-                "value: u8,",
-            ),
+            ("union Packet {\n    value: u8,\n}\n", 2, "value: u8,"),
             (
                 "const fn width() -> usize { 4 }\nstruct Packet {\n    value: [u8; width()],\n}\n",
                 3,
