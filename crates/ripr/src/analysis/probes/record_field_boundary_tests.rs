@@ -38,7 +38,11 @@ fn probes_at(source: &str, line: usize) -> Result<Vec<Probe>, String> {
 #[test]
 fn record_field_declaration_retains_exact_unknown_subject() -> Result<(), String> {
     let probes = probes_at(SOURCE, 3)?;
-    assert_eq!(probes.len(), 1, "declaration must remain visible: {probes:?}");
+    assert_eq!(
+        probes.len(),
+        1,
+        "declaration must remain visible: {probes:?}"
+    );
     assert_eq!(
         probes[0].family,
         ProbeFamily::StaticUnknown,
