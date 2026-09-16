@@ -1,6 +1,6 @@
 # Repair attempt identity
 
-`ripr agent repair` is a two-phase transaction. The before phase prepares bounded evidence; a human or external coding agent makes one focused test edit; the after phase verifies the exact prepared transaction and writes the review receipt.
+`ripr agent repair` has three phases: `before`, `after`, and `verify`. The before phase prepares bounded evidence; a human or external coding agent makes one focused test edit; the after phase checks the exact prepared transaction and writes its static review receipt. For a trust-bound Python attempt, the separately authorized verify phase executes the retained packet's bounded verification route and records execution and static movement separately. The ordinary unbound before/edit/after path remains available; it does not authorize execution.
 
 The durable object is a **repair attempt**, not a seam lookup and not the repository-global workflow directory.
 
@@ -15,6 +15,76 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 The before phase prints the attempt manifest path and the exact `--attempt` command to run next. Preserve that command across agent sessions, process restarts, and concurrent work.
 
 `--seam-id <id> --phase after` remains a compatibility route. It succeeds only when exactly one awaiting attempt has that seam. Zero or multiple matches fail closed; RIPR does not guess which attempt is newest or intended.
+
+## Governed Python sequence
+
+Start with an accepted repair-trust selection manifest and its selected row ID
+([RIPR-SPEC-0176](specs/RIPR-SPEC-0176-python-repair-trust-attempts.md)).
+The selection row must match the current repository HEAD and the packet's exact
+test-only target. This command consumes the selection; it does not create or
+approve a cohort. The manifest must be inside the selected repository root;
+relative paths resolve from that root. Keep its bytes unchanged throughout the
+attempt. Finish verification before applying another trust-bound attempt in the
+same repository: the compatibility apply record is repository-global, and a
+later apply prevents verification of the earlier attempt.
+
+```text
+ripr agent repair --root . --seam-id <seam-id> --phase before --python-repair-trust-manifest <selection.json> --python-repair-trust-attempt <selection-attempt-id> --edit-authorized --edit-authority <operator-id>
+# preserve the printed repair-attempt ID; make the focused test edit outside RIPR
+ripr agent repair --root . --attempt <repair-attempt-id> --phase after --edit-authorized --edit-authority <operator-id>
+ripr agent repair --root . --attempt <repair-attempt-id> --phase verify --verify-authorized --verify-authority <operator-id>
+```
+
+The selection-attempt ID identifies a manifest row; the repair-attempt ID is the
+new durable transaction printed by `before`. They are not interchangeable.
+
+- Pass both `--python-repair-trust-manifest` and
+  `--python-repair-trust-attempt` on `before` only. Later phases consume and
+  revalidate the retained binding, not a replacement manifest argument.
+- Pass `--edit-authorized` and `--edit-authority` together on the trust-bound
+  `before` and `after` phases. Use the same operator or agent identity.
+- `verify` accepts only `--attempt`, never `--seam-id`. It requires an applied,
+  trust-bound attempt and the separate `--verify-authorized` /
+  `--verify-authority` pair, reaffirming the identity that authorized the edit.
+  The edit flags cannot substitute for verification authorization.
+- Keep HEAD, the applied patch, configuration, and retained artifacts unchanged
+  between `after` and `verify`. Identity drift refuses execution; do not repair
+  a stale attempt by rewriting its retained evidence.
+
+### Verification, rollback, and receipt
+
+The verify phase revalidates the retained identities before execution. It runs
+only the packet's producer-owned typed verification route through bounded
+execution controls, then reruns analysis and compares the intended native Python
+behavior by identity. A missing canonical route records execution as
+`unavailable`; it does not authorize a guessed command.
+
+To request restoration of the applied test edit after the observations, append
+`--verify-rollback` to the authorized verify command. This is optional and valid
+only on `verify`. The rollback touches only the allowed changed edit surface,
+not the workflow artifacts. It refuses a restore that cannot recover the
+baseline bytes (including pre-attempt dirty content or a moved index), and
+checks the pinned HEAD and remaining edit residue. Inspect the receipt's
+`rollback` disposition: `proved`, `blocked`, or `not_run`. A request is not a
+guarantee of restoration, and an error before the rollback step does not undo
+the edit automatically.
+
+The candidate receipt is written to
+`target/ripr/workflow/python-repair-driver-verification.json`; the bounded
+execution record is
+`target/ripr/workflow/python-repair-driver-verification-execution.json`, and the
+fresh analysis is
+`target/ripr/workflow/after-verification.repo-exposure.json`. Preserve these
+artifacts with the attempt's evidence. The receipt path is repository-global:
+verification refuses to overwrite an existing receipt, even for another attempt.
+Archive that evidence before explicitly removing the receipt for a new run.
+
+**Execution and static movement are independent observations.** A passed command
+does not imply improved static exposure, and improved exposure does not imply a
+passed command. Inspect both axes and their limitations, not just the command's
+exit status. The candidate receipt grants no lifecycle, acceptance, closure,
+repair-correctness, support-tier, gate, badge, or promotion claim. Cohort review
+and acceptance remain separate work.
 
 ## Durable location
 
