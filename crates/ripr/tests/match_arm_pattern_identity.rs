@@ -9,7 +9,7 @@
 use ripr::{
     CheckInput, CheckOutput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace,
 };
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CANDIDATE_SOURCE: &str = r#"pub fn route(kind: &str) -> &'static str {
@@ -185,5 +185,3 @@ fn fixture_paths_remain_inside_the_ephemeral_root() -> Result<(), String> {
     }
     Ok(())
 }
-
-fn _path_type_check(_: &Path) {}
