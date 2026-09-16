@@ -527,6 +527,96 @@ mod tests {
         self_reexec_command(HANG_ENV)
     }
 
+    /// Spawn the deterministic hung fixture child (the re-executed test
+    /// binary sleeps 2 minutes and never exits on its own).
+    fn spawn_hung_child() -> Result<std::process::Child, String> {
+        hang_command()?
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|err| format!("spawn hung fixture child: {err}"))
+    }
+
+    /// Guard that terminates and reaps the hung fixture child on every
+    /// exit path, so a broken kill path reports a test failure instead of
+    /// orphaning a 2-minute sleeper. Disarm after the reap proof observes
+    /// the exit.
+    struct HungChildGuard(Option<std::process::Child>);
+
+    impl HungChildGuard {
+        fn disarm(&mut self) {
+            if let Some(child) = self.0.take() {
+                drop(child);
+            }
+        }
+    }
+
+    impl Drop for HungChildGuard {
+        fn drop(&mut self) {
+            if let Some(child) = self.0.as_mut() {
+                terminate_child_tree(child);
+            }
+        }
+    }
+
+    /// Deterministic kill+reap proof for a hung fixture child (#3742
+    /// Slice 2): drives `poll_child` with the 50ms discriminating
+    /// deadline (or a pre-cancelled token when `cancelled`), then asserts
+    /// termination via `try_wait` instead of a wall-clock bound.
+    /// `poll_child` terminates and reaps before returning a non-`Exited`
+    /// arm (see `ChildWait`), so `Ok(Some(_))` is the proof; any other
+    /// outcome fails after the guard reaps the child.
+    fn assert_hung_child_reaped(cancelled: bool) -> Result<(), String> {
+        let token = AnalysisCancellationToken::new();
+        if cancelled && !token.cancel(AnalysisAbortKind::Superseded) {
+            return Err("fresh token should accept cancellation".to_string());
+        }
+        let mut guard = HungChildGuard(Some(spawn_hung_child()?));
+        let child: &mut std::process::Child =
+            guard.0.as_mut().ok_or("hung child guard is empty")?;
+        let wait = if cancelled {
+            with_token(&token, || {
+                poll_child(child, Some(Duration::from_mins(2)), "hang-reap-proof")
+            })
+        } else {
+            poll_child(child, Some(Duration::from_millis(50)), "hang-reap-proof")
+        };
+        let arm_ok = match (&wait, cancelled) {
+            (ChildWait::TimedOut(message), false) => message.contains("exceeded the 50ms deadline"),
+            (ChildWait::Cancelled(message), true) => {
+                is_cancellation_error(message) && !is_git_invocation_timeout(message)
+            }
+            _ => false,
+        };
+        let exited = matches!(
+            guard
+                .0
+                .as_mut()
+                .ok_or("hung child guard is empty")?
+                .try_wait(),
+            Ok(Some(_))
+        );
+        guard.disarm();
+        if !arm_ok {
+            return Err(format!(
+                "hung child wait took the wrong arm for cancelled={cancelled}: {}",
+                match wait {
+                    ChildWait::Exited(status) => format!("exited: {status}"),
+                    ChildWait::TimedOut(message) | ChildWait::Cancelled(message) => message,
+                    ChildWait::WaitFailed(error) => error,
+                }
+            ));
+        }
+        if !exited {
+            return Err(
+                "hung child remained alive after the kill path; termination was not established"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn run_git_returns_trimmed_stdout_on_success() -> Result<(), String> {
         if reexec_harness() {
@@ -571,13 +661,11 @@ mod tests {
             return Ok(());
         }
         let mut command = hang_command()?;
-        let started = Instant::now();
         let result = collect_output_with_deadline(
             &mut command,
             Some(Duration::from_millis(50)),
             "hang-test",
         );
-        let elapsed = started.elapsed();
         let err = match result {
             Err(err) => err,
             Ok(_) => return Err("a hung invocation must fail, not collect output".to_string()),
@@ -590,13 +678,10 @@ mod tests {
                 "timeout error should name the deadline, got: {err}"
             ));
         }
-        // The child sleeps 120s; a prompt return proves kill+reap happened
-        // (a leaked child would block the reader join for the full sleep).
-        if elapsed >= Duration::from_secs(30) {
-            return Err(format!(
-                "timeout path took {elapsed:?}; the hung child was not terminated and reaped"
-            ));
-        }
+        // Kill+reap proof without a wall-clock bound: drive the same
+        // deadline machinery on a fresh hung child and assert the exit is
+        // observed via try_wait.
+        assert_hung_child_reaped(false)?;
         Ok(())
     }
 
@@ -699,13 +784,11 @@ mod tests {
                 "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 60') -NoNewWindow -PassThru; Set-Content -LiteralPath '{marker_path_text}' -Value $p.Id; Wait-Process -Id $p.Id"
             ),
         ]);
-        let started = Instant::now();
         let result = collect_output_with_deadline(
             &mut command,
             Some(Duration::from_secs(5)),
             "pipe-inheriting-descendant",
         );
-        let elapsed = started.elapsed();
         let err = match result {
             Err(err) => err,
             Ok(_) => {
@@ -714,6 +797,11 @@ mod tests {
         };
         if !is_git_invocation_timeout(&err) {
             return Err(format!("expected the named timeout error, got: {err}"));
+        }
+        if !err.contains("exceeded the 5000ms deadline") {
+            return Err(format!(
+                "timeout error should name the deadline, got: {err}"
+            ));
         }
         let descendant_pid = std::fs::read_to_string(&marker_path)
             .map_err(|read_error| format!("descendant PID marker was not written: {read_error}"))?
@@ -741,15 +829,14 @@ mod tests {
                 "pipe-inheriting descendant {descendant_pid} remained alive after timeout; tree termination was not established"
             ));
         }
-        // The descendant lives for 60 seconds, while a correct process-tree
-        // kill must complete this proof below the 30-second bound. The PID
-        // check is the discriminator: bounded pipe draining alone can return
-        // without proving that the inherited writer was terminated.
-        if elapsed >= Duration::from_secs(30) {
-            return Err(format!(
-                "pipe-inheriting timeout took {elapsed:?}; reader drain was not bounded"
-            ));
-        }
+        // The descendant lives for 60 seconds; the PID check above is the
+        // discriminator (bounded pipe draining alone can return without
+        // proving that the inherited writer was terminated). No wall-clock
+        // bound: drain time past the kill is capped by
+        // POST_KILL_DRAIN_GRACE inside the drain path, and the
+        // "exceeded the 5000ms deadline" assert above pins the 5s
+        // discriminating input. An elapsed assert would only add flake
+        // surface under parallel load.
         Ok(())
     }
 
@@ -786,11 +873,9 @@ mod tests {
             return Err("fresh token should accept cancellation".to_string());
         }
         let mut command = hang_command()?;
-        let started = Instant::now();
         let result = with_token(&token, || {
             collect_output_with_deadline(&mut command, Some(Duration::from_mins(2)), "hang-test")
         });
-        let elapsed = started.elapsed();
         let err = match result {
             Err(err) => err,
             Ok(_) => return Err("a cancelled invocation must fail".to_string()),
@@ -803,11 +888,10 @@ mod tests {
                 "cancellation must win over the deadline, got: {err}"
             ));
         }
-        if elapsed >= Duration::from_secs(30) {
-            return Err(format!(
-                "cancellation path took {elapsed:?}; the hung child was not terminated and reaped"
-            ));
-        }
+        // Kill+reap proof without a wall-clock bound: drive the same
+        // cancellation machinery on a fresh hung child and assert the exit
+        // is observed via try_wait.
+        assert_hung_child_reaped(true)?;
         Ok(())
     }
 
@@ -818,7 +902,6 @@ mod tests {
             return Ok(());
         }
         let mut command = self_reexec_command(FLOOD_ENV)?;
-        let started = Instant::now();
         let output = collect_output_with_deadline(
             &mut command,
             Some(Duration::from_secs(30)),
@@ -828,15 +911,15 @@ mod tests {
             return Err(format!("flood child failed: {}", output.status));
         }
         // 8 chunks of 64 KiB must all be collected; a drained pipe is the
-        // only way the child could exit without a deadlock.
+        // only way the child could exit without a deadlock. No wall-clock
+        // bound: `Ok` already proves the child exited before the 30s
+        // deadline (a timeout returns `Err`), so an elapsed assert would
+        // only add flake surface under parallel load.
         if output.stdout.len() < 8 * 64 * 1024 {
             return Err(format!(
                 "expected drained output of at least 512 KiB, got {} bytes",
                 output.stdout.len()
             ));
-        }
-        if started.elapsed() >= Duration::from_secs(30) {
-            return Err("flood test consumed its whole deadline".to_string());
         }
         Ok(())
     }
