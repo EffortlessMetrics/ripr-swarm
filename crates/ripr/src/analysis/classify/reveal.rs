@@ -210,6 +210,16 @@ fn analyze_related_assertions(
     } else {
         Vec::new()
     };
+    // For MatchArm: string literals in the changed arm expression are the
+    // parser-owned identity of a literal arm (`"sensor"` in
+    // `"sensor" => "sensor-v2",`). A sibling arm's literals never overlap
+    // this arm's expression, so literal confirmation keeps the sibling
+    // rejection that variant-only matching provides.
+    let match_arm_literals = if matches!(probe.family, ProbeFamily::MatchArm) {
+        rust_string_literals(analysis_expression)
+    } else {
+        Vec::new()
+    };
     // For probes whose changed expression constructs an exact error variant
     // (`Err(Type::Variant)`): collect the variant-only token (the identifier
     // after the last `::`) so that a sibling-variant assertion that pins a
@@ -249,6 +259,7 @@ fn analyze_related_assertions(
         probe_tokens: &probe_tokens,
         effect_literals: &effect_literals,
         match_arm_variants: &match_arm_variants,
+        match_arm_literals: &match_arm_literals,
         error_construction_variant: error_construction_variant.as_deref(),
         family: &probe.family,
         wrapper_seam,
@@ -391,6 +402,7 @@ struct RevealMatchContext<'a> {
     probe_tokens: &'a [String],
     effect_literals: &'a [String],
     match_arm_variants: &'a [String],
+    match_arm_literals: &'a [String],
     error_construction_variant: Option<&'a str>,
     family: &'a ProbeFamily,
     /// `true` only for #3700 wrapper error seams: the changed expression is a
@@ -430,8 +442,11 @@ fn guarded_oracle_names_bare_callee(text: &str, callee: &str) -> bool {
 /// clearing `observation_unverified` for a probe on `Mode::Frozen`, because
 /// the shared qualifier token `Mode` is excluded from the confirmation set.
 /// When the expression contains no `::` (e.g. `None => 0,`), the variant
-/// token list is empty and `has_token_match` is always false, reflecting that
-/// the probe has no arm-specific identifier.
+/// token list is empty and variant matching contributes nothing. String
+/// literals in the arm expression additionally confirm: an assertion
+/// supplying the same literal observes this arm's parser-owned identity.
+/// A sibling arm's literals never overlap this arm's expression, so the
+/// sibling rejection is preserved.
 ///
 /// For probes whose changed expression constructs an exact error variant,
 /// with `ExactErrorVariant` assertions (RIPR-SPEC-0106, Part B): when
@@ -486,6 +501,7 @@ fn assertion_matches_probe_detail_with_literals(
         probe_tokens,
         effect_literals,
         match_arm_variants,
+        match_arm_literals,
         error_construction_variant,
         family,
         wrapper_seam,
@@ -570,6 +586,10 @@ fn assertion_matches_probe_detail_with_literals(
         match_arm_variants
             .iter()
             .any(|v| contains_as_whole_word(&assertion.text, v))
+            || !match_arm_literals.is_empty()
+                && rust_string_literals(&assertion.text)
+                    .iter()
+                    .any(|literal| match_arm_literals.contains(literal))
     } else if wrapper_seam {
         // A #3700 wrapper error seam stays unconfirmable: see above.
         false
@@ -611,6 +631,7 @@ fn assertion_matches_probe_detail_with_literals(
 fn assertion_matches_probe_detail(
     probe_tokens: &[String],
     match_arm_variants: &[String],
+    match_arm_literals: &[String],
     error_construction_variant: Option<&str>,
     family: &ProbeFamily,
     assertion: &OracleFact,
@@ -621,6 +642,7 @@ fn assertion_matches_probe_detail(
             probe_tokens,
             effect_literals: &[],
             match_arm_variants,
+            match_arm_literals,
             error_construction_variant,
             family,
             wrapper_seam: false,
@@ -1460,6 +1482,7 @@ mod tests {
         let (matched, has_token) = assertion_matches_probe_detail(
             &["score".to_string()],
             &[],
+            &[],
             None,
             &ProbeFamily::StaticUnknown,
             &token_assertion,
@@ -1475,6 +1498,7 @@ mod tests {
         );
         let (matched, has_token) = assertion_matches_probe_detail(
             &["err".to_string()],
+            &[],
             &[],
             None,
             &ProbeFamily::ErrorPath,
@@ -1492,6 +1516,7 @@ mod tests {
         let (matched, has_token) = assertion_matches_probe_detail(
             &["run".to_string()],
             &[],
+            &[],
             None,
             &ProbeFamily::StaticUnknown,
             &fallback_assertion,
@@ -1506,12 +1531,60 @@ mod tests {
         let (matched, _) = assertion_matches_probe_detail(
             &["run".to_string()],
             &[],
+            &[],
             None,
             &ProbeFamily::StaticUnknown,
             &fallback_assertion,
             2,
         );
         assert!(!matched, "fallback must not fire for assertion_count > 1");
+    }
+
+    // Literal-arm identity (#1714): an assertion supplying the arm's string
+    // literal confirms a MatchArm probe with no `::` variant tokens.
+    #[test]
+    fn literal_assertion_confirms_literal_match_arm() {
+        let aligned = oracle(
+            "assert_eq!(route(\"sensor\"), \"sensor-v2\");",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        let (matched, has_token) = assertion_matches_probe_detail(
+            &[],
+            &[],
+            &["sensor".to_string(), "sensor-v2".to_string()],
+            None,
+            &ProbeFamily::MatchArm,
+            &aligned,
+            2,
+        );
+        assert!(matched, "literal overlap must associate");
+        assert!(has_token, "shared arm literal must confirm observation");
+    }
+
+    // Sibling rejection (#1714): a sibling arm's literals never overlap this
+    // arm's expression, so the sibling oracle leaves it unverified.
+    #[test]
+    fn sibling_literal_assertion_does_not_confirm_changed_arm() {
+        let sibling = oracle(
+            "assert_eq!(route(\"focused-test\"), \"proof\");",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        let (matched, has_token) = assertion_matches_probe_detail(
+            &[],
+            &[],
+            &["sensor".to_string(), "sensor-v2".to_string()],
+            None,
+            &ProbeFamily::MatchArm,
+            &sibling,
+            2,
+        );
+        assert!(
+            !has_token,
+            "sibling literals must not confirm the changed arm"
+        );
+        let _ = matched;
     }
 
     // RIPR-SPEC-0106 Control 2 (SIBLING-VARIANT): a Negative-pinning assertion
@@ -1526,6 +1599,7 @@ mod tests {
         // Probe expression names TooLarge; error_path_variant = Some("TooLarge").
         let (matched, has_token) = assertion_matches_probe_detail(
             &["CalcError".to_string(), "TooLarge".to_string()],
+            &[],
             &[],
             Some("TooLarge"),
             &ProbeFamily::ErrorPath,
@@ -1658,6 +1732,7 @@ return Err(\"typed pin\".into());
         let (matched, has_token) = assertion_matches_probe_detail(
             &["CalcError".to_string(), "Negative".to_string()],
             &[],
+            &[],
             Some("Negative"),
             &ProbeFamily::ErrorPath,
             &exact_assertion,
@@ -1693,6 +1768,7 @@ return Err(\"typed pin\".into());
                 "TooLarge".to_string(),
             ],
             &[],
+            &[],
             Some("TooLarge"),
             &ProbeFamily::ReturnValue,
             &sibling_assertion,
@@ -1722,6 +1798,7 @@ return Err(\"typed pin\".into());
                 "CalcError".to_string(),
                 "TooLarge".to_string(),
             ],
+            &[],
             &[],
             Some("TooLarge"),
             &ProbeFamily::ReturnValue,
