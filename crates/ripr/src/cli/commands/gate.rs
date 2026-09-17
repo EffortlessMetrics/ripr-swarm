@@ -221,7 +221,7 @@ fn default_visible_only_warning(
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{args, repo_root, unique_command_test_dir};
+    use super::super::tests::{args, unique_command_test_dir};
     use super::*;
 
     #[test]
@@ -388,7 +388,9 @@ mod tests {
         gate(&args(&[
             "evaluate",
             "--root",
-            &repo_root().display().to_string(),
+            &crate::testing::fixture_workspace::hermetic_gate_fixture_root()?
+                .display()
+                .to_string(),
             "--pr-guidance",
             "fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json",
             "--out",
@@ -417,7 +419,9 @@ mod tests {
         let result = gate(&args(&[
             "evaluate",
             "--root",
-            &repo_root().display().to_string(),
+            &crate::testing::fixture_workspace::hermetic_gate_fixture_root()?
+                .display()
+                .to_string(),
             "--pr-guidance",
             "fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json",
             "--mode",

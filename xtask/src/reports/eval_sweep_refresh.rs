@@ -2559,6 +2559,78 @@ mod python_eval_sweep_refresh {
             .map_err(|error| format!("resolve built ripr binary failed: {error}"))
     }
 
+    /// Stages a private copy of the built binary under the test's temp
+    /// root and returns its path for `--ripr-bin`. The refresh route
+    /// spawns the binary repeatedly over minutes; spawning
+    /// `target/debug/` directly races a concurrent cargo relink, which
+    /// breaks spawns with ETXTBSY/sharing violations (#3742 class (a)).
+    /// A private copy is never relinked. A short copy retry covers a
+    /// transient read lock on the source; a missing source fails closed
+    /// with no fallback to a live path.
+    fn staged_ripr_binary(root: &Path, source: &str) -> Result<String, String> {
+        let staged = root.join(format!("ripr-under-test{}", std::env::consts::EXE_SUFFIX));
+        let mut failures = 0u32;
+        loop {
+            match std::fs::copy(source, &staged) {
+                Ok(_) => break,
+                Err(error) => {
+                    failures += 1;
+                    if failures >= 3 {
+                        return Err(format!(
+                            "stage ripr binary for spawn failed after 3 attempts \
+                             (source `{source}`, staged `{}`): {error}",
+                            staged.display()
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50 * u64::from(failures)));
+                }
+            }
+        }
+        if !staged.is_file() {
+            return Err(format!(
+                "staged ripr binary is not a file: {}",
+                staged.display()
+            ));
+        }
+        Ok(staged.to_string_lossy().to_string())
+    }
+
+    #[test]
+    fn staged_binary_copies_bytes_under_the_test_root() -> Result<(), String> {
+        let root = temp_root("stage-bytes");
+        std::fs::create_dir_all(&root).map_err(|error| format!("create stage root: {error}"))?;
+        let source = root.join("source-binary");
+        std::fs::write(&source, b"fake-ripr-bytes")
+            .map_err(|error| format!("write fake source: {error}"))?;
+        let staged = staged_ripr_binary(&root, &source.to_string_lossy())?;
+        let staged_path = PathBuf::from(&staged);
+        assert!(
+            staged_path.starts_with(&root),
+            "staged binary must live under the test root: {staged}"
+        );
+        assert_ne!(staged_path, source, "staged copy must not be the source");
+        let bytes =
+            std::fs::read(&staged_path).map_err(|error| format!("read staged copy: {error}"))?;
+        assert_eq!(bytes, b"fake-ripr-bytes");
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove stage root: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn staged_binary_missing_source_fails_closed() -> Result<(), String> {
+        let root = temp_root("stage-missing");
+        std::fs::create_dir_all(&root).map_err(|error| format!("create stage root: {error}"))?;
+        let error = staged_ripr_binary(&root, &root.join("no-such-binary").to_string_lossy())
+            .err()
+            .ok_or_else(|| "missing source must fail".to_string())?;
+        assert!(
+            error.contains("stage ripr binary for spawn failed"),
+            "failure must name the staging step: {error}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove stage root: {error}"))?;
+        Ok(())
+    }
+
     fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
         let mut owned: Vec<String> = vec!["-C".to_string(), dir.to_string_lossy().to_string()];
         owned.extend(args.iter().map(|argument| (*argument).to_string()));
@@ -3785,7 +3857,7 @@ mod python_eval_sweep_refresh {
         std::fs::write(out.join(CACHE_DIR).join("s7"), "not a directory")
             .map_err(|error| format!("write cache blocker: {error}"))?;
 
-        let binary = built_ripr_binary()?;
+        let binary = staged_ripr_binary(&root, &built_ripr_binary()?)?;
         let args = vec![
             "--manifest".to_string(),
             manifest_path.to_string_lossy().to_string(),
@@ -3879,7 +3951,7 @@ mod python_eval_sweep_refresh {
             pins.push(build_seed(&seed)?);
         }
         let manifest_path = write_manifest_and_diffs(&root, &pins)?;
-        let binary = built_ripr_binary()?;
+        let binary = staged_ripr_binary(&root, &built_ripr_binary()?)?;
         let out = root.join("out");
 
         let args = vec![
@@ -4090,7 +4162,7 @@ mod python_eval_sweep_refresh {
         std::fs::create_dir_all(root.join("out").join(SUBJECTS_DIR).join("s7"))
             .map_err(|error| format!("create stale dir: {error}"))?;
 
-        let binary = built_ripr_binary()?;
+        let binary = staged_ripr_binary(&root, &built_ripr_binary()?)?;
         let out = root.join("out");
         let args = vec![
             "--manifest".to_string(),
@@ -4178,7 +4250,7 @@ mod python_eval_sweep_refresh {
             "the reused checkout must be dirty before the route runs"
         );
 
-        let binary = built_ripr_binary()?;
+        let binary = staged_ripr_binary(&root, &built_ripr_binary()?)?;
         let out = root.join("out");
         let args = vec![
             "--manifest".to_string(),
@@ -4292,7 +4364,7 @@ mod python_eval_sweep_refresh {
                 .map_err(|error| format!("mark post-checkout hook executable: {error}"))?;
         }
 
-        let binary = built_ripr_binary()?;
+        let binary = staged_ripr_binary(&root, &built_ripr_binary()?)?;
         let out = root.join("out");
         let args = vec![
             "--manifest".to_string(),

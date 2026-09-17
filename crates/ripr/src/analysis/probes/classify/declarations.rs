@@ -1,4 +1,4 @@
-//! Parser-confirmed parameter declarations stay unknown, not executable fields.
+//! Parser-confirmed declarations stay unknown, not executable fields.
 
 use super::super::lexical::classify_changed_line;
 use super::{ParserProbeShape, source_line_byte_range};
@@ -10,8 +10,10 @@ use std::ops::Range;
 /// This fallback is used only after ordinary parser-owned expressions have
 /// been considered. It never promotes exposure or drops the changed source.
 /// Exact current-line equality prevents borrowing new-side context for a
-/// different removed/stale line. Shared signature/body lines are not eligible.
-pub(super) fn parameter_declaration_shape<'a>(
+/// different removed/stale line. Shared declaration/expression lines are not
+/// eligible. Record fields containing const expressions or macros remain with
+/// the existing analysis rather than acquiring a declaration-only disposition.
+pub(super) fn declaration_shape<'a>(
     facts: &'a FileFacts,
     line: usize,
     changed_text: &str,
@@ -35,22 +37,12 @@ pub(super) fn parameter_declaration_shape<'a>(
         return None;
     }
     let root = parse.tree();
-    let declaration = parameter_line_span(root.syntax(), line_range)?;
-    for parameter in root
-        .syntax()
-        .descendants()
-        .filter(|node| ast::Param::can_cast(node.kind()) || ast::SelfParam::can_cast(node.kind()))
-    {
-        let Some(list) = parameter.parent().and_then(ast::ParamList::cast) else {
-            continue;
-        };
-        if list.syntax().parent().and_then(ast::Fn::cast).is_none() {
-            continue;
-        }
-        let range = parameter.text_range();
-        let parameter_start = u32::from(range.start()) as usize;
-        let parameter_end = u32::from(range.end()) as usize;
-        if parameter_start <= declaration.start && declaration.end <= parameter_end {
+    let declaration = declaration_line_span(root.syntax(), line_range)?;
+    for node in root.syntax().descendants().filter(supported_declaration) {
+        let range = node.text_range();
+        let start = u32::from(range.start()) as usize;
+        let end = u32::from(range.end()) as usize;
+        if start <= declaration.start && declaration.end <= end {
             return Some(ParserProbeShape {
                 family: ProbeFamily::StaticUnknown,
                 start_line: line,
@@ -64,10 +56,34 @@ pub(super) fn parameter_declaration_shape<'a>(
     None
 }
 
+fn supported_declaration(node: &SyntaxNode) -> bool {
+    if ast::Param::can_cast(node.kind()) || ast::SelfParam::can_cast(node.kind()) {
+        return node
+            .parent()
+            .and_then(ast::ParamList::cast)
+            .and_then(|list| list.syntax().parent())
+            .is_some_and(|parent| ast::Fn::can_cast(parent.kind()));
+    }
+    if !ast::RecordField::can_cast(node.kind()) {
+        return false;
+    }
+    // Only named struct fields are admitted here. Enum/union/tuple and macro
+    // contexts have separate contracts; a real RecordExprField never matches.
+    let owned_by_struct = node
+        .parent()
+        .and_then(ast::RecordFieldList::cast)
+        .and_then(|list| list.syntax().parent())
+        .is_some_and(|parent| ast::Struct::can_cast(parent.kind()));
+    owned_by_struct
+        && !node.descendants().any(|child| {
+            ast::Expr::can_cast(child.kind()) || ast::MacroCall::can_cast(child.kind())
+        })
+}
+
 /// Bound the line by parser-owned nontrivia tokens, excluding its trailing
-/// parameter separator. Comment text is preserved in the shape, but cannot
-/// extend its containment range. Real code after a comment remains in range.
-fn parameter_line_span(root: &SyntaxNode, line: Range<usize>) -> Option<Range<usize>> {
+/// separator. Comment text is preserved in the shape, but cannot extend its
+/// containment range. Real code after a comment remains in range.
+fn declaration_line_span(root: &SyntaxNode, line: Range<usize>) -> Option<Range<usize>> {
     let mut start = None;
     let mut end = None;
     for token in root
@@ -85,7 +101,7 @@ fn parameter_line_span(root: &SyntaxNode, line: Range<usize>) -> Option<Range<us
         {
             continue;
         }
-        // A multiline nontrivia token cannot be a complete parameter-only line.
+        // A multiline nontrivia token cannot be a complete declaration-only line.
         if token_start < line.start || token_end > line.end {
             return None;
         }
@@ -113,7 +129,7 @@ mod tests {
     fn parameter_shape_preserves_exact_coordinates_and_unknown_family() -> Result<(), String> {
         for source in [SOURCE.to_string(), SOURCE.replace('\n', "\r\n")] {
             let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
-            let shape = parameter_declaration_shape(&facts, 3, "    out: &Path,")
+            let shape = declaration_shape(&facts, 3, "    out: &Path,")
                 .ok_or_else(|| "missing parser-confirmed parameter".to_string())?;
             assert_eq!(shape.family, ProbeFamily::StaticUnknown);
             assert_eq!(shape.start_line, 3);
@@ -128,16 +144,16 @@ mod tests {
     #[test]
     fn parameter_shape_requires_current_parser_owned_source() -> Result<(), String> {
         let mut facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), SOURCE)?;
-        assert!(parameter_declaration_shape(&facts, 3, "out: &Other,").is_none());
-        assert!(parameter_declaration_shape(&facts, 0, "out: &Path,").is_none());
-        assert!(parameter_declaration_shape(&facts, 30, "out: &Path,").is_none());
+        assert!(declaration_shape(&facts, 3, "out: &Other,").is_none());
+        assert!(declaration_shape(&facts, 0, "out: &Path,").is_none());
+        assert!(declaration_shape(&facts, 30, "out: &Path,").is_none());
         facts.used_lexical_fallback = true;
-        assert!(parameter_declaration_shape(&facts, 3, "out: &Path,").is_none());
+        assert!(declaration_shape(&facts, 3, "out: &Path,").is_none());
         facts.used_lexical_fallback = false;
         facts.source = "struct Path;\nfn project(\n    out: &Path,\n".to_string();
-        assert!(parameter_declaration_shape(&facts, 3, "out: &Path,").is_none());
+        assert!(declaration_shape(&facts, 3, "out: &Path,").is_none());
         facts.source.clear();
-        assert!(parameter_declaration_shape(&facts, 3, "out: &Path,").is_none());
+        assert!(declaration_shape(&facts, 3, "out: &Path,").is_none());
         Ok(())
     }
 
@@ -177,7 +193,7 @@ mod tests {
         ] {
             let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
             assert!(
-                parameter_declaration_shape(&facts, line, text).is_none(),
+                declaration_shape(&facts, line, text).is_none(),
                 "non-parameter or shared line was reclassified: {source}"
             );
         }
@@ -197,7 +213,7 @@ mod tests {
                 let source = format!("// λ\nstruct Path;\nfn project(\n    {text}\n) {{}}\n")
                     .replace('\n', newline);
                 let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
-                let shape = parameter_declaration_shape(&facts, 4, &text)
+                let shape = declaration_shape(&facts, 4, &text)
                     .ok_or_else(|| format!("commented parameter was lost: {text}"))?;
                 assert_eq!(shape.family, ProbeFamily::StaticUnknown);
                 assert_eq!(shape.start_line, 4);
@@ -205,6 +221,88 @@ mod tests {
                 assert_eq!(shape.text, text);
                 assert!(!shape.unsafe_boundary);
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn record_fields_preserve_trivia_visibility_and_byte_identity() -> Result<(), String> {
+        for text in [
+            "value: Marker,",
+            "pub value: Marker, // field",
+            "pub(crate) value: Marker, /* outer /* nested */ tail */",
+            "value: Marker /* final field */",
+        ] {
+            for newline in ["\n", "\r\n"] {
+                let source = format!("// λ\nstruct Marker;\nstruct Packet {{\n    {text}\n}}\n")
+                    .replace('\n', newline);
+                let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+                let shape = declaration_shape(&facts, 4, text)
+                    .ok_or_else(|| format!("record declaration was not retained: {text}"))?;
+                assert_eq!(shape.family, ProbeFamily::StaticUnknown);
+                assert_eq!(shape.text, text);
+                assert_eq!(shape.start_line, 4);
+                assert_eq!(Some(shape.start_byte), source.find(text));
+                assert!(!shape.standalone_call);
+                assert!(!shape.unsafe_boundary);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn record_field_fallback_requires_current_valid_source() -> Result<(), String> {
+        let source = "struct Packet {\n    value: u8,\n}\n";
+        let mut facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        assert!(declaration_shape(&facts, 2, "value: u8,").is_some());
+        assert!(declaration_shape(&facts, 2, "value: u16,").is_none());
+        assert!(declaration_shape(&facts, 0, "value: u8,").is_none());
+        assert!(declaration_shape(&facts, 99, "value: u8,").is_none());
+        facts.used_lexical_fallback = true;
+        assert!(declaration_shape(&facts, 2, "value: u8,").is_none());
+        facts.used_lexical_fallback = false;
+        facts.source = "struct Packet {\n    value: u8,\n".to_string();
+        assert!(declaration_shape(&facts, 2, "value: u8,").is_none());
+        facts.source.clear();
+        assert!(declaration_shape(&facts, 2, "value: u8,").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn record_field_fallback_rejects_shared_or_unsupported_contexts() -> Result<(), String> {
+        for (source, line, text) in [
+            (
+                "struct Packet {\n    first: u8, /* separator */ second: u8,\n}\n",
+                2,
+                "first: u8, /* separator */ second: u8,",
+            ),
+            (
+                "struct Packet { value: u8 } fn make() -> Packet { Packet { value: 7 } }\n",
+                1,
+                "struct Packet { value: u8 } fn make() -> Packet { Packet { value: 7 } }",
+            ),
+            (
+                "enum Packet { Data {\n    value: u8,\n} }\n",
+                2,
+                "value: u8,",
+            ),
+            ("union Packet {\n    value: u8,\n}\n", 2, "value: u8,"),
+            (
+                "const fn width() -> usize { 4 }\nstruct Packet {\n    value: [u8; width()],\n}\n",
+                3,
+                "value: [u8; width()],",
+            ),
+            (
+                "struct Packet {\n    value: field_type!(),\n}\n",
+                2,
+                "value: field_type!(),",
+            ),
+        ] {
+            let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+            assert!(
+                declaration_shape(&facts, line, text).is_none(),
+                "shared or unsupported field context was admitted: {text}"
+            );
         }
         Ok(())
     }
