@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected_parent=e0c18907ace47e01917061932c0f1190c3e1157c
+          expected_parent=e04639ff0a23a792d327b5fd7e4bced32079bc76
           script=.github/repair-3759-observed-operand.py
           workflow=.github/workflows/repair-3759-observed-operand.yml
           retired=.github/workflows/repair-3759-qualified-owner.yml
@@ -48,20 +48,24 @@ jobs:
           if text.count(old) != 1:
               raise SystemExit(f"diagnostic-list row count: {text.count(old)}")
           text = text.replace(old, "", 1)
-          anchor = '''        assert_eq!(
-              owner_call_literals("assert_eq!(route(\\"sensor\\"), \\"v\\");", "route"),
-          '''
-          expected = '''        assert_eq!(
-              owner_call_literals(
-                  "assert_eq!(route(\\"focused-test\\"), \\"proof\\", \\"{}\\", route(\\"sensor\\"));",
-                  "route"
-              ),
-              vec!["focused-test".to_string()]
-          );
-          '''
-          if text.count(anchor) != 1:
-              raise SystemExit(f"diagnostic-expectation anchor count: {text.count(anchor)}")
-          path.write_text(text.replace(anchor, expected + anchor, 1), encoding="utf-8")
+
+          needle = 'owner_call_literals("assert_eq!(route(\\"sensor\\"), \\"v\\");", "route"),'
+          if text.count(needle) != 1:
+              raise SystemExit(f"diagnostic-expectation needle count: {text.count(needle)}")
+          needle_at = text.index(needle)
+          insertion_at = text.rfind("        assert_eq!(", 0, needle_at)
+          if insertion_at < 0:
+              raise SystemExit("diagnostic-expectation insertion point unavailable")
+          expected = (
+              "        assert_eq!(\n"
+              "            owner_call_literals(\n"
+              "                \\\"assert_eq!(route(\\\\\\\"focused-test\\\\\\\"), \\\\\\\"proof\\\\\\\", \\\\\\\"{}\\\\\\\", route(\\\\\\\"sensor\\\\\\\"));\\\",\n"
+              "                \\\"route\\\"\n"
+              "            ),\n"
+              "            vec![\\\"focused-test\\\".to_string()]\n"
+              "        );\n"
+          )
+          path.write_text(text[:insertion_at] + expected + text[insertion_at:], encoding="utf-8")
           PY
 
           git config user.name github-actions[bot]
