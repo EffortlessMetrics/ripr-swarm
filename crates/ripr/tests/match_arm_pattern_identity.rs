@@ -255,3 +255,139 @@ fn sibling_assertion_mentions_sensor_only_in_its_message() {
     );
     Ok(())
 }
+
+#[test]
+fn diagnostic_owner_call_does_not_observe_the_changed_arm() -> Result<(), String> {
+    let test_source = r#"use match_arm_pattern_identity::route;
+
+#[test]
+fn only_the_sibling_result_is_compared() {
+    assert_eq!(route("focused-test"), "proof", "changed arm: {}", route("sensor"));
+}
+"#;
+    let repo = TempRepo::create(test_source)?;
+    let output = repo.check()?;
+    let finding = changed_sensor_arm(&output)?;
+    assert_eq!(finding.probe.location.line, 3);
+    assert!(finding.probe.expression.starts_with("\"sensor\" =>"));
+    assert!(finding.related_tests.iter().any(|test| {
+        test.name == "only_the_sibling_result_is_compared"
+            && test
+                .oracle
+                .as_deref()
+                .is_some_and(|oracle| oracle.contains("route(\"focused-test\")"))
+    }));
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "an owner call in diagnostic arguments has no observed result"
+    );
+    assert!(
+        finding
+            .ripr
+            .reveal
+            .discriminate
+            .summary
+            .contains("observation_unverified")
+    );
+    Ok(())
+}
+
+#[test]
+fn unselected_literal_inside_an_argument_is_not_the_owner_input() -> Result<(), String> {
+    let test_source = r#"use match_arm_pattern_identity::route;
+
+#[test]
+fn conditional_input_selects_the_sibling() {
+    assert_eq!(route(if false { "sensor" } else { "focused-test" }), "proof");
+}
+"#;
+    let repo = TempRepo::create(test_source)?;
+    let output = repo.check()?;
+    let finding = changed_sensor_arm(&output)?;
+    assert_eq!(finding.probe.location.line, 3);
+    assert!(finding.probe.expression.starts_with("\"sensor\" =>"));
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a literal in the unselected branch is not the value passed to route"
+    );
+    assert!(
+        finding
+            .ripr
+            .reveal
+            .discriminate
+            .summary
+            .contains("observation_unverified")
+    );
+    Ok(())
+}
+
+#[test]
+fn a_matching_literal_does_not_bypass_the_changed_arm_guard() -> Result<(), String> {
+    let test_source = SIBLING_TEST.replace("route(\"focused-test\")", "route(\"sensor\")");
+    let repo = TempRepo::create(&test_source)?;
+    let pattern = "\"sensor\" =>";
+    let guarded = "\"sensor\" if kind.len() > 10 =>";
+    let sibling = "\"focused-test\" => \"proof\"";
+    let fallback = "\"sensor\" => \"proof\"";
+    std::fs::write(
+        repo.root.join("src/lib.rs"),
+        CANDIDATE_SOURCE
+            .replace(pattern, guarded)
+            .replace(sibling, fallback),
+    )
+    .map_err(|error| format!("write guarded source failed: {error}"))?;
+    std::fs::write(
+        repo.root.join("diff.patch"),
+        DIFF.replace(pattern, guarded).replace(sibling, fallback),
+    )
+    .map_err(|error| format!("write guarded diff failed: {error}"))?;
+
+    let output = repo.check()?;
+    let finding = changed_sensor_arm(&output)?;
+    assert_eq!(finding.probe.location.line, 3);
+    assert!(finding.probe.expression.starts_with("\"sensor\" if"));
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a false guard sends the matching literal to the unchanged sibling"
+    );
+    assert!(
+        finding
+            .ripr
+            .reveal
+            .discriminate
+            .summary
+            .contains("observation_unverified")
+    );
+    Ok(())
+}
+
+#[test]
+fn observed_owner_result_with_diagnostic_arguments_remains_exposed() -> Result<(), String> {
+    let test_source = r#"use match_arm_pattern_identity::route;
+
+#[test]
+fn the_sensor_result_is_compared_with_an_extra_diagnostic() {
+    assert_eq!(route("sensor"), "sensor-v2", "sibling: {}", route("focused-test"));
+}
+"#;
+    let repo = TempRepo::create(test_source)?;
+    let output = repo.check()?;
+    let finding = changed_sensor_arm(&output)?;
+    assert_eq!(finding.probe.location.line, 3);
+    assert!(finding.probe.expression.starts_with("\"sensor\" =>"));
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "diagnostic arguments must not erase a genuinely observed owner result"
+    );
+    assert!(finding.related_tests.iter().any(|test| {
+        test.name == "the_sensor_result_is_compared_with_an_extra_diagnostic"
+            && test.oracle.as_deref().is_some_and(|oracle| {
+                oracle.contains("route(\"sensor\")") && oracle.contains("\"sensor-v2\"")
+            })
+    }));
+    Ok(())
+}
