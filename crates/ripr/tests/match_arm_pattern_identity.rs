@@ -89,7 +89,7 @@ impl TempRepo {
             root: self.root.clone(),
             base: None,
             diff_file: Some(self.root.join("diff.patch")),
-            mode: Mode::Fast,
+            mode: Mode::Ready,
             format: OutputFormat::Json,
             include_unchanged_tests: true,
             ..CheckInput::default()
