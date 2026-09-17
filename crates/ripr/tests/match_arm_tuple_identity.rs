@@ -214,3 +214,62 @@ fn fixture_paths_remain_inside_the_ephemeral_root() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Keep argument spelling distinct from the value selected by the match.
+fn check_non_identity_scrutinee(scrutinee: &str, expected_result: &str) -> Result<(), String> {
+    let original = "match (request_match, task_match) {";
+    let replacement = format!("match {scrutinee} {{");
+    assert_eq!(CANDIDATE_SOURCE.matches(original).count(), 1);
+    assert_eq!(DIFF.matches(original).count(), 1);
+    let test_source = ALIGNED_TEST.replace("\"request_identity_v2\"", expected_result);
+    let repo = TempRepo::create(&test_source)?;
+    std::fs::write(
+        repo.root.join("src/lib.rs"),
+        CANDIDATE_SOURCE.replace(original, &replacement),
+    )
+    .map_err(|error| format!("write non-identity source failed: {error}"))?;
+    std::fs::write(
+        repo.root.join("diff.patch"),
+        DIFF.replace(original, &replacement),
+    )
+    .map_err(|error| format!("write non-identity diff failed: {error}"))?;
+
+    let output = repo.check()?;
+    let finding = changed_request_only_arm(&output)?;
+    assert!(finding.related_tests.iter().any(|test| {
+        test.name == "exact_request_only_tuple_is_observed"
+            && test.oracle.as_deref().is_some_and(|oracle| {
+                oracle.contains("relation(true, false)") && oracle.contains(expected_result)
+            })
+    }));
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "call arguments are not the matched tuple for {scrutinee}: {:?}",
+        finding.ripr.reveal.discriminate
+    );
+    assert!(
+        finding
+            .ripr
+            .reveal
+            .discriminate
+            .summary
+            .contains("observation_unverified")
+    );
+    Ok(())
+}
+
+#[test]
+fn reordered_scrutinee_does_not_borrow_argument_position() -> Result<(), String> {
+    check_non_identity_scrutinee("(task_match, request_match)", "\"task_identity\"")
+}
+
+#[test]
+fn transformed_scrutinee_does_not_borrow_argument_values() -> Result<(), String> {
+    check_non_identity_scrutinee("(!request_match, task_match)", "\"none\"")
+}
+
+#[test]
+fn constant_scrutinee_does_not_borrow_unused_argument_values() -> Result<(), String> {
+    check_non_identity_scrutinee("(false, true)", "\"task_identity\"")
+}
