@@ -1,0 +1,122 @@
+name: Apply Exact Record-Field Repair
+
+on:
+  push:
+    branches: [fix/record-field-declaration-1453]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    name: Apply exact test-contract repair
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: fix/record-field-declaration-1453
+          fetch-depth: 2
+
+      - name: Verify parent and apply one exact replacement
+        shell: bash
+        env:
+          EXPECTED_PARENT: 2f4804ca2e1c53ad25e87e9279505b2b5309828e
+          EXPECTED_SOURCE_BLOB: 163922dca4525b7b8813cbf28fe30dd3f10c0463
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git diff --name-only HEAD^ HEAD)" = '.github/workflows/repair-apply.yml'
+          source_path='crates/ripr/src/analysis/language/rust.rs'
+          test "$(git hash-object -- "$source_path")" = "$EXPECTED_SOURCE_BLOB"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("crates/ripr/src/analysis/language/rust.rs")
+          text = path.read_text(encoding="utf-8")
+          old = '''            let field_count = |path: &str| {
+              let expected_path = root.join(path);
+              result
+                  .findings
+                  .iter()
+                  .filter(|finding| {
+                      finding.probe.location.file == expected_path
+                          && finding.probe.family == ProbeFamily::FieldConstruction
+                  })
+                  .count()
+          };
+          if field_count("src/production.rs") != 1 {
+              return Err(format!(
+                  "{name}: production field missing: {:?}",
+                  result.findings
+              ));
+          }
+          let expected_child_fields = usize::from(!test_only);
+          if field_count(child_path) != expected_child_fields {
+              return Err(format!(
+                  "{name}: expected {expected_child_fields} child field findings: {:?}",
+                  result.findings
+              ));
+          }
+          '''
+          new = '''            // Source-role eligibility and syntax family are independent.
+          // Valid declarations stay visible as unknown; malformed source
+          // must retain the existing lexical field-construction fallback.
+          let child_family = if name == "lexical-fallback" {
+              ProbeFamily::FieldConstruction
+          } else {
+              ProbeFamily::StaticUnknown
+          };
+          for (path, expected_count, expected_family) in [
+              ("src/production.rs", 1, ProbeFamily::StaticUnknown),
+              (child_path, usize::from(!test_only), child_family),
+          ] {
+              let expected_path = root.join(path);
+              let findings = result
+                  .findings
+                  .iter()
+                  .filter(|finding| finding.probe.location.file == expected_path)
+                  .collect::<Vec<_>>();
+              if findings.len() != expected_count {
+                  return Err(format!(
+                      "{name}: expected {expected_count} findings for {path}: {findings:?}"
+                  ));
+              }
+              for finding in findings {
+                  if finding.probe.family != expected_family
+                      || finding.probe.location.line != 2
+                      || finding.probe.expression != "allowed: usize,"
+                  {
+                      return Err(format!(
+                          "{name}: wrong retained field identity for {path}: {finding:?}"
+                      ));
+                  }
+                  if expected_family == ProbeFamily::StaticUnknown
+                      && finding.class != ExposureClass::StaticUnknown
+                  {
+                      return Err(format!(
+                          "{name}: declaration received exposure credit: {finding:?}"
+                      ));
+                  }
+              }
+          }
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f"expected exactly one stale assertion block, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
+          PY
+          rm -- .github/workflows/repair-apply.yml .github/workflows/repair-source-export.yml
+          git diff --check
+          test "$(git diff --name-only | sort)" = "$(printf '%s\n' '.github/workflows/repair-apply.yml' '.github/workflows/repair-source-export.yml' 'crates/ripr/src/analysis/language/rust.rs' | sort)"
+          test "$(git hash-object -- "$source_path")" = 'b403c2d82ca8737488fa758fb51a2bad24c2ae65'
+
+      - name: Commit bounded repair and remove repair workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- crates/ripr/src/analysis/language/rust.rs .github/workflows/repair-apply.yml .github/workflows/repair-source-export.yml
+          git commit -m 'test(rust): align ownerless field integration contract'
+          git push origin HEAD:fix/record-field-declaration-1453
