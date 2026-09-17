@@ -2630,29 +2630,46 @@ mod tests {
                 &OraclePolicy::default(),
                 &changed_files,
             )?;
-            let field_count = |path: &str| {
+            // Source-role eligibility and syntax family are independent.
+            // Valid declarations stay visible as unknown; malformed source
+            // must retain the existing lexical field-construction fallback.
+            let child_family = if name == "lexical-fallback" {
+                ProbeFamily::FieldConstruction
+            } else {
+                ProbeFamily::StaticUnknown
+            };
+            for (path, expected_count, expected_family) in [
+                ("src/production.rs", 1, ProbeFamily::StaticUnknown),
+                (child_path, usize::from(!test_only), child_family),
+            ] {
                 let expected_path = root.join(path);
-                result
+                let findings = result
                     .findings
                     .iter()
-                    .filter(|finding| {
-                        finding.probe.location.file == expected_path
-                            && finding.probe.family == ProbeFamily::FieldConstruction
-                    })
-                    .count()
-            };
-            if field_count("src/production.rs") != 1 {
-                return Err(format!(
-                    "{name}: production field missing: {:?}",
-                    result.findings
-                ));
-            }
-            let expected_child_fields = usize::from(!test_only);
-            if field_count(child_path) != expected_child_fields {
-                return Err(format!(
-                    "{name}: expected {expected_child_fields} child field findings: {:?}",
-                    result.findings
-                ));
+                    .filter(|finding| finding.probe.location.file == expected_path)
+                    .collect::<Vec<_>>();
+                if findings.len() != expected_count {
+                    return Err(format!(
+                        "{name}: expected {expected_count} findings for {path}: {findings:?}"
+                    ));
+                }
+                for finding in findings {
+                    if finding.probe.family != expected_family
+                        || finding.probe.location.line != 2
+                        || finding.probe.expression != "allowed: usize,"
+                    {
+                        return Err(format!(
+                            "{name}: wrong retained field identity for {path}: {finding:?}"
+                        ));
+                    }
+                    if expected_family == ProbeFamily::StaticUnknown
+                        && finding.class != ExposureClass::StaticUnknown
+                    {
+                        return Err(format!(
+                            "{name}: declaration received exposure credit: {finding:?}"
+                        ));
+                    }
+                }
             }
         }
         Ok(())
