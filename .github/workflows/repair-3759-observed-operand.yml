@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected_parent=e04639ff0a23a792d327b5fd7e4bced32079bc76
+          expected_parent=4ed1976fc7733b1858736821b471adb935d1f2f2
           script=.github/repair-3759-observed-operand.py
           workflow=.github/workflows/repair-3759-observed-operand.yml
           retired=.github/workflows/repair-3759-qualified-owner.yml
@@ -59,10 +59,10 @@ jobs:
           expected = (
               "        assert_eq!(\n"
               "            owner_call_literals(\n"
-              "                \\\"assert_eq!(route(\\\\\\\"focused-test\\\\\\\"), \\\\\\\"proof\\\\\\\", \\\\\\\"{}\\\\\\\", route(\\\\\\\"sensor\\\\\\\"));\\\",\n"
-              "                \\\"route\\\"\n"
+              '                "assert_eq!(route(\\"focused-test\\"), \\"proof\\", \\"{}\\", route(\\"sensor\\"));",\n'
+              '                "route"\n'
               "            ),\n"
-              "            vec![\\\"focused-test\\\".to_string()]\n"
+              '            vec!["focused-test".to_string()]\n'
               "        );\n"
           )
           path.write_text(text[:insertion_at] + expected + text[insertion_at:], encoding="utf-8")
