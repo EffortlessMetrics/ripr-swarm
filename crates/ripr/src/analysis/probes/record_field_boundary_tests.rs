@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 const SOURCE: &str = "struct Marker;\nstruct Packet {\n    value: Marker,\n}\nfn packet() -> Packet {\n    Packet {\n        value: Marker,\n    }\n}\n";
 
+/// Build the real RA summary and diff-produced probes for one exact changed line.
 fn probes_at(source: &str, line: usize) -> Result<Vec<Probe>, String> {
     let path = PathBuf::from("src/lib.rs");
     let text = source
