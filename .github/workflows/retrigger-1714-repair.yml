@@ -24,10 +24,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "1f201632bd7d1d0d64dc5fca32a2104c85361a7c" || {
-            echo "unexpected repair-trigger head" >&2
-            exit 1
-          }
+          expected_stage=77ad378d40ff5cc1acf49fa020822bf6dffb208c
+          git cat-file -e "$expected_stage^{commit}"
+          git merge-base --is-ancestor "$expected_stage" HEAD
+          changed_since_stage="$(git diff --name-only "$expected_stage"..HEAD | sort)"
+          test "$changed_since_stage" = ".github/workflows/retrigger-1714-repair.yml"
+
           workflow=.github/workflows/repair-1714-owner-input.yml
           python - <<'PY'
           from pathlib import Path
