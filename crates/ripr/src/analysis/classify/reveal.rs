@@ -561,21 +561,9 @@ fn split_top_level_arguments(text: &str) -> Option<Vec<&str>> {
             '"' => in_string = true,
             '\'' => in_char = true,
             '(' | '[' | '{' => stack.push(ch),
-            ')' => {
-                if stack.pop() != Some('(') {
-                    return None;
-                }
-            }
-            ']' => {
-                if stack.pop() != Some('[') {
-                    return None;
-                }
-            }
-            '}' => {
-                if stack.pop() != Some('{') {
-                    return None;
-                }
-            }
+            ')' if stack.pop() != Some('(') => return None,
+            ']' if stack.pop() != Some('[') => return None,
+            '}' if stack.pop() != Some('{') => return None,
             ',' if stack.is_empty() => {
                 arguments.push(text[start..index].trim());
                 start = index + ch.len_utf8();
