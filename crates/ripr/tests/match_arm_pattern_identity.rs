@@ -188,3 +188,70 @@ fn fixture_paths_remain_inside_the_ephemeral_root() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn shared_result_literal_does_not_observe_a_sibling_arm() -> Result<(), String> {
+    let test_source = SIBLING_TEST.replace("\"proof\"", "\"sensor-v2\"");
+    let repo = TempRepo::create(&test_source)?;
+    let sibling = "\"focused-test\" => \"proof\"";
+    let shared_result = "\"focused-test\" => \"sensor-v2\"";
+    std::fs::write(
+        repo.root.join("src/lib.rs"),
+        CANDIDATE_SOURCE.replace(sibling, shared_result),
+    )
+    .map_err(|error| format!("write shared-result source failed: {error}"))?;
+    std::fs::write(
+        repo.root.join("diff.patch"),
+        DIFF.replace(sibling, shared_result),
+    )
+    .map_err(|error| format!("write shared-result diff failed: {error}"))?;
+
+    let output = repo.check()?;
+    let finding = changed_sensor_arm(&output)?;
+    assert_eq!(finding.probe.location.line, 3);
+    assert!(finding.probe.expression.starts_with("\"sensor\" =>"));
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a sibling call returning the same literal never selects the changed sensor arm"
+    );
+    assert!(
+        finding
+            .ripr
+            .reveal
+            .discriminate
+            .summary
+            .contains("observation_unverified")
+    );
+    Ok(())
+}
+
+#[test]
+fn diagnostic_literal_does_not_select_the_changed_arm() -> Result<(), String> {
+    let test_source = r#"use match_arm_pattern_identity::route;
+
+#[test]
+fn sibling_assertion_mentions_sensor_only_in_its_message() {
+    assert_eq!(route("focused-test"), "proof", "sensor");
+}
+"#;
+    let repo = TempRepo::create(test_source)?;
+    let output = repo.check()?;
+    let finding = changed_sensor_arm(&output)?;
+    assert_eq!(finding.probe.location.line, 3);
+    assert!(finding.probe.expression.starts_with("\"sensor\" =>"));
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "assertion diagnostic text is not a changed-arm input or observation"
+    );
+    assert!(
+        finding
+            .ripr
+            .reveal
+            .discriminate
+            .summary
+            .contains("observation_unverified")
+    );
+    Ok(())
+}
