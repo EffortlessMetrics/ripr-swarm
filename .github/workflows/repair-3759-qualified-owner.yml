@@ -1,0 +1,207 @@
+name: Repair 3759 qualified owner binding
+
+on:
+  push:
+    branches:
+      - fix/1714-match-arm-pattern-identity
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.repository == 'EffortlessMetrics/ripr-swarm'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact repair branch
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: fix/1714-match-arm-pattern-identity
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Merge current main and apply bounded repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_parent=75dbec39c07ae45ca8f68bafcdf34fd8aeef40a7
+          workflow=.github/workflows/repair-3759-qualified-owner.yml
+
+          test "$(git rev-parse HEAD^)" = "$expected_parent"
+          test "$(git diff --name-only "$expected_parent"..HEAD)" = "$workflow"
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin main
+          git merge --no-edit origin/main
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("crates/ripr/src/analysis/classify/reveal.rs")
+          text = path.read_text(encoding="utf-8")
+
+          old = '''        let preceded_by_identifier = absolute > 0
+              && text[..absolute]
+                  .chars()
+                  .next_back()
+                  .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+          let inside_string = spans
+              .iter()
+              .any(|(start, end)| absolute >= *start && absolute < *end);
+          if preceded_by_identifier || inside_string {
+          '''
+          new = '''        let preceded_by_identifier = absolute > 0
+              && text[..absolute]
+                  .chars()
+                  .next_back()
+                  .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+          let preceded_by_qualifier = text[..absolute]
+              .chars()
+              .rev()
+              .find(|ch| !ch.is_whitespace())
+              .is_some_and(|ch| matches!(ch, ':' | '.'));
+          let inside_string = spans
+              .iter()
+              .any(|(start, end)| absolute >= *start && absolute < *end);
+          if preceded_by_identifier || preceded_by_qualifier || inside_string {
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f"qualified-call production anchor count: {text.count(old)}")
+          text = text.replace(old, new, 1)
+
+          old = '''            || !match_arm_literals.is_empty()
+                  && owner_callee.is_some_and(|owner| {
+          '''
+          new = '''            || !match_arm_literals.is_empty()
+                  && !import_defeats_owner
+                  && !cross_package_defeats_owner
+                  && owner_callee.is_some_and(|owner| {
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f"ambiguity-gate production anchor count: {text.count(old)}")
+          text = text.replace(old, new, 1)
+
+          old = '''/// and parens inside strings honest; inputs bound through variables are not
+          /// statically visible (fail closed, same residual class as #3727 qualified
+          /// paths).
+          '''
+          new = '''/// and parens inside strings honest. Qualified paths and method calls are not
+          /// bare owner bindings and are rejected. Inputs bound through variables are not
+          /// statically visible (fail closed, same residual class as #3727 qualified
+          /// paths).
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f"owner-call documentation anchor count: {text.count(old)}")
+          text = text.replace(old, new, 1)
+
+          old = '''    fn owner_call_literal_scope_rejects_longer_callee_names() {
+              assert!(owner_call_literals("assert_eq!(reroute(\\\"sensor\\\"), 1);", "route").is_empty());
+              assert_eq!(
+                  owner_call_literals("assert_eq!(route(wrap(\\\"sensor\\\")), 1);", "route"),
+                  vec!["sensor".to_string()]
+              );
+              assert_eq!(
+                  owner_call_literals("assert_eq!(route(\\\"sensor\\\"), \\\"v\\\");", "route"),
+                  vec!["sensor".to_string()]
+              );
+          }
+          '''
+          new = '''    fn owner_call_literal_scope_rejects_longer_callee_names() {
+              assert!(owner_call_literals("assert_eq!(reroute(\\\"sensor\\\"), 1);", "route").is_empty());
+              assert!(
+                  owner_call_literals("assert_eq!(other::route(\\\"sensor\\\"), 1);", "route")
+                      .is_empty()
+              );
+              assert!(
+                  owner_call_literals("assert_eq!(other :: route(\\\"sensor\\\"), 1);", "route")
+                      .is_empty()
+              );
+              assert!(
+                  owner_call_literals("assert_eq!(router.route(\\\"sensor\\\"), 1);", "route")
+                      .is_empty()
+              );
+              assert!(
+                  owner_call_literals("assert_eq!(router . route(\\\"sensor\\\"), 1);", "route")
+                      .is_empty()
+              );
+              assert_eq!(
+                  owner_call_literals("assert_eq!(route(wrap(\\\"sensor\\\")), 1);", "route"),
+                  vec!["sensor".to_string()]
+              );
+              assert_eq!(
+                  owner_call_literals("assert_eq!(route(\\\"sensor\\\"), \\\"v\\\");", "route"),
+                  vec!["sensor".to_string()]
+              );
+          }
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f"qualified-call test anchor count: {text.count(old)}")
+          text = text.replace(old, new, 1)
+
+          anchor = '''    // Diagnostic text (#1714): a pattern literal appearing only as assertion
+          // message text is not an owner-supplied input.
+          '''
+          test = '''    // Foreign imports and same-named functions in another package make a
+          // bare owner call ambiguous. Literal overlap may associate the oracle, but it
+          // cannot clear observation_unverified under either producer-owned defeat.
+          #[test]
+          fn match_arm_literal_confirmation_respects_owner_ambiguity_gates() {
+              let aligned = oracle(
+                  "assert_eq!(route(\\\"sensor\\\"), \\\"sensor-v2\\\");",
+                  OracleKind::ExactValue,
+                  OracleStrength::Strong,
+              );
+              let empty = Vec::<String>::new();
+              let pattern_literals = vec!["sensor".to_string()];
+              let family = ProbeFamily::MatchArm;
+              let context = RevealMatchContext {
+                  probe_tokens: &empty,
+                  effect_literals: &empty,
+                  match_arm_variants: &empty,
+                  match_arm_literals: &pattern_literals,
+                  error_construction_variant: None,
+                  family: &family,
+                  wrapper_seam: false,
+                  owner_callee: Some("route"),
+              };
+
+              for (import_defeats_owner, cross_package_defeats_owner) in
+                  [(true, false), (false, true), (true, true)]
+              {
+                  let (_, has_token) = assertion_matches_probe_detail_with_literals(
+                      &context,
+                      &aligned,
+                      2,
+                      import_defeats_owner,
+                      cross_package_defeats_owner,
+                  );
+                  assert!(
+                      !has_token,
+                      "ambiguous owner binding unexpectedly confirmed: import={import_defeats_owner} cross_package={cross_package_defeats_owner}"
+                  );
+              }
+
+              let (_, has_token) =
+                  assertion_matches_probe_detail_with_literals(&context, &aligned, 2, false, false);
+              assert!(has_token, "unambiguous bare owner call must still confirm");
+          }
+
+          '''
+          if text.count(anchor) != 1:
+              raise SystemExit(f"ambiguity test insertion anchor count: {text.count(anchor)}")
+          text = text.replace(anchor, test + anchor, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          cargo fmt --all
+          cargo test -p ripr owner_call_literal_scope_rejects_longer_callee_names
+          cargo test -p ripr match_arm_literal_confirmation_respects_owner_ambiguity_gates
+          cargo test -p ripr --test match_arm_pattern_identity
+
+          git rm "$workflow"
+          git add crates/ripr/src/analysis/classify/reveal.rs
+          git diff --check --cached
+          git commit -m "fix(rust): reject ambiguous match-arm owner calls"
+          git push origin HEAD:fix/1714-match-arm-pattern-identity
