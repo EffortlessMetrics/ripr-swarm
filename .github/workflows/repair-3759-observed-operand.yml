@@ -24,19 +24,45 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected_parent=2a8bf6685f25791e9c5e583c7dd210661fb017ec
+          expected_parent=e0c18907ace47e01917061932c0f1190c3e1157c
           script=.github/repair-3759-observed-operand.py
           workflow=.github/workflows/repair-3759-observed-operand.yml
           retired=.github/workflows/repair-3759-qualified-owner.yml
 
           actual_parent="$(git rev-parse HEAD^)"
           test "$actual_parent" = "$expected_parent"
-          expected_paths="$(printf '%s\n' "$script" "$workflow" "$retired" | sort)"
+          expected_paths="$workflow"
           actual_paths="$(git diff --name-only "$expected_parent"..HEAD | sort)"
           printf 'repair head=%s parent=%s\nexpected paths:\n%s\nactual paths:\n%s\n' \
             "$(git rev-parse HEAD)" "$actual_parent" "$expected_paths" "$actual_paths"
           test "$actual_paths" = "$expected_paths"
           test ! -e "$retired"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/repair-3759-observed-operand.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''            "assert_eq!(route(\\"focused-test\\"), \\"proof\\", \\"{}\\", route(\\"sensor\\"));",
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f"diagnostic-list row count: {text.count(old)}")
+          text = text.replace(old, "", 1)
+          anchor = '''        assert_eq!(
+              owner_call_literals("assert_eq!(route(\\"sensor\\"), \\"v\\");", "route"),
+          '''
+          expected = '''        assert_eq!(
+              owner_call_literals(
+                  "assert_eq!(route(\\"focused-test\\"), \\"proof\\", \\"{}\\", route(\\"sensor\\"));",
+                  "route"
+              ),
+              vec!["focused-test".to_string()]
+          );
+          '''
+          if text.count(anchor) != 1:
+              raise SystemExit(f"diagnostic-expectation anchor count: {text.count(anchor)}")
+          path.write_text(text.replace(anchor, expected + anchor, 1), encoding="utf-8")
+          PY
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
