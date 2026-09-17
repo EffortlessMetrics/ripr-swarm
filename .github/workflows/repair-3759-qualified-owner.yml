@@ -24,11 +24,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected_parent=75dbec39c07ae45ca8f68bafcdf34fd8aeef40a7
+          expected_parent=e9c49ec49ddc38beff25c8cc77a3487b7b80da0d
           workflow=.github/workflows/repair-3759-qualified-owner.yml
 
-          test "$(git rev-parse HEAD^)" = "$expected_parent"
-          test "$(git diff --name-only "$expected_parent"..HEAD)" = "$workflow"
+          actual_parent="$(git rev-parse HEAD^)"
+          changed="$(git diff --name-only "$expected_parent"..HEAD)"
+          printf 'repair head=%s parent=%s changed=%s\n' "$(git rev-parse HEAD)" "$actual_parent" "$changed"
+          test "$actual_parent" = "$expected_parent"
+          test "$changed" = "$workflow"
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
