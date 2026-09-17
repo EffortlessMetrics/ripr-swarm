@@ -1,12 +1,8 @@
-//! Test-first public-API witness for RIPR #1714 tuple-pattern identity.
+//! Public-API witnesses for RIPR #1714 tuple-pattern identity.
 //!
-//! The positive case intentionally fails on the pre-repair analyzer: an exact
-//! `(true, false)` owner call and exact result assertion must eventually bind to
-//! that parser-owned arm, while the sibling `(false, true)` arm must remain
-//! distinct. This file changes no production behavior or gate policy.
-
-#[path = "support/tuple_match_arm_source_generator.rs"]
-mod tuple_match_arm_source_generator;
+//! Select the exact candidate-side arm, not a removed-side probe sharing its
+//! pattern and line. Keep unsupported input mappings explicitly unverified.
+//! These tests execute the analyzer; they never generate replacement source.
 
 use ripr::{
     CheckInput, CheckOutput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace,
@@ -107,45 +103,63 @@ impl Drop for TempRepo {
     }
 }
 
+/// Fixture-local comparison: these literal values contain no whitespace.
+fn normalized_arm(text: &str) -> String {
+    text.trim()
+        .trim_end_matches(',')
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+/// Candidate currentness is carried by `after`, not a shared pattern prefix.
+/// Do not filter by classification: a wrong class must reach the test oracle.
 fn changed_request_only_arm(output: &CheckOutput) -> Result<&ripr::Finding, String> {
-    let mut matches = output.findings.iter().filter(|finding| {
-        if finding.probe.family != ProbeFamily::MatchArm || finding.probe.location.line != 4 {
-            return false;
+    let expected = normalized_arm("(true, false) => \"request_identity_v2\",");
+    let matches = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ProbeFamily::MatchArm
+                && finding.probe.location.line == 4
+                && normalized_arm(&finding.probe.expression) == expected
+                && finding
+                    .probe
+                    .after
+                    .as_deref()
+                    .is_some_and(|after| normalized_arm(after) == expected)
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [finding] => Ok(*finding),
+        _ => {
+            let observed = output
+                .findings
+                .iter()
+                .filter(|finding| finding.probe.family == ProbeFamily::MatchArm)
+                .map(|finding| {
+                    format!(
+                        "id={:?}; line={}; before={:?}; after={:?}; expression={:?}; class={:?}",
+                        finding.probe.id,
+                        finding.probe.location.line,
+                        finding.probe.before,
+                        finding.probe.after,
+                        finding.probe.expression,
+                        finding.class
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" | ");
+            Err(format!(
+                "expected exactly one candidate-current request arm at line 4, found {}; all match subjects: {observed}",
+                matches.len()
+            ))
         }
-        let normalized = finding
-            .probe
-            .expression
-            .chars()
-            .filter(|character| !character.is_whitespace())
-            .collect::<String>();
-        normalized.starts_with("(true,false)=>")
-    });
-    let finding = matches.next().ok_or_else(|| {
-        let observed = output
-            .findings
-            .iter()
-            .map(|finding| {
-                format!(
-                    "{}:{}:{}",
-                    finding.probe.family.as_str(),
-                    finding.probe.location.line,
-                    finding.probe.expression
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" | ");
-        format!("missing changed `(true, false)` arm at line 4; observed {observed}")
-    })?;
-    if matches.next().is_some() {
-        return Err("duplicate changed `(true, false)` match-arm findings".to_string());
     }
-    Ok(finding)
 }
 
 #[test]
 fn exact_tuple_input_and_result_certify_the_same_match_arm() -> Result<(), String> {
-    tuple_match_arm_source_generator::emit_candidate()?;
-
     let repo = TempRepo::create(ALIGNED_TEST)?;
     let output = repo.check()?;
     let finding = changed_request_only_arm(&output)?;
