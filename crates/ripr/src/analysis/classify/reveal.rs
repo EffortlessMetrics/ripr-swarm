@@ -439,84 +439,400 @@ fn guarded_oracle_names_bare_callee(text: &str, callee: &str) -> bool {
     text.contains(&format!("match {callee}("))
 }
 
-/// String literals in a match-arm pattern (left of the first `=>`).
+/// String literals in a match-arm pattern (left of the arm separator `=>`).
 /// Empty when the expression has no arm separator: without a statically
 /// established pattern there is no literal arm identity to confirm.
+///
+/// The separator is the first `=>` outside string/character literals and
+/// comments (a `=>` inside literal content such as `"sensor=>legacy"` is
+/// not an arm separator). Values are decoded literal values, so a raw
+/// spelling and a cooked spelling with different decoded values never
+/// equate (`r"sensor\n"` is not `"sensor\n"`).
 fn match_arm_pattern_literals(expression: &str) -> Vec<String> {
-    match expression.split_once("=>") {
-        Some((pattern, _)) => rust_string_literals(pattern),
+    match find_fat_arrow(expression) {
+        Some(separator) => match_arm_string_values(&expression[..separator]),
         None => Vec::new(),
     }
 }
 
 /// Whether the parser-owned match-arm pattern includes a guard before `=>`.
 ///
-/// The pattern text is already parser-produced. Comments and string contents
-/// are masked before checking the `if` keyword, so `"if" =>` and comments do
-/// not create a guard. This slice deliberately fails closed for guarded arms:
-/// matching the pattern literal alone does not establish guard satisfaction.
+/// The `if` keyword must sit outside string/character literals and comments,
+/// so `"if" =>` and comments do not create a guard. This slice deliberately
+/// fails closed for guarded arms: matching the pattern literal alone does
+/// not establish guard satisfaction.
 fn match_arm_pattern_has_guard(expression: &str) -> bool {
-    let Some((pattern, _)) = expression.split_once("=>") else {
+    let Some(separator) = find_fat_arrow(expression) else {
         return false;
     };
-    let masked = crate::analysis::extract::mask_comments_and_strings(pattern);
-    contains_as_whole_word(&masked, "if")
+    contains_guard_if(&expression[..separator])
 }
 
-/// Byte ranges (quotes included) of the string-literal spans in `text`,
-/// using the same string/comment scan as [`rust_string_literals`] so the two
-/// stay consistent about what counts as a literal.
+/// Byte index of the `=` in the first `=>` outside string/character literals
+/// and comments. A fat arrow inside literal content or a comment never
+/// separates a match arm from its body.
+fn find_fat_arrow(text: &str) -> Option<usize> {
+    let opaque = lex_opaque_ranges(text);
+    let bytes = text.as_bytes();
+    let mut index = 0usize;
+    while index + 1 < bytes.len() {
+        if opaque
+            .iter()
+            .any(|(start, end)| index >= *start && index < *end)
+        {
+            index += 1;
+            continue;
+        }
+        if bytes[index] == b'=' && bytes[index + 1] == b'>' {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+/// True when a whole-word `if` occurs outside string/character literals and
+/// comments. Raw-string contents (including `r#"if"#`) never count.
+fn contains_guard_if(pattern: &str) -> bool {
+    let opaque = lex_opaque_ranges(pattern);
+    let bytes = pattern.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if opaque
+            .iter()
+            .any(|(start, end)| index >= *start && index < *end)
+        {
+            index += 1;
+            continue;
+        }
+        let is_if = bytes[index] == b'i'
+            && rest_at(pattern, index).starts_with("if")
+            && !is_rust_word_continue_at(pattern, index + 2);
+        if is_if {
+            let before = if index == 0 {
+                None
+            } else {
+                pattern
+                    .get(..index)
+                    .and_then(|before| before.chars().next_back())
+            };
+            if before.is_none_or(|ch| !is_rust_word_char(ch)) {
+                return true;
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
+/// Suffix of `text` at byte `index`, or empty when `index` is past the end
+/// or inside a multibyte character. Structural scans use this so
+/// non-ASCII literal contents can never panic byte slicing.
+fn rest_at(text: &str, index: usize) -> &str {
+    text.get(index..).unwrap_or("")
+}
+
+fn is_rust_word_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+fn is_rust_word_continue_at(text: &str, index: usize) -> bool {
+    text.get(index..)
+        .is_some_and(|rest| rest.chars().next().is_some_and(is_rust_word_char))
+}
+
+/// Byte ranges (prefix and quotes included) of the string-literal spans in
+/// `text`, covering cooked (`"..."`, `b"..."`) and raw (`r"..."`,
+/// `r#"..."#`, `br...`) spellings. Comments and character literals never
+/// produce spans.
 fn string_span_ranges(text: &str) -> Vec<(usize, usize)> {
-    let mut spans = Vec::new();
-    let mut open = None;
-    let mut escaped = false;
-    let mut in_line_comment = false;
-    let mut in_block_comment = false;
-    let mut chars = text.char_indices().peekable();
-    while let Some((index, ch)) = chars.next() {
-        if in_line_comment {
-            if ch == '\n' {
-                in_line_comment = false;
-            }
+    lex_strings(text)
+        .into_iter()
+        .map(|(start, end, _)| (start, end))
+        .collect()
+}
+
+/// True when `text` holds a string literal that never terminates. The lexer
+/// extends such a span to the end of the text, so structural scans fail
+/// closed instead of reading past it.
+fn has_unterminated_string(text: &str) -> bool {
+    // Only an unterminated literal reaches the end of the text without a
+    // decoded value; an invalid escape keeps its closing quote and span.
+    lex_strings(text)
+        .into_iter()
+        .any(|(_, end, value)| value.is_none() && end == text.len() && !text.is_empty())
+}
+
+/// Decoded string-literal values in `text`, sorted and deduplicated.
+/// A raw spelling contributes its verbatim content while a cooked spelling
+/// contributes its unescaped value, so spellings with different decoded
+/// values never equate. An undecodable or unterminated literal contributes
+/// nothing (fail closed).
+fn match_arm_string_values(text: &str) -> Vec<String> {
+    let mut values = lex_strings(text)
+        .into_iter()
+        .filter_map(|(_, _, value)| value)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    values
+}
+
+/// Byte ranges of every lexically opaque region in `text`: string literals
+/// (cooked and raw), character literals, line comments, and (nesting-aware)
+/// block comments. Structural scans skip these ranges so literal contents
+/// never read as syntax.
+fn lex_opaque_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut opaque = Vec::new();
+    for (start, end, _) in lex_strings(text) {
+        opaque.push((start, end));
+    }
+    let mut index = 0usize;
+    let bytes = text.as_bytes();
+    while index < bytes.len() {
+        if opaque
+            .iter()
+            .any(|(start, end)| index >= *start && index < *end)
+        {
+            index += 1;
             continue;
         }
-        if in_block_comment {
-            if ch == '*'
-                && let Some((_, '/')) = chars.peek().copied()
-            {
-                let _ = chars.next();
-                in_block_comment = false;
-            }
+        let rest = rest_at(text, index);
+        if rest.starts_with("//") {
+            let end = rest.find('\n').map_or(text.len(), |offset| index + offset);
+            opaque.push((index, end));
+            index = end;
             continue;
         }
-        if open.is_some() {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                spans.push((open.unwrap_or(index), index + 1));
-                open = None;
-            }
-            continue;
-        }
-        match ch {
-            '"' => open = Some(index),
-            '/' => match chars.peek().copied() {
-                Some((_, '/')) => {
-                    let _ = chars.next();
-                    in_line_comment = true;
+        if rest.starts_with("/*") {
+            let mut depth = 0usize;
+            let mut cursor = index;
+            while cursor < bytes.len() {
+                if rest_at(text, cursor).starts_with("/*") {
+                    depth += 1;
+                    cursor += 2;
+                } else if rest_at(text, cursor).starts_with("*/") {
+                    depth -= 1;
+                    cursor += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    cursor += 1;
                 }
-                Some((_, '*')) => {
-                    let _ = chars.next();
-                    in_block_comment = true;
+            }
+            opaque.push((index, cursor));
+            index = cursor;
+            continue;
+        }
+        if rest.starts_with('\'')
+            && let Some(end) = char_literal_end(text, index)
+        {
+            opaque.push((index, end));
+            index = end;
+            continue;
+        }
+        index += 1;
+    }
+    opaque
+}
+
+/// String literals as `(span_start, span_end, decoded_value)`. Cooked
+/// literals decode standard escapes; raw literals contribute verbatim
+/// content. An undecodable literal keeps its span with no value, and an
+/// unterminated literal extends to the end of the text with no value, so
+/// downstream structural scans fail closed instead of reading past it.
+fn lex_strings(text: &str) -> Vec<(usize, usize, Option<String>)> {
+    let mut literals = Vec::new();
+    let mut index = 0usize;
+    let bytes = text.as_bytes();
+    while index < bytes.len() {
+        let rest = rest_at(text, index);
+        if let Some((end, value)) = raw_string_at(text, index) {
+            literals.push((index, end, Some(value)));
+            index = end;
+            continue;
+        }
+        if rest.starts_with('\'')
+            && let Some(end) = char_literal_end(text, index)
+        {
+            index = end;
+            continue;
+        }
+        let cooked_start = if rest.starts_with('"') || rest.starts_with("b\"") {
+            Some(index)
+        } else {
+            None
+        };
+        if let Some(start) = cooked_start {
+            let quote = start + usize::from(text[start..].starts_with('b'));
+            match cooked_string_at(text, quote) {
+                Some((end, value)) => {
+                    literals.push((start, end, value));
+                    index = end;
                 }
-                _ => {}
-            },
-            _ => {}
+                None => {
+                    literals.push((start, text.len(), None));
+                    break;
+                }
+            }
+            continue;
+        }
+        index += 1;
+    }
+    literals
+}
+
+/// Raw string at `start` (`r"..."`, `r#"..."#`, `br...`), returning the end
+/// byte index and the verbatim content. `None` when no raw string opens
+/// here or the terminator is missing (the caller then advances one byte).
+fn raw_string_at(text: &str, start: usize) -> Option<(usize, String)> {
+    let mut cursor = start;
+    if rest_at(text, cursor).starts_with('b') {
+        cursor += 1;
+    }
+    if !rest_at(text, cursor).starts_with('r') {
+        return None;
+    }
+    cursor += 1;
+    let mut hashes = 0usize;
+    while rest_at(text, cursor).starts_with('#') {
+        hashes += 1;
+        cursor += 1;
+    }
+    if !rest_at(text, cursor).starts_with('"') {
+        return None;
+    }
+    cursor += 1;
+    let content_start = cursor;
+    let bytes = text.as_bytes();
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'"' {
+            let mut tail = cursor + 1;
+            let mut seen = 0usize;
+            while seen < hashes && tail < bytes.len() && bytes[tail] == b'#' {
+                seen += 1;
+                tail += 1;
+            }
+            if seen == hashes {
+                return Some((tail, text[content_start..cursor].to_string()));
+            }
+        }
+        cursor += 1;
+    }
+    None
+}
+
+/// Cooked string starting at the opening `"` byte index `quote`, returning
+/// the end byte index and the decoded value (`None` value on an invalid
+/// escape). `None` when the string never terminates.
+fn cooked_string_at(text: &str, quote: usize) -> Option<(usize, Option<String>)> {
+    let mut value = String::new();
+    let mut valid = true;
+    let mut index = quote + 1;
+    let bytes = text.as_bytes();
+    while index < bytes.len() {
+        let ch = rest_at(text, index).chars().next()?;
+        if ch == '"' {
+            return Some((index + 1, valid.then(|| value.clone())));
+        }
+        if ch != '\\' {
+            value.push(ch);
+            index += ch.len_utf8();
+            continue;
+        }
+        match decode_cooked_escape(text, index) {
+            Some((consumed, decoded)) => {
+                value.push_str(&decoded);
+                index += consumed;
+            }
+            None => {
+                valid = false;
+                index += 1;
+            }
         }
     }
-    spans
+    None
+}
+
+/// Decode one cooked escape at the `\` byte index `start`, returning the
+/// consumed byte count and the decoded text. Covers `\\`, `\"`, `\'`,
+/// `\n`, `\r`, `\t`, `\0`, `\xNN`, `\u{...}`, and the
+/// backslash-newline line continuation.
+fn decode_cooked_escape(text: &str, start: usize) -> Option<(usize, String)> {
+    let rest = &text[start..];
+    let mut chars = rest.chars();
+    if chars.next() != Some('\\') {
+        return None;
+    }
+    match chars.next()? {
+        '\\' => Some((2, "\\".to_string())),
+        '"' => Some((2, "\"".to_string())),
+        '\'' => Some((2, "'".to_string())),
+        'n' => Some((2, "\n".to_string())),
+        'r' => Some((2, "\r".to_string())),
+        't' => Some((2, "\t".to_string())),
+        '0' => Some((2, "\0".to_string())),
+        'x' => {
+            let digits = rest.get(2..4)?;
+            let byte = u8::from_str_radix(digits, 16).ok()?;
+            Some((4, (byte as char).to_string()))
+        }
+        'u' => {
+            let braced = rest.strip_prefix("\\u{")?;
+            let end = braced.find('}')?;
+            let scalar = u32::from_str_radix(&braced[..end], 16).ok()?;
+            let decoded = char::from_u32(scalar)?;
+            Some((3 + end + 1, decoded.to_string()))
+        }
+        '\n' => {
+            let mut consumed = 2usize;
+            for ch in rest[2..].chars() {
+                if ch.is_whitespace() {
+                    consumed += ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            Some((consumed, String::new()))
+        }
+        _ => None,
+    }
+}
+
+/// End byte index of the character literal opening at `start`, or `None`
+/// when the `'` begins a lifetime rather than a character literal.
+fn char_literal_end(text: &str, start: usize) -> Option<usize> {
+    let rest = &text[start + 1..];
+    let mut chars = rest.char_indices().peekable();
+    let (_, first) = chars.next()?;
+    if first == '\n' {
+        return None;
+    }
+    if first == '\\' {
+        let mut cursor = 1usize;
+        let mut found = false;
+        for (offset, ch) in chars {
+            cursor = offset + ch.len_utf8();
+            if ch == '\'' {
+                found = true;
+                break;
+            }
+            if ch == '\n' || cursor > 10 {
+                return None;
+            }
+        }
+        if !found {
+            return None;
+        }
+        return Some(start + 1 + cursor);
+    }
+    let (offset, _) = chars.next()?;
+    if rest[offset..].starts_with('\'') {
+        return Some(start + 1 + offset + 1);
+    }
+    None
 }
 
 /// Direct string-literal inputs supplied by the observed owner call.
@@ -528,38 +844,20 @@ fn string_span_ranges(text: &str) -> Vec<(usize, usize)> {
 /// direct string-literal argument. Qualified paths, methods, wrappers,
 /// conditionals, blocks, variables, and transformed/nested inputs fail closed.
 fn split_top_level_arguments(text: &str) -> Option<Vec<&str>> {
+    let opaque = lex_opaque_ranges(text);
     let mut arguments = Vec::new();
     let mut start = 0usize;
     let mut stack = Vec::new();
-    let mut in_string = false;
-    let mut in_char = false;
-    let mut escaped = false;
 
     for (index, ch) in text.char_indices() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        if in_char {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '\'' {
-                in_char = false;
-            }
+        if opaque
+            .iter()
+            .any(|(range_start, range_end)| index >= *range_start && index < *range_end)
+        {
             continue;
         }
 
         match ch {
-            '"' => in_string = true,
-            '\'' => in_char = true,
             '(' | '[' | '{' => stack.push(ch),
             ')' if stack.pop() != Some('(') => return None,
             ']' if stack.pop() != Some('[') => return None,
@@ -572,7 +870,10 @@ fn split_top_level_arguments(text: &str) -> Option<Vec<&str>> {
         }
     }
 
-    if in_string || in_char || !stack.is_empty() {
+    if !stack.is_empty() {
+        return None;
+    }
+    if has_unterminated_string(text) {
         return None;
     }
     arguments.push(text[start..].trim());
@@ -580,41 +881,24 @@ fn split_top_level_arguments(text: &str) -> Option<Vec<&str>> {
 }
 
 fn matching_parenthesis(text: &str, opening: usize) -> Option<usize> {
+    let opaque = lex_opaque_ranges(text);
     let mut depth = 0usize;
-    let mut in_string = false;
-    let mut in_char = false;
-    let mut escaped = false;
 
     for (relative, ch) in text[opening..].char_indices() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        if in_char {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '\'' {
-                in_char = false;
-            }
+        let index = opening + relative;
+        if opaque
+            .iter()
+            .any(|(range_start, range_end)| index >= *range_start && index < *range_end)
+        {
             continue;
         }
 
         match ch {
-            '"' => in_string = true,
-            '\'' => in_char = true,
             '(' => depth += 1,
             ')' => {
                 depth = depth.checked_sub(1)?;
                 if depth == 0 {
-                    return Some(opening + relative);
+                    return Some(index);
                 }
             }
             _ => {}
@@ -690,7 +974,7 @@ fn direct_owner_string_input(expression: &str, owner: &str) -> Option<String> {
     if spans.len() != 1 || spans[0] != (0, argument.len()) {
         return None;
     }
-    let mut literals = rust_string_literals(argument);
+    let mut literals = match_arm_string_values(argument);
     (literals.len() == 1).then(|| literals.remove(0))
 }
 
