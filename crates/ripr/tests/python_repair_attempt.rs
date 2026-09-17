@@ -218,6 +218,9 @@ fn build_fixture(label: &str) -> Result<TempFixture, String> {
     )?;
     run_git(&root, &["config", "user.name", "RIPR Test"])?;
     run_git(&root, &["config", "commit.gpgSign", "false"])?;
+    // The edit cage compares exact worktree bytes. Keep Git checkout from
+    // translating the fixture's LF baseline under a host autocrlf setting.
+    run_git(&root, &["config", "core.autocrlf", "false"])?;
     run_git(&root, &["add", "."])?;
     run_git(&root, &["commit", "-qm", "base"])?;
     run_git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
