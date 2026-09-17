@@ -5,6 +5,9 @@
 //! that parser-owned arm, while the sibling `(false, true)` arm must remain
 //! distinct. This file changes no production behavior or gate policy.
 
+#[path = "support/tuple_match_arm_source_generator.rs"]
+mod tuple_match_arm_source_generator;
+
 use ripr::{
     CheckInput, CheckOutput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace,
 };
@@ -141,6 +144,8 @@ fn changed_request_only_arm(output: &CheckOutput) -> Result<&ripr::Finding, Stri
 
 #[test]
 fn exact_tuple_input_and_result_certify_the_same_match_arm() -> Result<(), String> {
+    tuple_match_arm_source_generator::emit_candidate()?;
+
     let repo = TempRepo::create(ALIGNED_TEST)?;
     let output = repo.check()?;
     let finding = changed_request_only_arm(&output)?;

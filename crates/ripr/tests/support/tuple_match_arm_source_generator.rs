@@ -1,9 +1,9 @@
-//! Temporary source generator for the test-first tuple-arm repair.
+//! Temporary guarded source emitter for the test-first tuple-arm repair.
 //!
-//! This test applies exact, single-occurrence replacements to the reviewed
-//! classifier source and emits the complete candidate file through the normal
-//! CI report artifact. The generated file is inspected and committed as source;
-//! this generator is then removed before qualification.
+//! The public-API red witness calls this before its expected assertion failure,
+//! so CI retains the complete reviewed classifier candidate in the ordinary
+//! RIPR report artifact. The generated file is inspected and committed as
+//! source; this helper is removed before qualification.
 
 use std::fs;
 use std::path::Path;
@@ -19,8 +19,7 @@ fn replace_once(source: &mut String, needle: &str, replacement: &str) -> Result<
     Ok(())
 }
 
-#[test]
-fn emit_guarded_tuple_arm_classifier_candidate() -> Result<(), String> {
+pub(super) fn emit_candidate() -> Result<(), String> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace = manifest
         .parent()
