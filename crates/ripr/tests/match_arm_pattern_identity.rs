@@ -1,10 +1,9 @@
 //! End-to-end witness for RIPR #1714.
 //!
-//! The Rust parser already owns the exact match-arm pattern, but reveal
-//! confirmation currently keeps only identifiers following `::`. A literal
-//! arm therefore remains weak even when one exact test supplies the matching
-//! input and asserts the arm result. This test is intentionally added before
-//! the producer repair so hosted CI retains the real failing witness.
+//! Retain the original literal-arm witness and adversarial cases for
+//! observation that belongs to a sibling, diagnostic, unselected input, or
+//! guarded arm. Every classification assertion selects one exact changed
+//! arm; the enclosing match and duplicate subjects cannot stand in for it.
 
 use ripr::{
     CheckInput, CheckOutput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace,
@@ -104,29 +103,32 @@ impl Drop for TempRepo {
 }
 
 fn changed_sensor_arm(output: &CheckOutput) -> Result<&ripr::Finding, String> {
-    output
-        .findings
-        .iter()
-        .find(|finding| {
-            finding.probe.family == ProbeFamily::MatchArm
-                && finding.probe.expression.contains("\"sensor\"")
-        })
-        .ok_or_else(|| {
-            let observed = output
-                .findings
-                .iter()
-                .map(|finding| {
-                    format!(
-                        "{}:{}:{}",
-                        finding.probe.family.as_str(),
-                        finding.probe.location.line,
-                        finding.probe.expression
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(" | ");
-            format!("missing changed sensor match-arm finding; observed {observed}")
-        })
+    let mut matches = output.findings.iter().filter(|finding| {
+        finding.probe.family == ProbeFamily::MatchArm
+            && finding.probe.location.line == 3
+            && (finding.probe.expression.starts_with("\"sensor\" =>")
+                || finding.probe.expression.starts_with("\"sensor\" if"))
+    });
+    let finding = matches.next().ok_or_else(|| {
+        let observed = output
+            .findings
+            .iter()
+            .map(|finding| {
+                format!(
+                    "{}:{}:{}",
+                    finding.probe.family.as_str(),
+                    finding.probe.location.line,
+                    finding.probe.expression
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        format!("missing changed sensor arm at line 3; observed {observed}")
+    })?;
+    if matches.next().is_some() {
+        return Err("duplicate changed sensor match-arm findings at line 3".to_string());
+    }
+    Ok(finding)
 }
 
 #[test]
@@ -143,10 +145,9 @@ fn exact_literal_input_and_result_certify_the_same_match_arm() -> Result<(), Str
     );
     assert!(finding.related_tests.iter().any(|test| {
         test.name == "exact_sensor_arm_is_observed"
-            && test
-                .oracle
-                .as_deref()
-                .is_some_and(|oracle| oracle.contains("route(\"sensor\")"))
+            && test.oracle.as_deref().is_some_and(|oracle| {
+                oracle.contains("route(\"sensor\")") && oracle.contains("\"sensor-v2\"")
+            })
     }));
     Ok(())
 }
@@ -171,6 +172,12 @@ fn a_sibling_literal_arm_oracle_cannot_certify_the_changed_arm() -> Result<(), S
             .contains("observation_unverified"),
         "the sibling-only witness must retain the explicit unverified discriminator"
     );
+    assert!(finding.related_tests.iter().any(|test| {
+        test.name == "sibling_proof_arm_is_observed"
+            && test.oracle.as_deref().is_some_and(|oracle| {
+                oracle.contains("route(\"focused-test\")") && oracle.contains("\"proof\"")
+            })
+    }));
     Ok(())
 }
 
