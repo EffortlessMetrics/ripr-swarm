@@ -210,13 +210,15 @@ fn analyze_related_assertions(
     } else {
         Vec::new()
     };
-    // For MatchArm: string literals in the changed arm expression are the
+    // For MatchArm: string literals in the arm PATTERN (left of `=>`) are the
     // parser-owned identity of a literal arm (`"sensor"` in
-    // `"sensor" => "sensor-v2",`). A sibling arm's literals never overlap
-    // this arm's expression, so literal confirmation keeps the sibling
-    // rejection that variant-only matching provides.
+    // `"sensor" => "sensor-v2",`). Result-side literals never confirm: a
+    // sibling arm returning the same literal does not select this arm.
+    // A sibling arm's pattern literals never overlap this arm's pattern, so
+    // literal confirmation keeps the sibling rejection that variant-only
+    // matching provides. No `=>` means no statically established pattern.
     let match_arm_literals = if matches!(probe.family, ProbeFamily::MatchArm) {
-        rust_string_literals(analysis_expression)
+        match_arm_pattern_literals(analysis_expression)
     } else {
         Vec::new()
     };
@@ -428,6 +430,148 @@ fn guarded_oracle_names_bare_callee(text: &str, callee: &str) -> bool {
     text.contains(&format!("match {callee}("))
 }
 
+/// String literals in a match-arm pattern (left of the first `=>`).
+/// Empty when the expression has no arm separator: without a statically
+/// established pattern there is no literal arm identity to confirm.
+fn match_arm_pattern_literals(expression: &str) -> Vec<String> {
+    match expression.split_once("=>") {
+        Some((pattern, _)) => rust_string_literals(pattern),
+        None => Vec::new(),
+    }
+}
+
+/// Byte ranges (quotes included) of the string-literal spans in `text`,
+/// using the same string/comment scan as [`rust_string_literals`] so the two
+/// stay consistent about what counts as a literal.
+fn string_span_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut open = None;
+    let mut escaped = false;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        if in_line_comment {
+            if ch == '\n' {
+                in_line_comment = false;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if ch == '*'
+                && let Some((_, '/')) = chars.peek().copied()
+            {
+                let _ = chars.next();
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if open.is_some() {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                spans.push((open.unwrap_or(index), index + 1));
+                open = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' => open = Some(index),
+            '/' => match chars.peek().copied() {
+                Some((_, '/')) => {
+                    let _ = chars.next();
+                    in_line_comment = true;
+                }
+                Some((_, '*')) => {
+                    let _ = chars.next();
+                    in_block_comment = true;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    spans
+}
+
+/// String literals supplied as inputs to the changed owner: literals inside
+/// a `owner(..)` call in the assertion text. A literal that appears only as
+/// assertion diagnostic/message text never selects an arm — including a
+/// message that spells the call itself (`"route(\"sensor\")"` binds no
+/// input). String-aware callee search and paren matching keep nested calls
+/// and parens inside strings honest; inputs bound through variables are not
+/// statically visible (fail closed, same residual class as #3727 qualified
+/// paths).
+fn owner_call_literals(text: &str, owner: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let spans = string_span_ranges(text);
+    let mut search_from = 0;
+    while let Some(relative) = text[search_from..].find(&format!("{owner}(")) {
+        // Same-entity binding, not token coincidence: `route(` must not match
+        // inside a longer callee name (`reroute(`) or inside a string
+        // literal (a diagnostic message spelling the call text).
+        let absolute = search_from + relative;
+        let preceded_by_identifier = absolute > 0
+            && text[..absolute]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+        let inside_string = spans
+            .iter()
+            .any(|(start, end)| absolute >= *start && absolute < *end);
+        if preceded_by_identifier || inside_string {
+            search_from = absolute + owner.len();
+            continue;
+        }
+        let mut depth = 0;
+        let mut in_string = false;
+        let mut escaped = false;
+        let mut call_start = None;
+        let bytes: Vec<(usize, char)> = text[search_from + relative..].char_indices().collect();
+        let mut i = 0;
+        while i < bytes.len() {
+            let (_, ch) = bytes[i];
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    in_string = false;
+                }
+            } else if ch == '"' {
+                in_string = true;
+            } else if ch == '(' {
+                if call_start.is_none() {
+                    call_start = Some(i);
+                }
+                depth += 1;
+            } else if ch == ')' {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            i += 1;
+        }
+        if let Some(start) = call_start {
+            let end = if i < bytes.len() {
+                search_from + relative + bytes[i].0
+            } else {
+                text.len()
+            };
+            let call_text = &text[search_from + relative + bytes[start].0..end];
+            out.extend(rust_string_literals(call_text));
+            search_from = end;
+        } else {
+            break;
+        }
+    }
+    out
+}
+
 /// Returns `(matched, has_token_match)`.
 ///
 /// `matched` is true when the assertion should be associated with this probe
@@ -443,10 +587,11 @@ fn guarded_oracle_names_bare_callee(text: &str, callee: &str) -> bool {
 /// the shared qualifier token `Mode` is excluded from the confirmation set.
 /// When the expression contains no `::` (e.g. `None => 0,`), the variant
 /// token list is empty and variant matching contributes nothing. String
-/// literals in the arm expression additionally confirm: an assertion
-/// supplying the same literal observes this arm's parser-owned identity.
-/// A sibling arm's literals never overlap this arm's expression, so the
-/// sibling rejection is preserved.
+/// literals in the arm PATTERN additionally confirm, but only when supplied
+/// as inputs to the changed owner (`route("sensor")`): result-side literals
+/// never confirm (a sibling returning the same literal does not select this
+/// arm), and diagnostic/message literals never confirm. The owner's bare
+/// callee name scopes the match; without a known owner nothing confirms.
 ///
 /// For probes whose changed expression constructs an exact error variant,
 /// with `ExactErrorVariant` assertions (RIPR-SPEC-0106, Part B): when
@@ -587,9 +732,11 @@ fn assertion_matches_probe_detail_with_literals(
             .iter()
             .any(|v| contains_as_whole_word(&assertion.text, v))
             || !match_arm_literals.is_empty()
-                && rust_string_literals(&assertion.text)
-                    .iter()
-                    .any(|literal| match_arm_literals.contains(literal))
+                && owner_callee.is_some_and(|owner| {
+                    owner_call_literals(&assertion.text, owner)
+                        .iter()
+                        .any(|literal| match_arm_literals.contains(literal))
+                })
     } else if wrapper_seam {
         // A #3700 wrapper error seam stays unconfirmable: see above.
         false
@@ -628,6 +775,10 @@ fn assertion_matches_probe_detail_with_literals(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "test-only mirror of the grouped RevealMatchContext inputs"
+)]
 fn assertion_matches_probe_detail(
     probe_tokens: &[String],
     match_arm_variants: &[String],
@@ -636,6 +787,7 @@ fn assertion_matches_probe_detail(
     family: &ProbeFamily,
     assertion: &OracleFact,
     assertion_count: usize,
+    owner_callee: Option<&str>,
 ) -> (bool, bool) {
     assertion_matches_probe_detail_with_literals(
         &RevealMatchContext {
@@ -646,7 +798,7 @@ fn assertion_matches_probe_detail(
             error_construction_variant,
             family,
             wrapper_seam: false,
-            owner_callee: None,
+            owner_callee,
         },
         assertion,
         assertion_count,
@@ -1487,6 +1639,7 @@ mod tests {
             &ProbeFamily::StaticUnknown,
             &token_assertion,
             2,
+            None,
         );
         assert!(matched, "token match must fire");
         assert!(has_token, "token match must set has_token_match");
@@ -1504,6 +1657,7 @@ mod tests {
             &ProbeFamily::ErrorPath,
             &family_assertion,
             2,
+            None,
         );
         assert!(matched, "family match must fire");
         assert!(!has_token, "family-only match must not set has_token_match");
@@ -1521,6 +1675,7 @@ mod tests {
             &ProbeFamily::StaticUnknown,
             &fallback_assertion,
             1,
+            None,
         );
         assert!(matched, "single-assertion fallback must fire");
         assert!(
@@ -1536,6 +1691,7 @@ mod tests {
             &ProbeFamily::StaticUnknown,
             &fallback_assertion,
             2,
+            None,
         );
         assert!(!matched, "fallback must not fire for assertion_count > 1");
     }
@@ -1552,14 +1708,15 @@ mod tests {
         let (matched, has_token) = assertion_matches_probe_detail(
             &[],
             &[],
-            &["sensor".to_string(), "sensor-v2".to_string()],
+            &["sensor".to_string()],
             None,
             &ProbeFamily::MatchArm,
             &aligned,
             2,
+            Some("route"),
         );
         assert!(matched, "literal overlap must associate");
-        assert!(has_token, "shared arm literal must confirm observation");
+        assert!(has_token, "owner-supplied pattern literal must confirm");
     }
 
     // Sibling rejection (#1714): a sibling arm's literals never overlap this
@@ -1574,17 +1731,104 @@ mod tests {
         let (matched, has_token) = assertion_matches_probe_detail(
             &[],
             &[],
-            &["sensor".to_string(), "sensor-v2".to_string()],
+            &["sensor".to_string()],
             None,
             &ProbeFamily::MatchArm,
             &sibling,
             2,
+            Some("route"),
         );
         assert!(
             !has_token,
             "sibling literals must not confirm the changed arm"
         );
         let _ = matched;
+    }
+
+    // Shared result (#1714): a sibling returning the same result literal does
+    // not select the changed arm, even though the literal overlaps.
+    #[test]
+    fn shared_result_literal_does_not_confirm_sibling_arm() {
+        let shared = oracle(
+            "assert_eq!(route(\"focused-test\"), \"sensor-v2\");",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        let (_, has_token) = assertion_matches_probe_detail(
+            &[],
+            &[],
+            &["sensor".to_string()],
+            None,
+            &ProbeFamily::MatchArm,
+            &shared,
+            2,
+            Some("route"),
+        );
+        assert!(
+            !has_token,
+            "result-side overlap must not confirm the changed arm"
+        );
+    }
+
+    // Owner-call scoping: longer callee names do not bind, nested calls do.
+    #[test]
+    fn owner_call_literal_scope_rejects_longer_callee_names() {
+        assert!(owner_call_literals("assert_eq!(reroute(\"sensor\"), 1);", "route").is_empty());
+        assert_eq!(
+            owner_call_literals("assert_eq!(route(wrap(\"sensor\")), 1);", "route"),
+            vec!["sensor".to_string()]
+        );
+        assert_eq!(
+            owner_call_literals("assert_eq!(route(\"sensor\"), \"v\");", "route"),
+            vec!["sensor".to_string()]
+        );
+    }
+
+    // A diagnostic message that spells the owner call binds no input: the
+    // callee occurrence inside the message string is not a call.
+    #[test]
+    fn owner_call_literal_scope_rejects_call_text_inside_message() {
+        assert!(
+            owner_call_literals(
+                "assert!(value == 1, \"route(\\\"sensor\\\") should hold\");",
+                "route"
+            )
+            .is_empty()
+        );
+    }
+
+    // Variable-bound inputs are not statically visible: `route(input)` with
+    // no literal argument supplies nothing, so confirmation fails closed.
+    #[test]
+    fn owner_call_literal_scope_rejects_variable_bound_inputs() {
+        assert!(
+            owner_call_literals("assert_eq!(route(input), \"sensor-v2\");", "route").is_empty()
+        );
+    }
+
+    // Diagnostic text (#1714): a pattern literal appearing only as assertion
+    // message text is not an owner-supplied input.
+    #[test]
+    fn diagnostic_literal_does_not_confirm_changed_arm() {
+        let diagnostic = oracle(
+            "assert_eq!(route(\"focused-test\"), \"proof\", \"sensor\");",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        let (_, has_token) = assertion_matches_probe_detail(
+            &[],
+            &[],
+            &["sensor".to_string()],
+            None,
+            &ProbeFamily::MatchArm,
+            &diagnostic,
+            2,
+            Some("route"),
+        );
+        assert!(
+            !has_token,
+            "message-only literal must not confirm the changed arm"
+        );
     }
 
     // RIPR-SPEC-0106 Control 2 (SIBLING-VARIANT): a Negative-pinning assertion
@@ -1605,6 +1849,7 @@ mod tests {
             &ProbeFamily::ErrorPath,
             &sibling_assertion,
             2,
+            None,
         );
         assert!(
             !matched,
@@ -1737,6 +1982,7 @@ return Err(\"typed pin\".into());
             &ProbeFamily::ErrorPath,
             &exact_assertion,
             2,
+            None,
         );
         assert!(
             matched,
@@ -1773,6 +2019,7 @@ return Err(\"typed pin\".into());
             &ProbeFamily::ReturnValue,
             &sibling_assertion,
             2,
+            None,
         );
         assert!(
             matched,
@@ -1804,6 +2051,7 @@ return Err(\"typed pin\".into());
             &ProbeFamily::ReturnValue,
             &aligned_assertion,
             2,
+            None,
         );
         assert!(matched);
         assert!(
