@@ -1,0 +1,68 @@
+name: retrigger-1714-repair
+
+on:
+  push:
+    branches:
+      - fix/1714-match-arm-pattern-identity
+
+permissions:
+  contents: write
+
+jobs:
+  retrigger:
+    if: github.event.head_commit.message == 'chore retrigger repair 1714'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: fix/1714-match-arm-pattern-identity
+          fetch-depth: 0
+
+      - name: Correct retained witness contract and retrigger
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "1f201632bd7d1d0d64dc5fca32a2104c85361a7c" || {
+            echo "unexpected repair-trigger head" >&2
+            exit 1
+          }
+          workflow=.github/workflows/repair-1714-owner-input.yml
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/repair-1714-owner-input.yml')
+          text = path.read_text(encoding='utf-8')
+          old_parent = '''          actual_parent="$(git rev-parse HEAD^)"
+          test "$actual_parent" = "$expected"
+
+          red="$RUNNER_TEMP/ripr-1714-red"
+'''
+          new_parent = '''          git cat-file -e "$expected^{commit}"
+          git merge-base --is-ancestor "$expected" HEAD
+          changed_since_red="$(git diff --name-only "$expected"..HEAD | sort)"
+          test "$changed_since_red" = ".github/workflows/repair-1714-owner-input.yml"
+
+          red="$RUNNER_TEMP/ripr-1714-red"
+'''
+          old_result = '''          grep -F "shared_result_literal_does_not_observe_a_sibling_arm" "$RUNNER_TEMP/ripr-1714-red.log"
+          grep -F "diagnostic_literal_does_not_select_the_changed_arm" "$RUNNER_TEMP/ripr-1714-red.log"
+          grep -E "test result: FAILED\\. 3 passed; 2 failed" "$RUNNER_TEMP/ripr-1714-red.log"
+'''
+          new_result = '''          grep -F "test shared_result_literal_does_not_observe_a_sibling_arm ... ok" "$RUNNER_TEMP/ripr-1714-red.log"
+          grep -F "test diagnostic_literal_does_not_select_the_changed_arm ... FAILED" "$RUNNER_TEMP/ripr-1714-red.log"
+          grep -E "test result: FAILED\\. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out" "$RUNNER_TEMP/ripr-1714-red.log"
+'''
+          if text.count(old_parent) != 1 or text.count(old_result) != 1:
+              raise SystemExit('repair workflow no longer matches the qualified predecessor')
+          text = text.replace(old_parent, new_parent, 1).replace(old_result, new_result, 1)
+          path.write_text(text, encoding='utf-8', newline='\n')
+          PY
+          rm .github/workflows/retrigger-1714-repair.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$workflow" .github/workflows/retrigger-1714-repair.yml
+          git diff --cached --check
+          git commit -m "chore repair stage 1714 owner input"
+          git push origin HEAD:fix/1714-match-arm-pattern-identity
