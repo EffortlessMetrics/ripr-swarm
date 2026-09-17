@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected_parent=4ed1976fc7733b1858736821b471adb935d1f2f2
+          expected_parent=cc253c111279f32a737b4918f1f3d072762e3242
           script=.github/repair-3759-observed-operand.py
           workflow=.github/workflows/repair-3759-observed-operand.yml
           retired=.github/workflows/repair-3759-qualified-owner.yml
@@ -80,7 +80,7 @@ jobs:
           cargo test -p ripr match_arm_literal_confirmation_respects_owner_ambiguity_and_guards
           cargo test -p ripr --test match_arm_pattern_identity
 
-          git rm "$script" "$workflow"
+          git rm -f "$script" "$workflow"
           git add crates/ripr/src/analysis/classify/reveal.rs
           git diff --check --cached
           test ! -e "$retired"
