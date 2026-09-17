@@ -1,0 +1,60 @@
+name: Repair 3759 observed operand binding
+
+on:
+  push:
+    branches:
+      - fix/1714-match-arm-pattern-identity
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.repository == 'EffortlessMetrics/ripr-swarm'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact repair branch
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: fix/1714-match-arm-pattern-identity
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply bounded observed-operand repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_parent=2a8bf6685f25791e9c5e583c7dd210661fb017ec
+          script=.github/repair-3759-observed-operand.py
+          workflow=.github/workflows/repair-3759-observed-operand.yml
+          retired=.github/workflows/repair-3759-qualified-owner.yml
+
+          actual_parent="$(git rev-parse HEAD^)"
+          test "$actual_parent" = "$expected_parent"
+          expected_paths="$(printf '%s\n' "$script" "$workflow" "$retired" | sort)"
+          actual_paths="$(git diff --name-only "$expected_parent"..HEAD | sort)"
+          printf 'repair head=%s parent=%s\nexpected paths:\n%s\nactual paths:\n%s\n' \
+            "$(git rev-parse HEAD)" "$actual_parent" "$expected_paths" "$actual_paths"
+          test "$actual_paths" = "$expected_paths"
+          test ! -e "$retired"
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin main
+          git merge --no-edit origin/main
+
+          python3 "$script"
+          cargo fmt --all
+          cargo test -p ripr owner_call_literal_scope_rejects_longer_callee_names
+          cargo test -p ripr match_arm_guard_detection_masks_literals_and_comments
+          cargo test -p ripr match_arm_literal_confirmation_respects_owner_ambiguity_and_guards
+          cargo test -p ripr --test match_arm_pattern_identity
+
+          git rm "$script" "$workflow"
+          git add crates/ripr/src/analysis/classify/reveal.rs
+          git diff --check --cached
+          test ! -e "$retired"
+          test ! -e "$script"
+          test ! -e "$workflow"
+          git commit -m "fix(rust): bind match arms to observed inputs"
+          git push origin HEAD:fix/1714-match-arm-pattern-identity
