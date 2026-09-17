@@ -407,10 +407,8 @@ fn check_literal_syntax_case(
     expected_class: ExposureClass,
 ) -> Result<(), String> {
     let assertion = format!("assert_eq!({compared_call}, {expected_result}{diagnostic});");
-    let test_source = ALIGNED_TEST.replace(
-        "assert_eq!(route(\"sensor\"), \"sensor-v2\");",
-        &assertion,
-    );
+    let test_source =
+        ALIGNED_TEST.replace("assert_eq!(route(\"sensor\"), \"sensor-v2\");", &assertion);
     let repo = TempRepo::create(&test_source)?;
     let prefix = format!("{pattern} =>");
     std::fs::write(
