@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected_parent=e9c49ec49ddc38beff25c8cc77a3487b7b80da0d
+          expected_parent=acece4e8f064ccb0cbcfca09325a41c7e5272263
           workflow=.github/workflows/repair-3759-qualified-owner.yml
 
           actual_parent="$(git rev-parse HEAD^)"
@@ -44,156 +44,121 @@ jobs:
           path = Path("crates/ripr/src/analysis/classify/reveal.rs")
           text = path.read_text(encoding="utf-8")
 
-          old = '''        let preceded_by_identifier = absolute > 0
-              && text[..absolute]
-                  .chars()
-                  .next_back()
-                  .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-          let inside_string = spans
-              .iter()
-              .any(|(start, end)| absolute >= *start && absolute < *end);
-          if preceded_by_identifier || inside_string {
-          '''
-          new = '''        let preceded_by_identifier = absolute > 0
-              && text[..absolute]
-                  .chars()
-                  .next_back()
-                  .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-          let preceded_by_qualifier = text[..absolute]
-              .chars()
-              .rev()
-              .find(|ch| !ch.is_whitespace())
-              .is_some_and(|ch| matches!(ch, ':' | '.'));
-          let inside_string = spans
-              .iter()
-              .any(|(start, end)| absolute >= *start && absolute < *end);
-          if preceded_by_identifier || preceded_by_qualifier || inside_string {
-          '''
-          if text.count(old) != 1:
-              raise SystemExit(f"qualified-call production anchor count: {text.count(old)}")
-          text = text.replace(old, new, 1)
+          owner_start = text.index("fn owner_call_literals(text: &str, owner: &str) -> Vec<String> {")
+          owner_end = text.index("\n/// Returns `(matched, has_token_match)`.", owner_start)
+          owner_block = text[owner_start:owner_end]
 
-          old = '''            || !match_arm_literals.is_empty()
-                  && owner_callee.is_some_and(|owner| {
-          '''
-          new = '''            || !match_arm_literals.is_empty()
-                  && !import_defeats_owner
-                  && !cross_package_defeats_owner
-                  && owner_callee.is_some_and(|owner| {
-          '''
-          if text.count(old) != 1:
-              raise SystemExit(f"ambiguity-gate production anchor count: {text.count(old)}")
-          text = text.replace(old, new, 1)
+          anchor = "        let inside_string = spans\n"
+          if owner_block.count(anchor) != 1:
+              raise SystemExit(f"inside-string owner anchor count: {owner_block.count(anchor)}")
+          owner_block = owner_block.replace(
+              anchor,
+              "        let preceded_by_qualifier = text[..absolute]\n"
+              "            .chars()\n"
+              "            .rev()\n"
+              "            .find(|ch| !ch.is_whitespace())\n"
+              "            .is_some_and(|ch| matches!(ch, ':' | '.'));\n"
+              + anchor,
+              1,
+          )
 
-          old = '''/// and parens inside strings honest; inputs bound through variables are not
-          /// statically visible (fail closed, same residual class as #3727 qualified
-          /// paths).
-          '''
-          new = '''/// and parens inside strings honest. Qualified paths and method calls are not
-          /// bare owner bindings and are rejected. Inputs bound through variables are not
-          /// statically visible (fail closed, same residual class as #3727 qualified
-          /// paths).
-          '''
-          if text.count(old) != 1:
-              raise SystemExit(f"owner-call documentation anchor count: {text.count(old)}")
-          text = text.replace(old, new, 1)
+          anchor = "        if preceded_by_identifier || inside_string {\n"
+          if owner_block.count(anchor) != 1:
+              raise SystemExit(f"owner rejection anchor count: {owner_block.count(anchor)}")
+          owner_block = owner_block.replace(
+              anchor,
+              "        if preceded_by_identifier || preceded_by_qualifier || inside_string {\n",
+              1,
+          )
+          text = text[:owner_start] + owner_block + text[owner_end:]
 
-          old = '''    fn owner_call_literal_scope_rejects_longer_callee_names() {
-              assert!(owner_call_literals("assert_eq!(reroute(\\\"sensor\\\"), 1);", "route").is_empty());
-              assert_eq!(
-                  owner_call_literals("assert_eq!(route(wrap(\\\"sensor\\\")), 1);", "route"),
-                  vec!["sensor".to_string()]
-              );
-              assert_eq!(
-                  owner_call_literals("assert_eq!(route(\\\"sensor\\\"), \\\"v\\\");", "route"),
-                  vec!["sensor".to_string()]
-              );
-          }
-          '''
-          new = '''    fn owner_call_literal_scope_rejects_longer_callee_names() {
-              assert!(owner_call_literals("assert_eq!(reroute(\\\"sensor\\\"), 1);", "route").is_empty());
-              assert!(
-                  owner_call_literals("assert_eq!(other::route(\\\"sensor\\\"), 1);", "route")
-                      .is_empty()
-              );
-              assert!(
-                  owner_call_literals("assert_eq!(other :: route(\\\"sensor\\\"), 1);", "route")
-                      .is_empty()
-              );
-              assert!(
-                  owner_call_literals("assert_eq!(router.route(\\\"sensor\\\"), 1);", "route")
-                      .is_empty()
-              );
-              assert!(
-                  owner_call_literals("assert_eq!(router . route(\\\"sensor\\\"), 1);", "route")
-                      .is_empty()
-              );
-              assert_eq!(
-                  owner_call_literals("assert_eq!(route(wrap(\\\"sensor\\\")), 1);", "route"),
-                  vec!["sensor".to_string()]
-              );
-              assert_eq!(
-                  owner_call_literals("assert_eq!(route(\\\"sensor\\\"), \\\"v\\\");", "route"),
-                  vec!["sensor".to_string()]
-              );
-          }
-          '''
-          if text.count(old) != 1:
-              raise SystemExit(f"qualified-call test anchor count: {text.count(old)}")
-          text = text.replace(old, new, 1)
-
-          anchor = '''    // Diagnostic text (#1714): a pattern literal appearing only as assertion
-          // message text is not an owner-supplied input.
-          '''
-          test = '''    // Foreign imports and same-named functions in another package make a
-          // bare owner call ambiguous. Literal overlap may associate the oracle, but it
-          // cannot clear observation_unverified under either producer-owned defeat.
-          #[test]
-          fn match_arm_literal_confirmation_respects_owner_ambiguity_gates() {
-              let aligned = oracle(
-                  "assert_eq!(route(\\\"sensor\\\"), \\\"sensor-v2\\\");",
-                  OracleKind::ExactValue,
-                  OracleStrength::Strong,
-              );
-              let empty = Vec::<String>::new();
-              let pattern_literals = vec!["sensor".to_string()];
-              let family = ProbeFamily::MatchArm;
-              let context = RevealMatchContext {
-                  probe_tokens: &empty,
-                  effect_literals: &empty,
-                  match_arm_variants: &empty,
-                  match_arm_literals: &pattern_literals,
-                  error_construction_variant: None,
-                  family: &family,
-                  wrapper_seam: false,
-                  owner_callee: Some("route"),
-              };
-
-              for (import_defeats_owner, cross_package_defeats_owner) in
-                  [(true, false), (false, true), (true, true)]
-              {
-                  let (_, has_token) = assertion_matches_probe_detail_with_literals(
-                      &context,
-                      &aligned,
-                      2,
-                      import_defeats_owner,
-                      cross_package_defeats_owner,
-                  );
-                  assert!(
-                      !has_token,
-                      "ambiguous owner binding unexpectedly confirmed: import={import_defeats_owner} cross_package={cross_package_defeats_owner}"
-                  );
-              }
-
-              let (_, has_token) =
-                  assertion_matches_probe_detail_with_literals(&context, &aligned, 2, false, false);
-              assert!(has_token, "unambiguous bare owner call must still confirm");
-          }
-
-          '''
+          anchor = "            || !match_arm_literals.is_empty()\n"
           if text.count(anchor) != 1:
-              raise SystemExit(f"ambiguity test insertion anchor count: {text.count(anchor)}")
-          text = text.replace(anchor, test + anchor, 1)
+              raise SystemExit(f"literal confirmation anchor count: {text.count(anchor)}")
+          text = text.replace(
+              anchor,
+              anchor
+              + "                && !import_defeats_owner\n"
+              + "                && !cross_package_defeats_owner\n",
+              1,
+          )
+
+          function = "    fn owner_call_literal_scope_rejects_longer_callee_names() {\n"
+          function_start = text.index(function)
+          insertion_at = text.index("        assert_eq!(\n", function_start)
+          controls = (
+              "        assert!(\n"
+              "            owner_call_literals(\"assert_eq!(other::route(\\\"sensor\\\"), 1);\", \"route\")\n"
+              "                .is_empty()\n"
+              "        );\n"
+              "        assert!(\n"
+              "            owner_call_literals(\"assert_eq!(other :: route(\\\"sensor\\\"), 1);\", \"route\")\n"
+              "                .is_empty()\n"
+              "        );\n"
+              "        assert!(\n"
+              "            owner_call_literals(\"assert_eq!(router.route(\\\"sensor\\\"), 1);\", \"route\")\n"
+              "                .is_empty()\n"
+              "        );\n"
+              "        assert!(\n"
+              "            owner_call_literals(\"assert_eq!(router . route(\\\"sensor\\\"), 1);\", \"route\")\n"
+              "                .is_empty()\n"
+              "        );\n"
+          )
+          text = text[:insertion_at] + controls + text[insertion_at:]
+
+          anchor = (
+              "    // Diagnostic text (#1714): a pattern literal appearing only as assertion\n"
+              "    // message text is not an owner-supplied input.\n"
+          )
+          if text.count(anchor) != 1:
+              raise SystemExit(f"ambiguity-test insertion anchor count: {text.count(anchor)}")
+          ambiguity_test = '''    // A same-name foreign import or package-local definition makes the
+    // bare owner call ambiguous. Literal overlap may associate the oracle,
+    // but it cannot clear observation_unverified under either defeat.
+    #[test]
+    fn match_arm_literal_confirmation_respects_owner_ambiguity_gates() {
+        let aligned = oracle(
+            "assert_eq!(route(\"sensor\"), \"sensor-v2\");",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        let empty = Vec::<String>::new();
+        let pattern_literals = vec!["sensor".to_string()];
+        let family = ProbeFamily::MatchArm;
+        let context = RevealMatchContext {
+            probe_tokens: &empty,
+            effect_literals: &empty,
+            match_arm_variants: &empty,
+            match_arm_literals: &pattern_literals,
+            error_construction_variant: None,
+            family: &family,
+            wrapper_seam: false,
+            owner_callee: Some("route"),
+        };
+
+        for (import_defeats_owner, cross_package_defeats_owner) in
+            [(true, false), (false, true), (true, true)]
+        {
+            let (_, has_token) = assertion_matches_probe_detail_with_literals(
+                &context,
+                &aligned,
+                2,
+                import_defeats_owner,
+                cross_package_defeats_owner,
+            );
+            assert!(
+                !has_token,
+                "ambiguous owner binding unexpectedly confirmed: import={import_defeats_owner} cross_package={cross_package_defeats_owner}"
+            );
+        }
+
+        let (_, has_token) =
+            assertion_matches_probe_detail_with_literals(&context, &aligned, 2, false, false);
+        assert!(has_token, "unambiguous bare owner call must still confirm");
+    }
+
+'''
+          text = text.replace(anchor, ambiguity_test + anchor, 1)
 
           path.write_text(text, encoding="utf-8")
           PY
