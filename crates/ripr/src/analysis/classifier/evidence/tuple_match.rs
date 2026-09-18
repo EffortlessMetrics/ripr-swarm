@@ -285,7 +285,7 @@ fn observed_equality_inner(function: &ast::Fn, owner: &str, witness: &ArmWitness
     let [attribute] = attributes.as_slice() else {
         return None;
     };
-    if attribute.syntax().text().to_string() != "#[test]"
+    if attribute.syntax().text() != "#[test]"
         || function.async_token().is_some()
         || function.param_list()?.params().next().is_some()
     {
@@ -301,7 +301,7 @@ fn observed_equality_inner(function: &ast::Fn, owner: &str, witness: &ArmWitness
     }
     let expression = ast::MacroExpr::cast(statement.expr()?.syntax().clone())?;
     let call = expression.macro_call()?;
-    if call.path()?.syntax().text().to_string() != "assert_eq" {
+    if call.path()?.syntax().text() != "assert_eq" {
         return None;
     }
     // Let the existing parser split actual expression operands. Diagnostic
