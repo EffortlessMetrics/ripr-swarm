@@ -2278,6 +2278,14 @@ mod tests {
             vec!["sensor".to_string()]
         );
         assert_eq!(
+            match_arm_pattern_literals("/* \"focused-test\" */ \"sensor\" => \"sensor-v2\""),
+            vec!["sensor".to_string()]
+        );
+        assert_eq!(
+            match_arm_pattern_literals("// \"focused-test\"\n\"sensor\" => \"sensor-v2\""),
+            vec!["sensor".to_string()]
+        );
+        assert_eq!(
             match_arm_pattern_literals("\"/*\" => \"comment-like\""),
             vec!["/*".to_string()]
         );
