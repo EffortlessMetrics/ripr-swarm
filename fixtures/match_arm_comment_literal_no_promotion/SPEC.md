@@ -48,6 +48,9 @@ and one failure. The nested negative variant did not run past its earlier
 failed assertion; its outcome is not inferred.
 
 This fixture's source and full diff were checked for exact application and
-reversal. Committed expected outputs and independent honesty-corpus
-registration still need the normal generation and review after the
-production correction. No observed bad output is accepted as a golden.
+reversal. Expected outputs (`check.json`, `human.txt`, `human-full.txt`)
+were generated after the production correction and reviewed: one
+`weakly_exposed` finding with `observation_unverified`, zero `exposed`.
+The `rust_match_arm_comment_literal_oracle` honesty-corpus case pins that
+non-promotion independent of the golden. No observed bad output is
+accepted as a golden.
