@@ -2262,6 +2262,39 @@ mod tests {
     }
 
     #[test]
+    fn match_arm_pattern_literals_ignore_comment_text() {
+        assert_eq!(
+            match_arm_pattern_literals("\"sensor\" /* \"focused-test\" */ => \"sensor-v2\""),
+            vec!["sensor".to_string()]
+        );
+        assert_eq!(
+            match_arm_pattern_literals(
+                "\"sensor\" /* outer /* r#\"focused-test\"# */ tail */ => \"sensor-v2\""
+            ),
+            vec!["sensor".to_string()]
+        );
+        assert_eq!(
+            match_arm_pattern_literals("\"sensor\" // \"focused-test\"\n => \"sensor-v2\""),
+            vec!["sensor".to_string()]
+        );
+        assert_eq!(
+            match_arm_pattern_literals("\"/*\" => \"comment-like\""),
+            vec!["/*".to_string()]
+        );
+        assert_eq!(
+            match_arm_pattern_literals("r#\"//\"# => \"comment-like\""),
+            vec!["//".to_string()]
+        );
+        // An unterminated comment swallows the separator, so no arm
+        // identity is established at all (fail closed, not a partial
+        // literal).
+        assert_eq!(
+            match_arm_pattern_literals("\"sensor\" /* unterminated => \"sensor-v2\""),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
     fn match_arm_literal_confirmation_respects_owner_ambiguity_and_guards() {
         let aligned = oracle(
             "assert_eq!(route(\"sensor\"), \"sensor-v2\");",
