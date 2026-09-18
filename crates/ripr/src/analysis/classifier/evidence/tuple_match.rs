@@ -31,7 +31,13 @@ pub(super) fn discrimination(
     }
     let owner = context.owner_fn?;
     if context.probe.owner.as_ref() != Some(&owner.id)
-        || context.index.functions.iter().filter(|f| f.name == owner.name).count() != 1
+        || context
+            .index
+            .functions
+            .iter()
+            .filter(|f| f.name == owner.name)
+            .count()
+            != 1
     {
         return None;
     }
@@ -87,22 +93,23 @@ fn parsed(source: &str) -> Option<ast::SourceFile> {
 
 /// Only an unambiguous top-level free function is in this initial slice.
 fn named_function(root: &ast::SourceFile, name: &str) -> Option<ast::Fn> {
-    let mut functions = root.syntax().children().filter_map(ast::Fn::cast).filter(|f| {
-        f.name().is_some_and(|n| n.text() == name)
-    });
+    let mut functions = root
+        .syntax()
+        .children()
+        .filter_map(ast::Fn::cast)
+        .filter(|f| f.name().is_some_and(|n| n.text() == name));
     let function = functions.next()?;
     functions.next().is_none().then_some(function)
 }
 
-fn current_arm(
-    source: &str,
-    function: &ast::Fn,
-    context: &ProbeContext<'_>,
-) -> Option<ArmWitness> {
+fn current_arm(source: &str, function: &ast::Fn, context: &ProbeContext<'_>) -> Option<ArmWitness> {
     let match_expression = identity_match(function)?;
     let after = context.probe.after.as_deref()?;
     let before = context.probe.before.as_deref()?;
-    let arms = match_expression.match_arm_list()?.arms().collect::<Vec<_>>();
+    let arms = match_expression
+        .match_arm_list()?
+        .arms()
+        .collect::<Vec<_>>();
     // Four distinct, unguarded literal patterns exclude earlier wildcard or
     // overlapping-arm selection without inventing general reachability facts.
     if arms.len() != 4 {
@@ -172,7 +179,11 @@ fn identity_match(function: &ast::Fn) -> Option<ast::MatchExpr> {
     }
     let expression = ast::MatchExpr::cast(statements.tail_expr()?.syntax().clone())?;
     let tuple = ast::TupleExpr::cast(expression.expr()?.syntax().clone())?;
-    let fields = tuple.syntax().children().filter_map(ast::Expr::cast).collect::<Vec<_>>();
+    let fields = tuple
+        .syntax()
+        .children()
+        .filter_map(ast::Expr::cast)
+        .collect::<Vec<_>>();
     let [left, right] = fields.as_slice() else {
         return None;
     };
@@ -207,7 +218,11 @@ fn direct_name(expression: &ast::Expr) -> Option<String> {
 
 fn bool_pattern(pattern: &ast::Pat) -> Option<[bool; 2]> {
     let tuple = ast::TuplePat::cast(pattern.syntax().clone())?;
-    let fields = tuple.syntax().children().filter_map(ast::Pat::cast).collect::<Vec<_>>();
+    let fields = tuple
+        .syntax()
+        .children()
+        .filter_map(ast::Pat::cast)
+        .collect::<Vec<_>>();
     let [first, second] = fields.as_slice() else {
         return None;
     };
@@ -255,9 +270,7 @@ fn test_namespace_is_plain(root: &ast::SourceFile) -> bool {
         }
         if let Some(import) = ast::Use::cast(node) {
             let text = import.syntax().text().to_string();
-            return !text.contains('*')
-                && !text.contains("assert_eq")
-                && !text.contains(" as ");
+            return !text.contains('*') && !text.contains("assert_eq") && !text.contains(" as ");
         }
         false
     })
@@ -267,11 +280,7 @@ fn observed_equality(function: &ast::Fn, owner: &str, witness: &ArmWitness) -> b
     observed_equality_inner(function, owner, witness).unwrap_or(false)
 }
 
-fn observed_equality_inner(
-    function: &ast::Fn,
-    owner: &str,
-    witness: &ArmWitness,
-) -> Option<bool> {
+fn observed_equality_inner(function: &ast::Fn, owner: &str, witness: &ArmWitness) -> Option<bool> {
     let attributes = function.attrs().collect::<Vec<_>>();
     let [attribute] = attributes.as_slice() else {
         return None;
@@ -307,7 +316,11 @@ fn observed_equality_inner(
         return None;
     }
     let tuple = ast::TupleExpr::cast(body.tail_expr()?.syntax().clone())?;
-    let operands = tuple.syntax().children().filter_map(ast::Expr::cast).collect::<Vec<_>>();
+    let operands = tuple
+        .syntax()
+        .children()
+        .filter_map(ast::Expr::cast)
+        .collect::<Vec<_>>();
     let [left, right, ..] = operands.as_slice() else {
         return None;
     };
@@ -363,18 +376,30 @@ mod tests {
 
     #[test]
     fn only_compared_direct_inputs_and_exact_results_observe() -> Result<(), String> {
-        let witness = ArmWitness { input: [true, false], result: "new".to_string() };
+        let witness = ArmWitness {
+            input: [true, false],
+            result: "new".to_string(),
+        };
         for (assertion, expected) in [
             ("assert_eq!(route(true, false), \"new\");", true),
             ("assert_eq!(\"new\", route(true, false));", true),
-            ("assert_eq!(route(true, false), \"new\", \"message {}\", 1);", true),
+            (
+                "assert_eq!(route(true, false), \"new\", \"message {}\", 1);",
+                true,
+            ),
             ("assert_eq!(route(false, true), \"new\");", false),
-            ("assert_eq!(route(false, true), \"old\", \"{:?}\", route(true, false));", false),
+            (
+                "assert_eq!(route(false, true), \"old\", \"{:?}\", route(true, false));",
+                false,
+            ),
             ("assert_eq!(route(true, false), \"old\");", false),
             ("assert_ne!(route(true, false), \"old\");", false),
             ("assert_eq!(other(true, false), \"new\");", false),
             ("assert_eq!(foreign::route(true, false), \"new\");", false),
-            ("assert_eq!(route(if false { true } else { false }, false), \"new\");", false),
+            (
+                "assert_eq!(route(if false { true } else { false }, false), \"new\");",
+                false,
+            ),
             ("assert_eq!(route(!false, false), \"new\");", false),
             ("assert_eq!({ route(true, false) }, \"new\");", false),
         ] {

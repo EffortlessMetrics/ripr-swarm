@@ -98,8 +98,8 @@ impl ClassifiedProbeEvidence {
             },
         );
 
-        let discriminate = tuple_match::discrimination(context, &observe, &discriminate)
-            .unwrap_or(discriminate);
+        let discriminate =
+            tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
 
         let ripr = RiprEvidence {
             reach: reach.clone(),
