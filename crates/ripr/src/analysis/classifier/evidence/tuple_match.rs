@@ -183,12 +183,9 @@ fn conventional_source_crate_root(file: &Path) -> bool {
         components.next(),
         components.next(),
     ) {
-        (
-            Some(Component::Normal(source)),
-            Some(Component::Normal(file)),
-            None,
-            None,
-        ) => source == "src" && matches!(file.to_str(), Some("lib.rs" | "main.rs")),
+        (Some(Component::Normal(source)), Some(Component::Normal(file)), None, None) => {
+            source == "src" && matches!(file.to_str(), Some("lib.rs" | "main.rs"))
+        }
         (
             Some(Component::Normal(source)),
             Some(Component::Normal(bin)),
