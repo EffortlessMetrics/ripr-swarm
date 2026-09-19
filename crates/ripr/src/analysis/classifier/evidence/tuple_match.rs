@@ -5,11 +5,11 @@
 //! ownership, control flow, or oracle shapes leave existing evidence unchanged.
 
 use crate::analysis::classify::{ProbeContext, file_imports_foreign_callee_name};
-use crate::analysis::rust_index::{find_file_facts, is_test_file};
+use crate::analysis::rust_index::find_file_facts;
 use crate::domain::{Confidence, Probe, ProbeFamily, RelationReason, StageEvidence, StageState};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
 use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxNode, ast};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 struct ArmWitness {
     input: [bool; 2],
@@ -130,16 +130,55 @@ fn same_current_file(
 }
 
 /// A same-file test has its complete macro namespace in the parsed source.
-/// A cross-file test is standalone only when it is a direct integration-test
-/// crate root (`.../tests/<target>.rs`). Nested files beneath that target and
-/// uncomposed source modules may inherit macros from an unseen parent.
+/// A cross-file test is standalone only when it is a conventional Cargo
+/// integration-test crate root for the owner's package
+/// (`<package>/tests/<target>.rs`). Nested files, a `tests` directory below
+/// `src`, cross-package paths, custom source roots, and non-normal components
+/// remain conservatively unverified. This is a compilation-unit shape check,
+/// not a second source-role classifier.
 fn assertion_namespace_is_standalone(owner_file: &Path, test_file: &Path) -> bool {
-    test_file == owner_file
-        || (is_test_file(test_file)
-            && test_file
-                .parent()
-                .and_then(|parent| parent.file_name())
-                .is_some_and(|name| name == "tests"))
+    if test_file == owner_file {
+        return true;
+    }
+    let Some(package_root) = conventional_package_root(owner_file) else {
+        return false;
+    };
+    let relative_test = if package_root.as_os_str().is_empty() {
+        test_file
+    } else {
+        let Ok(relative) = test_file.strip_prefix(&package_root) else {
+            return false;
+        };
+        relative
+    };
+    let mut components = relative_test.components();
+    let (Some(Component::Normal(directory)), Some(Component::Normal(file)), None) =
+        (components.next(), components.next(), components.next())
+    else {
+        return false;
+    };
+    directory == "tests"
+        && Path::new(file)
+            .extension()
+            .is_some_and(|extension| extension == "rs")
+}
+
+fn conventional_package_root(owner_file: &Path) -> Option<PathBuf> {
+    let components = owner_file.components().collect::<Vec<_>>();
+    let source_index = components
+        .iter()
+        .rposition(|component| matches!(component, Component::Normal(name) if name == "src"))?;
+    if source_index + 1 >= components.len() {
+        return None;
+    }
+    let mut root = PathBuf::new();
+    for component in &components[..source_index] {
+        let Component::Normal(name) = component else {
+            return None;
+        };
+        root.push(name);
+    }
+    Some(root)
 }
 
 fn parsed(source: &str) -> Option<ast::SourceFile> {
@@ -599,11 +638,31 @@ mod tests {
         ));
         assert!(!assertion_namespace_is_standalone(
             Path::new("src/lib.rs"),
+            Path::new("src/tests/relation.rs")
+        ));
+        assert!(!assertion_namespace_is_standalone(
+            Path::new("src/lib.rs"),
             Path::new("tests/support/relation.rs")
         ));
         assert!(!assertion_namespace_is_standalone(
             Path::new("src/lib.rs"),
             Path::new("src/tests.rs")
+        ));
+        assert!(!assertion_namespace_is_standalone(
+            Path::new("crates/core/src/lib.rs"),
+            Path::new("crates/other/tests/relation.rs")
+        ));
+        assert!(!assertion_namespace_is_standalone(
+            Path::new("source/lib.rs"),
+            Path::new("tests/relation.rs")
+        ));
+        assert!(!assertion_namespace_is_standalone(
+            Path::new("src/lib.rs"),
+            Path::new("tests/relation.txt")
+        ));
+        assert!(!assertion_namespace_is_standalone(
+            Path::new("src/lib.rs"),
+            Path::new("../tests/relation.rs")
         ));
     }
 
