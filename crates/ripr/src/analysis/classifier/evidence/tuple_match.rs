@@ -129,16 +129,17 @@ fn same_current_file(
     owner_path == probe_path
 }
 
-/// A same-file test has its complete macro namespace in the parsed source.
-/// A cross-file test is standalone only when it is a conventional Cargo
-/// integration-test crate root for the owner's package
-/// (`<package>/tests/<target>.rs`). Nested files, a `tests` directory below
-/// `src`, cross-package paths, custom source roots, and non-normal components
-/// remain conservatively unverified. This is a compilation-unit shape check,
-/// not a second source-role classifier.
+/// Bare assertion syntax is trustworthy only when the parsed file is a
+/// conventional Cargo compilation-unit root. Same physical-file identity is
+/// insufficient: an out-of-line child can inherit a parent-defined macro that
+/// its own AST cannot see. Cross-file tests qualify only as direct integration
+/// test roots for the owner's package (`<package>/tests/<target>.rs`).
+/// Nested files, custom source roots, cross-package paths, and non-normal
+/// components remain conservatively unverified. This is a compilation-unit
+/// shape check, not a second source-role classifier.
 fn assertion_namespace_is_standalone(owner_file: &Path, test_file: &Path) -> bool {
     if test_file == owner_file {
-        return true;
+        return conventional_source_crate_root(test_file);
     }
     let Some(package_root) = conventional_package_root(owner_file) else {
         return false;
@@ -161,6 +162,47 @@ fn assertion_namespace_is_standalone(owner_file: &Path, test_file: &Path) -> boo
         && Path::new(file)
             .extension()
             .is_some_and(|extension| extension == "rs")
+}
+
+fn conventional_source_crate_root(file: &Path) -> bool {
+    let Some(package_root) = conventional_package_root(file) else {
+        return false;
+    };
+    let relative = if package_root.as_os_str().is_empty() {
+        file
+    } else {
+        let Ok(relative) = file.strip_prefix(&package_root) else {
+            return false;
+        };
+        relative
+    };
+    let mut components = relative.components();
+    match (
+        components.next(),
+        components.next(),
+        components.next(),
+        components.next(),
+    ) {
+        (
+            Some(Component::Normal(source)),
+            Some(Component::Normal(file)),
+            None,
+            None,
+        ) => source == "src" && matches!(file.to_str(), Some("lib.rs" | "main.rs")),
+        (
+            Some(Component::Normal(source)),
+            Some(Component::Normal(bin)),
+            Some(Component::Normal(file)),
+            None,
+        ) => {
+            source == "src"
+                && bin == "bin"
+                && Path::new(file)
+                    .extension()
+                    .is_some_and(|extension| extension == "rs")
+        }
+        _ => false,
+    }
 }
 
 fn conventional_package_root(owner_file: &Path) -> Option<PathBuf> {
@@ -619,11 +661,18 @@ mod tests {
     }
 
     #[test]
-    fn standalone_assertion_namespace_requires_same_file_or_direct_test_root() {
-        assert!(assertion_namespace_is_standalone(
-            Path::new("src/lib.rs"),
-            Path::new("src/lib.rs")
-        ));
+    fn standalone_assertion_namespace_requires_a_compilation_unit_root() {
+        for same_file in [
+            "src/lib.rs",
+            "src/main.rs",
+            "src/bin/tool.rs",
+            "crates/core/src/lib.rs",
+        ] {
+            assert!(
+                assertion_namespace_is_standalone(Path::new(same_file), Path::new(same_file)),
+                "{same_file}"
+            );
+        }
         assert!(assertion_namespace_is_standalone(
             Path::new("src/lib.rs"),
             Path::new("tests/relation.rs")
@@ -632,6 +681,20 @@ mod tests {
             Path::new("crates/core/src/lib.rs"),
             Path::new("crates/core/tests/relation.rs")
         ));
+        for same_file_child in [
+            "src/outer/tuple_tests.rs",
+            "src/tests.rs",
+            "source/lib.rs",
+            "src/bin/support/mod.rs",
+        ] {
+            assert!(
+                !assertion_namespace_is_standalone(
+                    Path::new(same_file_child),
+                    Path::new(same_file_child)
+                ),
+                "{same_file_child}"
+            );
+        }
         assert!(!assertion_namespace_is_standalone(
             Path::new("src/lib.rs"),
             Path::new("src/outer/tuple_tests.rs")
