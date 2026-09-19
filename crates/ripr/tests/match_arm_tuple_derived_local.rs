@@ -229,11 +229,7 @@ fn changed_request_only_arm(output: &CheckOutput) -> Result<&ripr::Finding, Stri
         .filter(|finding| {
             finding.probe.family == ProbeFamily::MatchArm
                 && is_current(&finding.probe.expression)
-                && finding
-                    .probe
-                    .after
-                    .as_deref()
-                    .is_some_and(&is_current)
+                && finding.probe.after.as_deref().is_some_and(&is_current)
                 && finding
                     .probe
                     .before
