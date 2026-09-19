@@ -5,7 +5,7 @@
 //! ownership, control flow, or oracle shapes leave existing evidence unchanged.
 
 use crate::analysis::classify::{ProbeContext, file_imports_foreign_callee_name};
-use crate::analysis::rust_index::find_file_facts;
+use crate::analysis::rust_index::{find_file_facts, is_test_file};
 use crate::domain::{Confidence, Probe, ProbeFamily, RelationReason, StageEvidence, StageState};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
 use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxNode, ast};
@@ -66,14 +66,17 @@ pub(super) fn discrimination(
             continue;
         };
         // A physical child file can inherit a parent-defined assert_eq!.
-        // This slice admits only standalone, fully resolved file contexts;
-        // provenance is not a new source-role or test-eligibility rule.
+        // Composition provenance names known parent contexts. When provenance
+        // is empty, only the owner file itself or a direct Cargo integration
+        // test root has a standalone namespace; deeper source/test modules
+        // remain conservatively unverified.
         if test_facts.used_lexical_fallback
             || !test_facts.role_provenance.edges.is_empty()
             || test_facts
                 .role_provenance
                 .earliest_unresolved_reason
                 .is_some()
+            || !assertion_namespace_is_standalone(&owner.file, &test.file)
             || file_imports_foreign_callee_name(
                 &test_facts.source,
                 &owner.name,
@@ -124,6 +127,19 @@ fn same_current_file(
         return false;
     };
     owner_path == probe_path
+}
+
+/// A same-file test has its complete macro namespace in the parsed source.
+/// A cross-file test is standalone only when it is a direct integration-test
+/// crate root (`.../tests/<target>.rs`). Nested files beneath that target and
+/// uncomposed source modules may inherit macros from an unseen parent.
+fn assertion_namespace_is_standalone(owner_file: &Path, test_file: &Path) -> bool {
+    test_file == owner_file
+        || (is_test_file(test_file)
+            && test_file
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .is_some_and(|name| name == "tests"))
 }
 
 fn parsed(source: &str) -> Option<ast::SourceFile> {
@@ -564,6 +580,34 @@ mod tests {
     }
 
     #[test]
+    fn standalone_assertion_namespace_requires_same_file_or_direct_test_root() {
+        assert!(assertion_namespace_is_standalone(
+            Path::new("src/lib.rs"),
+            Path::new("src/lib.rs")
+        ));
+        assert!(assertion_namespace_is_standalone(
+            Path::new("src/lib.rs"),
+            Path::new("tests/relation.rs")
+        ));
+        assert!(assertion_namespace_is_standalone(
+            Path::new("crates/core/src/lib.rs"),
+            Path::new("crates/core/tests/relation.rs")
+        ));
+        assert!(!assertion_namespace_is_standalone(
+            Path::new("src/lib.rs"),
+            Path::new("src/outer/tuple_tests.rs")
+        ));
+        assert!(!assertion_namespace_is_standalone(
+            Path::new("src/lib.rs"),
+            Path::new("tests/support/relation.rs")
+        ));
+        assert!(!assertion_namespace_is_standalone(
+            Path::new("src/lib.rs"),
+            Path::new("src/tests.rs")
+        ));
+    }
+
+    #[test]
     fn unsupported_pattern_shapes_and_literal_values_stay_absent() -> Result<(), String> {
         for (pattern, expected) in [
             ("(true, false)", Some([true, false])),
@@ -573,7 +617,7 @@ mod tests {
             ("((true, false), false)", None),
             ("(true, false) | (false, true)", None),
         ] {
-            let arm = single_arm(&format!("{pattern} => \"new\","))
+            let arm = single_arm(&format!("{pattern} => \"new\",") )
                 .ok_or_else(|| "invalid arm fixture".to_string())?;
             let pattern = arm.pat().ok_or_else(|| "missing pattern".to_string())?;
             assert_eq!(bool_pattern(&pattern), expected);
