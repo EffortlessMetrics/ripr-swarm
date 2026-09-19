@@ -6,6 +6,8 @@ use crate::analysis::classify::{
 };
 use crate::domain::*;
 
+mod tuple_match;
+
 pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) ripr: RiprEvidence,
     pub(in crate::analysis) evidence: Vec<String>,
@@ -95,6 +97,9 @@ impl ClassifiedProbeEvidence {
                 })
             },
         );
+
+        let discriminate =
+            tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
 
         let ripr = RiprEvidence {
             reach: reach.clone(),
