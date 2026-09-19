@@ -167,7 +167,7 @@ fn conventional_package_root(owner_file: &Path) -> Option<PathBuf> {
     let components = owner_file.components().collect::<Vec<_>>();
     let source_index = components
         .iter()
-        .rposition(|component| matches!(component, Component::Normal(name) if name == "src"))?;
+        .rposition(|component| matches!(component, Component::Normal(name) if *name == "src"))?;
     if source_index + 1 >= components.len() {
         return None;
     }
