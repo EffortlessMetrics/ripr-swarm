@@ -9,6 +9,7 @@ use crate::analysis::rust_index::find_file_facts;
 use crate::domain::{Confidence, Probe, ProbeFamily, RelationReason, StageEvidence, StageState};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
 use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxNode, ast};
+use std::path::Path;
 
 struct ArmWitness {
     input: [bool; 2],
@@ -42,8 +43,15 @@ pub(super) fn discrimination(
         return None;
     }
     let facts = find_file_facts(context.index, &owner.file)?;
-    let probe_facts = find_file_facts(context.index, &context.probe.location.file)?;
-    if !std::ptr::eq(facts, probe_facts) || facts.used_lexical_fallback {
+    let same_source = find_file_facts(context.index, &context.probe.location.file)
+        .is_some_and(|probe_facts| std::ptr::eq(facts, probe_facts))
+        || same_current_file(
+            context,
+            &owner.file,
+            &context.probe.location.file,
+            &facts.source,
+        );
+    if !same_source || facts.used_lexical_fallback {
         return None;
     }
     let root = parsed(&facts.source)?;
@@ -92,6 +100,30 @@ pub(super) fn discrimination(
         }
     }
     None
+}
+
+/// Resolve the producer's absolute changed-file coordinate only through the
+/// index's workspace-root authority. Relative owner identity, current source
+/// bytes, package identity, and canonical filesystem identity must all agree.
+fn same_current_file(
+    context: &ProbeContext<'_>,
+    owner_file: &Path,
+    probe_file: &Path,
+    source: &str,
+) -> bool {
+    let Some(authority) = context.index.workspace_authority.as_ref() else {
+        return false;
+    };
+    if !authority.validates_target(owner_file, owner_file, source) {
+        return false;
+    }
+    let Ok(owner_path) = authority.root.join(owner_file).canonicalize() else {
+        return false;
+    };
+    let Ok(probe_path) = probe_file.canonicalize() else {
+        return false;
+    };
+    owner_path == probe_path
 }
 
 fn parsed(source: &str) -> Option<ast::SourceFile> {
