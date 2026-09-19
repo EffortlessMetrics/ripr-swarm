@@ -209,8 +209,7 @@ fn derived_request_identity_must_bind_through_the_exact_closure_projection() -> 
     assert!(finding.related_tests.iter().any(|test| {
         test.name == "request_only_projection_observes_the_changed_relation"
             && test.oracle.as_deref().is_some_and(|oracle| {
-                oracle.contains("terminalize_proof")
-                    && oracle.contains("request_identity_v2")
+                oracle.contains("terminalize_proof") && oracle.contains("request_identity_v2")
             })
     }));
     assert_eq!(
