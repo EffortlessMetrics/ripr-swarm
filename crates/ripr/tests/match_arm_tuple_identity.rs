@@ -289,3 +289,49 @@ fn transformed_scrutinee_does_not_borrow_argument_values() -> Result<(), String>
 fn constant_scrutinee_does_not_borrow_unused_argument_values() -> Result<(), String> {
     check_non_identity_scrutinee("(false, true)", "\"task_identity\"")
 }
+
+/// A physical module file does not establish the macro namespace it inherits.
+#[test]
+fn inherited_assertion_namespace_cannot_certify_the_tuple_arm() -> Result<(), String> {
+    for prefix in [
+        "",
+        "#[cfg(test)]\nmacro_rules! assert_eq { ($($ignored:tt)*) => {{}}; }\n",
+    ] {
+        let repo = TempRepo::create(ALIGNED_TEST)?;
+        std::fs::remove_file(repo.root.join("tests/relation.rs"))
+            .map_err(|error| format!("remove standalone test failed: {error}"))?;
+        let source = format!("{CANDIDATE_SOURCE}{prefix}#[cfg(test)]\nmod tuple_tests;\n");
+        std::fs::write(repo.root.join("src/lib.rs"), source)
+            .map_err(|error| format!("write parent test namespace failed: {error}"))?;
+        std::fs::write(
+            repo.root.join("src/tuple_tests.rs"),
+            ALIGNED_TEST.replace("use match_arm_tuple_identity::relation;", "use crate::relation;"),
+        )
+        .map_err(|error| format!("write child test module failed: {error}"))?;
+
+        let output = repo.check()?;
+        let finding = changed_request_only_arm(&output)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "a child-file parse cannot establish its inherited assertion namespace: {prefix:?}"
+        );
+        assert!(
+            finding
+                .ripr
+                .reveal
+                .discriminate
+                .summary
+                .contains("observation_unverified")
+        );
+        assert!(finding.related_tests.iter().any(|test| {
+            test.file.ends_with("src/tuple_tests.rs")
+                && test.name == "exact_request_only_tuple_is_observed"
+                && test.oracle.as_deref().is_some_and(|oracle| {
+                    oracle.contains("relation(true, false)")
+                        && oracle.contains("\"request_identity_v2\"")
+                })
+        }));
+    }
+    Ok(())
+}

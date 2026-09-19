@@ -57,7 +57,12 @@ pub(super) fn discrimination(
         let Some(test_facts) = find_file_facts(context.index, &test.file) else {
             continue;
         };
+        // A physical child file can inherit a parent-defined assert_eq!.
+        // This slice admits only standalone, fully resolved file contexts;
+        // provenance is not a new source-role or test-eligibility rule.
         if test_facts.used_lexical_fallback
+            || !test_facts.role_provenance.edges.is_empty()
+            || test_facts.role_provenance.earliest_unresolved_reason.is_some()
             || file_imports_foreign_callee_name(
                 &test_facts.source,
                 &owner.name,
@@ -129,10 +134,9 @@ fn current_arm(source: &str, function: &ast::Fn, context: &ProbeContext<'_>) -> 
         let result = plain_string(&arm.expr()?)?;
         let start = u32::from(arm.syntax().text_range().start()) as usize;
         let line = source.get(..start)?.bytes().filter(|b| *b == b'\n').count() + 1;
-        let text = arm.syntax().text().to_string();
         if line == context.probe.location.line
-            && arm_text(&text) == arm_text(after)
-            && arm_text(&text) == arm_text(&context.probe.expression)
+            && arm_source_matches(&arm, after)?
+            && arm_source_matches(&arm, &context.probe.expression)?
         {
             if selected.is_some() {
                 return None;
@@ -153,6 +157,18 @@ fn current_arm(source: &str, function: &ast::Fn, context: &ProbeContext<'_>) -> 
 
 fn arm_text(text: &str) -> &str {
     text.trim().trim_end_matches(',').trim_end()
+}
+
+/// Evidence can carry the exact pattern-through-arrow projection rather than
+/// the complete arm. Admit only that parser-owned boundary or the entire
+/// current arm, never an arbitrary prefix or a stale full-result spelling.
+fn arm_source_matches(arm: &ast::MatchArm, claimed: &str) -> Option<bool> {
+    let full = arm.syntax().text().to_string();
+    let start = u32::from(arm.syntax().text_range().start());
+    let end = u32::from(arm.fat_arrow_token()?.text_range().end());
+    let boundary = end.checked_sub(start)? as usize;
+    let pattern = full.get(..boundary)?;
+    Some(arm_text(&full) == arm_text(claimed) || pattern.trim() == claimed.trim())
 }
 
 /// No statements may intervene: shadowing, assignment, early returns, nested
@@ -351,6 +367,26 @@ mod tests {
     fn function(source: &str, name: &str) -> Result<ast::Fn, String> {
         let root = parsed(source).ok_or_else(|| "invalid fixture syntax".to_string())?;
         named_function(&root, name).ok_or_else(|| "missing fixture function".to_string())
+    }
+
+    #[test]
+    fn current_arm_requires_full_source_or_exact_parser_arrow_boundary() -> Result<(), String> {
+        let arm = single_arm("(true, false) => \"new\",")
+            .ok_or_else(|| "invalid current arm fixture".to_string())?;
+        for (claimed, expected) in [
+            ("(true, false) => \"new\",", true),
+            ("(true, false) => \"new\"", true),
+            ("(true, false) =>", true),
+            ("  (true, false) =>  ", true),
+            ("(true, false) => \"old\",", false),
+            ("(false, true) =>", false),
+            ("(true, false)", false),
+            ("(true, false) =", false),
+            ("(true, false) => unrelated", false),
+        ] {
+            assert_eq!(arm_source_matches(&arm, claimed), Some(expected), "{claimed}");
+        }
+        Ok(())
     }
 
     #[test]
