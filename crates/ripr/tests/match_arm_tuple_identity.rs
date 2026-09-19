@@ -115,19 +115,28 @@ fn normalized_arm(text: &str) -> String {
 /// Candidate currentness is carried by `after`, not a shared pattern prefix.
 /// Do not filter by classification: a wrong class must reach the test oracle.
 fn changed_request_only_arm(output: &CheckOutput) -> Result<&ripr::Finding, String> {
-    let expected = normalized_arm("(true, false) => \"request_identity_v2\",");
+    let expected_full = normalized_arm("(true, false) => \"request_identity_v2\",");
+    let expected_boundary = normalized_arm("(true, false) =>");
+    let expected_before = normalized_arm("(true, false) => \"request_identity_v1\",");
+    let is_current_claim = |text: &str| {
+        let text = normalized_arm(text);
+        text == expected_full || text == expected_boundary
+    };
     let matches = output
         .findings
         .iter()
         .filter(|finding| {
             finding.probe.family == ProbeFamily::MatchArm
                 && finding.probe.location.line == 4
-                && normalized_arm(&finding.probe.expression) == expected
+                && is_current_claim(&finding.probe.expression)
                 && finding
                     .probe
                     .after
                     .as_deref()
-                    .is_some_and(|after| normalized_arm(after) == expected)
+                    .is_some_and(|after| is_current_claim(after))
+                && finding.probe.before.as_deref().is_none_or(|before| {
+                    normalized_arm(before) == expected_before
+                })
         })
         .collect::<Vec<_>>();
     match matches.as_slice() {
