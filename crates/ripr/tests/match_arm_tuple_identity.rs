@@ -338,3 +338,51 @@ fn inherited_assertion_namespace_cannot_certify_the_tuple_arm() -> Result<(), St
     }
     Ok(())
 }
+
+/// A new file has no removed-side context to pair with its current arms.
+#[test]
+fn added_only_tuple_arm_requires_the_matching_input_and_result() -> Result<(), String> {
+    let added = CANDIDATE_SOURCE
+        .lines()
+        .map(|line| format!("+{line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let line_count = CANDIDATE_SOURCE.lines().count();
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/lib.rs\n@@ -0,0 +1,{line_count} @@\n{added}\n"
+    );
+    for (test_source, expected) in [
+        (ALIGNED_TEST, ExposureClass::Exposed),
+        (SIBLING_TEST, ExposureClass::WeaklyExposed),
+    ] {
+        let repo = TempRepo::create(test_source)?;
+        std::fs::write(repo.root.join("diff.patch"), &diff)
+            .map_err(|error| format!("write added-only diff failed: {error}"))?;
+        let output = repo.check()?;
+        let finding = changed_request_only_arm(&output)?;
+        assert!(
+            finding.probe.before.is_none(),
+            "an added-only probe must not borrow an old value: {:?}",
+            finding.probe
+        );
+        assert_eq!(
+            finding.class,
+            expected,
+            "added-only arm observation: probe={:?}; stages={:?}",
+            finding.probe,
+            finding.ripr
+        );
+        assert!(!finding.related_tests.is_empty());
+        if expected == ExposureClass::WeaklyExposed {
+            assert!(
+                finding
+                    .ripr
+                    .reveal
+                    .discriminate
+                    .summary
+                    .contains("observation_unverified")
+            );
+        }
+    }
+    Ok(())
+}
