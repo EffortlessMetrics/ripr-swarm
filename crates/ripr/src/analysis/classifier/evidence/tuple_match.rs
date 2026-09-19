@@ -617,7 +617,7 @@ mod tests {
             ("((true, false), false)", None),
             ("(true, false) | (false, true)", None),
         ] {
-            let arm = single_arm(&format!("{pattern} => \"new\",") )
+            let arm = single_arm(&format!("{pattern} => \"new\","))
                 .ok_or_else(|| "invalid arm fixture".to_string())?;
             let pattern = arm.pat().ok_or_else(|| "missing pattern".to_string())?;
             assert_eq!(bool_pattern(&pattern), expected);
