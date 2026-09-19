@@ -305,7 +305,10 @@ fn inherited_assertion_namespace_cannot_certify_the_tuple_arm() -> Result<(), St
             .map_err(|error| format!("write parent test namespace failed: {error}"))?;
         std::fs::write(
             repo.root.join("src/tuple_tests.rs"),
-            ALIGNED_TEST.replace("use match_arm_tuple_identity::relation;", "use crate::relation;"),
+            ALIGNED_TEST.replace(
+                "use match_arm_tuple_identity::relation;",
+                "use crate::relation;",
+            ),
         )
         .map_err(|error| format!("write child test module failed: {error}"))?;
 

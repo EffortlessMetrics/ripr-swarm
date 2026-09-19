@@ -62,7 +62,10 @@ pub(super) fn discrimination(
         // provenance is not a new source-role or test-eligibility rule.
         if test_facts.used_lexical_fallback
             || !test_facts.role_provenance.edges.is_empty()
-            || test_facts.role_provenance.earliest_unresolved_reason.is_some()
+            || test_facts
+                .role_provenance
+                .earliest_unresolved_reason
+                .is_some()
             || file_imports_foreign_callee_name(
                 &test_facts.source,
                 &owner.name,
@@ -384,7 +387,11 @@ mod tests {
             ("(true, false) =", false),
             ("(true, false) => unrelated", false),
         ] {
-            assert_eq!(arm_source_matches(&arm, claimed), Some(expected), "{claimed}");
+            assert_eq!(
+                arm_source_matches(&arm, claimed),
+                Some(expected),
+                "{claimed}"
+            );
         }
         Ok(())
     }
