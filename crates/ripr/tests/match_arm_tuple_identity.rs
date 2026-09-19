@@ -134,9 +134,11 @@ fn changed_request_only_arm(output: &CheckOutput) -> Result<&ripr::Finding, Stri
                     .after
                     .as_deref()
                     .is_some_and(|after| is_current_claim(after))
-                && finding.probe.before.as_deref().is_none_or(|before| {
-                    normalized_arm(before) == expected_before
-                })
+                && finding
+                    .probe
+                    .before
+                    .as_deref()
+                    .is_none_or(|before| normalized_arm(before) == expected_before)
         })
         .collect::<Vec<_>>();
     match matches.as_slice() {
@@ -375,11 +377,9 @@ fn added_only_tuple_arm_requires_the_matching_input_and_result() -> Result<(), S
             finding.probe
         );
         assert_eq!(
-            finding.class,
-            expected,
+            finding.class, expected,
             "added-only arm observation: probe={:?}; stages={:?}",
-            finding.probe,
-            finding.ripr
+            finding.probe, finding.ripr
         );
         assert!(!finding.related_tests.is_empty());
         if expected == ExposureClass::WeaklyExposed {
