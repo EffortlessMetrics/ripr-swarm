@@ -6,7 +6,7 @@
 
 use crate::analysis::classify::{ProbeContext, file_imports_foreign_callee_name};
 use crate::analysis::rust_index::find_file_facts;
-use crate::domain::{Confidence, ProbeFamily, RelationReason, StageEvidence, StageState};
+use crate::domain::{Confidence, Probe, ProbeFamily, RelationReason, StageEvidence, StageState};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
 use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxNode, ast};
 
@@ -48,7 +48,7 @@ pub(super) fn discrimination(
     }
     let root = parsed(&facts.source)?;
     let function = named_function(&root, &owner.name)?;
-    let witness = current_arm(&facts.source, &function, context)?;
+    let witness = current_arm(&facts.source, &function, context.probe)?;
 
     for (test, reason) in &context.related_tests {
         if *reason != RelationReason::DirectOwnerCall {
@@ -87,7 +87,7 @@ pub(super) fn discrimination(
             return Some(StageEvidence::new(
                 StageState::Yes,
                 Confidence::High,
-                "Exact boolean tuple input selects this current arm; equality observes its changed literal result",
+                "Exact boolean tuple input selects this current arm; equality observes its current literal result",
             ));
         }
     }
@@ -110,10 +110,13 @@ fn named_function(root: &ast::SourceFile, name: &str) -> Option<ast::Fn> {
     functions.next().is_none().then_some(function)
 }
 
-fn current_arm(source: &str, function: &ast::Fn, context: &ProbeContext<'_>) -> Option<ArmWitness> {
+fn current_arm(source: &str, function: &ast::Fn, probe: &Probe) -> Option<ArmWitness> {
     let match_expression = identity_match(function)?;
-    let after = context.probe.after.as_deref()?;
-    let before = context.probe.before.as_deref()?;
+    // `after` is the producer's candidate-side authority. Added/repo probes
+    // may have no old-side context; requiring `before` makes their otherwise
+    // exact observation unreachable. Never synthesize an old value or infer
+    // one from a sibling probe with coincident coordinates.
+    let after = probe.after.as_deref()?;
     let arms = match_expression
         .match_arm_list()?
         .arms()
@@ -137,9 +140,9 @@ fn current_arm(source: &str, function: &ast::Fn, context: &ProbeContext<'_>) -> 
         let result = plain_string(&arm.expr()?)?;
         let start = u32::from(arm.syntax().text_range().start()) as usize;
         let line = source.get(..start)?.bytes().filter(|b| *b == b'\n').count() + 1;
-        if line == context.probe.location.line
+        if line == probe.location.line
             && arm_source_matches(&arm, after)?
-            && arm_source_matches(&arm, &context.probe.expression)?
+            && arm_source_matches(&arm, &probe.expression)?
         {
             if selected.is_some() {
                 return None;
@@ -148,12 +151,18 @@ fn current_arm(source: &str, function: &ast::Fn, context: &ProbeContext<'_>) -> 
         }
     }
     let witness = selected?;
-    let old = single_arm(before)?;
-    if old.guard().is_some()
-        || bool_pattern(&old.pat()?)? != witness.input
-        || plain_string(&old.expr()?)? == witness.result
-    {
-        return None;
+    // When old-side context exists, retain the stricter replacement checks.
+    // Its absence is not evidence of an unchanged result; this witness
+    // is about the selected current arm, not a runtime before/after comparison.
+    if let Some(before) = probe.before.as_deref() {
+        let old = single_arm(before)?;
+        if old.guard().is_some()
+            || old.attrs().next().is_some()
+            || bool_pattern(&old.pat()?)? != witness.input
+            || plain_string(&old.expr()?)? == witness.result
+        {
+            return None;
+        }
     }
     Some(witness)
 }
@@ -393,6 +402,72 @@ mod tests {
                 "{claimed}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn current_arm_requires_candidate_source_not_mandatory_old_context() -> Result<(), String> {
+        let source = r#"fn route(a: bool, b: bool) -> &'static str {
+    match (a, b) {
+        (true, true) => "both",
+        (true, false) => "new",
+        (false, true) => "other",
+        (false, false) => "none",
+    }
+}
+"#;
+        let owner = function(source, "route")?;
+        let current = r#"(true, false) => "new","#;
+        let old = r#"(true, false) => "old","#;
+        let sibling = r#"(false, true) => "old","#;
+        let guarded = r#"(true, false) if true => "old","#;
+        let attributed = r#"#[cfg(test)] (true, false) => "old","#;
+        let escaped = r#"(true, false) => "old\n","#;
+        let arrow = "(true, false) =>";
+        let mut probe = Probe {
+            id: crate::domain::ProbeId("tuple-current-source".to_string()),
+            location: crate::domain::SourceLocation::new("src/lib.rs", 4, 1),
+            owner: None,
+            family: ProbeFamily::MatchArm,
+            delta: crate::domain::DeltaKind::Control,
+            before: None,
+            after: None,
+            expression: String::new(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        };
+        for (before, after, expression, expected) in [
+            (None, Some(current), current, true),
+            (None, Some(arrow), arrow, true),
+            (Some(old), Some(current), current, true),
+            (Some(old), Some(arrow), arrow, true),
+            (Some(current), Some(current), current, false),
+            (Some(sibling), Some(current), current, false),
+            (Some(guarded), Some(current), current, false),
+            (Some(attributed), Some(current), current, false),
+            (Some(escaped), Some(current), current, false),
+            (Some(arrow), Some(current), current, false),
+            (Some(old), None, current, false),
+            (None, None, current, false),
+            (None, Some(old), current, false),
+            (None, Some(current), old, false),
+            (None, Some(sibling), current, false),
+        ] {
+            probe.before = before.map(str::to_string);
+            probe.after = after.map(str::to_string);
+            probe.expression = expression.to_string();
+            let witness = current_arm(source, &owner, &probe);
+            assert_eq!(witness.is_some(), expected, "probe={probe:?}");
+            if let Some(witness) = witness {
+                assert_eq!(witness.input, [true, false]);
+                assert_eq!(witness.result, "new");
+            }
+        }
+        probe.before = None;
+        probe.after = Some(current.to_string());
+        probe.expression = current.to_string();
+        probe.location.line = 5;
+        assert!(current_arm(source, &owner, &probe).is_none());
         Ok(())
     }
 
