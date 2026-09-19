@@ -168,7 +168,9 @@ fn exact_tuple_input_and_result_certify_the_same_match_arm() -> Result<(), Strin
         finding.class,
         ExposureClass::Exposed,
         "an exact `(true, false)` owner input and exact result must certify only that parser-owned arm; probe={:#?}; stages={:#?}; related={:#?}",
-        finding.probe, finding.ripr, finding.related_tests
+        finding.probe,
+        finding.ripr,
+        finding.related_tests
     );
     assert!(finding.related_tests.iter().any(|test| {
         test.name == "exact_request_only_tuple_is_observed"
