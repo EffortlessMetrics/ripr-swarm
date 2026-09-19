@@ -133,7 +133,7 @@ fn changed_request_only_arm(output: &CheckOutput) -> Result<&ripr::Finding, Stri
                     .probe
                     .after
                     .as_deref()
-                    .is_some_and(|after| is_current_claim(after))
+                    .is_some_and(&is_current_claim)
                 && finding
                     .probe
                     .before
