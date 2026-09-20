@@ -2170,9 +2170,9 @@ mod tests {
                         .as_u64()
                         .is_some_and(|line| (88..98).contains(&line))
                     || card["grip_class"] != "reachable_unrevealed"
-                    || !card["reason"]
+                    || card["reason"]
                         .as_str()
-                        .is_some_and(|reason| !reason.is_empty())
+                        .is_none_or(|reason| reason.is_empty())
                     || card["suggested_test"].is_null()
                 {
                     return Err(format!("retained card lost actionable evidence: {card}"));
