@@ -128,9 +128,12 @@ pub(crate) fn render_review_comments_json_with_scope(
             continue;
         }
         let recommended_test = agent_seam_packets::recommended_test_for(selected.seam);
-        if changed_test_paths
-            .iter()
-            .any(|path| path == &normalize_path_text(Path::new(&recommended_test.file)))
+        // Test-file proximity does not resolve a producer-owned open seam.
+        // Keep its recommendation and existing confidence/repair limitations.
+        if !selected.seam.class.is_headline_eligible()
+            && changed_test_paths
+                .iter()
+                .any(|path| path == &normalize_path_text(Path::new(&recommended_test.file)))
         {
             suppressed.push(suppressed_json(
                 selected,
@@ -2068,8 +2071,40 @@ mod tests {
     }
 
     #[test]
-    fn review_comments_suppresses_when_recommended_test_changed() -> Result<(), String> {
-        let seams = [classified(88)];
+    fn review_comments_changed_tests_do_not_erase_unresolved_classes() -> Result<(), String> {
+        for class in [
+            SeamGripClass::Ungripped,
+            SeamGripClass::WeaklyGripped,
+            SeamGripClass::ReachableUnrevealed,
+            SeamGripClass::ActivationUnknown,
+            SeamGripClass::PropagationUnknown,
+            SeamGripClass::ObservationUnknown,
+            SeamGripClass::DiscriminationUnknown,
+        ] {
+            for test_changed in [false, true] {
+                let mut entry = classified(88);
+                entry.class = class;
+                let mut lines = vec![AgentBriefLine::new("src/pricing.rs", 88)];
+                if test_changed {
+                    lines.push(AgentBriefLine::new("tests/pricing.rs", 12));
+                }
+                let working_set = AgentBriefResolvedWorkingSet::base("main", lines);
+                let value = render_value(&working_set, &[entry])?;
+                if value["summary"]["comments"] != 1
+                    || value["summary"]["suppressed"] != 0
+                    || value["summary"]["unchanged_tests"] != !test_changed
+                {
+                    return Err(format!(
+                        "unresolved {class:?}, changed={test_changed}: {value}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_changed_tests_preserve_noneligible_disposition() -> Result<(), String> {
         let working_set = AgentBriefResolvedWorkingSet::base(
             "main",
             vec![
@@ -2078,21 +2113,100 @@ mod tests {
             ],
         );
 
-        let value = render_value(&working_set, &seams)?;
-        assert_eq!(value["summary"]["comments"], 0);
-        assert_eq!(value["summary"]["suppressed"], 1);
-        assert_eq!(value["suppressed"][0]["reason"], "nearby_test_changed");
-        assert_eq!(value["summary"]["unchanged_tests"], false);
-        let rendered = render_review_comments_markdown(
-            Path::new("."),
-            "main",
-            "HEAD",
-            &Mode::Draft,
-            &RiprConfig::default(),
-            &working_set,
-            &selection(&seams),
-        );
-        assert!(rendered.contains("nearby_test_changed"));
+        for class in [
+            SeamGripClass::StronglyGripped,
+            SeamGripClass::Intentional,
+            SeamGripClass::Suppressed,
+            SeamGripClass::Opaque,
+        ] {
+            let mut entry = classified(88);
+            entry.class = class;
+            let control = AgentBriefResolvedWorkingSet::base(
+                "main",
+                vec![AgentBriefLine::new("src/pricing.rs", 88)],
+            );
+            let baseline = render_value(&control, std::slice::from_ref(&entry))?;
+            let value = render_value(&working_set, &[entry])?;
+            for key in ["comments", "summary_only", "suppressed"] {
+                if value[key] != baseline[key] {
+                    return Err(format!("noneligible {class:?} changed {key}: {value}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_changed_tests_retain_ten_selected_with_bounded_overflow()
+    -> Result<(), String> {
+        for count in [10, 11] {
+            let seams: Vec<_> = (88..88 + count)
+                .map(|line| {
+                    let mut entry = classified(line);
+                    entry.class = SeamGripClass::ReachableUnrevealed;
+                    entry
+                })
+                .collect();
+            let mut lines: Vec<_> = (88..88 + count)
+                .map(|line| AgentBriefLine::new("src/pricing.rs", line))
+                .collect();
+            lines.push(AgentBriefLine::new("tests/pricing.rs", 12));
+            let working_set = AgentBriefResolvedWorkingSet::base("main", lines);
+            let value = render_value(&working_set, &seams)?;
+            if value["summary"]["comments"] != 3
+                || value["summary"]["summary_only"] != 7
+                || value["summary"]["suppressed"] != count - 10
+            {
+                return Err(format!("bounded selected guidance erased: {value}"));
+            }
+            let cards = value["comments"]
+                .as_array()
+                .ok_or("missing comments")?
+                .iter()
+                .chain(value["summary_only"].as_array().ok_or("missing summary")?);
+            for card in cards.clone() {
+                if card["source_location"]["file"] != "src/pricing.rs"
+                    || !card["source_location"]["line"]
+                        .as_u64()
+                        .is_some_and(|line| (88..98).contains(&line))
+                    || card["grip_class"] != "reachable_unrevealed"
+                    || card["reason"]
+                        .as_str()
+                        .is_none_or(|reason| reason.is_empty())
+                    || card["suggested_test"].is_null()
+                {
+                    return Err(format!("retained card lost actionable evidence: {card}"));
+                }
+            }
+            let control = AgentBriefResolvedWorkingSet::base(
+                "main",
+                (88..88 + count)
+                    .map(|line| AgentBriefLine::new("src/pricing.rs", line))
+                    .collect(),
+            );
+            let baseline = render_value(&control, &seams)?;
+            for key in ["comments", "summary_only", "suppressed", "limits_note"] {
+                if value[key] != baseline[key] {
+                    return Err(format!(
+                        "changed-test proximity altered card evidence or limits: {key}"
+                    ));
+                }
+            }
+            let ids: std::collections::BTreeSet<_> = cards
+                .map(|card| card["seam_id"].as_str().ok_or("missing seam identity"))
+                .collect::<Result<_, _>>()?;
+            let expected: std::collections::BTreeSet<_> = seams
+                .iter()
+                .take(10)
+                .map(|entry| entry.seam.id().as_str())
+                .collect();
+            if ids != expected {
+                return Err("selected seam identity lost".into());
+            }
+            if count == 11 && value["suppressed"][0]["reason"] != "summary_cap" {
+                return Err("overflow lost explicit cap reason".into());
+            }
+        }
         Ok(())
     }
 

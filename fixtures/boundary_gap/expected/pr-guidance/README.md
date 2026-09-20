@@ -17,7 +17,8 @@ Cases:
 - `same-file-line`: seam falls back to the nearest changed line in the same file.
 - `summary-only`: no safe changed-line placement is available.
 - `capped`: inline and summary caps suppress excess recommendations.
-- `changed-test-skip`: a nearby recommended test file changed, so guidance is suppressed.
+- `changed-test-skip`: historical case name; a nearby recommended test file
+  changed, but the unresolved headline-eligible seam retains its guidance.
 - `configured-off`: selector warnings explain configured-off seams without comments.
 
 The fixture test is read-only. Refresh these files intentionally by inspecting
