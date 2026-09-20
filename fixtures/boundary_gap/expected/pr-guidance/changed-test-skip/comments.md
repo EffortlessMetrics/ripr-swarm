@@ -4,9 +4,9 @@
 - base: main
 - head: HEAD
 - mode: draft
-- line annotations: 0
+- line annotations: 1
 - summary-only recommendations: 0
-- suppressed recommendations: 1
+- suppressed recommendations: 0
 - analysis scope: `working_set`
 - run status: `scoped`
 - scoped production files: 2/unknown
@@ -17,7 +17,10 @@ Advisory static evidence only. RIPR does not edit source, generate tests, run mu
 
 ## Line Annotations
 
-- None.
+- `8f7fa8644fd12280` @ `src/pricing.rs:88`: Static evidence names missing discriminator `amount == discount_threshold` for this seam.
+  - canonical_gap_id: `gap:dedf923a13a00573`
+  - state: `actionable`
+  - command: `ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json`
 
 ## Summary-Only Recommendations
 
@@ -25,5 +28,5 @@ Advisory static evidence only. RIPR does not edit source, generate tests, run mu
 
 ## Suppressed
 
-- `8f7fa8644fd12280`: nearby_test_changed
+- None.
 

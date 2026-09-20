@@ -172,7 +172,7 @@ the rename is traceable string-for-string:
 | `inline_comment_cap_reached` | implemented for review guidance and the publish-plan cap skip path; tokenizes the former free-text `summary_reason` "inline comment cap reached" and replaces the historical publish-plan skip reason `cap_reached`. The RIPR-SPEC-0025 metric name `pr_inline_comment_cap_reached` names the same condition. | placement existed; the inline cap was already filled. |
 | `no_safe_changed_line_placement` | implemented for review guidance; tokenizes the former free-text `summary_reason` "no safe changed-line placement was available for this seam" | no changed production line was a safe anchor; card moves to summary with `source_location`. |
 | `navigation_only_cross_language_target` | implemented for review guidance; tokenizes the former free-text `summary_reason` "navigation-only cross-language target limitation; no PR repair comment emitted" | cross-language test target unresolved; navigation context only, no repair comment. |
-| `nearby_test_changed` | existing | the recommended test file changed in this PR; the author is already working there. |
+| `nearby_test_changed` | existing | the recommended test file changed in this PR, and the seam is not headline-eligible. Unresolved headline-eligible recommendations remain visible with their original evidence and limitations: changing a nearby test does not establish discrimination. |
 | `summary_cap` | existing | the summary item cap was reached. |
 | `missing_verification_command` | existing (emitted on the gap-ledger path today; the working-set path adopts it in the same slice) | actionable guidance requires a verify command; without one the card is suppressed, not weakened. |
 

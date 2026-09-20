@@ -316,6 +316,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- PR review guidance retains unresolved headline-eligible recommendations
+  when the nearby recommended test file changes. Test-file proximity no
+  longer erases these cards; evidence limitations and output caps remain
+  unchanged ([#3771](https://github.com/EffortlessMetrics/ripr-swarm/issues/3771)).
+
 - Rust diff analysis now treats ownerless field declarations in resolved
   test-required module children as evidence-only, including literal-path and
   transitive module children. Production, mixed, missing, and unresolved
