@@ -193,6 +193,12 @@ Check internal seam ownership:
 * `output`: human, JSON, GitHub, future SARIF rendering.
 * `cli`: command adapter.
 * `lsp`: editor protocol adapter.
+* `agent`: bounded repair-loop command production and provenance.
+* `config`: `ripr.toml` loading, typed model, language detection.
+* `mcp`: bounded read-only Model Context Protocol adapter (`ripr mcp --stdio`;
+  ADR 0022). Shared workspace-status projection; no edit or execution authority.
+* `provider_contract`: public exact-snapshot DTOs for external proof
+  orchestrators; not an analysis or rendering layer.
 
 ### Rust policy
 
