@@ -298,7 +298,9 @@ are scoped or reviewed.
   current selection authority. `docs/IMPLEMENTATION_PLAN.md`,
   `docs/agent-context/CONTEXT_SYSTEM.md`, and
   `plans/rust-one-shot-evidence-to-repair.md` now point at GitHub issues/PRs
-  and `.allow/spec-system/slices/`, matching the repo tracking model
+  for live selection. `.allow/spec-system/slices/` remains PR-local scope
+  (`ImplementationSliceV1`), not a second live selector, matching the repo
+  tracking model
   ([#3780](https://github.com/EffortlessMetrics/ripr-swarm/issues/3780)).
 
 - `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`

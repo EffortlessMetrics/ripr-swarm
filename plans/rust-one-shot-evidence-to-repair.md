@@ -4,8 +4,10 @@ Status: active
 Owner: product-swarm  
 Plan artifact: RIPR-PLAN-0062  
 Linked goal: none; retired singleton goal files do not select work. Live
-authority is the GitHub issues named below plus scoped slices under
-`.allow/spec-system/slices/`.
+authority is the GitHub issues named below, related PRs/checks, and the
+local worktree. `.allow/spec-system/slices/` holds PR-local scope records
+consulted after GitHub selects a live issue or PR (`ImplementationSliceV1`;
+no live execution state).
 Linked issues: #1423, #1424, #1425, #1427, #1440, #1543, #1560
 Starting PRs: #1489, #1487, #1483
 
@@ -32,8 +34,9 @@ control-plane PR records cargo-allow doctor, audit, and worklist outputs.
 
 The profile is advisory while its findings are made low-noise. The former
 `.ripr/goals/active.toml` execution manifest was deleted in #1701 and is
-not a live selector; GitHub issues named in this plan plus
-`.allow/spec-system/slices/` carry current execution state. cargo-allow
+not a live selector; GitHub issues named in this plan carry current
+execution state. `.allow/spec-system/slices/` remains PR-local scope after
+that selection, not a second scheduler. cargo-allow
 issue #2119 remains the dialect blocker for spec-system validation, not a
 reason to revive the deleted file. The installed cargo-allow 0.1.10
 requires `--config .allow/profiles/spec-system.toml` for this owned profile;
@@ -122,7 +125,8 @@ mutation invalidates prior certification, and a reviewer who changes the branch
 acts as a fixer rather than an independent reviewer for that pass. Cargo-allow
 remains advisory structural authority, RIPR xtask remains proof executor, and
 retired singleton goal files do not select work. Live execution state is the
-GitHub issues named in this plan plus `.allow/spec-system/slices/`.
+GitHub issues named in this plan, related PRs/checks, and the local
+worktree. `.allow/spec-system/slices/` is PR-local scope, not live selection.
 
 ## Contract
 
