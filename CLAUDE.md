@@ -68,7 +68,11 @@ Internal responsibilities:
 - `cli`: command-line adapter;
 - `lsp`: editor sidecar, diagnostics, hover, actions, budgets, refresh, identity;
 - `agent`: bounded repair-loop command production and provenance;
-- `config`: typed configuration and language detection.
+- `config`: typed configuration and language detection;
+- `mcp`: bounded read-only Model Context Protocol adapter (`ripr mcp --stdio`;
+  ADR 0022). Shared workspace-status projection; no edit or execution authority;
+- `provider_contract`: public exact-snapshot DTOs for external proof
+  orchestrators; not an analysis or rendering layer.
 
 Use the existing semantic owner. Do not fork a parallel validator or move a
 decision into a renderer, transport, policy facade, or test helper merely
