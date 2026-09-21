@@ -678,7 +678,7 @@ mod tests {
         ];
         if findings != expected {
             return Err(format!(
-                "review route omission should report only `{removed}`, got {findings:?}"
+                "review route omission did not isolate the required marker: {findings:?}"
             ));
         }
 
