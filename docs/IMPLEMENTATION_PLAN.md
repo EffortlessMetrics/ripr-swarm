@@ -11,9 +11,11 @@ through multiple work items, but each work item should follow the
 
 This file is one layer of the repo's centralized, agent-neutral tracking
 model. The full layering — proposals (why), specs (what), ADRs (durable
-decisions), this plan (work queue), campaign ledger, active manifest, and
-closeout handoffs — is documented in the
-[repo tracking model](REPO_TRACKING_MODEL.md). Reach for a proposal in
+decisions), this plan (work queue), campaign ledger, live GitHub issues/PRs,
+scoped slices under `.allow/spec-system/slices/`, and closeout handoffs — is
+documented in the
+[repo tracking model](REPO_TRACKING_MODEL.md). Retired singleton goal files
+do not select work. Reach for a proposal in
 [`docs/proposals/`](proposals/) before a spec when the change spans more
 than one behavior contract or touches repo shape.
 
@@ -21,7 +23,7 @@ than one behavior contract or touches repo shape.
 
 | Campaign | Objective | Work items |
 | --- | --- | --- |
-| Rust One-Shot Evidence-to-Repair Product Closure (32) | Make RIPR's Rust PR workflow lead from one changed behavior to one exact test-only repair and a receipt, without artifact archaeology or known-ineffective routing. | Active: [RIPR-PLAN-0062](../plans/rust-one-shot-evidence-to-repair.md) and `.ripr/goals/active.toml` select the campaign; cargo-allow spec-system is advisory while active-goal dialect support is blocked on cargo-allow #2119. |
+| Rust One-Shot Evidence-to-Repair Product Closure (32) | Make RIPR's Rust PR workflow lead from one changed behavior to one exact test-only repair and a receipt, without artifact archaeology or known-ineffective routing. | Active: [RIPR-PLAN-0062](../plans/rust-one-shot-evidence-to-repair.md) and its linked GitHub issues select remaining acceptance. cargo-allow spec-system is advisory while dialect support is blocked on cargo-allow #2119. Retired singleton goal files do not select work. |
 | CLI Finding Navigation Discoverability (33) | Make the default human `check` output lead directly to executable, scope-preserving `explain` and `context` follow-up commands. | Complete: #2598/#2620 and #2659/#2681 landed the navigation route, governed golden updates, replay coverage, and [the closeout handoff](handoffs/2026-07-28-cli-finding-navigation-discoverability-closeout.md). Inherited all-target Clippy debt remains isolated in #2679. |
 | Analyzer Honesty and Policy Visibility (34) | Make analyzer and policy limitations visible instead of silently skipped or over-credited, while preserving conservative advisory semantics. | Complete: #2698/#2702 disclose parser-to-lexical fallback through repo and seam-inventory cache paths; #2699/#2703 make the static-language policy scan the editor's `.ts`, `.js`, `.tsx`, and `.jsx` sources; the [campaign closeout](handoffs/2026-07-29-analyzer-honesty-and-policy-visibility-closeout.md) records the proof and claim boundary. |
 | Operator Signal Integrity (35) | Ensure operator-facing disclosures, gate failures, and GitHub annotations preserve the actual limitation or severity instead of silently disappearing, being downgraded, or hiding the first actionable reason. | Complete: #2675/#2720 submodule-pointer disclosure, #2599/#2721 inline gate reasons, #2632/#2722 annotation mapping, and repair #2726 for the source-of-truth all-warning contract. #2718 merged independently and remains outside this campaign. See the [closeout handoff](handoffs/2026-07-29-operator-signal-integrity-closeout.md). |
@@ -82,12 +84,11 @@ than one behavior contract or touches repo shape.
 | Lane 1 Cross-Language Guidance Safety | Pin the #908 MarkdownObject review-comments wrong-target sample so externally observed TypeScript evidence remains navigation-only when target placement is unresolved. | Complete: `output/markdownobject-review-comments-target-safety` adds a MarkdownObject-specific review-comments regression proving no guessed `vendor/lolhtml` Rust test target, no verify command, no public repair packet, and navigation-only `test/js/bun/md/md-edge-cases.test.ts` context routed to `analysis/cross-language-test-target-inference`; #908/#910 remain open for broader cross-language oracle work. |
 | Cross-Language Evidence Router UX | Turn the calibrated TypeScript/Bun graph path into a repeatable mixed TypeScript plus Rust operating loop for Bun operators, Claude Code, and other configured projects without promoting preview evidence. | Complete: [RIPR-SPEC-0063](specs/RIPR-SPEC-0063-cross-language-evidence-router-ux.md) and [RIPR-PLAN-0063](../plans/cross-language-evidence-router-ux/implementation-plan.md) defined PR-sized slices for 0.8.1 patch proof, compact Bun UB summary, advisory agent packet, proof-mode projection, node:fs and Bun.write manifest-only profiles, bridge inventory, live Bun dogfood, runbook polish, and the post-0.8.1 support decision. The [post-0.8.1 TypeScript/Bun support decision](handoffs/2026-06-05-post-081-typescript-bun-support-decision.md) keeps TypeScript/JavaScript preview/advisory, confirms calibrated Bun stable-byte evidence is useful for TS-discriminated, missing-discriminator, mention-only, bridge-unknown, and named-limitation states, and requires a separate accepted promotion contract for any stronger claim. |
 
-The following machine-readable execution record is historical. The current
-manifest is `.ripr/goals/active.toml` with
-`id = "rust-one-shot-evidence-to-repair"`; see
-[RIPR-PLAN-0062](../plans/rust-one-shot-evidence-to-repair.md) for current work
-items. The prior manifest recorded `status = "active"` for
-`cross-language-evidence-router-ux` and
+The following machine-readable execution record is historical. The deleted
+`.ripr/goals/active.toml` file is not a live selector; see
+[RIPR-PLAN-0062](../plans/rust-one-shot-evidence-to-repair.md) and its linked
+GitHub issues for current Campaign 32 work. The prior manifest recorded
+`status = "active"` for `cross-language-evidence-router-ux` and
 records `release/typescript-bun-preview-patch-proof`,
 `output/bun-ub-preview-summary`, and
 `agent/bun-cross-language-advisory-packet`,
@@ -97,8 +98,8 @@ records `release/typescript-bun-preview-patch-proof`,
 `analysis/configured-bridge-inventory`, and
 `dogfood/live-bun-stable-byte-receipts`,
 `docs/bun-ub-first-run-polish`, and
-`docs/post-081-support-decision` as completed selected slices. The active
-manifest now records `no_current_goal = true`. The prior
+`docs/post-081-support-decision` as completed selected slices. The deleted
+manifest last recorded `no_current_goal = true`. The prior
 post-release successor kept normal development in
 ripr-swarm, preserved source ripr as release/distribution authority, and closed
 the selected Lane 1 evidence-to-repair operating loop:
