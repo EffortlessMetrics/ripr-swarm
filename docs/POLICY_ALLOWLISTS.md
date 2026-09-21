@@ -48,7 +48,7 @@ allows it:
 
 | Ledger | Exception meaning | Durable identity | Review signal | Stale or growth behavior |
 | --- | --- | --- | --- | --- |
-| No-panic allowlist | A reviewed panic-family call site that remains exceptional. | `path + family + selector`. | `owner`, `explanation`, and expiry. | Stale, duplicate, ambiguous, or unallowed entries block the no-panic gate. |
+| No-panic allowlist | A reviewed panic-family call site that remains exceptional. | `path + family + selector`. | `owner`, `explanation`, and expiry. | Stale, duplicate semantic identities, duplicate `id` values, ambiguous, or unallowed entries block the no-panic gate. |
 | Clippy lint/debt/exception ledgers | Active lint policy, deferred lint flips, and per-site source suppressions. | Lint id plus selector/path and source `#[expect(..., reason = "...")]`. | Ledger `owner`, `reason`, `covered_by`, and source reason. | Planned/debt entries stay explicit; bare or unmatched suppressions block the allow-attribute check. |
 | Non-Rust allowlist | A reviewed non-Rust file allowed inside a Rust-first repo. | Glob plus surface/classification. | `owner`, `reason`, `covered_by`, surface, and classification. | Missing or unclassified files block file-policy checks; retired entries are reviewed cleanup candidates. |
 | Workflow allowlists | Bounded workflow run-block or action-runtime exceptions. | Workflow path plus line/count or pattern cap. | Reviewed reason in the text ledger. | Caps are ceilings, not budgets; stale entries should be removed when the workflow no longer needs them. |
