@@ -53,7 +53,12 @@ The date prefix sorts handoffs chronologically when a directory listing
 is the index. The `<topic>` slug should match the campaign or PR-cluster
 the handoff covers (e.g. `2026-05-04-campaign-4a-closeout.md`).
 
-## Current Handoffs
+## Retained handoffs (historical)
+
+These files are campaign and freeze closeouts. They do not select current
+work. Start from [the roadmap](../ROADMAP.md) and live GitHub issues for what
+RIPR is doing now. Keep the links: a closeout remains the receipt for the
+claim it closed.
 
 - [0.9.0 freeze re-pin](2026-06-08-0.9.0-freeze-repin.md)
 - [0.9.0 swarm freeze](2026-06-05-0.9.0-swarm-freeze.md)

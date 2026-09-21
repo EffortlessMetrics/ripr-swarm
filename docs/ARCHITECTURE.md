@@ -3,7 +3,7 @@
 `ripr` is one published package with strong internal module seams.
 
 ```text
-CLI / LSP / CI
+CLI / LSP / MCP / CI
   -> app
      -> analysis engine
      -> domain
@@ -18,6 +18,13 @@ CLI / LSP / CI
 - `output`: human, JSON, and GitHub annotation rendering.
 - `cli`: command-line entrypoint.
 - `lsp`: experimental `tower-lsp-server` sidecar entrypoint.
+- `agent`: bounded repair-loop command production and provenance.
+- `config`: `ripr.toml` loading, typed model, language detection.
+- `mcp`: bounded read-only Model Context Protocol adapter (`ripr mcp --stdio`;
+  [ADR 0022](adr/0022-mcp-is-a-bounded-projection.md)). Shared workspace-status
+  projection; no edit or execution authority.
+- `provider_contract`: public exact-snapshot DTOs for external proof
+  orchestrators; not an analysis or rendering layer.
 
 ## Analysis scope
 

@@ -14,6 +14,27 @@ const SKILLS: [&str; 7] = [
     "review-pr",
 ];
 
+/// Product-surface module tokens that AGENTS.md, CLAUDE.md, and
+/// docs/ARCHITECTURE.md must name. Pins the #1943/#3774 drift class:
+/// those three maps cannot omit these backticked tokens. Adding a new
+/// product-map surface means adding the token here and in all three maps.
+/// This list is not parsed from `lib.rs`; `git`, `workspace_status`, and
+/// private helpers stay off the product map.
+const REQUIRED_ARCHITECTURE_MODULES: [&str; 10] = [
+    "`domain`",
+    "`app`",
+    "`analysis`",
+    "`output`",
+    "`cli`",
+    "`lsp`",
+    "`agent`",
+    "`config`",
+    "`mcp`",
+    "`provider_contract`",
+];
+
+const ARCHITECTURE_MAP_FILES: [&str; 3] = ["AGENTS.md", "CLAUDE.md", "docs/ARCHITECTURE.md"];
+
 const ROOT_REVIEW_ROUTE_MARKER: &str = "review_route:root_to_review_pr";
 
 const REVIEW_ROUTE_REQUIRED_MARKERS: [(&str, &str); 5] = [
@@ -83,6 +104,7 @@ const PROVIDERS: [(&str, &str, &str, &str, Option<&str>); 3] = [
 
 pub(crate) fn check() -> Result<(), String> {
     let mut findings = Vec::new();
+    validate_architecture_maps(&mut findings);
     for (provider, instructions, root, other_root, override_path) in PROVIDERS {
         let text = match fs::read_to_string(instructions) {
             Ok(text) => text,
@@ -273,6 +295,31 @@ pub(crate) fn check() -> Result<(), String> {
             report["findings"].as_array().map_or(0, Vec::len)
         ))
     }
+}
+
+fn validate_architecture_maps(findings: &mut Vec<String>) {
+    for path in ARCHITECTURE_MAP_FILES {
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                findings.push(format!("architecture-map: {path} unreadable: {error}"));
+                continue;
+            }
+        };
+        findings.extend(architecture_map_findings(path, &text));
+    }
+}
+
+fn architecture_map_findings(path: &str, text: &str) -> Vec<String> {
+    let mut findings = Vec::new();
+    for module in REQUIRED_ARCHITECTURE_MODULES {
+        if !text.contains(module) {
+            findings.push(format!(
+                "architecture-map: {path} omits required module token {module}"
+            ));
+        }
+    }
+    findings
 }
 
 fn validate_root_review_route(provider: &str, routing_text: &str, findings: &mut Vec<String>) {
@@ -484,6 +531,39 @@ mod tests {
             return Err(format!(
                 "unknown review route marker was not isolated: {findings:?}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn architecture_map_tokens_are_closed_and_discriminating() -> Result<(), String> {
+        let complete = REQUIRED_ARCHITECTURE_MODULES.join("\n");
+        let findings = architecture_map_findings("AGENTS.md", &complete);
+        if !findings.is_empty() {
+            return Err(format!(
+                "complete architecture map unexpectedly failed: {findings:?}"
+            ));
+        }
+
+        let incomplete = complete.replace("`mcp`", "mcp");
+        let findings = architecture_map_findings("AGENTS.md", &incomplete);
+        let expected =
+            vec!["architecture-map: AGENTS.md omits required module token `mcp`".to_string()];
+        if findings != expected {
+            return Err(format!(
+                "architecture map omission should report only `mcp` without backticks, got {findings:?}"
+            ));
+        }
+
+        if ARCHITECTURE_MAP_FILES != ["AGENTS.md", "CLAUDE.md", "docs/ARCHITECTURE.md"] {
+            return Err(format!(
+                "architecture map file set drifted: {ARCHITECTURE_MAP_FILES:?}"
+            ));
+        }
+        for required in ["`mcp`", "`provider_contract`", "`agent`", "`config`"] {
+            if !REQUIRED_ARCHITECTURE_MODULES.contains(&required) {
+                return Err(format!("required architecture set omits {required}"));
+            }
         }
         Ok(())
     }

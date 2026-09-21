@@ -294,12 +294,33 @@ are scoped or reviewed.
 
 ### Changed
 
+- `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
+  consumes `policy/clippy-debt.toml`. That gate still dual-rails
+  `Cargo.toml` against `policy/clippy-lints.toml` only; the debt file is
+  advisory until a follow-up wires it. `clippy::let_underscore_must_use`
+  is now a real `[[debt]]` row (`clippy-debt-0001`, target 2027-03-31)
+  instead of a commented example whose target had already passed
+  ([#3782](https://github.com/EffortlessMetrics/ripr-swarm/issues/3782)).
+
 - Reviewer-facing architecture copies in `docs/ENGINEERING.md` and
   `.factory/skills/review-guidelines/SKILL.md` now name `agent`, `config`,
   `mcp`, and `provider_contract`, matching the product map. The
   `check-agent-skills` pin remains on `AGENTS.md`, `CLAUDE.md`, and
   `docs/ARCHITECTURE.md`
   ([#3779](https://github.com/EffortlessMetrics/ripr-swarm/issues/3779)).
+- Agent and human architecture maps now name the `mcp` protocol adapter and
+  the `provider_contract` DTO surface. `cargo xtask check-agent-skills` pins
+  the required module tokens in `AGENTS.md`, `CLAUDE.md`, and
+  `docs/ARCHITECTURE.md` so the `#1943` drift class cannot recur silently
+  ([#3774](https://github.com/EffortlessMetrics/ripr-swarm/issues/3774)).
+- `AGENTS.md` local validation now leads with `cargo xtask precommit` and
+  names `ci-full` as the complete pass. The 40-command block is labeled
+  targeted-rerun inventory, not sequential required work
+  ([#3775](https://github.com/EffortlessMetrics/ripr-swarm/issues/3775)).
+- `docs/handoffs/README.md` labels retained campaign closeouts as historical.
+  `docs/agent-context/repo-map.md` no longer names the retired active-goal
+  manifest as a live selector
+  ([#3777](https://github.com/EffortlessMetrics/ripr-swarm/issues/3777)).
 
 - The 0.11.0 support claim now describes the Rust gap-repair loop as `usable
   alpha`, not unqualified `usable`. Fixture, package, editor, bounded test-only
