@@ -291,9 +291,9 @@ fn run_status(args: &[String]) -> Result<(), String> {
 }
 
 fn cleanup_hint(cache_dir: &Path) -> String {
+    let path = cache_dir.display();
     format!(
-        "To clean up {}, use: cargo xtask cache gc [--dry-run] [--max-size-gb N] [--ttl-days N]",
-        cache_dir.display()
+        "To clean up {path}, run: {CACHE_DIR_ENV}={path} cargo xtask cache gc [--dry-run] [--max-size-gb N] [--ttl-days N]"
     )
 }
 
@@ -437,8 +437,8 @@ mod tests {
             "cleanup hint must name the directory status just reported: {hint}"
         );
         assert!(
-            hint.contains("cargo xtask cache gc"),
-            "cleanup hint must name the GC command that honors RIPR_CACHE_DIR: {hint}"
+            hint.contains("RIPR_CACHE_DIR=/tmp/ripr-reloc-cache cargo xtask cache gc"),
+            "cleanup hint must carry the same RIPR_CACHE_DIR status used, not an unqualified GC command: {hint}"
         );
     }
 

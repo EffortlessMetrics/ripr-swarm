@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -14,6 +16,20 @@ const SHARDED_CACHE_FAMILY_SUFFIX: &str = "-sharded";
 const SHARD_MANIFEST_FILE: &str = "manifest.json";
 const SHARD_FILE_PREFIX: &str = "shard-";
 const MAX_REPORT_ROWS: usize = 20;
+
+/// Directory names `ripr` itself creates under the cache base directory.
+/// Mirrors `crates/ripr/src/cli/commands/cache.rs` `CACHE_ROOT_MARKERS` so
+/// xtask GC/report stay conservative for a relocated `RIPR_CACHE_DIR`.
+const CACHE_ROOT_MARKERS: &[&str] = &[
+    "repo-seam-facts",
+    "repo-seam-facts-sharded",
+    "repo-compact-classified-seams",
+    "repo-compact-classified-seams-sharded",
+    "repo-corpus-fingerprint",
+    "repo-file-facts",
+    "repo-seam-counts",
+];
+const DEFAULT_CACHE_ROOT_SUFFIX: &[&str] = &["target", "ripr", "cache"];
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let Some((subcommand, rest)) = args.split_first() else {
@@ -70,7 +86,10 @@ fn cache_usage() -> String {
         "",
         "Scope:",
         "  Scans and deletes only under the resolved cache root:",
-        "  RIPR_CACHE_DIR when set to a non-empty path, otherwise target/ripr/cache.",
+        "  RIPR_CACHE_DIR when set to a non-empty absolute path that looks like a",
+        "  ripr cache, otherwise target/ripr/cache.",
+        "  Relative paths, parent-directory traversal, symlink roots, near-root",
+        "  paths, and ordinary directories are refused before any walk or delete.",
         "  Reports, receipts, PR/review artifacts, workflow artifacts, build output, and source files are ignored.",
         "",
         "Defaults:",
@@ -276,6 +295,7 @@ fn build_cache_report_from_env(
     env_value: Result<String, std::env::VarError>,
 ) -> Result<CacheReport, String> {
     let cache_root = cache_root_from_env(root, env_value);
+    validate_scan_cache_root(&cache_root)?;
     let files = collect_cache_files(root, &cache_root)?;
     let mut families = BTreeMap::<String, CacheFamily>::new();
     let mut total_bytes = 0u64;
@@ -543,6 +563,7 @@ fn build_gc_plan_from_env(
     started_at: SystemTime,
 ) -> Result<GcPlan, String> {
     let cache_root = cache_root_from_env(root, env_value);
+    validate_scan_cache_root(&cache_root)?;
     let files = collect_cache_files(root, &cache_root)?;
     let total_bytes = files
         .iter()
@@ -642,13 +663,35 @@ fn modified_sort_key(file: &CacheFile) -> (u64, u32) {
 }
 
 fn collect_cache_files(root: &Path, cache_root: &Path) -> Result<Vec<CacheFile>, String> {
-    if !cache_root.exists() {
-        return Ok(Vec::new());
+    match fs::symlink_metadata(cache_root) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => {
+            return Err(format!("failed to inspect {}: {err}", cache_root.display()));
+        }
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(format!(
+                "refusing to scan {}: it is a symlink, not a cache directory",
+                cache_root.display()
+            ));
+        }
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(format!("{} is not a directory", cache_root.display()));
+        }
+        Ok(_) => {}
     }
-    let metadata = fs::metadata(cache_root)
-        .map_err(|err| format!("failed to inspect {}: {err}", cache_root.display()))?;
-    if !metadata.is_dir() {
-        return Err(format!("{} is not a directory", cache_root.display()));
+
+    if !is_recognized_cache_root(cache_root) {
+        let mut entries = fs::read_dir(cache_root)
+            .map_err(|err| format!("failed to read {}: {err}", cache_root.display()))?;
+        if entries.next().is_some() {
+            return Err(format!(
+                "refusing to scan {}: it holds files but does not look like a ripr cache root \
+                 (expected a path ending in target/ripr/cache, or a ripr cache directory such as \
+                 `repo-seam-facts` inside it). Check {CACHE_DIR_ENV}.",
+                cache_root.display()
+            ));
+        }
+        return Ok(Vec::new());
     }
 
     let mut files = Vec::new();
@@ -690,6 +733,63 @@ fn cache_root_from_env(root: &Path, env_value: Result<String, std::env::VarError
         Ok(value) if !value.trim().is_empty() => PathBuf::from(value.trim()),
         _ => root.join("target").join("ripr").join("cache"),
     }
+}
+
+fn validate_scan_cache_root(cache_dir: &Path) -> Result<(), String> {
+    if is_default_cache_layout(cache_dir) {
+        return Ok(());
+    }
+    let display = cache_dir.display();
+    if cache_dir.as_os_str().is_empty() {
+        return Err(format!(
+            "refusing to scan an empty cache path; set {CACHE_DIR_ENV} to the cache directory or unset it"
+        ));
+    }
+    if !cache_dir.is_absolute() {
+        return Err(format!(
+            "refusing to scan relative cache path {display}; set {CACHE_DIR_ENV} to an absolute path"
+        ));
+    }
+    if cache_dir
+        .components()
+        .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+    {
+        return Err(format!(
+            "refusing to scan {display}: it contains a `..` or `.` component; \
+             set {CACHE_DIR_ENV} to an absolute cache path without parent-directory traversal"
+        ));
+    }
+    if normal_components(cache_dir).len() < 2 {
+        return Err(format!(
+            "refusing to scan {display}: a cache root must sit at least two directories below the filesystem root"
+        ));
+    }
+    Ok(())
+}
+
+fn is_default_cache_layout(cache_dir: &Path) -> bool {
+    let components = normal_components(cache_dir);
+    components.len() >= DEFAULT_CACHE_ROOT_SUFFIX.len()
+        && components[components.len() - DEFAULT_CACHE_ROOT_SUFFIX.len()..]
+            .iter()
+            .zip(DEFAULT_CACHE_ROOT_SUFFIX)
+            .all(|(actual, expected)| *actual == OsStr::new(expected))
+}
+
+fn is_recognized_cache_root(cache_dir: &Path) -> bool {
+    is_default_cache_layout(cache_dir)
+        || CACHE_ROOT_MARKERS
+            .iter()
+            .any(|marker| cache_dir.join(marker).is_dir())
+}
+
+fn normal_components(path: &Path) -> Vec<&OsStr> {
+    path.components()
+        .filter_map(|component| match component {
+            Component::Normal(name) => Some(name),
+            _ => None,
+        })
+        .collect()
 }
 
 fn deletion_path(root: &Path, relative_path: &Path) -> PathBuf {
@@ -1320,6 +1420,61 @@ mod tests {
         cleanup(workspace)?;
         cleanup(relocated)?;
         Ok(())
+    }
+
+    #[test]
+    fn cache_scan_refuses_relative_and_parent_dir_paths() {
+        let root = PathBuf::from("/workspace/ripr");
+        let relative = build_cache_report_from_env(&root, Ok("tmp/cache".into()));
+        assert!(
+            relative.is_err(),
+            "relative RIPR_CACHE_DIR must be refused before any walk: {relative:?}"
+        );
+        let traversal = build_gc_plan_from_env(
+            &root,
+            Ok("/tmp/ripr-reloc-cache/../..".into()),
+            &GcOptions {
+                dry_run: true,
+                max_size_bytes: None,
+                ttl_days: None,
+            },
+            SystemTime::now(),
+        );
+        assert!(
+            traversal.is_err(),
+            "parent-directory RIPR_CACHE_DIR must be refused before any delete: {traversal:?}"
+        );
+    }
+
+    #[test]
+    fn cache_scan_refuses_unrecognized_nonempty_root() -> Result<(), String> {
+        let workspace = temp_root("gc-unrecog-workspace")?;
+        let relocated = temp_root("gc-unrecog-cache")?;
+        write_bytes(&relocated.join("notes.txt"), 4)?;
+        let result = build_gc_plan_from_env(
+            &workspace,
+            Ok(relocated.display().to_string()),
+            &GcOptions {
+                dry_run: false,
+                max_size_bytes: Some(0),
+                ttl_days: None,
+            },
+            SystemTime::now() + Duration::from_secs(1),
+        );
+        let notes = relocated.join("notes.txt");
+        let still_present = notes.exists();
+        cleanup(workspace)?;
+        if still_present {
+            cleanup(relocated)?;
+        }
+        match result {
+            Ok(_) => Err("gc planned deletions inside an ordinary directory".into()),
+            Err(_) if !still_present => Err("gc deleted a non-cache file".into()),
+            Err(message) if !message.contains("does not look like a ripr cache root") => {
+                Err(format!("unexpected refusal: {message}"))
+            }
+            Err(_) => Ok(()),
+        }
     }
 
     fn temp_root(label: &str) -> Result<PathBuf, String> {

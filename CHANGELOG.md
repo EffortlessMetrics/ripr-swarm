@@ -295,9 +295,10 @@ are scoped or reviewed.
 ### Changed
 
 - `cargo xtask cache report` / `gc` honor `RIPR_CACHE_DIR` instead of always
-  scanning `target/ripr/cache`. `ripr cache status` names the resolved
-  directory in its cleanup hint so the printed GC command operates on the
-  cache just reported
+  scanning `target/ripr/cache`. Relocated roots must be absolute, must not
+  traverse `..`, and must look like a ripr cache before any walk or delete.
+  `ripr cache status` prints a cleanup hint that exports the same
+  `RIPR_CACHE_DIR` the status process used
   ([#3808](https://github.com/EffortlessMetrics/ripr-swarm/issues/3808)).
 
 - `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
