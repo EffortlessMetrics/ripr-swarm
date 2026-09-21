@@ -328,6 +328,12 @@ are scoped or reviewed.
   `docs/agent-context/repo-map.md` no longer names the retired active-goal
   manifest as a live selector
   ([#3777](https://github.com/EffortlessMetrics/ripr-swarm/issues/3777)).
+- Schema 0.3 no-panic allowlist `id` values are now unique and gated.
+  `cargo xtask check-no-panic-family` rejects a colliding `id` even when
+  the selectors differ. Four reused `panic-0051`..`panic-0054` rows for
+  the RIPR-SPEC-0112 `cli_smoke` sites were renumbered to `panic-0071`..
+  `panic-0074`
+  ([#3799](https://github.com/EffortlessMetrics/ripr-swarm/issues/3799)).
 
 - The 0.11.0 support claim now describes the Rust gap-repair loop as `usable
   alpha`, not unqualified `usable`. Fixture, package, editor, bounded test-only
