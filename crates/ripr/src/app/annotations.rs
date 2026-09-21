@@ -6,6 +6,7 @@
 //! `::warning` annotation lines to `target/ripr/review/annotations.txt`.
 //! Supports `--comments <path>`, `--out <path>`, `--check`, `--help`.
 
+use crate::cli::suggest::unknown_argument;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -60,7 +61,7 @@ fn parse_options(args: &[String]) -> Result<AnnotationOptions, String> {
                 options.out = non_empty_arg(args, i, "--out")?.to_string();
             }
             "--check" => options.check = true,
-            other => return Err(format!("unknown annotations argument `{other}`")),
+            other => return Err(unknown_argument("annotations", other)),
         }
         i += 1;
     }

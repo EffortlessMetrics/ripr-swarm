@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::cli::suggest::unknown_argument;
+
 use super::{
     DEFAULT_AGENT_PACKET, DEFAULT_BASE, DEFAULT_FIRST_ACTION, DEFAULT_GAP_LEDGER,
     DEFAULT_GATE_DECISION, DEFAULT_HEAD, DEFAULT_OUT_DIR, DEFAULT_RECEIPTS_DIR,
@@ -102,7 +104,7 @@ pub(super) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
                 options.out_dir = non_empty_arg(args, i, "--out-dir")?.to_string();
             }
             "--check" => options.check = true,
-            other => return Err(format!("unknown first-pr argument {other:?}")),
+            other => return Err(unknown_argument("first-pr", other)),
         }
         i += 1;
     }

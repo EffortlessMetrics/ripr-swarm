@@ -5,6 +5,7 @@
 //! `target/ripr/pr/repo-exposure.json` + PR labels and emits
 //! `target/xtask/impacted-evidence/latest.{json,md}`.
 
+use crate::cli::suggest::unknown_argument;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::env;
@@ -72,7 +73,7 @@ fn parse_options(args: &[String]) -> Result<ImpactedEvidenceOptions, String> {
                     .extend(split_labels(non_empty_arg(args, i, "--labels")?));
             }
             "--check" => options.check = true,
-            other => return Err(format!("unknown impacted-evidence argument `{other}`")),
+            other => return Err(unknown_argument("impacted-evidence", other)),
         }
         i += 1;
     }

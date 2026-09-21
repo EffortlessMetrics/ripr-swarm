@@ -27,6 +27,7 @@
 //!
 //! Output: `target/ripr/reports/ripr-plus.{json,md}`.
 
+use crate::cli::suggest::unknown_argument;
 use crate::config::RiprConfig;
 use crate::output;
 use serde_json::{Value, json};
@@ -82,7 +83,7 @@ fn parse_options(args: &[String]) -> Result<RiprPlusOptions, String> {
                     "--repo-exposure-summary",
                 )?));
             }
-            other => return Err(format!("unknown plus argument `{other}`")),
+            other => return Err(unknown_argument("plus", other)),
         }
         index += 1;
     }

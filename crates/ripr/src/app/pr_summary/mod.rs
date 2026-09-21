@@ -15,6 +15,8 @@ mod model;
 mod render;
 mod util;
 
+use crate::cli::suggest::unknown_argument;
+
 use io::load_json;
 pub use json::{build_pr_evidence_summary, render_pr_evidence_summary_json};
 pub use model::PrEvidenceSummaryJson;
@@ -133,7 +135,7 @@ fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
                     .ok_or_else(|| "--baseline requires a path argument".to_string())?;
                 baseline = Some(path.clone());
             }
-            other => return Err(format!("unknown pr-summary argument `{other}`")),
+            other => return Err(unknown_argument("pr-summary", other)),
         }
     }
     Ok(SummaryOptions { check, baseline })

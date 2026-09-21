@@ -10,7 +10,7 @@ mod execute;
 mod help;
 mod parse;
 mod rerun;
-mod suggest;
+pub(crate) mod suggest;
 
 use crate::agent::loop_commands::{
     WORKFLOW_AGENT_BRIEF_ARTIFACT, WORKFLOW_AGENT_PACKET_ARTIFACT,

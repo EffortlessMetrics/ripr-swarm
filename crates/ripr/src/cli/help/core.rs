@@ -349,3 +349,68 @@ Options:
   --stdio       Run the language server over stdio LSP framing. This is the default.
   --version     Print the language server version.
 "#;
+pub(super) const FIRST_PR_HELP: &str = r#"Write the first-PR evidence packet (repo exposure, gap ledger, review comments) to an output directory.
+
+Usage: ripr first-pr [--root <path>] [--base <rev>] [--head <rev>] [--out-dir <path>] [--check]
+
+Options:
+  --root <path>             Workspace root (default: .).
+  --base <rev>              Base revision for the diff.
+  --head <rev>              Head revision for the diff.
+  --check-output <path>     Write the check payload here.
+  --gap-ledger <path>       Gap ledger input path.
+  --first-action <path>     First-action input path.
+  --review-comments <path>  Review comments input path.
+  --agent-packet <path>     Agent packet input path.
+  --gate-decision <path>    Gate decision input path.
+  --receipts-dir <path>     Receipts directory.
+  --out-dir <path>          Output directory for the packet.
+  --check                   Verify the existing packet is up to date.
+"#;
+pub(super) const PR_SUMMARY_HELP: &str = r#"Compose PR evidence artifacts into a PR readiness summary.
+
+Usage: ripr pr-summary [--baseline <path>] [--check]
+
+Options:
+  --baseline <path>   Baseline file for comparison.
+  --check             Verify the existing summary is up to date.
+"#;
+pub(super) const ANNOTATIONS_HELP: &str = r#"Emit GitHub Actions annotations from review comments.
+
+Usage: ripr annotations [--comments <path>] [--out <path>] [--check]
+
+Options:
+  --comments <path>   Path to comments.json.
+  --out <path>        Output annotations path.
+  --check             Verify the existing annotations are up to date.
+"#;
+pub(super) const PR_EVIDENCE_HELP: &str = r#"Write the binary-first PR evidence packet.
+
+Usage: ripr pr-evidence [--root <path>] [--base <rev>] [--head <rev>] [--check]
+
+Options:
+  --root <path>   Workspace root (default: .).
+  --base <rev>    Base revision for the diff.
+  --head <rev>    Head revision for the diff.
+  --check         Verify the existing packet is up to date.
+"#;
+pub(super) const IMPACTED_EVIDENCE_HELP: &str = r#"Emit impacted-evidence files from repo exposure plus PR labels.
+
+Usage: ripr impacted-evidence [--pr-evidence <path>] [--label <name>] [--labels <list>] [--check]
+
+Options:
+  --pr-evidence <path>   PR evidence input path.
+  --label <name>         Single PR label to match.
+  --labels <list>        Comma-separated PR labels to match.
+  --check                Verify the existing files are up to date.
+"#;
+pub(super) const PLUS_HELP: &str = r#"Compose the RIPR+ repo receipt.
+
+Usage: ripr plus [--check] [--gap-ledger <path>] [--repo-exposure-summary <path>]
+
+Options:
+  --check                          Verify the existing receipt is up to date.
+  --gap-ledger <path>              Gap ledger input path.
+  --repo-exposure-summary <path>   Repo exposure summary input path.
+"#;
+

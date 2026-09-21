@@ -11,6 +11,7 @@
 //! This avoids recompilation and keeps the analysis in-process.
 
 use crate::app::{CheckInput, Mode, OutputFormat, check_workspace, render_check};
+use crate::cli::suggest::unknown_argument;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::fs;
@@ -84,7 +85,7 @@ fn parse_options(args: &[String]) -> Result<PrEvidenceOptions, String> {
                 options.head = non_empty_arg(args, i, "--head")?.to_string();
             }
             "--check" => options.check = true,
-            other => return Err(format!("unknown pr-evidence argument `{other}`")),
+            other => return Err(unknown_argument("pr-evidence", other)),
         }
         i += 1;
     }

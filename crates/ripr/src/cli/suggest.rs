@@ -19,7 +19,7 @@ use crate::cli::help;
 /// (`"check"`, `"agent brief"`, `"policy readiness"`), which is also what the
 /// help pointer names. Every `ripr` command path accepts `--help` directly, so
 /// the pointer is uniform.
-pub(in crate::cli) fn unknown_argument(command: &str, arg: &str) -> String {
+pub(crate) fn unknown_argument(command: &str, arg: &str) -> String {
     match closest_flag(command, arg) {
         Some(suggestion) => format!(
             "unknown {command} argument {arg:?}. Did you mean `{suggestion}`? Run `ripr {command} --help`."
@@ -383,6 +383,30 @@ mod tests {
             !clear_json.contains("Did you mean"),
             "cache clear must not suggest a cache-status flag: {clear_json}"
         );
+    }
+
+    /// `first-pr`, `pr-summary`, `annotations`, `pr-evidence`,
+    /// `impacted-evidence`, and `plus` already route unknown flags through
+    /// `unknown_argument`, but none of the paths was registered, so every typo
+    /// fell to the bare no-suggestion branch.
+    #[test]
+    fn new_evidence_commands_suggest_their_own_documented_flags() {
+        for (command, typo, expected) in [
+            ("first-pr", "--chek", "--check"),
+            ("pr-summary", "--baselime", "--baseline"),
+            ("annotations", "--coments", "--comments"),
+            ("pr-evidence", "--hed", "--head"),
+            ("impacted-evidence", "--lable", "--label"),
+            ("plus", "--chek", "--check"),
+        ] {
+            assert_eq!(
+                unknown_argument(command, typo),
+                format!(
+                    "unknown {command} argument {typo:?}. \
+                     Did you mean `{expected}`? Run `ripr {command} --help`."
+                ),
+            );
+        }
     }
 
     /// Every command path the CLI reports errors for must resolve to a help
