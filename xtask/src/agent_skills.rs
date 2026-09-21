@@ -74,6 +74,66 @@ const REVIEW_PR_REQUIRED_MARKERS: [&str; 17] = [
     "review_contract:blocked_is_not_human_cause",
 ];
 
+/// ZCode/Muse continuously consumes AGENTS.md and the `.agents/skills` tree.
+/// Pin the operating contract that prevents session summaries, local progress,
+/// base movement, or routine repository writes from silently changing delivery
+/// semantics. Claude's separate provider tree remains governed by #3785's
+/// provider-parity acceptance and is intentionally not generated from this tree.
+const AGENTS_ROOT_OPERATING_MARKERS: [&str; 5] = [
+    "operating_contract:primary_authority",
+    "operating_contract:routine_repo_writes",
+    "operating_contract:ordinary_squash_merge",
+    "operating_contract:delivery_state_ladder",
+    "operating_contract:host_shell_detection",
+];
+
+const AGENTS_SKILL_OPERATING_MARKERS: [(&str, &str); 20] = [
+    ("deliver-goal", "goal_contract:parent_end_state"),
+    ("deliver-goal", "goal_contract:progress_denominator"),
+    ("deliver-goal", "goal_contract:local_work_not_delivery"),
+    (
+        "deliver-goal",
+        "goal_contract:waiting_lane_not_global_blocker",
+    ),
+    (
+        "deliver-goal",
+        "goal_contract:subgoal_does_not_close_parent",
+    ),
+    (
+        "deliver-goal",
+        "goal_contract:primary_sources_before_summary",
+    ),
+    ("deliver-pr", "pr_contract:current_claim_search"),
+    (
+        "deliver-pr",
+        "pr_contract:duplicate_check_before_conflict",
+    ),
+    ("deliver-pr", "pr_contract:behind_only_no_restack"),
+    ("deliver-pr", "pr_contract:routine_repo_writes"),
+    ("deliver-pr", "pr_contract:ordinary_squash_merge"),
+    ("deliver-pr", "pr_contract:local_commit_not_delivery"),
+    (
+        "build-candidate",
+        "candidate_contract:host_shell_detection",
+    ),
+    (
+        "build-candidate",
+        "candidate_contract:focused_local_proof",
+    ),
+    (
+        "build-candidate",
+        "candidate_contract:one_writer_worktree",
+    ),
+    (
+        "build-candidate",
+        "candidate_contract:publish_for_remote_evidence",
+    ),
+    ("finish-pr", "finish_contract:routine_repo_writes"),
+    ("finish-pr", "finish_contract:ordinary_squash_merge"),
+    ("finish-pr", "finish_contract:duplicate_recheck"),
+    ("finish-pr", "finish_contract:behind_only_no_restack"),
+];
+
 const PROVIDERS: [(&str, &str, &str, &str, Option<&str>); 3] = [
     (
         "codex",
@@ -105,6 +165,7 @@ const PROVIDERS: [(&str, &str, &str, &str, Option<&str>); 3] = [
 pub(crate) fn check() -> Result<(), String> {
     let mut findings = Vec::new();
     validate_architecture_maps(&mut findings);
+    validate_agents_operating_contract(&mut findings);
     for (provider, instructions, root, other_root, override_path) in PROVIDERS {
         let text = match fs::read_to_string(instructions) {
             Ok(text) => text,
@@ -267,7 +328,8 @@ pub(crate) fn check() -> Result<(), String> {
             "prose identity", "section-order symmetry", "equal agent counts",
             "equal model choices", "one role per pass",
             "one provider as generated canonical source", "mandatory separate reviewer identity",
-            "semantic truth of declared review contract markers"
+            "semantic truth of declared review and operating contract markers",
+            "Claude provider prose parity with the AGENTS/ZCode operating contract"
         ]
     });
     crate::write_report(
@@ -317,6 +379,69 @@ fn architecture_map_findings(path: &str, text: &str) -> Vec<String> {
             findings.push(format!(
                 "architecture-map: {path} omits required module token {module}"
             ));
+        }
+    }
+    findings
+}
+
+fn validate_agents_operating_contract(findings: &mut Vec<String>) {
+    let agents = match fs::read_to_string("AGENTS.md") {
+        Ok(text) => text,
+        Err(error) => {
+            findings.push(format!("operating-contract: AGENTS.md unreadable: {error}"));
+            return;
+        }
+    };
+    for finding in closed_marker_findings(
+        &agents,
+        "operating_contract:",
+        &AGENTS_ROOT_OPERATING_MARKERS,
+    ) {
+        findings.push(format!("operating-contract: AGENTS.md {finding}"));
+    }
+
+    for skill in SKILLS {
+        let required = AGENTS_SKILL_OPERATING_MARKERS
+            .iter()
+            .filter_map(|(owner, marker)| (*owner == skill).then_some(*marker))
+            .collect::<Vec<_>>();
+        if required.is_empty() {
+            continue;
+        }
+        let relative = format!(".agents/skills/{skill}/SKILL.md");
+        let skill_text = match fs::read_to_string(&relative) {
+            Ok(text) => text,
+            Err(error) => {
+                findings.push(format!(
+                    "operating-contract: {relative} unreadable: {error}"
+                ));
+                continue;
+            }
+        };
+        let prefix = required[0]
+            .split_once(':')
+            .map_or("", |(prefix, _)| prefix)
+            .to_string()
+            + ":";
+        for finding in closed_marker_findings(&skill_text, &prefix, &required) {
+            findings.push(format!("operating-contract: {relative} {finding}"));
+        }
+    }
+}
+
+fn closed_marker_findings(text: &str, prefix: &str, required: &[&str]) -> Vec<String> {
+    let counts = declared_marker_counts(text, prefix);
+    let mut findings = Vec::new();
+    for marker in required {
+        match counts.get(*marker).copied().unwrap_or(0) {
+            0 => findings.push(format!("is missing marker `{marker}`")),
+            1 => {}
+            count => findings.push(format!("declares marker `{marker}` {count} times")),
+        }
+    }
+    for declared in counts.keys() {
+        if !required.contains(&declared.as_str()) {
+            findings.push(format!("declares unknown marker `{declared}`"));
         }
     }
     findings
@@ -444,6 +569,55 @@ fn negative_context(lines: &[&str], index: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn operating_contract_markers_are_closed_and_discriminating() -> Result<(), String> {
+        let complete = AGENTS_ROOT_OPERATING_MARKERS
+            .iter()
+            .map(|marker| format!("- `{marker}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let findings = closed_marker_findings(
+            &complete,
+            "operating_contract:",
+            &AGENTS_ROOT_OPERATING_MARKERS,
+        );
+        if !findings.is_empty() {
+            return Err(format!(
+                "complete operating contract unexpectedly failed: {findings:?}"
+            ));
+        }
+
+        let removed = AGENTS_ROOT_OPERATING_MARKERS[0];
+        let incomplete = complete.replace(&format!("- `{removed}`"), "");
+        let findings = closed_marker_findings(
+            &incomplete,
+            "operating_contract:",
+            &AGENTS_ROOT_OPERATING_MARKERS,
+        );
+        let expected = vec![format!("is missing marker `{removed}`")];
+        if findings != expected {
+            return Err(format!(
+                "operating contract omission should report only `{removed}`, got {findings:?}"
+            ));
+        }
+
+        let unknown = format!("{complete}\n- `operating_contract:invented_permission`");
+        let findings = closed_marker_findings(
+            &unknown,
+            "operating_contract:",
+            &AGENTS_ROOT_OPERATING_MARKERS,
+        );
+        let expected = vec![
+            "declares unknown marker `operating_contract:invented_permission`".to_string(),
+        ];
+        if findings != expected {
+            return Err(format!(
+                "unknown operating contract marker was not isolated: {findings:?}"
+            ));
+        }
+        Ok(())
+    }
 
     #[test]
     fn review_contract_markers_are_closed_and_discriminating() -> Result<(), String> {
