@@ -294,6 +294,12 @@ are scoped or reviewed.
 
 ### Changed
 
+- `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask
+  check-allow-attributes` matches `policy/clippy-exceptions.toml`. That
+  gate still counts source suppressions against `.ripr/allow-attributes.txt`
+  only; the TOML receipts remain advisory until a follow-up wires them
+  ([#3800](https://github.com/EffortlessMetrics/ripr-swarm/issues/3800)).
+
 - `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
   consumes `policy/clippy-debt.toml`. That gate still dual-rails
   `Cargo.toml` against `policy/clippy-lints.toml` only; the debt file is
