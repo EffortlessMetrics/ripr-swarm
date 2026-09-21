@@ -181,9 +181,11 @@ verifies that:
   (they're future flips, not active);
 - every `[workspace.lints.*]` line has a matching ledger entry.
 
-`activate_when_msrv` on `[[planned]]` entries is documentary (the lint has
-been available since that toolchain). The gate does **not** compare the
-field to workspace `rust-version`. Remaining blockers live in `reason`.
+`activate_when_msrv` on `[[planned]]` entries is documentary metadata.
+The gate does **not** compare the field to workspace `rust-version`, and
+the values are not verified available-since (`clippy::manual_pop_if`
+records `1.95` while `reason` says pinned 1.95.0 Clippy does not
+recognize the lint). Remaining blockers live in `reason`.
 
 When promoting a planned lint, move the entry from `[[planned]]` to
 `[[active.<group>]]`, add the matching `Cargo.toml` line, and update
@@ -205,7 +207,8 @@ Two companion ledgers track Clippy state alongside the active/planned table:
 
 These are advisory until the corresponding xtask ledger checks land in a
 follow-up PR (`check-lint-policy` still reads only `Cargo.toml` and
-`policy/clippy-lints.toml`). One slice already enforces coverage claims: `cargo xtask
+`policy/clippy-lints.toml`; `check-allow-attributes` still reads only
+`.ripr/allow-attributes.txt`). One slice already enforces coverage claims: `cargo xtask
 check-covered-by` resolves every test-valued `covered_by` entry in
 `policy/clippy-exceptions.toml` against a static scan of the workspace's
 actual `#[test]`-family functions, so a claim that names a renamed or deleted

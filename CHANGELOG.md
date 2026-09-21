@@ -295,11 +295,18 @@ are scoped or reviewed.
 ### Changed
 
 - `policy/clippy-lints.toml` no longer says planned lints wait for MSRV
-  and a matching xtask gate. `activate_when_msrv` is available-since
-  documentation; remaining blockers stay in `reason`.
-  `cargo xtask check-lint-policy` still dual-rails `Cargo.toml` against
-  the ledger and does not compare that field to workspace `rust-version`
+  and a matching xtask gate. `activate_when_msrv` is documentary metadata,
+  not a ratchet and not verified available-since; remaining blockers stay
+  in `reason`. `cargo xtask check-lint-policy` still dual-rails
+  `Cargo.toml` against the ledger and does not compare that field to
+  workspace `rust-version`
   ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
+
+- `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask
+  check-allow-attributes` matches `policy/clippy-exceptions.toml`. That
+  gate still counts source suppressions against `.ripr/allow-attributes.txt`
+  only; the TOML receipts remain advisory until a follow-up wires them
+  ([#3800](https://github.com/EffortlessMetrics/ripr-swarm/issues/3800)).
 
 - `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
   consumes `policy/clippy-debt.toml`. That gate still dual-rails
@@ -356,6 +363,11 @@ are scoped or reviewed.
   ([#2592](https://github.com/EffortlessMetrics/ripr-swarm/issues/2592)).
 
 ### Fixed
+
+- Live `parse_old_path_for_confinement` and `git::run_git` no longer carry
+  leftover `#[allow(dead_code)]` attributes whose reasons cited closed
+  follow-ups. Matching `.ripr/allow-attributes.txt` rows were dropped
+  ([#3801](https://github.com/EffortlessMetrics/ripr-swarm/issues/3801)).
 
 - PR review guidance retains unresolved headline-eligible recommendations
   when the nearby recommended test file changes. Test-file proximity no
