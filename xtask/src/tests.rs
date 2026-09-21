@@ -47585,6 +47585,36 @@ reason = "per-call expect receipts, not MSRV"
         "non-MSRV reason must keep an overdue planned lint: {violations:?}"
     );
 
+    let msrv_only = r#"
+[[planned]]
+name = "clippy::indexing_slicing"
+level = "deny"
+activate_when_msrv = "1.93"
+reason = "waiting for Rust 1.97"
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, msrv_only);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy::indexing_slicing")
+                && row.contains("is MSRV-only")
+                && row.contains("waiting for Rust 1.97")
+        }),
+        "overdue activate_when_msrv with an MSRV-only reason must fail: {violations:?}"
+    );
+
+    let clippy_unrecognized = r#"
+[[planned]]
+name = "clippy::manual_pop_if"
+level = "warn"
+activate_when_msrv = "1.95"
+reason = "Rust 1.95.0 Clippy does not recognize this lint; promote only after the pinned toolchain supports it."
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, clippy_unrecognized);
+    assert!(
+        violations.is_empty(),
+        "Clippy-recognition blocker must count as non-MSRV: {violations:?}"
+    );
+
     let future = r#"
 [[planned]]
 name = "clippy::indexing_slicing"
@@ -47596,6 +47626,25 @@ activate_when_msrv = "1.97"
         violations.is_empty(),
         "future activate_when_msrv does not require a reason yet: {violations:?}"
     );
+}
+
+#[test]
+fn planned_reason_is_msrv_only_strips_version_delays_only() {
+    assert!(super::planned_reason_is_msrv_only(""));
+    assert!(super::planned_reason_is_msrv_only("   "));
+    assert!(super::planned_reason_is_msrv_only("waiting for Rust 1.97"));
+    assert!(super::planned_reason_is_msrv_only("requires Rust 1.97"));
+    assert!(super::planned_reason_is_msrv_only("MSRV"));
+    assert!(super::planned_reason_is_msrv_only("available since 1.93"));
+    assert!(!super::planned_reason_is_msrv_only(
+        "per-call expect receipts, not MSRV"
+    ));
+    assert!(!super::planned_reason_is_msrv_only(
+        "Rust 1.95.0 Clippy does not recognize this lint"
+    ));
+    assert!(!super::planned_reason_is_msrv_only(
+        "needs a reviewed clippy.toml disallowed-fields list"
+    ));
 }
 
 #[test]

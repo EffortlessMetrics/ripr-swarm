@@ -296,7 +296,8 @@ are scoped or reviewed.
 
 - `cargo xtask check-lint-policy` now compares `[[planned]]`
   `activate_when_msrv` to `[workspace.package] rust-version`. An already-met
-  value without a non-MSRV `reason` fails the gate. The four current planned
+  value without a remaining non-MSRV `reason` fails the gate, including a
+  `reason` that only names an MSRV or Rust version. The four current planned
   lints keep their existing `reason` blockers and are not promoted
   ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
 

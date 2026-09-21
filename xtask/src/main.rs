@@ -15602,6 +15602,80 @@ fn parse_msrv_triple(value: &str) -> Option<(u32, u32, u32)> {
     Some((major, minor, patch))
 }
 
+/// True when `reason` is empty or only restates an MSRV/Rust-version delay.
+///
+/// This is a closed token filter, not NLP: version triples and a small
+/// MSRV-vocabulary list are stripped, then any leftover token counts as a
+/// remaining (non-MSRV) blocker. Typed `blocked_by` metadata is a later slice.
+fn planned_reason_is_msrv_only(reason: &str) -> bool {
+    const MSRV_VOCABULARY: &[&str] = &[
+        "a",
+        "activate",
+        "activation",
+        "after",
+        "already",
+        "an",
+        "and",
+        "at",
+        "available",
+        "be",
+        "before",
+        "blocked",
+        "blocker",
+        "bump",
+        "by",
+        "exceeded",
+        "exceeds",
+        "for",
+        "hit",
+        "hits",
+        "is",
+        "met",
+        "msrv",
+        "need",
+        "needs",
+        "of",
+        "on",
+        "once",
+        "or",
+        "planned",
+        "reached",
+        "reaches",
+        "required",
+        "requires",
+        "rust",
+        "rustc",
+        "rustversion",
+        "since",
+        "still",
+        "the",
+        "to",
+        "toolchain",
+        "until",
+        "upgrade",
+        "upgraded",
+        "version",
+        "wait",
+        "waiting",
+        "when",
+    ];
+    let leftover = reason
+        .to_ascii_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '.')
+        .filter_map(|raw| {
+            let token = raw.trim_matches('.');
+            if token.is_empty() {
+                None
+            } else {
+                Some(token.to_string())
+            }
+        })
+        .filter(|token| parse_msrv_triple(token).is_none())
+        .filter(|token| !MSRV_VOCABULARY.contains(&token.as_str()))
+        .count();
+    leftover == 0
+}
+
 fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<String> {
     let cargo_clippy = parse_workspace_lints_section(cargo_text, "clippy");
     let cargo_rust = parse_workspace_lints_section(cargo_text, "rust");
@@ -15638,6 +15712,11 @@ fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<St
                         if reason.is_empty() {
                             violations.push(format!(
                                 "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. Record a non-MSRV `reason` why it is still `[[planned]]`, or promote it.",
+                                entry.block_line, entry.name
+                            ));
+                        } else if planned_reason_is_msrv_only(reason) {
+                            violations.push(format!(
+                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. `reason` {reason:?} is MSRV-only. Record a remaining non-MSRV blocker, or promote it.",
                                 entry.block_line, entry.name
                             ));
                         }
@@ -15696,11 +15775,11 @@ fn check_lint_policy() -> Result<(), String> {
         PolicyReportSpec {
             report_file: "lint-policy.md",
             check: "check-lint-policy",
-            why_it_matters: "`policy/clippy-lints.toml` is the reviewable ledger of the workspace lint stance, including planned 1.94 / 1.95 flips. If Cargo.toml drifts from the ledger, reviewers lose the trajectory and the dual-rail design (clippy + semantic checker) loses its receipt. `activate_when_msrv` is compared to `[workspace.package] rust-version`; an already-met MSRV without a non-MSRV `reason` is overdue.",
+            why_it_matters: "`policy/clippy-lints.toml` is the reviewable ledger of the workspace lint stance, including planned 1.94 / 1.95 flips. If Cargo.toml drifts from the ledger, reviewers lose the trajectory and the dual-rail design (clippy + semantic checker) loses its receipt. `activate_when_msrv` is compared to `[workspace.package] rust-version`; an already-met MSRV without a remaining non-MSRV `reason` is overdue.",
             fix_kind: FixKind::PolicyExceptionRequired,
             recommended_fixes: &[
                 "Make `Cargo.toml` and `policy/clippy-lints.toml` agree: every `[[active.<group>]]` entry must appear in `[workspace.lints.*]` at the same level, and `[[planned]]` entries must not yet appear there.",
-                "When a planned lint's `activate_when_msrv` is already met by workspace `rust-version`, record a non-MSRV `reason` or promote the entry.",
+                "When a planned lint's `activate_when_msrv` is already met by workspace `rust-version`, record a remaining non-MSRV `reason` (not an MSRV-only delay) or promote the entry.",
                 "When promoting a planned lint, move the ledger entry from `[[planned]]` to `[[active.<group>]]` and add the matching `Cargo.toml` line in the same PR.",
                 "Document `[[active.<group>]]` family blocks in `docs/CLIPPY_POLICY.md` so the public surface stays in sync.",
             ],
