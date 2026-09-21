@@ -294,6 +294,14 @@ are scoped or reviewed.
 
 ### Changed
 
+- `policy/clippy-lints.toml` no longer says planned lints wait for MSRV
+  and a matching xtask gate. `activate_when_msrv` is documentary metadata,
+  not a ratchet and not verified available-since; remaining blockers stay
+  in `reason`. `cargo xtask check-lint-policy` still dual-rails
+  `Cargo.toml` against the ledger and does not compare that field to
+  workspace `rust-version`
+  ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
+
 - Live entry docs no longer name the deleted `.ripr/goals/active.toml` file as
   current selection authority. `docs/IMPLEMENTATION_PLAN.md`,
   `docs/agent-context/CONTEXT_SYSTEM.md`, and
