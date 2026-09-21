@@ -294,6 +294,13 @@ are scoped or reviewed.
 
 ### Changed
 
+- `policy/clippy-lints.toml` no longer says planned lints wait for MSRV
+  and a matching xtask gate. `activate_when_msrv` is available-since
+  documentation; remaining blockers stay in `reason`.
+  `cargo xtask check-lint-policy` still dual-rails `Cargo.toml` against
+  the ledger and does not compare that field to workspace `rust-version`
+  ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
+
 - `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
   consumes `policy/clippy-debt.toml`. That gate still dual-rails
   `Cargo.toml` against `policy/clippy-lints.toml` only; the debt file is

@@ -181,9 +181,14 @@ verifies that:
   (they're future flips, not active);
 - every `[workspace.lints.*]` line has a matching ledger entry.
 
+`activate_when_msrv` on `[[planned]]` entries is documentary (the lint has
+been available since that toolchain). The gate does **not** compare the
+field to workspace `rust-version`. Remaining blockers live in `reason`.
+
 When promoting a planned lint, move the entry from `[[planned]]` to
 `[[active.<group>]]`, add the matching `Cargo.toml` line, and update
-this doc — the gate makes drift visible immediately.
+this doc — the gate makes Cargo.toml drift visible immediately. It does
+not ratchet planned lints when MSRV advances.
 
 ## Companion ledgers
 
@@ -234,7 +239,8 @@ Planned lints retained after PR 03:
 
 The rollout PR stack is in `docs/ci/ripr-rollout-plan.md`. Future lint flips
 must move entries from `[[planned]]` to `[[active]]` only after the matching
-toolchain support, configuration, and xtask checks are present.
+toolchain support, configuration, and receipts in `reason` are present.
+`check-lint-policy` does not treat `activate_when_msrv` as that trigger.
 
 ## See also
 

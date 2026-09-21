@@ -219,6 +219,11 @@ level = "deny"
 name = "clippy::out_of_bounds_indexing"
 level = "deny"
 
+# `activate_when_msrv` is documentary: the toolchain version that first
+# shipped the lint (available since). Remaining blockers live in `reason`.
+# `check-lint-policy` does not compare this field to workspace `rust-version`;
+# it only ensures planned lints are absent from Cargo.toml.
+
 [[planned]]
 name = "clippy::indexing_slicing"
 level = "deny"
@@ -355,10 +360,14 @@ name = "unsafe_op_in_unsafe_fn"
 level = "deny"
 note = "Belt-and-suspenders for `unsafe_code = \"forbid\"`: keeps unsafe operations inside an unsafe fn from skipping the explicit `unsafe { ... }` block if a future PR ever carves out an unsafe island."
 
-# Lints planned for activation when MSRV advances. Recorded here so reviewers
-# can see the trajectory without scanning Cargo.toml history. They are not
-# active until MSRV reaches the listed version and the matching xtask gate is
-# updated to verify the move.
+# Lints planned for activation when the remaining blockers in `reason` are
+# cleared. Recorded here so reviewers can see the trajectory without scanning
+# Cargo.toml history. `activate_when_msrv` is available-since (the toolchain
+# that first shipped the lint), not a gate trigger. `check-lint-policy` does
+# not compare that field to workspace `rust-version`; it only ensures planned
+# lints are absent from Cargo.toml. Promotion still requires the matching
+# Cargo.toml line, the receipts or config listed in `reason`, and a ledger
+# move from `[[planned]]` to `[[active.<group>]]`.
 
 [[planned]]
 name = "clippy::disallowed_fields"
