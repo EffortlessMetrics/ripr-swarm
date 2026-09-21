@@ -16,9 +16,15 @@ use reports::*;
 use rerun::*;
 use swarm::*;
 
+use crate::app::annotations::ANNOTATIONS_HELP;
+use crate::app::impacted_evidence::IMPACTED_EVIDENCE_HELP;
+use crate::app::pr_evidence::PR_EVIDENCE_HELP;
+use crate::app::pr_summary::PR_SUMMARY_HELP;
+use crate::app::ripr_plus::PLUS_HELP;
 use crate::cli::commands::{
     CACHE_CLEAR_HELP, CACHE_STATUS_HELP, RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP,
 };
+use crate::output::first_pr::FIRST_PR_HELP;
 
 /// The command paths that resolve to a flag-documenting help body.
 ///
@@ -40,6 +46,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "agent status",
     "agent verify",
     "agent verify-execute",
+    "annotations",
     "assistant-loop health",
     "assistant-loop proof",
     "baseline create",
@@ -57,12 +64,15 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "evidence-health",
     "explain",
     "first-action",
+    "first-pr",
     "gate",
+    "impacted-evidence",
     "init",
     "lsp",
     "mcp",
     "outcome",
     "pilot",
+    "plus",
     "policy history",
     "policy operations",
     "policy preview-promote",
@@ -71,8 +81,10 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "policy suppression-health",
     "policy waiver-aging",
     "pr-comments plan",
+    "pr-evidence",
     "pr-ledger record",
     "pr-review front-panel",
+    "pr-summary",
     "receipt check",
     "receipt write",
     "reports gap-ledger",
@@ -103,6 +115,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "agent status" => AGENT_STATUS_HELP,
         "agent verify" => AGENT_VERIFY_HELP,
         "agent verify-execute" => AGENT_VERIFY_EXECUTE_HELP,
+        "annotations" => ANNOTATIONS_HELP,
         "assistant-loop health" | "assistant-loop proof" => ASSISTANT_LOOP_HELP,
         "baseline create" | "baseline diff" | "baseline update" => BASELINE_HELP,
         "cache clear" => CACHE_CLEAR_HELP,
@@ -117,12 +130,15 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "evidence-health" => EVIDENCE_HEALTH_HELP,
         "explain" => EXPLAIN_HELP,
         "first-action" => FIRST_ACTION_HELP,
+        "first-pr" => FIRST_PR_HELP,
         "gate" => GATE_HELP,
+        "impacted-evidence" => IMPACTED_EVIDENCE_HELP,
         "init" => INIT_HELP,
         "lsp" => LSP_HELP,
         "mcp" => crate::mcp::MCP_HELP,
         "outcome" => OUTCOME_HELP,
         "pilot" => PILOT_HELP,
+        "plus" => PLUS_HELP,
         "policy history"
         | "policy operations"
         | "policy preview-promote"
@@ -131,8 +147,10 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         | "policy suppression-health"
         | "policy waiver-aging" => POLICY_HELP,
         "pr-comments plan" => PR_COMMENTS_HELP,
+        "pr-evidence" => PR_EVIDENCE_HELP,
         "pr-ledger record" => PR_LEDGER_HELP,
         "pr-review front-panel" => PR_REVIEW_HELP,
+        "pr-summary" => PR_SUMMARY_HELP,
         "receipt check" => RECEIPT_CHECK_HELP,
         "receipt write" => RECEIPT_WRITE_HELP,
         "reports gap-ledger"
@@ -320,22 +338,23 @@ mod tests {
     use super::{
         AGENT_BRIEF_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
         AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP, AGENT_VERIFY_HELP,
-        ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP, CACHE_STATUS_HELP, CALIBRATE_HELP,
-        CHECK_HELP, CONFIG_HELP, CONTEXT_HELP, COVERAGE_GRIP_HELP, DIFF_HELP, DOCTOR_HELP,
-        EVIDENCE_HEALTH_HELP, EXPLAIN_HELP, FIRST_ACTION_HELP, GATE_HELP, HELP, HELP_ALL,
-        INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP, POLICY_HELP, PR_COMMENTS_HELP,
-        PR_LEDGER_HELP, PR_REVIEW_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP, SWARM_HELP,
-        SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help, print_agent_help,
-        print_agent_packet_help, print_agent_receipt_help, print_agent_repair_help,
-        print_agent_review_summary_help, print_agent_start_help, print_agent_status_help,
-        print_agent_verify_help, print_assistant_loop_help, print_baseline_help,
-        print_calibrate_help, print_check_help, print_config_help, print_context_help,
-        print_coverage_grip_help, print_diff_help, print_doctor_help, print_evidence_health_help,
-        print_explain_help, print_first_action_help, print_gate_help, print_help, print_help_all,
-        print_init_help, print_lsp_help, print_outcome_help, print_pilot_help, print_policy_help,
-        print_pr_comments_help, print_pr_ledger_help, print_pr_review_help, print_reports_help,
-        print_rerun_help, print_review_comments_help, print_swarm_help, print_swarm_ingest_help,
-        print_swarm_queue_help, print_zero_help,
+        ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP, CACHE_STATUS_HELP,
+        CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP, COVERAGE_GRIP_HELP, DIFF_HELP,
+        DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP,
+        GATE_HELP, HELP, HELP_ALL, IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP,
+        PILOT_HELP, PLUS_HELP, POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP,
+        PR_REVIEW_HELP, PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP,
+        SWARM_HELP, SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
+        print_agent_help, print_agent_packet_help, print_agent_receipt_help,
+        print_agent_repair_help, print_agent_review_summary_help, print_agent_start_help,
+        print_agent_status_help, print_agent_verify_help, print_assistant_loop_help,
+        print_baseline_help, print_calibrate_help, print_check_help, print_config_help,
+        print_context_help, print_coverage_grip_help, print_diff_help, print_doctor_help,
+        print_evidence_health_help, print_explain_help, print_first_action_help, print_gate_help,
+        print_help, print_help_all, print_init_help, print_lsp_help, print_outcome_help,
+        print_pilot_help, print_policy_help, print_pr_comments_help, print_pr_ledger_help,
+        print_pr_review_help, print_reports_help, print_rerun_help, print_review_comments_help,
+        print_swarm_help, print_swarm_ingest_help, print_swarm_queue_help, print_zero_help,
     };
     use crate::cli::command::KNOWN_COMMANDS;
 
@@ -676,6 +695,34 @@ mod tests {
                 .any(|line| line.trim_start().starts_with("--force")),
             "cache clear help must document --force on an option-list line: {CACHE_CLEAR_HELP}"
         );
+        // Pin: these six public commands live beside their parsers and are
+        // imported here so unknown-flag suggestions mine the same body --help
+        // prints. Drop a constant from this import list and this test fails
+        // to compile.
+        assert_eq!(super::help_text_for("first-pr"), Some(FIRST_PR_HELP));
+        assert_eq!(super::help_text_for("pr-summary"), Some(PR_SUMMARY_HELP));
+        assert_eq!(super::help_text_for("annotations"), Some(ANNOTATIONS_HELP));
+        assert_eq!(super::help_text_for("pr-evidence"), Some(PR_EVIDENCE_HELP));
+        assert_eq!(
+            super::help_text_for("impacted-evidence"),
+            Some(IMPACTED_EVIDENCE_HELP)
+        );
+        assert_eq!(super::help_text_for("plus"), Some(PLUS_HELP));
+        for (name, help_text, flag) in [
+            ("first-pr", FIRST_PR_HELP, "--gap-ledger"),
+            ("pr-summary", PR_SUMMARY_HELP, "--baseline"),
+            ("annotations", ANNOTATIONS_HELP, "--comments"),
+            ("pr-evidence", PR_EVIDENCE_HELP, "--head"),
+            ("impacted-evidence", IMPACTED_EVIDENCE_HELP, "--pr-evidence"),
+            ("plus", PLUS_HELP, "--repo-exposure-summary"),
+        ] {
+            assert!(
+                help_text
+                    .lines()
+                    .any(|line| line.trim_start().starts_with(flag)),
+                "{name} help must document {flag} on an option-list line: {help_text}"
+            );
+        }
     }
 
     #[test]

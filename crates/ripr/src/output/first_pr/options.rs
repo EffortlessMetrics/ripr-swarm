@@ -1,3 +1,4 @@
+use crate::cli::unknown_argument;
 use std::path::PathBuf;
 
 use super::{
@@ -102,7 +103,7 @@ pub(super) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
                 options.out_dir = non_empty_arg(args, i, "--out-dir")?.to_string();
             }
             "--check" => options.check = true,
-            other => return Err(format!("unknown first-pr argument {other:?}")),
+            other => return Err(unknown_argument("first-pr", other)),
         }
         i += 1;
     }
@@ -120,9 +121,37 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 pub(super) fn print_help() {
-    println!("{}", first_pr_help_text());
+    println!("{FIRST_PR_HELP}");
 }
 
-pub(super) fn first_pr_help_text() -> &'static str {
-    "Create the start-here packet for one PR from existing RIPR artifacts.\n\nusage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check]\n\nStart-here language:\n  - start here: open target/ripr/reports/start-here.md first when it exists\n  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action\n  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work\n  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof\n  - preview-limited evidence: syntax-first and advisory, with static limits before repair language\n  - receipt lifecycle: receipt_missing, receipt_found, receipt_stale, receipt_gap_mismatch, receipt_movement_improved, receipt_movement_unchanged, receipt_not_applicable\n  - verify command / receipt command / receipt path: static movement proof rail"
-}
+/// Help body for `ripr first-pr` / `ripr start-here`. Also the flag source for
+/// unknown-argument suggestions, so accepted flags have to appear as
+/// option-list lines, not only inside the usage brackets.
+pub(crate) const FIRST_PR_HELP: &str = "\
+Create the start-here packet for one PR from existing RIPR artifacts.
+
+usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check]
+
+Options:
+  --root <path>              Workspace root. Defaults to .
+  --base <rev>               PR base revision. Defaults to origin/main.
+  --head <rev>               PR head revision. Defaults to HEAD.
+  --check-output <path>      Optional check JSON to consume instead of running analysis.
+  --gap-ledger <path>        Gap-decision ledger JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
+  --first-action <path>      First-useful-action JSON. Defaults to target/ripr/reports/first-useful-action.json.
+  --review-comments <path>   Review-comments JSON. Defaults to target/ripr/review/comments.json.
+  --agent-packet <path>      Agent packet JSON. Defaults to target/ripr/workflow/agent-packet.json.
+  --gate-decision <path>     Gate-decision JSON. Defaults to target/ripr/reports/gate-decision.json.
+  --receipts-dir <path>      Receipt directory. Defaults to target/ripr/receipts.
+  --out-dir <path>           Output directory. Defaults to target/ripr/reports.
+  --check                    Verify the existing start-here packet is up to date.
+
+Start-here language:
+  - start here: open target/ripr/reports/start-here.md first when it exists
+  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action
+  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work
+  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof
+  - preview-limited evidence: syntax-first and advisory, with static limits before repair language
+  - receipt lifecycle: receipt_missing, receipt_found, receipt_stale, receipt_gap_mismatch, receipt_movement_improved, receipt_movement_unchanged, receipt_not_applicable
+  - verify command / receipt command / receipt path: static movement proof rail
+";

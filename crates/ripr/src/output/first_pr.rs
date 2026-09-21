@@ -39,8 +39,7 @@ mod preflight;
 mod rendering;
 mod validation;
 
-#[cfg(test)]
-use options::first_pr_help_text;
+pub(crate) use options::FIRST_PR_HELP;
 use options::{FirstPrOptions, parse_options, print_help};
 use preflight::{FirstPrPreflight, first_pr_preflight};
 #[cfg(test)]
@@ -1784,12 +1783,22 @@ mod tests {
             parse_options(&["--gap-ledger".to_string(), "".to_string()]),
             Err("first-pr --gap-ledger requires a non-empty value".to_string())
         );
+        let unknown = parse_options(&["--gap-ledgr".to_string()])
+            .expect_err("unknown first-pr flag must fail closed");
+        assert!(
+            unknown.contains("Did you mean `--gap-ledger`?"),
+            "first-pr typo must suggest the parser flag from its help body: {unknown}"
+        );
+        assert!(
+            unknown.contains("Run `ripr first-pr --help`."),
+            "first-pr unknown flag must point at scoped help: {unknown}"
+        );
         Ok(())
     }
 
     #[test]
     fn first_pr_help_pins_start_here_language() {
-        let help = first_pr_help_text();
+        let help = FIRST_PR_HELP;
         assert!(help.contains("ripr first-pr|start-here"));
         assert!(help.contains("--check-output <path>"));
         assert!(help.contains("Start-here language:"));

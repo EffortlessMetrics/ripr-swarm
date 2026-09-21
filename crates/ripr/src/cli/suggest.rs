@@ -19,7 +19,7 @@ use crate::cli::help;
 /// (`"check"`, `"agent brief"`, `"policy readiness"`), which is also what the
 /// help pointer names. Every `ripr` command path accepts `--help` directly, so
 /// the pointer is uniform.
-pub(in crate::cli) fn unknown_argument(command: &str, arg: &str) -> String {
+pub(crate) fn unknown_argument(command: &str, arg: &str) -> String {
     match closest_flag(command, arg) {
         Some(suggestion) => format!(
             "unknown {command} argument {arg:?}. Did you mean `{suggestion}`? Run `ripr {command} --help`."
@@ -382,6 +382,66 @@ mod tests {
         assert!(
             !clear_json.contains("Did you mean"),
             "cache clear must not suggest a cache-status flag: {clear_json}"
+        );
+    }
+
+    /// The six public commands in #3812 already rejected unknown flags, but
+    /// they used command-local bare error strings and had no `help_text_for`
+    /// body, so a typo never produced a scoped suggestion.
+    #[test]
+    fn remaining_public_flag_errors_suggest_their_own_documented_flags() {
+        for (command, typo, expected) in [
+            ("first-pr", "--gap-ledgr", "--gap-ledger"),
+            ("first-pr", "--out-di", "--out-dir"),
+            ("pr-summary", "--baselin", "--baseline"),
+            ("annotations", "--commnts", "--comments"),
+            ("pr-evidence", "--hea", "--head"),
+            ("impacted-evidence", "--pr-evidenc", "--pr-evidence"),
+            ("plus", "--gap-ledgr", "--gap-ledger"),
+            ("plus", "--repo-exposure-sumary", "--repo-exposure-summary"),
+        ] {
+            assert_eq!(
+                unknown_argument(command, typo),
+                format!(
+                    "unknown {command} argument {typo:?}. \
+                     Did you mean `{expected}`? Run `ripr {command} --help`."
+                ),
+            );
+        }
+        let first_pr_json = unknown_argument("first-pr", "--json");
+        assert!(
+            !first_pr_json.contains("Did you mean"),
+            "first-pr must not suggest a cache-status flag: {first_pr_json}"
+        );
+        let summary_comments = unknown_argument("pr-summary", "--comments");
+        assert!(
+            !summary_comments.contains("Did you mean"),
+            "pr-summary must not suggest an annotations flag: {summary_comments}"
+        );
+        let annotations_baseline = unknown_argument("annotations", "--baseline");
+        assert!(
+            !annotations_baseline.contains("Did you mean"),
+            "annotations must not suggest a pr-summary flag: {annotations_baseline}"
+        );
+        let evidence_comments = unknown_argument("pr-evidence", "--comments");
+        assert!(
+            !evidence_comments.contains("Did you mean"),
+            "pr-evidence must not suggest an annotations flag: {evidence_comments}"
+        );
+        let impacted_baseline = unknown_argument("impacted-evidence", "--baseline");
+        assert!(
+            !impacted_baseline.contains("Did you mean"),
+            "impacted-evidence must not suggest a pr-summary flag: {impacted_baseline}"
+        );
+        let plus_baseline = unknown_argument("plus", "--baseline");
+        assert!(
+            !plus_baseline.contains("Did you mean"),
+            "plus must not suggest a pr-summary flag: {plus_baseline}"
+        );
+        let status_gap = unknown_argument("cache status", "--gap-ledger");
+        assert!(
+            !status_gap.contains("Did you mean"),
+            "cache status must not inherit first-pr or plus flags: {status_gap}"
         );
     }
 

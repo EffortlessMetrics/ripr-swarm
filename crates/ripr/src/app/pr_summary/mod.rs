@@ -23,6 +23,8 @@ use render::{SummaryRenderInput, render_pr_evidence_summary};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::cli::unknown_argument;
+
 const PR_EVIDENCE_JSON: &str = "target/ripr/pr/repo-exposure.json";
 const PR_EVIDENCE_MD: &str = "target/ripr/pr/repo-exposure.md";
 const REVIEW_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
@@ -133,24 +135,30 @@ fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
                     .ok_or_else(|| "--baseline requires a path argument".to_string())?;
                 baseline = Some(path.clone());
             }
-            other => return Err(format!("unknown pr-summary argument `{other}`")),
+            other => return Err(unknown_argument("pr-summary", other)),
         }
     }
     Ok(SummaryOptions { check, baseline })
 }
 
 fn print_help() {
-    println!("usage: ripr pr-summary [--check] [--baseline <before.json>]");
-    println!();
-    println!("Options:");
-    println!("  --check              Verify the existing summary is up to date.");
-    println!("  --baseline <path>    Provide a before-snapshot JSON for gap delta counts.");
-    println!();
-    println!("Outputs:");
-    println!("  {PR_SUMMARY_MD}  — legacy PR evidence summary (Markdown)");
-    println!("  {PR_EVIDENCE_SUMMARY_JSON}  — v1 evidence summary (JSON)");
-    println!("  {PR_EVIDENCE_SUMMARY_MD}  — v1 evidence summary (Markdown panel)");
+    println!("{PR_SUMMARY_HELP}");
 }
+
+/// Help body for `ripr pr-summary`. Also the flag source for unknown-argument
+/// suggestions; keep accepted flags on option-list lines.
+pub(crate) const PR_SUMMARY_HELP: &str = "\
+usage: ripr pr-summary [--check] [--baseline <before.json>]
+
+Options:
+  --check              Verify the existing summary is up to date.
+  --baseline <path>    Provide a before-snapshot JSON for gap delta counts.
+
+Outputs:
+  target/ripr/pr/summary.md  — legacy PR evidence summary (Markdown)
+  target/ripr/reports/pr-evidence-summary.json  — v1 evidence summary (JSON)
+  target/ripr/reports/pr-evidence-summary.md  — v1 evidence summary (Markdown panel)
+";
 
 fn check_summary(path: &Path, expected: &str) -> Result<(), String> {
     let actual = fs::read_to_string(path)
@@ -213,15 +221,16 @@ mod tests {
 
     #[test]
     fn parse_rejects_unknown_arg() -> Result<(), String> {
-        match parse_options(&["--bogus".to_string()]) {
-            Err(msg) => {
-                if msg.contains("--bogus") {
-                    Ok(())
-                } else {
-                    Err(format!("error must name the arg: {msg}"))
-                }
+        match parse_options(&["--baselin".to_string()]) {
+            Err(msg)
+                if msg.contains("Did you mean `--baseline`?")
+                    && msg.contains("Run `ripr pr-summary --help`.") =>
+            {
+                Ok(())
             }
-            Ok(_) => Err("unknown arg must be rejected".to_string()),
+            other => Err(format!(
+                "expected scoped pr-summary suggestion, got {other:?}"
+            )),
         }
     }
 }
