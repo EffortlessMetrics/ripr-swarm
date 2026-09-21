@@ -3,6 +3,11 @@
 This repository is the product repo for `ripr`: a static mutation-exposure
 analyzer for Rust/Cargo workspaces.
 
+## Source Precedence
+
+This file outranks session summaries, prior-turn claims, and remembered
+constraints. Re-verify any inherited rule against this file before obeying it.
+
 ## Product Contract
 
 `ripr` answers this question:
@@ -446,6 +451,9 @@ explicit in PRs and planning docs.
 Do not pause merely to commit, push, open a PR, update a PR, or merge a clean
 PR.
 
+Merge method is squash. Never restack or rebase a PR to chase `main`;
+resolve only conflicts GitHub actually reports (see `finish-pr`).
+
 For scoped implementation, docs, tests, and refactors, use this default flow:
 
 ```text
@@ -581,9 +589,11 @@ Preserve the user's original goal, constraints, non-goals, assumptions, and
 acceptance predicates. The durable issue, specification, plan, policy, receipt,
 and closeout graph is the repository's source of truth for long-running work.
 
-Use the seven operational procedures under `.agents/skills/**` as the
-entrypoints for any agent that reads this file (Codex, ZCode, and any future
-provider that consumes `AGENTS.md`). Select the narrowest procedure for the
+Use the ten skills under `.agents/skills/**`: the seven operational
+procedures as the entrypoints for any agent that reads this file (Codex,
+ZCode, and any future provider that consumes `AGENTS.md`), plus the three
+host-environment contracts (`on-windows`, `on-linux`, `on-macos`). Load the
+skill matching the host before running any command. Select the narrowest procedure for the
 current claim, and keep one current branch/worktree/PR per coherent claim.
 Commit the coherent candidate, run the pre-publication `review-pr` pass, and
 let a `REVIEW_INCOMPLETE` candidate enter `finish-pr` only for publication.
@@ -604,7 +614,7 @@ pause.
 
 ZCode continuously loads root `AGENTS.md` as its only project instruction file.
 Nested `AGENTS.md`, `@import`, `@include`, and `CLAUDE.md` are not continuously
-merged by ZCode, so all routing must live in this file. The seven procedures
+merged by ZCode, so all routing must live in this file. The ten skills
 under `.agents/skills/**` are the source skill set; ZCode imports them as
 `$skills` rather than through a third prose tree.
 

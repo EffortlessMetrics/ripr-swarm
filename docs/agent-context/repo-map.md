@@ -17,6 +17,9 @@ human-facing layering doctrine lives in
 - GitHub Actions: CI, release, security checks, and workflow policy.
 - `policy/workflow_allowlist.txt`: required workflow budget policy.
 - `docs/agent-context/droid-rollout.md`: Factory Droid rollout checklist.
+- Host environment: load the matching skill before running commands —
+  `.agents/skills/on-windows/SKILL.md`, `on-linux`, or `on-macos`.
+  Skills hold zero cross-system instructions.
 
 ## Important policy files
 

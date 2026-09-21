@@ -2,6 +2,10 @@
 
 Agents should use the smallest validation set that proves the change.
 
+Local proof is the fast targeted check of the changed behavior (one command,
+one test scope). Full gates belong to PR CI: push early and let CI qualify
+the candidate. Do not front-load the whole gate battery onto the laptop.
+
 ## Rust
 
 ```bash

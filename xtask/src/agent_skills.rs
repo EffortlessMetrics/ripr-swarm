@@ -4,11 +4,14 @@ use std::path::Path;
 
 use serde_json::json;
 
-const SKILLS: [&str; 7] = [
+const SKILLS: [&str; 10] = [
     "build-candidate",
     "deliver-goal",
     "deliver-pr",
     "finish-pr",
+    "on-linux",
+    "on-macos",
+    "on-windows",
     "prepare-issue",
     "prepare-proof",
     "review-pr",
