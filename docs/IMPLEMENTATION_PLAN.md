@@ -1233,7 +1233,7 @@ runs the review-ready `check-pr` lane, the evidence gates (`fixtures`,
 `goldens check`, `test-oracle-report`, `dogfood`, and `metrics`), then the
 package listing and publish dry-run. See `AGENTS.md` local validation.
 
-Do not run the command blocks below as a sequential required list. They are
+Do not run the Rust command block below as a sequential required list. It is
 the inventory for targeted reruns when a specific gate failed. Claiming
 CI-equivalent completeness still requires `ci-full` or the routed `check-*`
 list; `precommit` does not substitute for those.
@@ -1250,7 +1250,8 @@ cargo package -p ripr --list
 cargo publish -p ripr --dry-run
 ```
 
-Extension targeted-rerun inventory:
+Extension PRs: neither `precommit` nor `ci-full` runs the VS Code compile
+or package checks. For changes under `editors/vscode`, run:
 
 ```bash
 cd editors/vscode
