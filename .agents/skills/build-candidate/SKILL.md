@@ -12,9 +12,27 @@ One candidate implements the selected claim, carries discriminating proof, respe
 - `review_route:build_candidate_to_review_pr`
 - `review_route:repair_returns_to_same_candidate`
 
+# Candidate operating contract markers
+
+- `candidate_contract:host_shell_detection`
+- `candidate_contract:focused_local_proof`
+- `candidate_contract:one_writer_worktree`
+- `candidate_contract:publish_for_remote_evidence`
+
+# Environment law
+
+Before running shell commands, identify the current host, shell, repository root, worktree, branch, and toolchain. Use that shell's grammar:
+
+- PowerShell on Windows; do not assume `touch`, `sed`, `awk`, POSIX pipelines, or Bash exit variables exist.
+- POSIX shell on Linux/macOS; do not paste PowerShell syntax by habit.
+
+Cargo writes normal progress to stderr. Stderr output alone is not failure. Use the real process exit status and terminal test/build summary. If a wrapper obscures the exit status, rerun the command directly or capture the native status explicitly before classifying the result.
+
+Run one broad Cargo command at a time in a candidate worktree and avoid stacking broad builds on the same constrained host. Do not kill or reinterpret unrelated processes. The parent goal may advance an independent claim in another worktree or worker while this candidate's command runs; the candidate writer remains the only mutator here.
+
 # Procedure
 
-1. Confirm the issue, claim boundary, current candidate branch/worktree, exact base SHA, semantic owner, and governing sources.
+1. Confirm the issue, claim boundary, current candidate branch/worktree, exact base SHA, semantic owner, governing sources, host, and shell.
 2. Establish the inherited baseline floor before the first mutation:
    - run `cargo xtask worktree doctor` and read its report;
    - require `git merge-base origin/main HEAD` to equal the recorded base SHA before `check-fast` may support base attribution. If it does not, reconcile history and record the resulting accepted base, or run base-aware gates directly; do not cite `check-fast` as base-authoritative;
@@ -24,52 +42,54 @@ One candidate implements the selected claim, carries discriminating proof, respe
    - when resuming an already-mutated candidate, run the same diagnostics immediately and reproduce any apparent inherited failure in a clean isolated worktree at the exact base before attributing it;
    - run full `cargo xtask precommit` in that isolated exact-base worktree only when the selected claim is a baseline repair or a later candidate failure needs an authoritative comparison;
    - route a real base failure separately unless the selected claim is the baseline repair. Do not absorb unrelated drift into this candidate.
-3. Read the owning production path, nearby tests, fixtures, and the strongest known-wrong or boundary case before editing production code.
-4. Put a discriminating control ahead of the implementation:
+3. Re-read the controlling issue, current source, open PRs, and recently merged PRs for the same claim before editing. A local plan or prior summary does not prove the work remains absent.
+4. Read the owning production path, nearby tests, fixtures, and the strongest known-wrong or boundary case before editing production code.
+5. Put a discriminating control ahead of the implementation:
    - add or strengthen the smallest test, fixture, or artifact assertion that should reject the missing behavior;
    - observe it fail for the intended reason against the pre-repair state;
    - for an existing implementation, bind the failure to its parent/pre-repair head or use a reversible negative mutation;
    - if no safe failing observation is available, report that proof dimension as `NOT_ESTABLISHED` rather than inventing a red/green sequence.
-5. Make the smallest coherent implementation that satisfies the claim. Do not create a second validator, owner, or route when an existing authority should be extended.
-6. Rerun the focused control immediately after each coherent edit. Treat failures as information about source, proof, instrument, or environment rather than retrying blindly, and stop broadening when the control no longer discriminates the selected claim.
-7. Improve the test suite:
+6. Make the smallest coherent implementation that satisfies the claim. Do not create a second validator, owner, or route when an existing authority should be extended.
+7. Rerun the focused control immediately after each coherent edit. Treat failures as information about source, proof, instrument, or environment rather than retrying blindly, and stop broadening when the control no longer discriminates the selected claim.
+8. Improve the test suite:
    - add the discriminating negative or alternate case;
    - validate fixture setup and nonempty subject;
    - add currentness or identity checks where relevant;
    - preserve fail-closed unknown and limitation states;
    - prove rendered/public behavior when source-text coincidence could pass without the real route changing.
-8. Simplify the candidate:
+9. Simplify the candidate:
    - remove temporary scaffolding and dead branches;
    - collapse duplicated logic into the owning layer;
    - remove public placeholders and panic/todo paths;
    - keep the PR's acceptance and rollback boundary coherent.
-9. Challenge the candidate with fresh criteria:
-   - authority, provenance, and architecture;
-   - correctness, failure paths, rollback, transaction boundaries, replay, and concurrency;
-   - test stimulus and oracle grip;
-   - runtime/schema/docs/help/output parity;
-   - platform, packaging, process, security, and user-facing claim honesty where relevant.
-10. Repair every accepted finding through the same candidate.
-11. Commit the coherent candidate so broad verification and review bind to one exact Git object. An uncommitted worktree cannot receive an exact-head disposition.
-12. Run `cargo xtask check-fast` again on that exact committed head as the first broad candidate gate, then run `cargo xtask precommit`, the focused tests, and the additional gates required by the changed surface. Before citing `check-fast`, confirm that the accepted merge-base still equals the recorded base SHA, then compare the independently resolved committed path set with `check-fast-selector.md` and the ran/skipped categories in `check-fast.md`; a base mismatch, unexpected zero, omitted path category, or selector failure is `INSTRUMENT_FAILURE`. Reconcile history or run the affected base-aware gates directly, and do not convert that partial route to pass. Read the emitted reports, not only the exit code. If repair changes the head, recommit and rerun the affected dimensions before review.
-13. Hand the exact committed head to `review-pr`. Candidate challenge inside the builder is not the final PR review, and green CI or zero review threads cannot replace that pass.
-14. Before a PR exists, `review-pr` may return `REVIEW_INCOMPLETE` because remote checks, artifacts, and review evidence are unavailable. Route that exact candidate to `finish-pr` for publication, then re-enter `review-pr` on the published PR head before merge convergence.
-15. If `review-pr` returns `REPAIR_REQUIRED`, repair the same candidate, recommit, and refresh only the affected review/proof dimensions before reviewing again.
+10. Challenge the candidate with fresh criteria:
+    - authority, provenance, and architecture;
+    - correctness, failure paths, rollback, transaction boundaries, replay, and concurrency;
+    - test stimulus and oracle grip;
+    - runtime/schema/docs/help/output parity;
+    - platform, packaging, process, security, and user-facing claim honesty where relevant.
+11. Repair every accepted finding through the same candidate.
+12. Commit the coherent candidate without pausing for routine permission so broad verification and review bind to one exact Git object. An uncommitted worktree cannot receive an exact-head disposition.
+13. Run `cargo xtask check-fast` again on that exact committed head as the first broad candidate gate, then run `cargo xtask precommit`, the focused tests, and the additional local gates required by the changed surface. Before citing `check-fast`, confirm that the accepted merge-base still equals the recorded base SHA, then compare the independently resolved committed path set with `check-fast-selector.md` and the ran/skipped categories in `check-fast.md`; a base mismatch, unexpected zero, omitted path category, or selector failure is `INSTRUMENT_FAILURE`. Reconcile history or run the affected base-aware gates directly, and do not convert that partial route to pass. Read the emitted reports, not only the exit code. If repair changes the head, recommit and rerun the affected dimensions before review.
+14. Keep local proof proportional. Focused tests, the narrow compile, `check-fast`, and `precommit` support publication. Hosted PR CI owns the full required merge-gate matrix unless the selected claim or a named failure specifically requires a broader local reproduction. Do not serially duplicate every hosted gate before pushing a coherent candidate.
+15. Hand the exact committed head to `review-pr`. Candidate challenge inside the builder is not the final PR review, and green CI or zero review threads cannot replace that pass.
+16. Before a PR exists, `review-pr` may return `REVIEW_INCOMPLETE` because remote checks, artifacts, and review evidence are unavailable. Route that exact candidate to `finish-pr` for publication without another permission pause, then re-enter `review-pr` on the published PR head before merge convergence.
+17. If `review-pr` returns `REPAIR_REQUIRED`, repair the same candidate, recommit, and refresh only the affected review/proof dimensions before reviewing again.
 
 # Candidate law
 
 - One claim normally has one current candidate.
-- One writer mutates the branch/worktree at a time.
+- One writer mutates the branch/worktree at a time. A delegated writer receives that candidate-owned worktree; the root and sibling agents do not edit it concurrently.
 - Focused agents may research or review read-only.
 - Inherited failures are not candidate failures until they reproduce against the recorded base.
 - A test added after the implementation is not discriminating evidence by itself; bind it to an observed known-wrong state.
 - Do not create rival candidates merely to produce parallel activity.
 - Do not scan sibling lanes for file overlap or reserve surfaces.
-- If an earlier PR creates a real conflict, this candidate owns its focused reconciliation and affected re-proof.
+- If an earlier PR creates a real conflict, first check whether it already delivered the same claim; otherwise this candidate owns its focused reconciliation and affected re-proof.
 
 # Decision law
 
-Choose and document reasonable reversible decisions. Escalate only when materially different viable outcomes remain after source research and safe implementation experiments.
+Choose and document reasonable reversible decisions. Escalate only when materially different viable outcomes remain after source research and safe implementation experiments. Routine commit, push, PR, review-repair, and protected merge transitions inside the selected claim do not require escalation.
 
 # Valid exits
 
