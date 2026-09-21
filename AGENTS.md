@@ -166,6 +166,7 @@ cargo xtask check-dependencies
 cargo xtask check-process-policy
 cargo xtask check-network-policy
 cargo xtask check-command-catalog
+cargo xtask check-agent-skills
 ```
 
 `cargo xtask shape` is allowed to make safe local edits: run `cargo fmt`, sort

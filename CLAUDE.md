@@ -289,7 +289,7 @@ infrastructure state rather than source failure.
 Focused and fixed-candidate commands include, as appropriate:
 
 ```bash
-cargo fmt --all -- --check
+cargo fmt --check
 cargo xtask precommit
 cargo xtask check-pr
 cargo xtask fixtures
@@ -315,6 +315,7 @@ cargo xtask check-dependencies
 cargo xtask check-process-policy
 cargo xtask check-network-policy
 cargo xtask check-command-catalog
+cargo xtask check-agent-skills
 ```
 
 Do not claim a gate passed when it did not run, timed out, or consumed zero
