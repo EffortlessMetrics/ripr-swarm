@@ -392,6 +392,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr first-pr`, `pr-summary`, `annotations`, `pr-evidence`,
+  `impacted-evidence`, and `plus` unknown-flag errors now go through the
+  shared help/suggestion authority. A near-miss typo suggests only a flag
+  that command's `--help` documents; a flag owned by a sibling command still
+  fails closed with no suggestion
+  ([#3812](https://github.com/EffortlessMetrics/ripr-swarm/issues/3812)).
+
 - `ripr cache status` and `ripr cache clear` unknown-flag errors now suggest
   the accepted flags from the same help bodies those commands print
   (`--json`, `--dry-run`, `--force`). Typos no longer fall through to the

@@ -11,6 +11,7 @@
 //! This avoids recompilation and keeps the analysis in-process.
 
 use crate::app::{CheckInput, Mode, OutputFormat, check_workspace, render_check};
+use crate::cli::unknown_argument;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::fs;
@@ -84,7 +85,7 @@ fn parse_options(args: &[String]) -> Result<PrEvidenceOptions, String> {
                 options.head = non_empty_arg(args, i, "--head")?.to_string();
             }
             "--check" => options.check = true,
-            other => return Err(format!("unknown pr-evidence argument `{other}`")),
+            other => return Err(unknown_argument("pr-evidence", other)),
         }
         i += 1;
     }
@@ -102,22 +103,28 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 fn print_help() {
-    println!("usage: ripr pr-evidence [--base <rev>] [--head <rev>] [--root <path>] [--check]");
-    println!();
-    println!("Options:");
-    println!("  --base <rev>   PR base revision. Defaults to {DEFAULT_BASE}.");
-    println!("  --head <rev>   PR head revision. Defaults to {DEFAULT_HEAD}.");
-    println!("  --root <path>  Workspace root label. Defaults to current directory.");
-    println!("  --check        Verify the existing PR evidence packet is contract-valid.");
-    println!();
-    println!("Outputs:");
-    println!("  {PR_EVIDENCE_JSON}  — PR evidence JSON packet");
-    println!("  {PR_EVIDENCE_MD}   — PR evidence Markdown panel");
-    println!("  {PR_DIFF}          — analyzed PR diff");
-    println!();
-    println!("This packet is diff-scoped and advisory. It does not post review");
-    println!("comments, edit source, or change gate semantics.");
+    println!("{PR_EVIDENCE_HELP}");
 }
+
+/// Help body for `ripr pr-evidence`. Also the flag source for unknown-argument
+/// suggestions; keep accepted flags on option-list lines.
+pub(crate) const PR_EVIDENCE_HELP: &str = "\
+usage: ripr pr-evidence [--base <rev>] [--head <rev>] [--root <path>] [--check]
+
+Options:
+  --base <rev>   PR base revision. Defaults to origin/main.
+  --head <rev>   PR head revision. Defaults to HEAD.
+  --root <path>  Workspace root label. Defaults to current directory.
+  --check        Verify the existing PR evidence packet is contract-valid.
+
+Outputs:
+  target/ripr/pr/repo-exposure.json  — PR evidence JSON packet
+  target/ripr/pr/repo-exposure.md   — PR evidence Markdown panel
+  target/ripr/pr/pr.diff          — analyzed PR diff
+
+This packet is diff-scoped and advisory. It does not post review
+comments, edit source, or change gate semantics.
+";
 
 fn write_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), String> {
     write_pr_evidence_with_runner(repo, options, run_ripr_check)

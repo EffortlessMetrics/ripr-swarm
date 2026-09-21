@@ -27,6 +27,7 @@
 //!
 //! Output: `target/ripr/reports/ripr-plus.{json,md}`.
 
+use crate::cli::unknown_argument;
 use crate::config::RiprConfig;
 use crate::output;
 use serde_json::{Value, json};
@@ -82,7 +83,7 @@ fn parse_options(args: &[String]) -> Result<RiprPlusOptions, String> {
                     "--repo-exposure-summary",
                 )?));
             }
-            other => return Err(format!("unknown plus argument `{other}`")),
+            other => return Err(unknown_argument("plus", other)),
         }
         index += 1;
     }
@@ -115,26 +116,28 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 fn print_help() {
-    println!("usage: ripr plus --repo-exposure-summary <path> | --gap-ledger <path> [--check]");
-    println!();
-    println!("Options:");
-    println!(
-        "  --repo-exposure-summary <path>  Compose the receipt from a repo-exposure-summary-json artifact (pure composition)."
-    );
-    println!(
-        "  --gap-ledger <path>             Compose the receipt from a gap decision ledger (ledger-only composition; no repo scan)."
-    );
-    println!("  --check                         Accepted for xtask parity (no-op).");
-    println!();
-    println!("Outputs:");
-    println!("  {RIPR_PLUS_JSON}");
-    println!("  {RIPR_PLUS_MD}");
-    println!();
-    println!("This receipt is the repo-wide RIPR+ quality-gate input. It uses the");
-    println!("public canonical actionable gap basis and does not count raw seam");
-    println!("inventory as unresolved debt. The binary-first `ripr plus` is");
-    println!("artifact-composition-only: it does not run an in-process full-repo scan.");
+    println!("{PLUS_HELP}");
 }
+
+/// Help body for `ripr plus`. Also the flag source for unknown-argument
+/// suggestions; keep accepted flags on option-list lines.
+pub(crate) const PLUS_HELP: &str = "\
+usage: ripr plus --repo-exposure-summary <path> | --gap-ledger <path> [--check]
+
+Options:
+  --repo-exposure-summary <path>  Compose the receipt from a repo-exposure-summary-json artifact (pure composition).
+  --gap-ledger <path>             Compose the receipt from a gap decision ledger (ledger-only composition; no repo scan).
+  --check                         Accepted for xtask parity (no-op).
+
+Outputs:
+  target/ripr/reports/ripr-plus.json
+  target/ripr/reports/ripr-plus.md
+
+This receipt is the repo-wide RIPR+ quality-gate input. It uses the
+public canonical actionable gap basis and does not count raw seam
+inventory as unresolved debt. The binary-first `ripr plus` is
+artifact-composition-only: it does not run an in-process full-repo scan.
+";
 
 fn ripr_plus_receipt_from_options(options: &RiprPlusOptions, head: &str) -> Result<Value, String> {
     if let Some(summary_path) = options.repo_exposure_summary.as_deref() {

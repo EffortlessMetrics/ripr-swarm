@@ -11,6 +11,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::cli::unknown_argument;
+
 const DEFAULT_PR_EVIDENCE_JSON: &str = "target/ripr/pr/repo-exposure.json";
 const IMPACTED_JSON: &str = "target/xtask/impacted-evidence/latest.json";
 const IMPACTED_MD: &str = "target/xtask/impacted-evidence/latest.md";
@@ -72,7 +74,7 @@ fn parse_options(args: &[String]) -> Result<ImpactedEvidenceOptions, String> {
                     .extend(split_labels(non_empty_arg(args, i, "--labels")?));
             }
             "--check" => options.check = true,
-            other => return Err(format!("unknown impacted-evidence argument `{other}`")),
+            other => return Err(unknown_argument("impacted-evidence", other)),
         }
         i += 1;
     }
@@ -93,22 +95,24 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 fn print_help() {
-    println!(
-        "usage: ripr impacted-evidence [--pr-evidence <path>] [--label <label>] [--labels <csv>] [--check]"
-    );
-    println!();
-    println!("Options:");
-    println!(
-        "  --pr-evidence <path>  Path to repo-exposure.json (default: {DEFAULT_PR_EVIDENCE_JSON})"
-    );
-    println!("  --label <label>       Add a single PR label (repeatable)");
-    println!("  --labels <csv>        Add comma/newline/semicolon-separated PR labels");
-    println!("  --check               Verify outputs are up to date");
-    println!();
-    println!("Outputs:");
-    println!("  {IMPACTED_JSON}");
-    println!("  {IMPACTED_MD}");
+    println!("{IMPACTED_EVIDENCE_HELP}");
 }
+
+/// Help body for `ripr impacted-evidence`. Also the flag source for
+/// unknown-argument suggestions; keep accepted flags on option-list lines.
+pub(crate) const IMPACTED_EVIDENCE_HELP: &str = "\
+usage: ripr impacted-evidence [--pr-evidence <path>] [--label <label>] [--labels <csv>] [--check]
+
+Options:
+  --pr-evidence <path>  Path to repo-exposure.json (default: target/ripr/pr/repo-exposure.json)
+  --label <label>       Add a single PR label (repeatable)
+  --labels <csv>        Add comma/newline/semicolon-separated PR labels
+  --check               Verify outputs are up to date
+
+Outputs:
+  target/xtask/impacted-evidence/latest.json
+  target/xtask/impacted-evidence/latest.md
+";
 
 fn impacted_evidence_packet(repo: &Path, options: &ImpactedEvidenceOptions) -> Value {
     let input = load_pr_evidence(repo, &options.pr_evidence);

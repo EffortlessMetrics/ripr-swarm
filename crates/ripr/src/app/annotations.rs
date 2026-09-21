@@ -10,6 +10,8 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::cli::unknown_argument;
+
 const DEFAULT_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 const DEFAULT_ANNOTATIONS_TXT: &str = "target/ripr/review/annotations.txt";
 
@@ -60,7 +62,7 @@ fn parse_options(args: &[String]) -> Result<AnnotationOptions, String> {
                 options.out = non_empty_arg(args, i, "--out")?.to_string();
             }
             "--check" => options.check = true,
-            other => return Err(format!("unknown annotations argument `{other}`")),
+            other => return Err(unknown_argument("annotations", other)),
         }
         i += 1;
     }
@@ -78,13 +80,19 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 fn print_help() {
-    println!("usage: ripr annotations [--comments <path>] [--out <path>] [--check]");
-    println!();
-    println!("Options:");
-    println!("  --comments <path>  Path to comments.json (default: {DEFAULT_COMMENTS_JSON})");
-    println!("  --out <path>       Output annotations path (default: {DEFAULT_ANNOTATIONS_TXT})");
-    println!("  --check            Verify the existing annotations are up to date.");
+    println!("{ANNOTATIONS_HELP}");
 }
+
+/// Help body for `ripr annotations`. Also the flag source for unknown-argument
+/// suggestions; keep accepted flags on option-list lines.
+pub(crate) const ANNOTATIONS_HELP: &str = "\
+usage: ripr annotations [--comments <path>] [--out <path>] [--check]
+
+Options:
+  --comments <path>  Path to comments.json (default: target/ripr/review/comments.json)
+  --out <path>       Output annotations path (default: target/ripr/review/annotations.txt)
+  --check            Verify the existing annotations are up to date.
+";
 
 fn render_annotations(
     repo: &Path,
