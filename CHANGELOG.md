@@ -379,6 +379,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr cache status` and `ripr cache clear` unknown-flag errors now suggest
+  the accepted flags from the same help bodies those commands print
+  (`--json`, `--dry-run`, `--force`). Typos no longer fall through to the
+  bare no-suggestion branch
+  ([#3786](https://github.com/EffortlessMetrics/ripr-swarm/issues/3786)).
+
 - Live `parse_old_path_for_confinement` and `git::run_git` no longer carry
   leftover `#[allow(dead_code)]` attributes whose reasons cited closed
   follow-ups. Matching `.ripr/allow-attributes.txt` rows were dropped

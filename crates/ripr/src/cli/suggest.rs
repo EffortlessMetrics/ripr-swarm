@@ -354,6 +354,37 @@ mod tests {
         }
     }
 
+    /// `cache status` and `cache clear` already routed unknown flags through
+    /// `unknown_argument`, but they had no help body in `help_text_for` and
+    /// were missing from `REGISTERED_COMMAND_PATHS`, so every typo fell to the
+    /// bare no-suggestion branch. The accepted flags are closed and known.
+    #[test]
+    fn cache_status_and_clear_suggest_their_own_documented_flags() {
+        for (command, typo, expected) in [
+            ("cache status", "--jsonn", "--json"),
+            ("cache clear", "--dry-runn", "--dry-run"),
+            ("cache clear", "--fors", "--force"),
+        ] {
+            assert_eq!(
+                unknown_argument(command, typo),
+                format!(
+                    "unknown {command} argument {typo:?}. \
+                     Did you mean `{expected}`? Run `ripr {command} --help`."
+                ),
+            );
+        }
+        let status_force = unknown_argument("cache status", "--force");
+        assert!(
+            !status_force.contains("Did you mean"),
+            "cache status must not suggest a cache-clear flag: {status_force}"
+        );
+        let clear_json = unknown_argument("cache clear", "--json");
+        assert!(
+            !clear_json.contains("Did you mean"),
+            "cache clear must not suggest a cache-status flag: {clear_json}"
+        );
+    }
+
     /// Every command path the CLI reports errors for must resolve to a help
     /// body that documents at least one flag, otherwise `unknown_argument`
     /// silently degrades to the no-suggestion branch forever.

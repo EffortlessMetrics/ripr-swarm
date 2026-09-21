@@ -16,7 +16,9 @@ use reports::*;
 use rerun::*;
 use swarm::*;
 
-use crate::cli::commands::{RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP};
+use crate::cli::commands::{
+    CACHE_CLEAR_HELP, CACHE_STATUS_HELP, RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP,
+};
 
 /// The command paths that resolve to a flag-documenting help body.
 ///
@@ -43,6 +45,8 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "baseline create",
     "baseline diff",
     "baseline update",
+    "cache clear",
+    "cache status",
     "calibrate cargo-mutants",
     "check",
     "config validate",
@@ -101,6 +105,8 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "agent verify-execute" => AGENT_VERIFY_EXECUTE_HELP,
         "assistant-loop health" | "assistant-loop proof" => ASSISTANT_LOOP_HELP,
         "baseline create" | "baseline diff" | "baseline update" => BASELINE_HELP,
+        "cache clear" => CACHE_CLEAR_HELP,
+        "cache status" => CACHE_STATUS_HELP,
         "calibrate cargo-mutants" => CALIBRATE_HELP,
         "check" => CHECK_HELP,
         "config validate" => CONFIG_HELP,
@@ -314,21 +320,21 @@ mod tests {
     use super::{
         AGENT_BRIEF_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
         AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP, AGENT_VERIFY_HELP,
-        ASSISTANT_LOOP_HELP, BASELINE_HELP, CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP,
-        COVERAGE_GRIP_HELP, DIFF_HELP, DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP,
-        FIRST_ACTION_HELP, GATE_HELP, HELP, HELP_ALL, INIT_HELP, LSP_HELP, OUTCOME_HELP,
-        PILOT_HELP, POLICY_HELP, PR_COMMENTS_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP, REPORTS_HELP,
-        RERUN_HELP, REVIEW_COMMENTS_HELP, SWARM_HELP, SWARM_INGEST_HELP, SWARM_QUEUE_HELP,
-        ZERO_HELP, print_agent_brief_help, print_agent_help, print_agent_packet_help,
-        print_agent_receipt_help, print_agent_repair_help, print_agent_review_summary_help,
-        print_agent_start_help, print_agent_status_help, print_agent_verify_help,
-        print_assistant_loop_help, print_baseline_help, print_calibrate_help, print_check_help,
-        print_config_help, print_context_help, print_coverage_grip_help, print_diff_help,
-        print_doctor_help, print_evidence_health_help, print_explain_help, print_first_action_help,
-        print_gate_help, print_help, print_help_all, print_init_help, print_lsp_help,
-        print_outcome_help, print_pilot_help, print_policy_help, print_pr_comments_help,
-        print_pr_ledger_help, print_pr_review_help, print_reports_help, print_rerun_help,
-        print_review_comments_help, print_swarm_help, print_swarm_ingest_help,
+        ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP, CACHE_STATUS_HELP, CALIBRATE_HELP,
+        CHECK_HELP, CONFIG_HELP, CONTEXT_HELP, COVERAGE_GRIP_HELP, DIFF_HELP, DOCTOR_HELP,
+        EVIDENCE_HEALTH_HELP, EXPLAIN_HELP, FIRST_ACTION_HELP, GATE_HELP, HELP, HELP_ALL,
+        INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP, POLICY_HELP, PR_COMMENTS_HELP,
+        PR_LEDGER_HELP, PR_REVIEW_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP, SWARM_HELP,
+        SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help, print_agent_help,
+        print_agent_packet_help, print_agent_receipt_help, print_agent_repair_help,
+        print_agent_review_summary_help, print_agent_start_help, print_agent_status_help,
+        print_agent_verify_help, print_assistant_loop_help, print_baseline_help,
+        print_calibrate_help, print_check_help, print_config_help, print_context_help,
+        print_coverage_grip_help, print_diff_help, print_doctor_help, print_evidence_health_help,
+        print_explain_help, print_first_action_help, print_gate_help, print_help, print_help_all,
+        print_init_help, print_lsp_help, print_outcome_help, print_pilot_help, print_policy_help,
+        print_pr_comments_help, print_pr_ledger_help, print_pr_review_help, print_reports_help,
+        print_rerun_help, print_review_comments_help, print_swarm_help, print_swarm_ingest_help,
         print_swarm_queue_help, print_zero_help,
     };
     use crate::cli::command::KNOWN_COMMANDS;
@@ -644,6 +650,32 @@ mod tests {
         assert!(LSP_HELP.starts_with("Start the experimental ripr LSP server"));
         assert!(LSP_HELP.contains("--stdio"));
         assert!(LSP_HELP.contains("--version"));
+        // Pin: cache status/clear help lives beside the parser and is imported
+        // here. Drop CACHE_STATUS_HELP / CACHE_CLEAR_HELP from this test module
+        // import list and this test fails to compile.
+        assert_eq!(
+            super::help_text_for("cache status"),
+            Some(CACHE_STATUS_HELP)
+        );
+        assert_eq!(super::help_text_for("cache clear"), Some(CACHE_CLEAR_HELP));
+        assert!(
+            CACHE_STATUS_HELP
+                .lines()
+                .any(|line| line.trim_start().starts_with("--json")),
+            "cache status help must document --json on an option-list line: {CACHE_STATUS_HELP}"
+        );
+        assert!(
+            CACHE_CLEAR_HELP
+                .lines()
+                .any(|line| line.trim_start().starts_with("--dry-run")),
+            "cache clear help must document --dry-run on an option-list line: {CACHE_CLEAR_HELP}"
+        );
+        assert!(
+            CACHE_CLEAR_HELP
+                .lines()
+                .any(|line| line.trim_start().starts_with("--force")),
+            "cache clear help must document --force on an option-list line: {CACHE_CLEAR_HELP}"
+        );
     }
 
     #[test]
