@@ -294,6 +294,14 @@ are scoped or reviewed.
 
 ### Changed
 
+- `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
+  consumes `policy/clippy-debt.toml`. That gate still dual-rails
+  `Cargo.toml` against `policy/clippy-lints.toml` only; the debt file is
+  advisory until a follow-up wires it. `clippy::let_underscore_must_use`
+  is now a real `[[debt]]` row (`clippy-debt-0001`, target 2027-03-31)
+  instead of a commented example whose target had already passed
+  ([#3782](https://github.com/EffortlessMetrics/ripr-swarm/issues/3782)).
+
 - The 0.11.0 support claim now describes the Rust gap-repair loop as `usable
   alpha`, not unqualified `usable`. Fixture, package, editor, bounded test-only
   packet, and before/after receipt proof remains intact, but the governed

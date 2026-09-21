@@ -88,8 +88,10 @@ Currently denied at the workspace level (selected highlights):
   `clippy::let_underscore_must_use` is
   intentionally **not** yet active — best-effort cleanup patterns
   (`let _ = fs::remove_dir_all(&dir)`) are pervasive across tests, and the
-  flip is tracked as a follow-up. Tests asserting that a `Result` is `Err`
-  should use `.expect_err("why")` rather than `assert!(x.is_err())`.
+  flip is recorded as `clippy-debt-0001` in
+  [`policy/clippy-debt.toml`](../policy/clippy-debt.toml). Tests asserting
+  that a `Result` is `Err` should use `.expect_err("why")` rather than
+  `assert!(x.is_err())`.
 - Format / I/O footguns: `clippy::format_in_format_args`,
   `clippy::to_string_in_format_args`, `clippy::unused_format_specs`,
   `clippy::suspicious_open_options`, `clippy::nonsensical_open_options`,
@@ -189,14 +191,16 @@ Two companion ledgers track Clippy state alongside the active/planned table:
 
 - [`policy/clippy-debt.toml`](../policy/clippy-debt.toml) records lints that
   are intentionally **deferred** with a named owner, a blocking dependency,
-  and a target date for clearing the debt. Empty by default.
+  and a target date for clearing the debt. It currently records
+  `clippy::let_underscore_must_use` as `clippy-debt-0001`.
 - [`policy/clippy-exceptions.toml`](../policy/clippy-exceptions.toml) records
   per-call-site `#[expect(...)]` / `#[allow(...)]` suppressions with an `id`,
   `owner`, `reason`, `covered_by`, and `expires`. It is the reviewable
   counterpart to `.ripr/allow-attributes.txt`. Empty by default.
 
 These are advisory until the corresponding xtask ledger checks land in a
-follow-up PR. One slice already enforces coverage claims: `cargo xtask
+follow-up PR (`check-lint-policy` still reads only `Cargo.toml` and
+`policy/clippy-lints.toml`). One slice already enforces coverage claims: `cargo xtask
 check-covered-by` resolves every test-valued `covered_by` entry in
 `policy/clippy-exceptions.toml` against a static scan of the workspace's
 actual `#[test]`-family functions, so a claim that names a renamed or deleted
