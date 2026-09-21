@@ -885,7 +885,7 @@ line = 4032
 column = 18
 
 [[allow]]
-id = "panic-0051"
+id = "panic-0071"
 path = "crates/ripr/tests/cli_smoke.rs"
 family = "unwrap"
 classification = "test_only"
@@ -904,7 +904,7 @@ line = 4117
 column = 5
 
 [[allow]]
-id = "panic-0052"
+id = "panic-0072"
 path = "crates/ripr/tests/cli_smoke.rs"
 family = "unwrap"
 classification = "test_only"
@@ -923,7 +923,7 @@ line = 4118
 column = 5
 
 [[allow]]
-id = "panic-0053"
+id = "panic-0073"
 path = "crates/ripr/tests/cli_smoke.rs"
 family = "unwrap"
 classification = "test_only"
@@ -942,7 +942,7 @@ line = 4119
 column = 5
 
 [[allow]]
-id = "panic-0054"
+id = "panic-0074"
 path = "crates/ripr/tests/cli_smoke.rs"
 family = "unwrap"
 classification = "test_only"

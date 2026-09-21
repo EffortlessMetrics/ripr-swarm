@@ -50,10 +50,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// stdout: <first 500 chars>
 /// stderr: <trimmed>
 /// ```
-#[allow(
-    dead_code,
-    reason = "trimmed-stdout convenience wrapper — production callers (#1921 migration) need the raw-Output variant for their own exit-status/error-text contracts; exercised by this module's tests"
-)]
 pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = run_git_output_with_deadline(root, args, None)?;
     if output.status.success() {
