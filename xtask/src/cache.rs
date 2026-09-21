@@ -9,6 +9,7 @@ const DEFAULT_MAX_SIZE_GB: u64 = 20;
 const DEFAULT_TTL_DAYS: u64 = 14;
 const BYTES_PER_GB: u64 = 1_000_000_000;
 const SECONDS_PER_DAY: u64 = 86_400;
+const CACHE_DIR_ENV: &str = "RIPR_CACHE_DIR";
 const SHARDED_CACHE_FAMILY_SUFFIX: &str = "-sharded";
 const SHARD_MANIFEST_FILE: &str = "manifest.json";
 const SHARD_FILE_PREFIX: &str = "shard-";
@@ -34,7 +35,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
 }
 
 fn cache_report(root: &Path) -> Result<(), String> {
-    let report = build_cache_report(root)?;
+    let report = build_cache_report_from_env(root, std::env::var(CACHE_DIR_ENV))?;
     let markdown = cache_report_markdown(&report);
     write_report("cache-report.md", &markdown)?;
     write_report("cache-report.json", &cache_report_json(&report)?)?;
@@ -45,10 +46,10 @@ fn cache_report(root: &Path) -> Result<(), String> {
 fn cache_gc(root: &Path, args: &[String]) -> Result<(), String> {
     let options = parse_gc_options(args)?;
     let started_at = SystemTime::now();
-    let plan = build_gc_plan(root, &options, started_at)?;
+    let plan = build_gc_plan_from_env(root, std::env::var(CACHE_DIR_ENV), &options, started_at)?;
     if !options.dry_run {
         for deletion in &plan.deletions {
-            let path = root.join(&deletion.relative_path);
+            let path = deletion_path(root, &deletion.relative_path);
             fs::remove_file(&path)
                 .map_err(|err| format!("failed to delete {}: {err}", path.display()))?;
         }
@@ -68,7 +69,8 @@ fn cache_usage() -> String {
         "  cargo xtask cache gc [--dry-run] [--max-size-gb <n>] [--ttl-days <n>]",
         "",
         "Scope:",
-        "  Only target/ripr/cache is scanned or deleted.",
+        "  Scans and deletes only under the resolved cache root:",
+        "  RIPR_CACHE_DIR when set to a non-empty path, otherwise target/ripr/cache.",
         "  Reports, receipts, PR/review artifacts, workflow artifacts, build output, and source files are ignored.",
         "",
         "Defaults:",
@@ -264,9 +266,17 @@ fn parse_days(value: &str) -> Result<u64, String> {
         .map_err(|err| format!("invalid --ttl-days `{value}`: {err}"))
 }
 
+#[cfg(test)]
 fn build_cache_report(root: &Path) -> Result<CacheReport, String> {
-    let cache_root = cache_root(root);
-    let files = collect_cache_files(root)?;
+    build_cache_report_from_env(root, Err(std::env::VarError::NotPresent))
+}
+
+fn build_cache_report_from_env(
+    root: &Path,
+    env_value: Result<String, std::env::VarError>,
+) -> Result<CacheReport, String> {
+    let cache_root = cache_root_from_env(root, env_value);
+    let files = collect_cache_files(root, &cache_root)?;
     let mut families = BTreeMap::<String, CacheFamily>::new();
     let mut total_bytes = 0u64;
     for file in &files {
@@ -512,13 +522,28 @@ fn read_shard_manifest(path: &Path) -> Result<ShardManifestInfo, String> {
     })
 }
 
+#[cfg(test)]
 fn build_gc_plan(
     root: &Path,
     options: &GcOptions,
     started_at: SystemTime,
 ) -> Result<GcPlan, String> {
-    let cache_root = cache_root(root);
-    let files = collect_cache_files(root)?;
+    build_gc_plan_from_env(
+        root,
+        Err(std::env::VarError::NotPresent),
+        options,
+        started_at,
+    )
+}
+
+fn build_gc_plan_from_env(
+    root: &Path,
+    env_value: Result<String, std::env::VarError>,
+    options: &GcOptions,
+    started_at: SystemTime,
+) -> Result<GcPlan, String> {
+    let cache_root = cache_root_from_env(root, env_value);
+    let files = collect_cache_files(root, &cache_root)?;
     let total_bytes = files
         .iter()
         .fold(0u64, |sum, file| sum.saturating_add(file.size_bytes));
@@ -616,19 +641,18 @@ fn modified_sort_key(file: &CacheFile) -> (u64, u32) {
         })
 }
 
-fn collect_cache_files(root: &Path) -> Result<Vec<CacheFile>, String> {
-    let cache_root = cache_root(root);
+fn collect_cache_files(root: &Path, cache_root: &Path) -> Result<Vec<CacheFile>, String> {
     if !cache_root.exists() {
         return Ok(Vec::new());
     }
-    let metadata = fs::metadata(&cache_root)
+    let metadata = fs::metadata(cache_root)
         .map_err(|err| format!("failed to inspect {}: {err}", cache_root.display()))?;
     if !metadata.is_dir() {
         return Err(format!("{} is not a directory", cache_root.display()));
     }
 
     let mut files = Vec::new();
-    let mut stack = vec![cache_root.clone()];
+    let mut stack = vec![cache_root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for entry in
             fs::read_dir(&dir).map_err(|err| format!("failed to read {}: {err}", dir.display()))?
@@ -650,7 +674,7 @@ fn collect_cache_files(root: &Path) -> Result<Vec<CacheFile>, String> {
             }
             let relative_path = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
             files.push(CacheFile {
-                family: cache_family(&cache_root, &path),
+                family: cache_family(cache_root, &path),
                 path,
                 relative_path,
                 size_bytes: metadata.len(),
@@ -661,8 +685,19 @@ fn collect_cache_files(root: &Path) -> Result<Vec<CacheFile>, String> {
     Ok(files)
 }
 
-fn cache_root(root: &Path) -> PathBuf {
-    root.join("target").join("ripr").join("cache")
+fn cache_root_from_env(root: &Path, env_value: Result<String, std::env::VarError>) -> PathBuf {
+    match env_value {
+        Ok(value) if !value.trim().is_empty() => PathBuf::from(value.trim()),
+        _ => root.join("target").join("ripr").join("cache"),
+    }
+}
+
+fn deletion_path(root: &Path, relative_path: &Path) -> PathBuf {
+    if relative_path.is_absolute() {
+        relative_path.to_path_buf()
+    } else {
+        root.join(relative_path)
+    }
 }
 
 fn cache_family(cache_root: &Path, path: &Path) -> String {
@@ -827,7 +862,7 @@ fn cache_report_json(report: &CacheReport) -> Result<String, String> {
     serde_json::to_string_pretty(&json!({
         "schema_version": "0.2",
         "status": "pass",
-        "scope": "target/ripr/cache",
+        "scope": report.cache_root,
         "cache_root": report.cache_root,
         "total_files": report.total_files,
         "total_bytes": report.total_bytes,
@@ -880,7 +915,7 @@ fn cache_gc_json(plan: &GcPlan, options: &GcOptions) -> Result<String, String> {
         "schema_version": "0.1",
         "status": "pass",
         "mode": if options.dry_run { "dry_run" } else { "delete" },
-        "scope": "target/ripr/cache",
+        "scope": plan.cache_root,
         "cache_root": plan.cache_root,
         "max_size_bytes": options.max_size_bytes,
         "ttl_days": options.ttl_days,
@@ -964,11 +999,12 @@ fn human_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        GcOptions, ShardSetStatus, build_cache_report, build_gc_plan, cache_gc_markdown,
-        cache_report_json, cache_report_markdown, parse_gc_options,
+        GcOptions, ShardSetStatus, build_cache_report, build_cache_report_from_env, build_gc_plan,
+        build_gc_plan_from_env, cache_gc_markdown, cache_report_json, cache_report_markdown,
+        cache_root_from_env, deletion_path, parse_gc_options,
     };
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1189,6 +1225,100 @@ mod tests {
         ])?;
         assert_eq!(explicit.max_size_bytes, Some(1_000_000_000));
         assert_eq!(explicit.ttl_days, Some(2));
+        Ok(())
+    }
+
+    #[test]
+    fn cache_root_honors_ripr_cache_dir() {
+        let root = PathBuf::from("/workspace/ripr");
+        assert_eq!(
+            cache_root_from_env(&root, Ok("/tmp/ripr-reloc-cache".into())),
+            PathBuf::from("/tmp/ripr-reloc-cache")
+        );
+        assert_eq!(
+            cache_root_from_env(&root, Ok("  /var/cache/ripr  ".into())),
+            PathBuf::from("/var/cache/ripr")
+        );
+        assert_eq!(
+            cache_root_from_env(&root, Ok(String::new())),
+            root.join("target").join("ripr").join("cache")
+        );
+        assert_eq!(
+            cache_root_from_env(&root, Ok("   ".into())),
+            root.join("target").join("ripr").join("cache")
+        );
+        assert_eq!(
+            cache_root_from_env(&root, Err(std::env::VarError::NotPresent)),
+            root.join("target").join("ripr").join("cache")
+        );
+    }
+
+    #[test]
+    fn deletion_path_keeps_relocated_absolute_paths() {
+        let root = PathBuf::from("/workspace/ripr");
+        let relocated = PathBuf::from("/tmp/ripr-reloc-cache/repo-seam-facts/v1/live.json");
+        assert_eq!(deletion_path(&root, &relocated), relocated);
+        assert_eq!(
+            deletion_path(&root, Path::new("target/ripr/cache/a.json")),
+            root.join("target/ripr/cache/a.json")
+        );
+    }
+
+    #[test]
+    fn cache_report_from_env_scans_relocated_root_not_default() -> Result<(), String> {
+        let workspace = temp_root("reloc-workspace")?;
+        let relocated = temp_root("reloc-cache")?;
+        write_bytes(&relocated.join("repo-seam-facts/v1/live.json"), 7)?;
+        write_bytes(
+            &workspace.join("target/ripr/cache/repo-seam-facts/v1/stale.json"),
+            99,
+        )?;
+
+        let report = build_cache_report_from_env(&workspace, Ok(relocated.display().to_string()))?;
+        assert_eq!(report.cache_root, relocated);
+        assert_eq!(report.total_files, 1);
+        assert_eq!(report.total_bytes, 7);
+        assert_eq!(report.families[0].name, "repo-seam-facts");
+        let markdown = cache_report_markdown(&report).replace('\\', "/");
+        assert!(markdown.contains("live.json"), "{markdown}");
+        assert!(!markdown.contains("stale.json"), "{markdown}");
+
+        cleanup(workspace)?;
+        cleanup(relocated)?;
+        Ok(())
+    }
+
+    #[test]
+    fn cache_gc_from_env_plans_relocated_root_not_default() -> Result<(), String> {
+        let workspace = temp_root("gc-reloc-workspace")?;
+        let relocated = temp_root("gc-reloc-cache")?;
+        write_bytes(&relocated.join("repo-seam-facts/v1/live.json"), 11)?;
+        write_bytes(
+            &workspace.join("target/ripr/cache/repo-seam-facts/v1/stale.json"),
+            99,
+        )?;
+
+        let plan = build_gc_plan_from_env(
+            &workspace,
+            Ok(relocated.display().to_string()),
+            &GcOptions {
+                dry_run: true,
+                max_size_bytes: Some(0),
+                ttl_days: None,
+            },
+            SystemTime::now() + Duration::from_secs(1),
+        )?;
+        assert_eq!(plan.cache_root, relocated);
+        assert_eq!(plan.selected_files, 1);
+        let deletion = plan.deletions[0]
+            .relative_path
+            .to_string_lossy()
+            .replace('\\', "/");
+        assert!(deletion.ends_with("live.json"), "{deletion}");
+        assert!(!deletion.ends_with("stale.json"), "{deletion}");
+
+        cleanup(workspace)?;
+        cleanup(relocated)?;
         Ok(())
     }
 

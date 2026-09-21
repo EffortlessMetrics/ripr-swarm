@@ -1344,15 +1344,15 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "stdout and target/ripr/reports/cache-report.{md,json}",
             false,
             false,
-            "Reports target/ripr/cache families, largest files, and sharded cache sets without reading or deleting source, build, report, receipt, PR, review, workflow, or agent artifacts.",
+            "Reports families, largest files, and sharded cache sets under the resolved cache root (RIPR_CACHE_DIR when set, otherwise target/ripr/cache) without reading or deleting source, build, report, receipt, PR, review, workflow, or agent artifacts.",
         ),
         command_entry(
             "cache gc [--dry-run] [--max-size-gb <n>] [--ttl-days <n>]",
             "argument_dependent",
-            "target/ripr/cache and target/ripr/reports/cache-gc.{md,json}",
+            "the resolved cache root (RIPR_CACHE_DIR when set, otherwise target/ripr/cache) and target/ripr/reports/cache-gc.{md,json}",
             false,
             false,
-            "Depending on --dry-run, deletes only selected files under target/ripr/cache or writes the exact deletion plan without deleting files.",
+            "Depending on --dry-run, deletes only selected files under the resolved cache root (RIPR_CACHE_DIR when set, otherwise target/ripr/cache) or writes the exact deletion plan without deleting files.",
         ),
         command_entry(
             "receipts [check]",

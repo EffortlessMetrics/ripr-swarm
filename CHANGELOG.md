@@ -294,6 +294,12 @@ are scoped or reviewed.
 
 ### Changed
 
+- `cargo xtask cache report` / `gc` honor `RIPR_CACHE_DIR` instead of always
+  scanning `target/ripr/cache`. `ripr cache status` names the resolved
+  directory in its cleanup hint so the printed GC command operates on the
+  cache just reported
+  ([#3808](https://github.com/EffortlessMetrics/ripr-swarm/issues/3808)).
+
 - `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
   consumes `policy/clippy-debt.toml`. That gate still dual-rails
   `Cargo.toml` against `policy/clippy-lints.toml` only; the debt file is
