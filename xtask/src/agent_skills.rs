@@ -104,26 +104,14 @@ const AGENTS_SKILL_OPERATING_MARKERS: [(&str, &str); 20] = [
         "goal_contract:primary_sources_before_summary",
     ),
     ("deliver-pr", "pr_contract:current_claim_search"),
-    (
-        "deliver-pr",
-        "pr_contract:duplicate_check_before_conflict",
-    ),
+    ("deliver-pr", "pr_contract:duplicate_check_before_conflict"),
     ("deliver-pr", "pr_contract:behind_only_no_restack"),
     ("deliver-pr", "pr_contract:routine_repo_writes"),
     ("deliver-pr", "pr_contract:ordinary_squash_merge"),
     ("deliver-pr", "pr_contract:local_commit_not_delivery"),
-    (
-        "build-candidate",
-        "candidate_contract:host_shell_detection",
-    ),
-    (
-        "build-candidate",
-        "candidate_contract:focused_local_proof",
-    ),
-    (
-        "build-candidate",
-        "candidate_contract:one_writer_worktree",
-    ),
+    ("build-candidate", "candidate_contract:host_shell_detection"),
+    ("build-candidate", "candidate_contract:focused_local_proof"),
+    ("build-candidate", "candidate_contract:one_writer_worktree"),
     (
         "build-candidate",
         "candidate_contract:publish_for_remote_evidence",
@@ -608,9 +596,8 @@ mod tests {
             "operating_contract:",
             &AGENTS_ROOT_OPERATING_MARKERS,
         );
-        let expected = vec![
-            "declares unknown marker `operating_contract:invented_permission`".to_string(),
-        ];
+        let expected =
+            vec!["declares unknown marker `operating_contract:invented_permission`".to_string()];
         if findings != expected {
             return Err(format!(
                 "unknown operating contract marker was not isolated: {findings:?}"
@@ -691,7 +678,7 @@ mod tests {
         ];
         if findings != expected {
             return Err(format!(
-                "review route omission was not isolated: {findings:?}"
+                "review route omission should report only `{removed}`, got {findings:?}"
             ));
         }
 
