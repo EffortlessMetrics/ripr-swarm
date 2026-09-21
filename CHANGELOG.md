@@ -294,6 +294,12 @@ are scoped or reviewed.
 
 ### Changed
 
+- Reviewer-facing architecture copies in `docs/ENGINEERING.md` and
+  `.factory/skills/review-guidelines/SKILL.md` now name `agent`, `config`,
+  `mcp`, and `provider_contract`, matching the product map. The
+  `check-agent-skills` pin remains on `AGENTS.md`, `CLAUDE.md`, and
+  `docs/ARCHITECTURE.md`
+  ([#3779](https://github.com/EffortlessMetrics/ripr-swarm/issues/3779)).
 - Schema 0.3 no-panic allowlist `id` values are now unique and gated.
   `cargo xtask check-no-panic-family` rejects a colliding `id` even when
   the selectors differ. Four reused `panic-0051`..`panic-0054` rows for
