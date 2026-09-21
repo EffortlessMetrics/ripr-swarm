@@ -236,6 +236,10 @@ use policy_commands::{
     policy_readiness, policy_suppression_health, policy_waiver_aging,
 };
 pub(super) use receipt_command::{RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP};
+// Cache help bodies live beside the cache parser but are also the flag source
+// for `ripr cache status|clear` suggestions, so `cli::help` needs a path to
+// them. Removing this re-export must fail to compile.
+pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_STATUS_HELP};
 
 pub(super) fn receipt(args: &[String]) -> Result<(), String> {
     receipt_command::run_receipt(args)
