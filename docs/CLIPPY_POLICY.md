@@ -201,7 +201,8 @@ Two companion ledgers track Clippy state alongside the active/planned table:
 
 These are advisory until the corresponding xtask ledger checks land in a
 follow-up PR (`check-lint-policy` still reads only `Cargo.toml` and
-`policy/clippy-lints.toml`). One slice already enforces coverage claims: `cargo xtask
+`policy/clippy-lints.toml`; `check-allow-attributes` still reads only
+`.ripr/allow-attributes.txt`). One slice already enforces coverage claims: `cargo xtask
 check-covered-by` resolves every test-valued `covered_by` entry in
 `policy/clippy-exceptions.toml` against a static scan of the workspace's
 actual `#[test]`-family functions, so a claim that names a renamed or deleted

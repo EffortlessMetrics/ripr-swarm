@@ -13,7 +13,7 @@ undocumented override.
 | `policy/non-rust-allowlist.toml` | Non-Rust programming files | `cargo xtask check-file-policy` |
 | `policy/clippy-lints.toml` | Active and planned Clippy lint policy | `cargo xtask check-lint-policy` |
 | `policy/clippy-debt.toml` | Temporary Clippy debt entries | Advisory; not consumed by `cargo xtask check-lint-policy` (see [`docs/CLIPPY_POLICY.md`](CLIPPY_POLICY.md) Companion ledgers) |
-| `policy/clippy-exceptions.toml` | Per-site Clippy suppression receipts; test-valued `covered_by` claims | `cargo xtask check-allow-attributes` (receipts, pending ledger check) and `cargo xtask check-covered-by` (`covered_by`) |
+| `policy/clippy-exceptions.toml` | Per-site Clippy suppression receipts; test-valued `covered_by` claims | Advisory receipts (not consumed by `cargo xtask check-allow-attributes`; that gate reads `.ripr/allow-attributes.txt`); `cargo xtask check-covered-by` (`covered_by`) |
 | `policy/dependency_allowlist.txt` | Allowed crate dependencies | `cargo xtask check-dependencies` |
 | `policy/ci-budget.toml` | LEM bands and enforcement posture | `cargo xtask ci plan` |
 | `policy/ci-lane-whitelist.toml` | Lane definitions and base LEM | `cargo xtask ci plan` |
@@ -48,7 +48,7 @@ allows it:
 
 | Ledger | Exception meaning | Durable identity | Review signal | Stale or growth behavior |
 | --- | --- | --- | --- | --- |
-| No-panic allowlist | A reviewed panic-family call site that remains exceptional. | `path + family + selector`. | `owner`, `explanation`, and expiry. | Stale, duplicate, ambiguous, or unallowed entries block the no-panic gate. |
+| No-panic allowlist | A reviewed panic-family call site that remains exceptional. | `path + family + selector`. | `owner`, `explanation`, and expiry. | Stale, duplicate semantic identities, duplicate `id` values, ambiguous, or unallowed entries block the no-panic gate. |
 | Clippy lint/debt/exception ledgers | Active lint policy, deferred lint flips, and per-site source suppressions. | Lint id plus selector/path and source `#[expect(..., reason = "...")]`. | Ledger `owner`, `reason`, `covered_by`, and source reason. | Planned/debt entries stay explicit; bare or unmatched suppressions block the allow-attribute check. |
 | Non-Rust allowlist | A reviewed non-Rust file allowed inside a Rust-first repo. | Glob plus surface/classification. | `owner`, `reason`, `covered_by`, surface, and classification. | Missing or unclassified files block file-policy checks; retired entries are reviewed cleanup candidates. |
 | Workflow allowlists | Bounded workflow run-block or action-runtime exceptions. | Workflow path plus line/count or pattern cap. | Reviewed reason in the text ledger. | Caps are ceilings, not budgets; stale entries should be removed when the workflow no longer needs them. |
@@ -76,7 +76,10 @@ line/count caps bound the exception instead of authorizing growth.
 
 ## Source suppression governance
 
-Source-level suppressions follow the same TOML-receipt model.
+Source-level suppressions still require a reason-bearing `#[expect]`.
+Counted suppressions are budgeted in `.ripr/allow-attributes.txt`;
+`policy/clippy-exceptions.toml` is the reviewable TOML counterpart and is
+not yet a gate.
 
 **Allowed form:**
 
@@ -93,8 +96,10 @@ Source-level suppressions follow the same TOML-receipt model.
 ```
 
 `clippy::allow_attributes_without_reason` is denied at the workspace level.
-`cargo xtask check-allow-attributes` enforces that every source suppression
-has a matching `policy/clippy-exceptions.toml` entry.
+`cargo xtask check-allow-attributes` counts source suppressions against
+`.ripr/allow-attributes.txt`. It does not match
+`policy/clippy-exceptions.toml` (see [`docs/CLIPPY_POLICY.md`](CLIPPY_POLICY.md)
+Companion ledgers; that TOML is advisory until a receipt check lands).
 
 RIPR finding suppressions use `.ripr/suppressions.toml` instead of source
 attributes. See `docs/CONFIGURATION.md` for the suppression metadata fields

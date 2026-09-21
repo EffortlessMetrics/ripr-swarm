@@ -1643,6 +1643,37 @@ fn check_duplicate_panic_allow_entries(
     Ok(())
 }
 
+/// Schema 0.3 `id` is the stable identifier referenced in PRs and cleanup
+/// work. Colliding ids make that identifier unusable; the v0.1 coordinate
+/// duplicate check and the evaluate-time semantic-identity check do not
+/// cover this. Empty ids are skipped so schema 0.2 rows still parse (#3799).
+fn check_duplicate_panic_allow_ids(
+    entries: &[PanicAllowEntryVersioned],
+    path: &str,
+) -> Result<(), String> {
+    let mut seen = BTreeMap::new();
+    for entry in entries {
+        let Some(id) = panic_allow_entry_id(entry) else {
+            continue;
+        };
+        if let Some(previous) = seen.get(id) {
+            return Err(format!(
+                "{path}: duplicate allowlist id `{id}` ({previous} and {})",
+                panic_allow_entry_label(entry)
+            ));
+        }
+        seen.insert(id.to_string(), panic_allow_entry_label(entry));
+    }
+    Ok(())
+}
+
+fn panic_allow_entry_id(entry: &PanicAllowEntryVersioned) -> Option<&str> {
+    match entry {
+        PanicAllowEntryVersioned::V1(_) => None,
+        PanicAllowEntryVersioned::V2(v2) => v2.id.as_deref().filter(|id| !id.trim().is_empty()),
+    }
+}
+
 fn check_old_panic_allowlist_exists() -> Result<(), String> {
     if Path::new(".ripr/no-panic-allowlist.txt").exists() {
         return Err(
@@ -2025,6 +2056,7 @@ fn parse_no_panic_allowlist_toml_v2(path: &str) -> Result<Vec<PanicAllowEntryVer
         entries.push(entry);
     }
 
+    check_duplicate_panic_allow_ids(&entries, path)?;
     Ok(entries)
 }
 
