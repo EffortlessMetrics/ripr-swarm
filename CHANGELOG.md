@@ -294,6 +294,12 @@ are scoped or reviewed.
 
 ### Changed
 
+- `policy/clippy-exceptions.toml` and `docs/CLIPPY_POLICY.md` no longer say
+  the exceptions ledger is empty by default. The live row remains
+  `clippy-exception-0001`; the commented example no longer reuses that id
+  or a past `expires` date
+  ([#3820](https://github.com/EffortlessMetrics/ripr-swarm/issues/3820)).
+
 - `policy/clippy-lints.toml` no longer says planned lints wait for MSRV
   and a matching xtask gate. `activate_when_msrv` is documentary metadata,
   not a ratchet and not verified available-since; remaining blockers stay
