@@ -47552,6 +47552,75 @@ activate_when_msrv = "1.93"
 }
 
 #[test]
+fn check_lint_policy_requires_reason_when_activate_when_msrv_already_met() {
+    let cargo = r#"
+[workspace.package]
+rust-version = "1.95"
+"#;
+    let overdue = r#"
+[[planned]]
+name = "clippy::indexing_slicing"
+level = "deny"
+activate_when_msrv = "1.93"
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, overdue);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy::indexing_slicing")
+                && row.contains("already met by workspace rust-version `1.95`")
+        }),
+        "overdue activate_when_msrv without reason must fail: {violations:?}"
+    );
+
+    let recorded = r#"
+[[planned]]
+name = "clippy::indexing_slicing"
+level = "deny"
+activate_when_msrv = "1.93"
+reason = "per-call expect receipts, not MSRV"
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, recorded);
+    assert!(
+        violations.is_empty(),
+        "non-MSRV reason must keep an overdue planned lint: {violations:?}"
+    );
+
+    let future = r#"
+[[planned]]
+name = "clippy::indexing_slicing"
+level = "deny"
+activate_when_msrv = "1.97"
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, future);
+    assert!(
+        violations.is_empty(),
+        "future activate_when_msrv does not require a reason yet: {violations:?}"
+    );
+}
+
+#[test]
+fn parse_workspace_package_rust_version_reads_workspace_package_only() {
+    let cargo = r#"
+[workspace]
+resolver = "2"
+
+[workspace.package]
+version = "0.11.0"
+rust-version = "1.95"
+
+[package]
+rust-version = "1.70"
+"#;
+    assert_eq!(
+        super::parse_workspace_package_rust_version(cargo).as_deref(),
+        Some("1.95")
+    );
+    assert_eq!(super::parse_msrv_triple("1.95"), Some((1, 95, 0)));
+    assert_eq!(super::parse_msrv_triple("1.95.1"), Some((1, 95, 1)));
+    assert!(super::parse_msrv_triple("1").is_none());
+}
+
+#[test]
 fn check_lint_policy_detects_level_drift() {
     let cargo = r#"
 [workspace.lints.clippy]

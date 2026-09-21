@@ -15440,6 +15440,7 @@ struct LedgerLintEntry {
     name: String,
     level: String,
     activate_when_msrv: Option<String>,
+    reason: Option<String>,
     block_line: usize,
     is_planned: bool,
 }
@@ -15495,6 +15496,7 @@ fn parse_clippy_lints_ledger(text: &str) -> (Vec<LedgerLintEntry>, Vec<String>) 
                     name: String::new(),
                     level: String::new(),
                     activate_when_msrv: None,
+                    reason: None,
                     block_line: line_number,
                     is_planned,
                 });
@@ -15533,6 +15535,11 @@ fn parse_clippy_lints_ledger(text: &str) -> (Vec<LedgerLintEntry>, Vec<String>) 
                     entry.activate_when_msrv = Some(msrv);
                 }
             }
+            "reason" => {
+                if let Some(reason) = unquoted {
+                    entry.reason = Some(reason);
+                }
+            }
             _ => {}
         }
     }
@@ -15551,15 +15558,56 @@ fn ledger_name_to_lookup(name: &str) -> (&str, &'static str) {
     }
 }
 
-fn check_lint_policy() -> Result<(), String> {
-    let cargo_text = fs::read_to_string("Cargo.toml")
-        .map_err(|err| format!("failed to read Cargo.toml: {err}"))?;
-    let ledger_text = fs::read_to_string("policy/clippy-lints.toml")
-        .map_err(|err| format!("failed to read policy/clippy-lints.toml: {err}"))?;
+/// Workspace MSRV from `[workspace.package] rust-version`.
+fn parse_workspace_package_rust_version(text: &str) -> Option<String> {
+    let mut in_package = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            in_package = line == "[workspace.package]";
+            continue;
+        }
+        if !in_package {
+            continue;
+        }
+        let Some((key, raw_value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "rust-version" {
+            continue;
+        }
+        return raw_value
+            .trim()
+            .strip_prefix('"')
+            .and_then(|rest| rest.split_once('"').map(|(token, _)| token.to_string()));
+    }
+    None
+}
 
-    let cargo_clippy = parse_workspace_lints_section(&cargo_text, "clippy");
-    let cargo_rust = parse_workspace_lints_section(&cargo_text, "rust");
-    let (entries, mut violations) = parse_clippy_lints_ledger(&ledger_text);
+/// Parse `1.95` / `1.95.0` into a comparable triple. Rejects empty or extra parts.
+fn parse_msrv_triple(value: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = value.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = match parts.next() {
+        Some(part) => part.parse().ok()?,
+        None => 0,
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<String> {
+    let cargo_clippy = parse_workspace_lints_section(cargo_text, "clippy");
+    let cargo_rust = parse_workspace_lints_section(cargo_text, "rust");
+    let (entries, mut violations) = parse_clippy_lints_ledger(ledger_text);
+    let workspace_msrv = parse_workspace_package_rust_version(cargo_text);
+    let workspace_triple = workspace_msrv.as_deref().and_then(parse_msrv_triple);
 
     for entry in &entries {
         let (bare, group) = ledger_name_to_lookup(&entry.name);
@@ -15574,6 +15622,28 @@ fn check_lint_policy() -> Result<(), String> {
                     "policy/clippy-lints.toml:{} declares `{}` as `[[planned]]` but Cargo.toml `[workspace.lints.{}]` already activates it at level `{}`. Promote the ledger entry to `[[active.<group>]]` or remove the Cargo.toml line.",
                     entry.block_line, entry.name, group, level
                 ));
+            }
+            if let Some(msrv) = entry.activate_when_msrv.as_deref() {
+                match (parse_msrv_triple(msrv), workspace_triple, workspace_msrv.as_deref()) {
+                    (None, _, _) => violations.push(format!(
+                        "policy/clippy-lints.toml:{} `{}` has unparsable `activate_when_msrv = {msrv:?}`; expected `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`.",
+                        entry.block_line, entry.name
+                    )),
+                    (_, None, ws) => violations.push(format!(
+                        "policy/clippy-lints.toml:{} `{}` records `activate_when_msrv = {msrv:?}` but Cargo.toml `[workspace.package]` has no parsable `rust-version` (found {ws:?}). The gate compares those two values.",
+                        entry.block_line, entry.name
+                    )),
+                    (Some(activate), Some(workspace), Some(ws)) if activate <= workspace => {
+                        let reason = entry.reason.as_deref().map(str::trim).unwrap_or("");
+                        if reason.is_empty() {
+                            violations.push(format!(
+                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. Record a non-MSRV `reason` why it is still `[[planned]]`, or promote it.",
+                                entry.block_line, entry.name
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
             }
             continue;
         }
@@ -15612,14 +15682,25 @@ fn check_lint_policy() -> Result<(), String> {
         }
     }
 
+    violations
+}
+
+fn check_lint_policy() -> Result<(), String> {
+    let cargo_text = fs::read_to_string("Cargo.toml")
+        .map_err(|err| format!("failed to read Cargo.toml: {err}"))?;
+    let ledger_text = fs::read_to_string("policy/clippy-lints.toml")
+        .map_err(|err| format!("failed to read policy/clippy-lints.toml: {err}"))?;
+    let violations = collect_lint_policy_violations(&cargo_text, &ledger_text);
+
     finish_policy_report(
         PolicyReportSpec {
             report_file: "lint-policy.md",
             check: "check-lint-policy",
-            why_it_matters: "`policy/clippy-lints.toml` is the reviewable ledger of the workspace lint stance, including planned 1.94 / 1.95 flips. If Cargo.toml drifts from the ledger, reviewers lose the trajectory and the dual-rail design (clippy + semantic checker) loses its receipt.",
+            why_it_matters: "`policy/clippy-lints.toml` is the reviewable ledger of the workspace lint stance, including planned 1.94 / 1.95 flips. If Cargo.toml drifts from the ledger, reviewers lose the trajectory and the dual-rail design (clippy + semantic checker) loses its receipt. `activate_when_msrv` is compared to `[workspace.package] rust-version`; an already-met MSRV without a non-MSRV `reason` is overdue.",
             fix_kind: FixKind::PolicyExceptionRequired,
             recommended_fixes: &[
                 "Make `Cargo.toml` and `policy/clippy-lints.toml` agree: every `[[active.<group>]]` entry must appear in `[workspace.lints.*]` at the same level, and `[[planned]]` entries must not yet appear there.",
+                "When a planned lint's `activate_when_msrv` is already met by workspace `rust-version`, record a non-MSRV `reason` or promote the entry.",
                 "When promoting a planned lint, move the ledger entry from `[[planned]]` to `[[active.<group>]]` and add the matching `Cargo.toml` line in the same PR.",
                 "Document `[[active.<group>]]` family blocks in `docs/CLIPPY_POLICY.md` so the public surface stays in sync.",
             ],
