@@ -317,6 +317,11 @@ are scoped or reviewed.
   names `ci-full` as the complete pass. The 40-command block is labeled
   targeted-rerun inventory, not sequential required work
   ([#3775](https://github.com/EffortlessMetrics/ripr-swarm/issues/3775)).
+- `docs/IMPLEMENTATION_PLAN.md` Required Gates now leads with
+  `cargo xtask precommit` and names `ci-full` as the complete local pass.
+  The cargo and VS Code command blocks are labeled targeted-rerun
+  inventory, matching `AGENTS.md` (#3775)
+  ([#3817](https://github.com/EffortlessMetrics/ripr-swarm/issues/3817)).
 - `docs/handoffs/README.md` labels retained campaign closeouts as historical.
   `docs/agent-context/repo-map.md` no longer names the retired active-goal
   manifest as a live selector
