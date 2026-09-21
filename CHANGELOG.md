@@ -301,6 +301,12 @@ are scoped or reviewed.
   lints keep their existing `reason` blockers and are not promoted
   ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
 
+- `cargo xtask check-lint-policy` now parses `policy/clippy-debt.toml`:
+  unique ids, required fields, ISO `target` dates that are not in the
+  past, and debt lints that are not already active, planned, or present
+  in `Cargo.toml`. `clippy-debt-0001` stays deferred
+  ([#3833](https://github.com/EffortlessMetrics/ripr-swarm/issues/3833)).
+
 - `crates/ripr/README.md` Development now leads with `cargo xtask precommit`
   and names `ci-full` as the complete local pass. The sequential cargo
   block is labeled targeted-rerun inventory, matching `AGENTS.md` (#3775)

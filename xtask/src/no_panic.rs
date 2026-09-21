@@ -1291,7 +1291,7 @@ fn semantic_selector_identity(entry: &PanicAllowEntryV2, selector: &PanicFamilyS
 /// the gate has no external date dependency. Returns a fallback far-future
 /// date if the system clock is before the Unix epoch (a pre-epoch clock
 /// would make expired entries appear valid — fail-safe, not fail-open).
-fn today_date_string() -> String {
+pub(crate) fn today_date_string() -> String {
     match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(duration) => date_from_secs(duration.as_secs()),
         Err(_) => "9999-12-31".to_string(), // clock before epoch: fail-safe
@@ -1318,7 +1318,7 @@ fn date_from_secs(secs: u64) -> String {
 /// Validate that `date` is a well-formed `YYYY-MM-DD` string with plausible
 /// month (01-12) and day (01-31) values. Used to guard the expiry comparison
 /// so a malformed date like `2026-13-45` does not silently bypass the check.
-fn is_valid_iso_date(date: &str) -> bool {
+pub(crate) fn is_valid_iso_date(date: &str) -> bool {
     let bytes = date.as_bytes();
     if bytes.len() != 10
         || bytes[4] != b'-'
