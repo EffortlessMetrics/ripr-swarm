@@ -294,6 +294,12 @@ are scoped or reviewed.
 
 ### Changed
 
+- `crates/ripr/README.md` Development now leads with `cargo xtask precommit`
+  and names `ci-full` as the complete local pass. The sequential cargo
+  block is labeled targeted-rerun inventory, matching `AGENTS.md` (#3775)
+  and `docs/IMPLEMENTATION_PLAN.md` (#3817)
+  ([#3830](https://github.com/EffortlessMetrics/ripr-swarm/issues/3830)).
+
 - `cargo xtask cache report` / `gc` honor `RIPR_CACHE_DIR` instead of always
   scanning `target/ripr/cache`. Relocated roots must be absolute, must not
   traverse `..`, and must look like a ripr cache before any walk or delete.

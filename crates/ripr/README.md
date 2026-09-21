@@ -259,6 +259,21 @@ test, and comparing before/after evidence.
 
 ## Development
 
+Use focused proof during implementation. Before publication, run:
+
+```bash
+cargo xtask precommit
+```
+
+`precommit` is the cheap non-mutating shift-left command. For one complete
+local review and package pass, run `cargo xtask ci-full`. See the repository
+root `AGENTS.md` local validation section.
+
+Do not run the command block below as a sequential required list. It is the
+inventory for targeted reruns when a specific gate failed. Claiming
+CI-equivalent completeness still requires `ci-full` or the routed `check-*`
+list; `precommit` does not substitute for those.
+
 ```bash
 cargo fmt --check
 cargo check --workspace --all-targets
