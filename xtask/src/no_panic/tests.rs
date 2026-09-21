@@ -1410,6 +1410,59 @@ callee = "unwrap"
 }
 
 #[test]
+fn parse_no_panic_allowlist_toml_v2_rejects_duplicate_ids() -> Result<(), String> {
+    // #3799: schema 0.3 `id` is the stable identifier. Distinct selectors
+    // with the same id must fail parse; semantic-identity uniqueness is a
+    // different check and would accept these rows.
+    with_temp_cwd("duplicate_ids", |root| {
+        let toml_content = r#"schema_version = "0.3"
+
+[[allow]]
+id = "panic-0001"
+path = "src/lib.rs"
+family = "unwrap"
+classification = "test_only"
+owner = "test-infra"
+explanation = "First site"
+expires = "2027-03-31"
+
+[allow.selector]
+kind = "method_call"
+container = "first_helper"
+callee = "unwrap"
+
+[[allow]]
+id = "panic-0001"
+path = "src/lib.rs"
+family = "unwrap"
+classification = "test_only"
+owner = "test-infra"
+explanation = "Second site"
+expires = "2027-03-31"
+
+[allow.selector]
+kind = "method_call"
+container = "second_helper"
+callee = "unwrap"
+"#;
+        write(&root.join("allowlist.toml"), toml_content);
+        let toml_path = root
+            .join("allowlist.toml")
+            .to_str()
+            .ok_or("non-UTF-8 path")?
+            .to_string();
+        let result = parse_no_panic_allowlist_toml_v2(&toml_path);
+        let err = result
+            .err()
+            .ok_or("expected parse error for duplicate schema 0.3 ids")?;
+        if !err.contains("duplicate allowlist id `panic-0001`") {
+            return Err(format!("unexpected error message: {err}"));
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn v0_1_entries_still_match_by_line_and_column() -> Result<(), String> {
     with_temp_cwd("v01_in_v02_file", |root| {
         let toml_content = r#"schema_version = "0.2"
