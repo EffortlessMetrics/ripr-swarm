@@ -294,6 +294,12 @@ are scoped or reviewed.
 
 ### Changed
 
+- Reviewer-facing architecture copies in `docs/ENGINEERING.md` and
+  `.factory/skills/review-guidelines/SKILL.md` now name `agent`, `config`,
+  `mcp`, and `provider_contract`, matching the product map. The
+  `check-agent-skills` pin remains on `AGENTS.md`, `CLAUDE.md`, and
+  `docs/ARCHITECTURE.md`
+  ([#3779](https://github.com/EffortlessMetrics/ripr-swarm/issues/3779)).
 - Agent and human architecture maps now name the `mcp` protocol adapter and
   the `provider_contract` DTO surface. `cargo xtask check-agent-skills` pins
   the required module tokens in `AGENTS.md`, `CLAUDE.md`, and
