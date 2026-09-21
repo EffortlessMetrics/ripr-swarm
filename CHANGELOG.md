@@ -301,6 +301,14 @@ are scoped or reviewed.
   `RIPR_CACHE_DIR` the status process used
   ([#3808](https://github.com/EffortlessMetrics/ripr-swarm/issues/3808)).
 
+- `policy/clippy-lints.toml` no longer says planned lints wait for MSRV
+  and a matching xtask gate. `activate_when_msrv` is documentary metadata,
+  not a ratchet and not verified available-since; remaining blockers stay
+  in `reason`. `cargo xtask check-lint-policy` still dual-rails
+  `Cargo.toml` against the ledger and does not compare that field to
+  workspace `rust-version`
+  ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
+
 - Live entry docs no longer name the deleted `.ripr/goals/active.toml` file as
   current selection authority. `docs/IMPLEMENTATION_PLAN.md`,
   `docs/agent-context/CONTEXT_SYSTEM.md`, and
@@ -339,6 +347,12 @@ are scoped or reviewed.
   names `ci-full` as the complete pass. The 40-command block is labeled
   targeted-rerun inventory, not sequential required work
   ([#3775](https://github.com/EffortlessMetrics/ripr-swarm/issues/3775)).
+- `docs/IMPLEMENTATION_PLAN.md` Required Gates now leads with
+  `cargo xtask precommit` and names `ci-full` as the complete local pass.
+  The cargo command block is labeled targeted-rerun inventory, matching
+  `AGENTS.md` (#3775). Extension compile/package remains required for
+  `editors/vscode` changes; neither `precommit` nor `ci-full` covers it
+  ([#3817](https://github.com/EffortlessMetrics/ripr-swarm/issues/3817)).
 - `docs/handoffs/README.md` labels retained campaign closeouts as historical.
   `docs/agent-context/repo-map.md` no longer names the retired active-goal
   manifest as a live selector
@@ -371,6 +385,12 @@ are scoped or reviewed.
   ([#2592](https://github.com/EffortlessMetrics/ripr-swarm/issues/2592)).
 
 ### Fixed
+
+- `ripr cache status` and `ripr cache clear` unknown-flag errors now suggest
+  the accepted flags from the same help bodies those commands print
+  (`--json`, `--dry-run`, `--force`). Typos no longer fall through to the
+  bare no-suggestion branch
+  ([#3786](https://github.com/EffortlessMetrics/ripr-swarm/issues/3786)).
 
 - Live `parse_old_path_for_confinement` and `git::run_git` no longer carry
   leftover `#[allow(dead_code)]` attributes whose reasons cited closed

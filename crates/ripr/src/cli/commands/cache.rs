@@ -10,14 +10,26 @@ const CACHE_STATUS_SCHEMA_VERSION: &str = "0.1";
 
 const CACHE_USAGE: &str =
     "Usage:\n  ripr cache status [--json]\n  ripr cache clear [--dry-run] [--force]";
-const STATUS_USAGE: &str = "Usage: ripr cache status [--json]";
-const CLEAR_USAGE: &str = r#"Usage: ripr cache clear [--dry-run] [--force]
+/// Help body for `ripr cache status`. Also the flag source for unknown-argument
+/// suggestions, so `--json` has to appear as an option-list line, not only
+/// inside the usage brackets.
+pub(in crate::cli) const CACHE_STATUS_HELP: &str = r#"Usage: ripr cache status [--json]
+
+Report the resolved analysis cache directory (RIPR_CACHE_DIR when set,
+otherwise target/ripr/cache under the Cargo workspace root).
+
+  --json    Print machine-readable status JSON.
+"#;
+/// Help body for `ripr cache clear`. Also the flag source for unknown-argument
+/// suggestions; keep accepted flags on option-list lines.
+pub(in crate::cli) const CACHE_CLEAR_HELP: &str = r#"Usage: ripr cache clear [--dry-run] [--force]
 
 Removes the resolved cache directory (RIPR_CACHE_DIR when set, otherwise
-target/ripr/cache under the Cargo workspace root.
+target/ripr/cache under the Cargo workspace root).
 
   --dry-run   Report what would be removed and remove nothing.
-  --force     Required to remove a cache directory that holds entries."#;
+  --force     Required to remove a cache directory that holds entries.
+"#;
 
 /// Directory names `ripr` itself creates under the cache base directory.
 ///
@@ -273,7 +285,7 @@ fn clear_cache_status(
 
 fn run_status(args: &[String]) -> Result<(), String> {
     if matches!(args, [arg] if arg == "--help" || arg == "-h") {
-        println!("{STATUS_USAGE}");
+        println!("{CACHE_STATUS_HELP}");
         return Ok(());
     }
 
@@ -299,7 +311,7 @@ fn cleanup_hint(cache_dir: &Path) -> String {
 
 fn run_clear(args: &[String]) -> Result<(), String> {
     if matches!(args, [arg] if arg == "--help" || arg == "-h") {
-        println!("{CLEAR_USAGE}");
+        println!("{CACHE_CLEAR_HELP}");
         return Ok(());
     }
 
@@ -408,11 +420,13 @@ mod tests {
 
     #[test]
     fn unknown_status_arguments_fail_closed() -> Result<(), String> {
-        let args = vec!["--jsoon".to_string()];
-        if parse_status_args(&args).is_ok() {
-            return Err("unknown cache status argument was accepted".to_string());
+        match parse_status_args(&["--jsonn".to_string()]) {
+            Ok(_) => Err("unknown cache status argument was accepted".to_string()),
+            Err(message) if message.contains("Did you mean `--json`?") => Ok(()),
+            Err(message) => Err(format!(
+                "expected `--json` suggestion for cache status typo, got {message}"
+            )),
         }
-        Ok(())
     }
 
     #[test]
@@ -518,6 +532,15 @@ mod tests {
         }
         if parse_clear_args(&["--forced".to_string()]).is_ok() {
             return Err("unknown cache clear argument was accepted".to_string());
+        }
+        match parse_clear_args(&["--dry-runn".to_string()]) {
+            Ok(_) => return Err("unknown cache clear argument was accepted".to_string()),
+            Err(message) if !message.contains("Did you mean `--dry-run`?") => {
+                return Err(format!(
+                    "expected `--dry-run` suggestion for cache clear typo, got {message}"
+                ));
+            }
+            Err(_) => {}
         }
         Ok(())
     }
