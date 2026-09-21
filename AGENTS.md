@@ -3,6 +3,88 @@
 This repository is the product repo for `ripr`: a static mutation-exposure
 analyzer for Rust/Cargo workspaces.
 
+## Repository Operating Authority
+
+- `operating_contract:primary_authority`
+- `operating_contract:routine_repo_writes`
+- `operating_contract:ordinary_squash_merge`
+- `operating_contract:delivery_state_ladder`
+- `operating_contract:host_shell_detection`
+
+At session start, after compaction, or after a handoff, reconstruct authority in
+this order:
+
+1. current user instructions;
+2. this root `AGENTS.md` and the applicable `.agents/skills/**` procedure;
+3. live repository source, GitHub issues/PRs/checks, and retained artifacts;
+4. prior summaries, subagent reports, progress recaps, and local notes.
+
+Lower-ranked material is a lead, not authority. It may not create a permission
+boundary, user ruling, exact count, object identity, completion state, or
+release disposition. When a summary conflicts with a primary source, discard
+the summary claim and continue from the primary source.
+
+Inside a selected repository goal, routine reversible delivery is already
+authorized:
+
+```text
+edit and test
+→ commit coherent candidate
+→ push ordinary branch
+→ open or update PR
+→ address review and CI
+→ resolve addressed threads
+→ normal protected squash merge
+→ clean lane-created branch/worktree/residue
+```
+
+Do not pause for separate approval at those transitions. Separate authorization
+is required for force-push or shared-history rewriting, destructive deletion of
+durable evidence, repository settings/rulesets/secrets, public tags/releases,
+registry or marketplace publication, signing or release credentials, or work
+outside the selected goal. Exact history-preserving source-integration
+transactions follow their controlling issue and are not ordinary squash merges.
+
+Ordinary `ripr-swarm` development PRs squash merge. A behind-only branch or
+unrelated movement on `main` is not a reason to rebase, restack, force-push, or
+rerun unaffected proof. Reconcile only an actual content conflict, changed
+explicit prerequisite, material combined-tree failure, or exact-base policy.
+Before resolving a conflict or opening a rival PR, reread current `main`, the
+controlling issue, open PRs, and recently merged PRs for equivalent landed work.
+
+Keep delivery states distinct:
+
+```text
+local edit or local commit      unpublished candidate; zero repository delivery
+open PR                         in flight
+merged PR                       implementation landed
+terminal issue acceptance       claim delivered
+immutable candidate receipt     release membership selected
+candidate qualification         candidate qualified
+history-preserving source sync  source integrated
+ship packet / authorization     release decision
+public tag and publication      release delivered
+independent public verification release verified
+```
+
+Never promote one state into another by prose. A readiness lens, green local
+suite, merged leaf, or completed session checklist is not whole-release
+readiness. Progress for a high-level goal is terminal parent predicates divided
+by the complete selected parent denominator; a narrower subgoal cannot replace
+or complete its parent.
+
+Every status report names the object, authority, exact identity, evidence
+observed, current state, unknowns, non-claim, and next transition. Preserve
+object identity across every handoff; evidence from one change or proof plane
+cannot be borrowed by another.
+
+Detect the current host and shell before composing commands. Use PowerShell
+syntax on Windows and POSIX syntax on Linux/macOS; do not assume `touch`, `sed`,
+`awk`, Bash pipelines, or PowerShell cmdlets exist everywhere. Cargo writes
+normal progress to stderr, so stderr alone is not failure: use the real process
+exit status and terminal result. If a wrapper obscures it, rerun directly or
+capture the native status explicitly.
+
 ## Product Contract
 
 `ripr` answers this question:
@@ -458,6 +540,12 @@ exist. A PR is ready only when the exact published head has a current
 addressed, the diff matches the stated scope, and repo policy does not require a
 different sequence.
 
+Ordinary `ripr-swarm` development PRs use protected squash merge. Do not update
+a behind-only branch merely to chase `main`; unrelated base movement does not
+invalidate proof or review. Before resolving a conflict, reread current `main`,
+the controlling issue, open PRs, and recently merged PRs to determine whether
+the upstream change already delivered the claim.
+
 Merge-safety rules, learned the hard way:
 
 - Treat CI checks like oracles. A check that *runs* but is not *required* is not
@@ -471,8 +559,8 @@ Merge-safety rules, learned the hard way:
   than waving them through.
 - When a PR fails on a file or spec it did not touch, reproduce against
   `origin/main`. If `main` is already broken, fix `main` in a tiny unblock PR
-  first, then rebase the dependent work — do not debug your own diff for an
-  inherited failure.
+  first, then reconcile the dependent work only when required — do not debug
+  your own diff for an inherited failure.
 - A pass with zero analyzed subjects is `not_run`, not evidence. Preserve
   denominators in reports; a green state with an empty denominator proves nothing.
 - An output-shape change invalidates every golden. A PR that adds or renames a
@@ -532,10 +620,13 @@ the current branch. It does not create an approval gate.
 until that dependency is landed or explicitly update the manifest. Do not invent
 a separate merge rule.
 
-Ask before proceeding only when continuing would change public schema, output
-contracts, security/workflows/secrets, dependencies, release or publish
-behavior, architecture boundaries, campaign ordering, or duplicate-PR
-selection.
+Ask before proceeding only when the selected goal has not already authorized
+the action and continuing would change public schema or output contracts,
+external exposure, architecture or campaign ordering, repository settings or
+secrets, destructive history, durable evidence, or release/publication state.
+Routine dependency, workflow, documentation, implementation, test, commit,
+push, PR, review-repair, and protected merge work that is explicitly inside the
+selected goal does not create a new approval pause.
 
 ## Review posture
 
@@ -588,9 +679,9 @@ current claim, and keep one current branch/worktree/PR per coherent claim.
 Commit the coherent candidate, run the pre-publication `review-pr` pass, and
 let a `REVIEW_INCOMPLETE` candidate enter `finish-pr` only for publication.
 Re-run `review-pr` on the exact published head with current remote evidence;
-only `REVIEW_READY` may enter `finish-pr` merge convergence. A waiting PR is
-still in flight; advance a distinct claim when useful and revisit it after a
-material transition.
+only `REVIEW_READY` may enter `finish-pr` merge convergence. A waiting PR or
+long-running command is still in flight; advance a distinct ready claim when
+useful and revisit it after a material transition.
 
 - `review_route:root_to_review_pr`
 
@@ -629,7 +720,10 @@ above:
 
 - `/goal` is session-level runtime state with independent completion
   verification; it does not replace issue acceptance, exact-head review,
-  required GitHub checks, or release authority.
+  required GitHub checks, release authority, or the parent goal denominator.
+- A stale or completed runtime goal may be replaced by a successor objective
+  derived from current user and repository authority; do not ask the user to
+  restate a recoverable end state.
 - Full Access, Auto Edit, or Goal Mode does not authorize direct or admin
   merge. The path through `$review-pr` → `$finish-pr` is mandatory.
 - Use native `Explore` for read-only source/authority mapping and
@@ -648,8 +742,9 @@ by a changed head, conflict, implementation, oracle, public claim, generated
 relationship, or integration basis. Unrelated movement on `main` does not
 invalidate proof or review by itself.
 
-Before publication use `cargo xtask precommit`, then the required changed-
-surface and release gates. After merge, verify current `main`, reconcile the
+Before publication use focused proof and `cargo xtask precommit`; hosted PR CI
+owns the required merge-gate matrix unless a named failure or claim requires a
+broader local reproduction. After merge, verify current `main`, reconcile the
 issue and campaign predicates, refresh generated evidence, capture genuine
 follow-ups, and remove only lane-created worktrees, branches, and residue.
 
