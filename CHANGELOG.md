@@ -302,6 +302,13 @@ are scoped or reviewed.
   instead of a commented example whose target had already passed
   ([#3782](https://github.com/EffortlessMetrics/ripr-swarm/issues/3782)).
 
+- Reviewer-facing architecture copies in `docs/ENGINEERING.md` and
+  `.factory/skills/review-guidelines/SKILL.md` now name `agent`, `config`,
+  `mcp`, and `provider_contract`, matching the product map. The
+  `check-agent-skills` pin remains on `AGENTS.md`, `CLAUDE.md`, and
+  `docs/ARCHITECTURE.md`
+  ([#3779](https://github.com/EffortlessMetrics/ripr-swarm/issues/3779)).
+
 - The 0.11.0 support claim now describes the Rust gap-repair loop as `usable
   alpha`, not unqualified `usable`. Fixture, package, editor, bounded test-only
   packet, and before/after receipt proof remains intact, but the governed
