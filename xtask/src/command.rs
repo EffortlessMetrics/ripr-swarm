@@ -1440,7 +1440,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/agent-skills.{md,json}",
             false,
             true,
-            "Checks both Codex and Claude instruction roots and their six canonical skills for structural validity, provider separation, retired orchestration drift, sibling references, required yielding states, and required architecture-map module tokens in AGENTS.md, CLAUDE.md, and docs/ARCHITECTURE.md; it does not enforce prose symmetry or model choices.",
+            "Checks Codex, Claude, and ZCode instruction roots and their seven canonical skills for structural validity, provider separation, retired orchestration drift, sibling references, required yielding states, and required architecture-map module tokens in AGENTS.md, CLAUDE.md, and docs/ARCHITECTURE.md; it does not enforce prose symmetry or model choices.",
         ),
         command_entry(
             "check-no-panic-family [--propose]",
