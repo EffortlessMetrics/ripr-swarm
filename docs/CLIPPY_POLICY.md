@@ -196,7 +196,8 @@ Two companion ledgers track Clippy state alongside the active/planned table:
 - [`policy/clippy-exceptions.toml`](../policy/clippy-exceptions.toml) records
   per-call-site `#[expect(...)]` / `#[allow(...)]` suppressions with an `id`,
   `owner`, `reason`, `covered_by`, and `expires`. It is the reviewable
-  counterpart to `.ripr/allow-attributes.txt`. Empty by default.
+  counterpart to `.ripr/allow-attributes.txt`. It currently records
+  `clippy-exception-0001`.
 
 These are advisory until the corresponding xtask ledger checks land in a
 follow-up PR (`check-lint-policy` still reads only `Cargo.toml` and

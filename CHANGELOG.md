@@ -294,6 +294,12 @@ are scoped or reviewed.
 
 ### Changed
 
+- `policy/clippy-exceptions.toml` and `docs/CLIPPY_POLICY.md` no longer say
+  the exceptions ledger is empty by default. The live row remains
+  `clippy-exception-0001`; the commented example no longer reuses that id
+  or a past `expires` date
+  ([#3820](https://github.com/EffortlessMetrics/ripr-swarm/issues/3820)).
+
 - `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
   consumes `policy/clippy-debt.toml`. That gate still dual-rails
   `Cargo.toml` against `policy/clippy-lints.toml` only; the debt file is
