@@ -23,8 +23,9 @@ protection, `pull_request_target` defaults, or default CI blocking.
 
 `AGENTS.md` already tells agents to recover long-running work from
 repository artifacts rather than chat history, starting from the roadmap,
-implementation plan, campaigns, active goal manifest, capability matrix,
-specs, traceability, and learnings. That works, but the links between
+implementation plan, campaigns, live GitHub issues/PRs,
+`.allow/spec-system/slices/`, capability matrix, specs, traceability, and
+learnings. That works, but the links between
 those artifacts are still implicit prose — an agent has to *read* the
 campaign to find the spec, and *read* the spec to find the code paths.
 

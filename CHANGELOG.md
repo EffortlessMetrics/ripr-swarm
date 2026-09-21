@@ -294,6 +294,13 @@ are scoped or reviewed.
 
 ### Changed
 
+- Live entry docs no longer name the deleted `.ripr/goals/active.toml` file as
+  current selection authority. `docs/IMPLEMENTATION_PLAN.md`,
+  `docs/agent-context/CONTEXT_SYSTEM.md`, and
+  `plans/rust-one-shot-evidence-to-repair.md` now point at GitHub issues/PRs
+  and `.allow/spec-system/slices/`, matching the repo tracking model
+  ([#3780](https://github.com/EffortlessMetrics/ripr-swarm/issues/3780)).
+
 - `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
   consumes `policy/clippy-debt.toml`. That gate still dual-rails
   `Cargo.toml` against `policy/clippy-lints.toml` only; the debt file is
