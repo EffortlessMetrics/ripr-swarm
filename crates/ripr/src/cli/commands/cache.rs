@@ -296,12 +296,17 @@ fn run_status(args: &[String]) -> Result<(), String> {
     let status = inspect_cache_dir(&cache_dir);
     println!("{}", render_status(&cache_dir, &status, is_json)?);
     if !is_json {
-        eprintln!(
-            "To clean up the cache, use: cargo xtask cache gc [--dry-run] [--max-size-gb N] [--ttl-days N]"
-        );
+        eprintln!("{}", cleanup_hint(&cache_dir));
     }
 
     Ok(())
+}
+
+fn cleanup_hint(cache_dir: &Path) -> String {
+    let path = cache_dir.display();
+    format!(
+        "To clean up {path}, run: {CACHE_DIR_ENV}={path} cargo xtask cache gc [--dry-run] [--max-size-gb N] [--ttl-days N]"
+    )
 }
 
 fn run_clear(args: &[String]) -> Result<(), String> {
@@ -435,6 +440,20 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn status_cleanup_hint_names_the_resolved_directory() {
+        let relocated = PathBuf::from("/tmp/ripr-reloc-cache");
+        let hint = cleanup_hint(&relocated);
+        assert!(
+            hint.contains("/tmp/ripr-reloc-cache"),
+            "cleanup hint must name the directory status just reported: {hint}"
+        );
+        assert!(
+            hint.contains("RIPR_CACHE_DIR=/tmp/ripr-reloc-cache cargo xtask cache gc"),
+            "cleanup hint must carry the same RIPR_CACHE_DIR status used, not an unqualified GC command: {hint}"
+        );
     }
 
     #[test]

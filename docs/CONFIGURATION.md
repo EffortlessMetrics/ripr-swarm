@@ -205,6 +205,10 @@ source checkout):
 RIPR_CACHE_DIR=/var/cache/ripr ripr check --root . --format repo-exposure-json
 ```
 
+`cargo xtask cache report` and `cargo xtask cache gc` honor the same
+`RIPR_CACHE_DIR` root. `ripr cache status` names that directory in its
+cleanup hint. `ripr cache clear` already used the resolved root.
+
 To run a deliberately large Rust extraction diff on a larger runner:
 
 ```bash

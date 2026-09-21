@@ -294,6 +294,13 @@ are scoped or reviewed.
 
 ### Changed
 
+- `cargo xtask cache report` / `gc` honor `RIPR_CACHE_DIR` instead of always
+  scanning `target/ripr/cache`. Relocated roots must be absolute, must not
+  traverse `..`, and must look like a ripr cache before any walk or delete.
+  `ripr cache status` prints a cleanup hint that exports the same
+  `RIPR_CACHE_DIR` the status process used
+  ([#3808](https://github.com/EffortlessMetrics/ripr-swarm/issues/3808)).
+
 - `policy/clippy-exceptions.toml` and `docs/CLIPPY_POLICY.md` no longer say
   the exceptions ledger is empty by default. The live row remains
   `clippy-exception-0001`; the commented example no longer reuses that id
