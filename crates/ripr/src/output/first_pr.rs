@@ -1783,16 +1783,16 @@ mod tests {
             parse_options(&["--gap-ledger".to_string(), "".to_string()]),
             Err("first-pr --gap-ledger requires a non-empty value".to_string())
         );
-        let unknown = parse_options(&["--gap-ledgr".to_string()])
-            .expect_err("unknown first-pr flag must fail closed");
-        assert!(
-            unknown.contains("Did you mean `--gap-ledger`?"),
-            "first-pr typo must suggest the parser flag from its help body: {unknown}"
-        );
-        assert!(
-            unknown.contains("Run `ripr first-pr --help`."),
-            "first-pr unknown flag must point at scoped help: {unknown}"
-        );
+        match parse_options(&["--gap-ledgr".to_string()]) {
+            Err(unknown)
+                if unknown.contains("Did you mean `--gap-ledger`?")
+                    && unknown.contains("Run `ripr first-pr --help`.") => {}
+            other => {
+                return Err(format!(
+                    "first-pr typo must suggest --gap-ledger from its help body, got {other:?}"
+                ));
+            }
+        }
         Ok(())
     }
 
