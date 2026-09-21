@@ -301,6 +301,15 @@ are scoped or reviewed.
   `RIPR_CACHE_DIR` the status process used
   ([#3808](https://github.com/EffortlessMetrics/ripr-swarm/issues/3808)).
 
+- Live entry docs no longer name the deleted `.ripr/goals/active.toml` file as
+  current selection authority. `docs/IMPLEMENTATION_PLAN.md`,
+  `docs/agent-context/CONTEXT_SYSTEM.md`, and
+  `plans/rust-one-shot-evidence-to-repair.md` now point at GitHub issues/PRs
+  for live selection. `.allow/spec-system/slices/` remains PR-local scope
+  (`ImplementationSliceV1`), not a second live selector, matching the repo
+  tracking model
+  ([#3780](https://github.com/EffortlessMetrics/ripr-swarm/issues/3780)).
+
 - `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask
   check-allow-attributes` matches `policy/clippy-exceptions.toml`. That
   gate still counts source suppressions against `.ripr/allow-attributes.txt`
