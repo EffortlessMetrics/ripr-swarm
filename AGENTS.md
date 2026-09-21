@@ -69,6 +69,10 @@ The current internal shape is:
   authority)
 - `agent`: repair-loop commands (loop commands, provenance)
 - `config`: `ripr.toml` loading, typed model, language detection
+- `mcp`: bounded read-only Model Context Protocol adapter (`ripr mcp --stdio`;
+  ADR 0022). Shared workspace-status projection; no edit or execution authority
+- `provider_contract`: public exact-snapshot DTOs for external proof
+  orchestrators; not an analysis or rendering layer
 
 ## Rust Baseline
 
@@ -90,20 +94,30 @@ The VS Code extension, GitHub Actions declarations, fixture inputs,
 documentation examples, generated outputs, and assets are explicit exceptions
 when covered by policy metadata.
 
-## Required Gates
+## Local validation
 
-Run these before claiming the branch is ready:
+Use focused proof during implementation. Before publication, run:
 
-For one complete local review and package pass, run `cargo xtask ci-full`. It
+```bash
+cargo xtask precommit
+```
+
+`precommit` is the cheap non-mutating shift-left command. For one complete
+local review and package pass, run `cargo xtask ci-full`. It
 runs the review-ready `check-pr` lane, the evidence gates (`fixtures`,
 `goldens check`, `test-oracle-report`, `dogfood`, and `metrics`), then the
-package listing and publish dry-run. The explicit commands below remain the
-inventory for targeted reruns.
+package listing and publish dry-run.
+
+Do not run the command block below as a sequential required list. It is the
+inventory for targeted reruns when a specific gate failed. Claiming
+CI-equivalent completeness still requires `ci-full` or the routed `check-*`
+list; `precommit` does not substitute for those (see Verification bias).
 
 The following report commands are advisory and do not independently block a
 merge: `cargo xtask pr-triage-report`, `cargo xtask metrics`,
 `cargo xtask check-pr-shape`, and `cargo xtask module-health`.
 
+### Targeted-rerun inventory
 ```bash
 cargo xtask shape
 cargo xtask fix-pr
@@ -623,8 +637,9 @@ above:
   candidate tournament.
 - A merged PR with an incomplete high-level goal must continue through
   `$deliver-goal`.
-- `check-agent-skills` validates the source-side route and skill set; it does
-  not claim that a user's local ZCode import or settings are enabled.
+- `check-agent-skills` validates the source-side route, skill set, and
+  architecture-map module tokens; it does not claim that a user's local
+  ZCode import or settings are enabled.
 
 Keep PR head, integration basis, squash result, proof, review, and release
 state as separate judgments. Refresh only the proof/review dimensions affected

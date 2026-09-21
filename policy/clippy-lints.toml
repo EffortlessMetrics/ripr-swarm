@@ -132,7 +132,8 @@ level = "deny"
 # Silent failure: ignoring a Result, future, or lock guard loses evidence the
 # analyzer cannot reconstruct. `let_underscore_must_use` is intentionally
 # deferred because best-effort cleanup patterns (`let _ = fs::remove_dir_all`)
-# are pervasive across tests; tracked as a follow-up flip.
+# are pervasive across tests; recorded as clippy-debt-0001 in
+# policy/clippy-debt.toml.
 [[active.silent_failure]]
 name = "clippy::let_underscore_future"
 level = "deny"

@@ -12,7 +12,7 @@ undocumented override.
 | `policy/no-panic-allowlist.toml` | Panic-family call sites (schema 0.3) | `cargo xtask check-no-panic-family` |
 | `policy/non-rust-allowlist.toml` | Non-Rust programming files | `cargo xtask check-file-policy` |
 | `policy/clippy-lints.toml` | Active and planned Clippy lint policy | `cargo xtask check-lint-policy` |
-| `policy/clippy-debt.toml` | Temporary Clippy debt entries | `cargo xtask check-lint-policy` |
+| `policy/clippy-debt.toml` | Temporary Clippy debt entries | Advisory; not consumed by `cargo xtask check-lint-policy` (see [`docs/CLIPPY_POLICY.md`](CLIPPY_POLICY.md) Companion ledgers) |
 | `policy/clippy-exceptions.toml` | Per-site Clippy suppression receipts; test-valued `covered_by` claims | `cargo xtask check-allow-attributes` (receipts, pending ledger check) and `cargo xtask check-covered-by` (`covered_by`) |
 | `policy/dependency_allowlist.txt` | Allowed crate dependencies | `cargo xtask check-dependencies` |
 | `policy/ci-budget.toml` | LEM bands and enforcement posture | `cargo xtask ci plan` |

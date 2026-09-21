@@ -2,9 +2,11 @@
 
 This file gives agents a fast orientation before review or repair work.
 
-For the typed graph that connects proposals, specs, ADRs, campaigns, the
-active goal manifest, work items, surfaces, traceability, reports, and
-handoffs, see the [repo context system](CONTEXT_SYSTEM.md). The
+For the typed graph that connects proposals, specs, ADRs, campaigns, live
+GitHub issues and PRs, implementation slices under
+`.allow/spec-system/slices/`, surfaces, traceability, reports, and retained
+handoffs, see the [repo context system](CONTEXT_SYSTEM.md). Retired singleton
+goal files do not select work. The
 human-facing layering doctrine lives in
 [REPO_TRACKING_MODEL.md](../REPO_TRACKING_MODEL.md).
 
