@@ -5,6 +5,15 @@ analyzer for Rust/Cargo workspaces.
 
 ## Operating authority and delivery state
 
+Core operating contract markers:
+
+- `root_contract:primary_sources_before_summary`
+- `root_contract:parent_goal_denominator`
+- `root_contract:routine_repo_writes`
+- `root_contract:ordinary_squash_merge`
+- `root_contract:waiting_lane_not_global_blocker`
+- `root_contract:environment_detection`
+
 Rehydrate every session from primary authority in this order:
 
 1. the current user instruction;
