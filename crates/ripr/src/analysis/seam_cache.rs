@@ -759,34 +759,70 @@ impl WorkspaceState<'_> {
 /// time) on unix platforms, closing the mtime-preserving-rewrite residual
 /// there. Old `0.1` mappings were computed without ctime and must never
 /// match a `0.2` fingerprint, so they are orphaned in the `0.1` directory.
+///
+/// Cache admission after #3848: on a platform with no content-change
+/// witness, [`corpus_fingerprint`] returns `None`, so neither
+/// `lookup` nor `store` can be reached with a fingerprint at all. Every
+/// mapping written by an earlier build on such a platform — including
+/// `0.2` entries this very version wrote before the repair — is therefore
+/// unreachable by construction rather than by version comparison, and the
+/// schema version stays `0.2` so unix mappings, whose validity rule did
+/// not change, are not needlessly orphaned.
 pub(crate) const CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION: &str = "0.2";
 
 /// Cheap corpus signature: FNV-1a over sorted
-/// `(relative path, mtime secs, mtime nanos, size)` tuples for every file in
-/// `files` (paths relative to `root`), extended with the unix ctime (inode
-/// change time secs + nanos) on unix platforms. Stat-only — no file
-/// contents are read. Returns `None` when any file cannot be stat'd or has
-/// no portable mtime; callers must then fall back to the full content
-/// read, which is always correct.
+/// `(relative path, mtime secs, mtime nanos, size, ctime secs, ctime
+/// nanos)` tuples for every file in `files` (paths relative to `root`).
+/// Stat-only — no file contents are read. Returns `None` on any platform
+/// without a content-change witness (see below), when any file cannot be
+/// stat'd, or when a file has no portable mtime; callers must then fall
+/// back to the full content read, which is always correct.
 ///
-/// Residual (issue #2108, narrowed by the ctime mix-in): on unix, ctime
-/// bumps on ANY content or metadata write — including writes by tools that
-/// restore mtime (`rsync -a`, `cp --preserve=timestamps`, archive
+/// Platform rule (issue #3848). A stat-only signature may only grant
+/// authoritative reuse where some field in it is guaranteed to move on an
+/// ordinary content write — a *content-change witness*. On unix the
+/// ctime mix-in is that witness: ctime
+/// bumps on ANY content or metadata write — including writes by tools
+/// that restore mtime (`rsync -a`, `cp --preserve=timestamps`, archive
 /// extractors) — so a same-size content rewrite with a preserved mtime
-/// still invalidates the fingerprint. The only way to change bytes without
-/// changing this signature is to write without touching any file metadata
-/// at all, which no ordinary file API or tool can do. On non-unix
-/// platforms the signature remains mtime+size only, and the original
-/// caveat stands there: a content change preserving both size and mtime
-/// (to the filesystem's mtime granularity) keeps the old fingerprint and
-/// can serve the stale mapping.
+/// still invalidates the fingerprint. The only way to change bytes
+/// without changing the signature is to write without touching any file
+/// metadata at all, which no ordinary file API or tool can do.
 ///
-/// Either way, the direction is bounded by the write path, which only
-/// stores a mapping when the fingerprint is identical before and after the
-/// content read, so a fingerprint hit can never select a hash derived from
-/// a corpus with a *different* signature — only from a signature-identical
-/// corpus whose bytes changed invisibly to the signature's fields.
+/// On a platform with no such field the signature would remain
+/// mtime+size only, where an ordinary same-length edit that restores the
+/// modification time reproduces the whole tuple and would serve a stale
+/// aggregate hash — stale seam evidence and classification, not merely
+/// stale telemetry. Rather than infer an unproven change counter from
+/// another native field, this function refuses to produce a signature at
+/// all there, and every consumer degrades to the read-everything path.
+/// The per-file fact cache is keyed independently on content and is not
+/// affected.
+///
+/// Where a signature is produced, the direction is additionally bounded
+/// by the write path, which only stores a mapping when the fingerprint is
+/// identical before and after the content read, so a fingerprint hit can
+/// never select a hash derived from a corpus with a *different*
+/// signature.
 pub(crate) fn corpus_fingerprint(root: &Path, files: &[PathBuf]) -> Option<String> {
+    #[cfg(unix)]
+    {
+        stat_signature(root, files)
+    }
+    // No field of a non-unix stat tuple is known to move on every content
+    // write, so refuse to produce a signature at all rather than hand
+    // callers one that a same-length mtime-restoring edit reproduces.
+    #[cfg(not(unix))]
+    {
+        let _ = (root, files);
+        None
+    }
+}
+
+/// The stat-only signature itself. Compiled only where the ctime witness
+/// that makes it sound exists (issue #3848).
+#[cfg(unix)]
+fn stat_signature(root: &Path, files: &[PathBuf]) -> Option<String> {
     let mut entries: Vec<String> = Vec::with_capacity(files.len());
     for path in files {
         let metadata = std::fs::metadata(root.join(path)).ok()?;
@@ -801,8 +837,8 @@ pub(crate) fn corpus_fingerprint(root: &Path, files: &[PathBuf]) -> Option<Strin
         );
         // Unix hardening: ctime (inode change time) cannot be preserved by
         // mtime-restoring tools, so mixing it in closes the
-        // preserved-mtime rewrite residual on unix (see the doc comment).
-        #[cfg(unix)]
+        // preserved-mtime rewrite residual (see the doc comment). This is
+        // the witness the whole signature rests on, not an extra field.
         let entry = {
             use std::os::unix::fs::MetadataExt;
             let mut entry = entry;
@@ -5360,12 +5396,27 @@ mod tests {
             first, second,
             "fingerprint must not depend on discovery order"
         );
-        assert!(first.is_some(), "fingerprint should be stat-able");
+        #[cfg(unix)]
+        assert!(
+            first.is_some(),
+            "unix carries the ctime content-change witness, so a stat-able corpus must sign"
+        );
+        #[cfg(not(unix))]
+        assert!(
+            first.is_none(),
+            "#3848: with no content-change witness no signature may be produced at all"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
 
+    /// Signature drift is only a subject where a signature is produced at
+    /// all. Non-unix platforms are covered by
+    /// `corpus_fingerprint_is_none_without_a_content_change_witness`,
+    /// which asserts the stronger property that no signature exists there
+    /// (issue #3848).
+    #[cfg(unix)]
     #[test]
     fn corpus_fingerprint_changes_with_size_or_mtime_or_path_set() -> Result<(), String> {
         let dir = isolated_dir("fingerprint-drift");
@@ -5415,12 +5466,6 @@ mod tests {
             .map_err(|err| format!("set_modified: {err}"))?;
         let restored_signature = corpus_fingerprint(&dir, std::slice::from_ref(&a))
             .ok_or("restored-signature fingerprint should compute")?;
-        #[cfg(not(unix))]
-        assert_eq!(
-            baseline, restored_signature,
-            "non-unix: same path + mtime + size must reproduce the baseline fingerprint"
-        );
-        #[cfg(unix)]
         assert_ne!(
             baseline, restored_signature,
             "unix: the rewrites above bumped ctime, so restoring content + mtime must NOT reproduce the baseline fingerprint"
@@ -5475,6 +5520,72 @@ mod tests {
         assert_ne!(
             baseline, after,
             "unix ctime must invalidate the fingerprint on a same-size rewrite with restored mtime"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// Issue #3848: on a platform with no content-change witness the
+    /// aggregate stat shortcut is refused outright, so the exact edit that
+    /// defeated it — same byte length, modification time restored — cannot
+    /// reproduce a signature, because no signature is produced at all.
+    /// Nothing can then be looked up from or stored into the mapping.
+    ///
+    /// This is the platform-side regression lock. It executes only on the
+    /// affected platform (native Windows CI); a Linux pass proves nothing
+    /// about it and must not be reported as covering this case.
+    #[cfg(not(unix))]
+    #[test]
+    fn corpus_fingerprint_is_none_without_a_content_change_witness() -> Result<(), String> {
+        let dir = isolated_dir("fingerprint-no-witness");
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = write_corpus_file(&dir, "src/a.rs", "pub fn a() -> i32 { 1 }\n")?;
+
+        // The corpus is ordinary and fully stat-able: every `None` below is
+        // the platform rule, not a stat failure.
+        let metadata = std::fs::metadata(dir.join(&a)).map_err(|err| format!("stat: {err}"))?;
+        let original_mtime = metadata
+            .modified()
+            .map_err(|err| format!("stat mtime: {err}"))?;
+        let original_len = metadata.len();
+        assert_eq!(
+            corpus_fingerprint(&dir, std::slice::from_ref(&a)),
+            None,
+            "no content-change witness: a stat-able corpus must still refuse to sign"
+        );
+
+        // Same length, different bytes, modification time restored.
+        std::fs::write(dir.join(&a), "pub fn a() -> i32 { 2 }\n")
+            .map_err(|err| format!("rewrite: {err}"))?;
+        let file = std::fs::File::options()
+            .write(true)
+            .open(dir.join(&a))
+            .map_err(|err| format!("open for set_modified: {err}"))?;
+        file.set_modified(original_mtime)
+            .map_err(|err| format!("set_modified: {err}"))?;
+        drop(file);
+
+        // Assert the observed filesystem state really is the trap case
+        // rather than assuming `set_modified` took effect.
+        let after = std::fs::metadata(dir.join(&a)).map_err(|err| format!("re-stat: {err}"))?;
+        assert_eq!(
+            after.len(),
+            original_len,
+            "the edit must preserve length for this to be the stale-reuse case"
+        );
+        assert_eq!(
+            after
+                .modified()
+                .map_err(|err| format!("re-stat mtime: {err}"))?,
+            original_mtime,
+            "the edit must restore mtime for this to be the stale-reuse case"
+        );
+
+        assert_eq!(
+            corpus_fingerprint(&dir, std::slice::from_ref(&a)),
+            None,
+            "#3848: the same-length mtime-restoring edit must not reproduce a reusable signature"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -5604,14 +5715,17 @@ mod tests {
 
         // Persist the mapping the cold path would store, then rebuild the
         // key the way the fingerprint fast path does — with no file bytes.
-        let fingerprint =
-            corpus_fingerprint(&dir, &[a, b]).ok_or("fingerprint should compute for the corpus")?;
+        // The signature's own value is irrelevant to key parity, so this
+        // uses a literal rather than `corpus_fingerprint`: the property
+        // must hold on platforms that produce no signature at all (#3848).
+        let fingerprint = "0123456789abcdef";
+        let _ = (&a, &b);
         let cache = RepoCorpusFingerprintCache::at_dir(dir.join("fp-cache"));
         cache
-            .store(&dir, &fingerprint, &fresh_key.files_content_hash)
+            .store(&dir, fingerprint, &fresh_key.files_content_hash)
             .map_err(|err| format!("store mapping: {err}"))?;
         let stored_hash = cache
-            .lookup(&dir, &fingerprint)
+            .lookup(&dir, fingerprint)
             .ok_or("stored mapping should load")?;
         let rebuilt_key = WorkspaceKeyContext {
             workspace_root: &dir,

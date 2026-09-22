@@ -417,6 +417,23 @@ are scoped or reviewed.
 
 ### Fixed
 
+- The stat-only aggregate corpus shortcut no longer grants authoritative
+  cache reuse on platforms without a content-change witness. Its signature
+  is `(path, mtime, size)` plus the unix inode change time; on unix ctime
+  moves on every content write, but on Windows and other non-unix targets
+  a same-length edit that restores the modification time reproduced the
+  whole signature and could serve stale seam evidence and classification
+  after a real source or test edit. `corpus_fingerprint` now produces no
+  signature at all on those platforms, so the cache-key fast path, the
+  compact projection, and the targeted-rerun identity check all degrade to
+  the read-everything path rather than reusing a stale aggregate hash. No
+  mapping can be looked up or stored there, which leaves mappings written
+  by earlier builds unreachable by construction; the content-keyed
+  per-file fact cache and all unix behavior are unchanged. Non-unix runs
+  trade the shortcut's speed for correctness until a native change-identity
+  design is proven
+  ([#3848](https://github.com/EffortlessMetrics/ripr-swarm/issues/3848)).
+
 - `ripr first-pr`, `pr-summary`, `annotations`, `pr-evidence`,
   `impacted-evidence`, and `plus` unknown-flag errors now go through the
   shared help/suggestion authority. A near-miss typo suggests only a flag

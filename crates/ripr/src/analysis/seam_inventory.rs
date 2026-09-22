@@ -2599,11 +2599,14 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n";
         let relative = PathBuf::from("src/foo.rs");
         write_file(&root.join(&relative), content)?;
-        let fingerprint = corpus_fingerprint(&root, std::slice::from_ref(&relative))
-            .ok_or("fingerprint should compute for the test corpus")?;
+        // The helper only ever receives an already-computed signature, so
+        // key rebuilding does not depend on this value. Using a literal
+        // keeps the property under test on platforms that produce no
+        // signature at all (#3848).
+        let fingerprint = "0123456789abcdef";
         let content_hash = files_content_hash(&[(relative.clone(), content.as_bytes().to_vec())]);
         RepoCorpusFingerprintCache::at(&root)
-            .store(&root, &fingerprint, &content_hash)
+            .store(&root, fingerprint, &content_hash)
             .map_err(|err| format!("store fingerprint mapping: {err}"))?;
         // Change the on-disk bytes after storing the mapping. The helper only
         // receives the already-computed fingerprint, so returning the stored
@@ -2613,7 +2616,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         write_file(&root.join(&relative), changed_content)?;
 
         let inputs = workspace_key_inputs(&root, &RiprConfig::default());
-        let key = fingerprint_cached_workspace_key(&root, &inputs, Some(&fingerprint))
+        let key = fingerprint_cached_workspace_key(&root, &inputs, Some(fingerprint))
             .ok_or("stored fingerprint should rebuild a cache key")?;
         (key.files_content_hash == content_hash)
             .then_some(())
@@ -2622,6 +2625,13 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             .is_none()
             .then_some(())
             .ok_or("unknown fingerprint mapping must fail closed to the content-read path")?;
+        // The production state on a platform with no content-change
+        // witness (#3848): no signature at all must fail closed to the
+        // content-read path, never to a mapping stored by an older build.
+        fingerprint_cached_workspace_key(&root, &inputs, None)
+            .is_none()
+            .then_some(())
+            .ok_or("absent fingerprint must fail closed to the content-read path")?;
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
@@ -2694,13 +2704,27 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         if new_key == cold_key {
             return Err("content change with mtime bump must produce a new cache key".into());
         }
-        let new_fingerprint = corpus_fingerprint(&root, &[PathBuf::from("src/foo.rs")])
-            .ok_or("fingerprint should compute for the changed corpus")?;
-        let stored = RepoCorpusFingerprintCache::at(&root).lookup(&root, &new_fingerprint);
-        if stored.as_deref() != Some(new_key.files_content_hash.as_str()) {
-            return Err(format!(
-                "rerun should store the new fingerprint mapping, got {stored:?}"
-            ));
+        match corpus_fingerprint(&root, &[PathBuf::from("src/foo.rs")]) {
+            Some(new_fingerprint) => {
+                let stored = RepoCorpusFingerprintCache::at(&root).lookup(&root, &new_fingerprint);
+                if stored.as_deref() != Some(new_key.files_content_hash.as_str()) {
+                    return Err(format!(
+                        "rerun should store the new fingerprint mapping, got {stored:?}"
+                    ));
+                }
+            }
+            // #3848: with no content-change witness no signature is
+            // produced, so no mapping is refreshed and the next run reads
+            // the corpus. The rerun assertions above already established
+            // that this path returns the recomputed result.
+            None => {
+                if cfg!(unix) {
+                    return Err(
+                        "unix carries a content-change witness and must sign a stat-able corpus"
+                            .into(),
+                    );
+                }
+            }
         }
 
         let _ = std::fs::remove_dir_all(&root);
@@ -2770,7 +2794,19 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         )?;
 
         store_corpus_fingerprint_mapping(&state, pre_fingerprint.clone(), &key);
-        let fingerprint = pre_fingerprint.ok_or("pre-read fingerprint should compute")?;
+        let Some(fingerprint) = pre_fingerprint else {
+            // #3848: with no content-change witness there is no pre-read
+            // signature, so the store is skipped before this guard is
+            // reached and nothing can be written either way.
+            if cfg!(unix) {
+                return Err(
+                    "unix carries a content-change witness and must produce a pre-read signature"
+                        .into(),
+                );
+            }
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(());
+        };
         let stored = RepoCorpusFingerprintCache::at(&root).lookup(&root, &fingerprint);
         if stored.is_some() {
             return Err(format!(
