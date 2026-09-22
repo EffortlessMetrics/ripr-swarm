@@ -166,7 +166,9 @@ ripr explain --diff crates/ripr/examples/sample/example.diff probe:crates_ripr_e
 # Emit an agent-ready context packet (same probe id as explain)
 ripr context --diff crates/ripr/examples/sample/example.diff --at probe:crates_ripr_examples_sample_src_lib.rs:predicate:3d666895 --json
 
-# Repair one named gap: ripr records before and after, you edit one test
+# Repair one named gap: ripr records before and after, you edit one test.
+# Seam ids come from `ripr pilot --root .` (target/ripr/pilot/pilot-summary.md);
+# the probe ids `ripr check` prints are a different identifier.
 ripr agent repair --root . --seam-id <seam-id> --phase before
 ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 
