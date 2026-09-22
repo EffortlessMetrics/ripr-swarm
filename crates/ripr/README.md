@@ -13,7 +13,7 @@ a discriminator that would notice if that behavior were wrong?
 `ripr` is alpha software. The current release is a syntax-first scanner that is
 useful for early feedback, not a proof system.
 
-This is the product repository for `ripr`. The `0.10.x` line keeps the analyzer,
+This is the product repository for `ripr`. The `0.11.x` line keeps the analyzer,
 editor, CI, and agent loops aligned around static evidence, preview-language
 visibility, and repo-local operating packets for targeted tests.
 
@@ -142,56 +142,74 @@ cargo install --path crates/ripr
 # Check local tooling and workspace shape
 ripr doctor
 
-# Analyze the current Git diff against origin/main
+# Analyze the current Git diff and name one gap to start with
 ripr check --base origin/main
 
-# The following examples use the bundled sample diff. If you installed
-# ripr from source, run them from the crate directory (crates/ripr/).
-# If you installed via cargo install ripr, substitute your own --diff path.
-ripr check --diff examples/sample/example.diff
+# The following examples use the bundled sample diff. Run them from the
+# ripr repository root. If you installed via cargo install ripr, use your
+# own --diff path and copy the probe id from `ripr check --json`.
+ripr check --diff crates/ripr/examples/sample/example.diff
+
+# Show every finding instead of the bounded Start here: route
+ripr check --diff crates/ripr/examples/sample/example.diff --format human-full
 
 # Emit stable JSON for tools and agents
-ripr check --diff examples/sample/example.diff --json
+ripr check --diff crates/ripr/examples/sample/example.diff --json
 
 # Emit GitHub Actions annotations
-ripr check --diff examples/sample/example.diff --format github
+ripr check --diff crates/ripr/examples/sample/example.diff --format github
 
-# Explain one finding. Copy a probe id from the --json output above;
-# it is content-addressed against the workspace root, so the exact
-# hash depends on where you run ripr from. The id below is from the
-# ripr repository root.
-ripr explain --diff examples/sample/example.diff probe:crates_ripr_examples_sample_src_lib.rs:predicate:3d666895
+# Explain one finding. Probe ids are content-addressed against the
+# workspace root, so the id below only matches from the repository root.
+ripr explain --diff crates/ripr/examples/sample/example.diff probe:crates_ripr_examples_sample_src_lib.rs:predicate:3d666895
 
 # Emit an agent-ready context packet (same probe id as explain)
-ripr context --diff examples/sample/example.diff --at probe:crates_ripr_examples_sample_src_lib.rs:predicate:3d666895 --json
+ripr context --diff crates/ripr/examples/sample/example.diff --at probe:crates_ripr_examples_sample_src_lib.rs:predicate:3d666895 --json
+
+# Repair one named gap: ripr records before and after, you edit one test
+ripr agent repair --root . --seam-id <seam-id> --phase before
+ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 
 # Start the experimental LSP sidecar
-ripr lsp
+ripr lsp --stdio
+
+# Serve read-only workspace status to an MCP client
+ripr mcp --stdio
 ```
+
+`ripr doctor --json` emits the same setup checks as machine-readable JSON.
 
 ## Example Finding
 
+`ripr explain` on the bundled sample (evidence list shortened):
+
 ```text
-WARNING src/pricing.rs:88
+WARNING ./crates/ripr/examples/sample/src/lib.rs:8
 
-Static exposure: weakly_exposed (predicate, control)
+Changed
+  after:  amount >= discount_threshold
 
-Changed behavior:
-  after:  if amount >= discount_threshold {
+Probe
+  family: predicate
+  delta:  control
+  owner:  crates/ripr/examples/sample/src/lib.rs::price
 
-RIPR:
-  Reach:        yes
-  Infect:      weak
-  Propagate:   yes
-  Observe:     yes
-  Discriminate: weak
+Static exposure
+  weakly_exposed (warning, confidence 0.84)
 
-Gap:
-  - No detected boundary input for the changed predicate
+Evidence
+  - reach yes: Related tests appear to reach price: premium_customer_gets_discount
+  - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+  - propagation yes: Changed behavior appears to influence returned value: Quote { total: amount - 100, discount_applied: true }
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly
+
+Weakness
   - No strong discriminator was detected
+  - missing discriminator amount == discount_threshold: No related test call uses amount equal to discount_threshold; observed amount values: 10_000; observed discount_threshold values: 100
 
-Recommended next step:
-  Add below, equal, and above threshold tests with exact assertions.
+Next step
+  Add boundary tests for below, equal, and above the changed threshold with exact assertions.
 ```
 
 ## Output Formats
@@ -207,6 +225,7 @@ should branch on it before reading the rest of the envelope:
   "schema_version": "0.2",
   "tool": "ripr",
   "mode": "draft",
+  "root": ".",
   "base": "origin/main",
   "findings": []
 }
@@ -235,8 +254,9 @@ The current alpha line is intentionally narrow:
 - one shared analysis engine
 - syntax-first unified diff analysis
 - basic Rust function, test, and assertion indexing
-- human, JSON, and GitHub outputs
+- human, JSON, GitHub, SARIF, repo, and badge outputs
 - experimental LSP sidecar
+- read-only MCP status server (`ripr mcp --stdio`)
 
 The package is not split into `ripr-core`, `ripr-cli`, or `ripr-lsp`. Public
 crate boundaries can be added later if external consumers need them.

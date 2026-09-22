@@ -129,6 +129,20 @@ inspect an opaque helper, fixture, macro, or dynamic boundary.
 
 ## 5. Copy The Work Packet
 
+For a Rust seam, `ripr agent repair` runs steps 5 through 8 as one
+transaction:
+
+```bash
+ripr agent repair --root . --seam-id <seam_id> --phase before
+# add one focused test outside RIPR
+ripr agent repair --root . --attempt <repair-attempt-id> --phase after
+```
+
+The before phase prints the exact `--attempt` command; see
+[Repair attempt identity](REPAIR_ATTEMPT.md). The lower-level packet, verify,
+and receipt commands below remain available for gap-ledger records and explicit
+control.
+
 For a gap-ledger-backed task, create the focused agent packet:
 
 ```bash

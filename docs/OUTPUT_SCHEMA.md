@@ -50,6 +50,7 @@ map is:
 | `ripr receipt write/check` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` | `schema_version` | `0.1` |
+| `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 
 Bump rules below apply per contract: a breaking change to one family bumps
@@ -6735,7 +6736,7 @@ JSON shape:
 
 ```json
 {
-  "schema_version": "0.4",
+  "schema_version": "0.5",
   "tool": "ripr",
   "status": "advisory",
   "analysis_outcome_status": "complete",
@@ -6819,7 +6820,7 @@ JSON shape:
 
 Field contract:
 
-- `schema_version` - currently `"0.4"`. Version `0.2` added receipt
+- `schema_version` - currently `"0.5"`. Version `0.2` added receipt
   provenance fields; version `0.3` added structured next-action guidance;
   version `0.4` adds the producer-owned analysis-outcome envelope while
   preserving the selected-seam and handoff fields from `0.1`.
@@ -12948,7 +12949,7 @@ schema bump.
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "scope": "repo",
   "packets_total": 12565,
   "packets": [
@@ -15496,7 +15497,8 @@ generated CI does not infer a complete result from the derived
 
 ## PR Evidence Summary
 
-`cargo xtask ripr-pr-summary` writes two sibling files after the legacy
+`ripr pr-summary` (repository wrapper: `cargo xtask ripr-pr-summary`) writes
+two sibling files after the legacy
 `pr-summary.md`:
 
 ```text
