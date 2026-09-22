@@ -64,6 +64,23 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
 }
 
 fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
+    let written = write_agent_start(options)?;
+    for path in &written.paths {
+        println!("Wrote {}", path.display());
+    }
+    if let Some(next) = &written.next_command {
+        println!("Next: {next}");
+    }
+    Ok(())
+}
+
+/// Files written by `agent start` and the first missing-input command.
+struct AgentStartWritten {
+    paths: Vec<PathBuf>,
+    next_command: Option<String>,
+}
+
+fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, String> {
     ensure_command_root(&options.root, "agent start")?;
     let (input, config) = load_root_input_and_config(&options.root)?;
 
@@ -112,13 +129,13 @@ fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
     write_text_file(&workflow_path, &workflow_json)?;
     write_text_file(&commands_path, &commands_md)?;
 
-    println!("Wrote {}", workflow_path.display());
-    println!("Wrote {}", commands_path.display());
-    println!("Wrote {}", agent_brief_path.display());
-    if let Some(next) = manifest.missing_inputs.first() {
-        println!("Next: {}", next.command);
-    }
-    Ok(())
+    Ok(AgentStartWritten {
+        paths: vec![workflow_path, commands_path, agent_brief_path],
+        next_command: manifest
+            .missing_inputs
+            .first()
+            .map(|next| next.command.clone()),
+    })
 }
 
 fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
@@ -462,11 +479,17 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             );
 
             // Compose existing commands: start (creates workflow + brief) + packet.
-            run_agent_start(AgentStartOptions {
+            // Stdout carries only the packet JSON. The start step's
+            // `Next: ripr check ...` hint is dropped because this phase writes
+            // that before snapshot itself; printing it sent users to redo it.
+            let started = write_agent_start(AgentStartOptions {
                 root: root.clone(),
                 seam_id: seam_id.clone(),
                 out_dir: std::path::PathBuf::from("target/ripr/workflow"),
             })?;
+            for path in &started.paths {
+                eprintln!("ripr: wrote {}", path.display());
+            }
 
             let before = root.join("target/ripr/workflow/before.repo-exposure.json");
             write_agent_repo_exposure_snapshot(&root, &before)?;
@@ -482,10 +505,9 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             write_text_file(&packet_path, &packet)?;
             print!("{packet}");
 
-            eprintln!("ripr: before phase complete. Next:");
-            eprintln!("  1. Edit the source code to add or strengthen the discriminator.");
+            eprintln!("ripr: wrote {}", packet_path.display());
             eprintln!(
-                "  2. Run the exact --attempt command printed after the attempt manifest is published."
+                "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below."
             );
             Ok(())
         }
@@ -677,7 +699,14 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             receipt_result?;
             apply_record_result?;
 
-            eprintln!("ripr: after phase complete. Review the receipt and status output.");
+            let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
+            for line in repair_after_summary_lines(&receipt_path) {
+                eprintln!("ripr: {line}");
+            }
+            eprintln!(
+                "ripr: after phase complete. Receipt: {}",
+                receipt_path.display()
+            );
             Ok(())
         }
         AgentRepairPhase::Verify => {
@@ -786,6 +815,48 @@ fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), St
         return Err(format!("publish {} failed: {err}", path.display()));
     }
     Ok(())
+}
+
+/// Narration for the repair after phase: the receipt's summary, or a line
+/// naming the receipt that could not be read so the gap is visible rather
+/// than silently empty.
+fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
+    match std::fs::read_to_string(receipt_path) {
+        Ok(receipt) => repair_receipt_summary_lines(&receipt),
+        Err(error) => vec![format!(
+            "could not read {} to summarize the result: {error}",
+            receipt_path.display()
+        )],
+    }
+}
+
+/// One-line human result for the repair after phase, read from the receipt
+/// that owns it. The JSON streams on stdout carry the full evidence; this
+/// names the movement so a person does not have to parse them. A receipt
+/// missing these fields yields no summary rather than a guessed one.
+fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(receipt) else {
+        return Vec::new();
+    };
+    let text = |pointer: &str| value.pointer(pointer).and_then(serde_json::Value::as_str);
+    let mut lines = Vec::new();
+    if let (Some(seam_id), Some(before), Some(after), Some(movement)) = (
+        text("/seam/seam_id"),
+        text("/provenance/before_class"),
+        text("/provenance/after_class"),
+        text("/provenance/movement"),
+    ) {
+        let summary = text("/summary/next_action/summary")
+            .map(|summary| format!(" {summary}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "result for seam `{seam_id}`: {before} -> {after} ({movement}).{summary}"
+        ));
+    }
+    if let Some(action) = text("/summary/next_action/recommended_action") {
+        lines.push(format!("next: {action}"));
+    }
+    lines
 }
 
 fn resolve_agent_start_out_dir(root: &Path, out_dir: &Path) -> PathBuf {
@@ -1183,5 +1254,63 @@ mod tests {
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         std::fs::remove_dir_all(&outside).map_err(|err| format!("remove outside: {err}"))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod repair_summary_tests {
+    use super::{repair_after_summary_lines, repair_receipt_summary_lines};
+
+    #[test]
+    fn repair_after_summary_names_a_receipt_it_could_not_read() {
+        let missing = std::env::temp_dir()
+            .join(format!("ripr-missing-receipt-{}", std::process::id()))
+            .join("agent-receipt.json");
+        let lines = repair_after_summary_lines(&missing);
+        assert_eq!(lines.len(), 1, "expected one read-failure line: {lines:?}");
+        let expected_prefix = format!(
+            "could not read {} to summarize the result: ",
+            missing.display()
+        );
+        assert!(
+            lines
+                .first()
+                .is_some_and(|line| line.starts_with(&expected_prefix)),
+            "read failure must name the receipt path: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn repair_summary_names_movement_and_next_action_from_the_receipt() {
+        let receipt = r#"{
+            "seam": {"seam_id": "67fc764ba37d77bd"},
+            "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"},
+            "summary": {"next_action": {"summary": "Static grip improved.", "recommended_action": "Keep the focused test and include this receipt in review."}}
+        }"#;
+        assert_eq!(
+            repair_receipt_summary_lines(receipt),
+            vec![
+                "result for seam `67fc764ba37d77bd`: weakly_gripped -> strongly_gripped (improved). Static grip improved.".to_string(),
+                "next: Keep the focused test and include this receipt in review.".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn repair_summary_reports_unchanged_movement_verbatim() {
+        let receipt = r#"{
+            "seam": {"seam_id": "s"},
+            "provenance": {"before_class": "weakly_gripped", "after_class": "weakly_gripped", "movement": "unchanged"}
+        }"#;
+        assert_eq!(
+            repair_receipt_summary_lines(receipt),
+            vec!["result for seam `s`: weakly_gripped -> weakly_gripped (unchanged).".to_string()]
+        );
+    }
+
+    #[test]
+    fn repair_summary_is_empty_when_the_receipt_lacks_movement() {
+        assert!(repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#).is_empty());
+        assert!(repair_receipt_summary_lines("not json").is_empty());
     }
 }
