@@ -2440,18 +2440,26 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
 
     #[cfg(not(unix))]
     #[test]
-    fn given_preserved_signature_when_content_is_swapped_then_stored_hash_is_reused()
+    fn given_preserved_signature_when_content_is_swapped_then_stale_seams_are_not_served()
     -> Result<(), String> {
-        // Pins the issue #2108 fast path on non-unix platforms: when every
-        // file keeps its (path, mtime, size) signature, the warm run must
-        // rebuild the byte-identical cache key from the fingerprint store
-        // WITHOUT re-reading file contents. Proof: the bytes on disk are
-        // swapped for different same-length content (so any content read
-        // would produce a different key), yet the run still hits the cache
-        // entry written under the original content's key. On unix this
-        // scenario invalidates via ctime instead — see the unix-gated
-        // companion test below.
-        let root = make_tempdir("fingerprint-warm-hit")?;
+        // The scenario the issue #2108 fast path got wrong on non-unix
+        // platforms, now pinned at its repaired outcome (#3848). Every file
+        // keeps its (path, mtime, size) signature across a same-length edit
+        // that restores the modification time, so a stat-only signature
+        // reproduces exactly and the stored mapping would serve an aggregate
+        // hash taken before the edit. There is no field of the non-unix stat
+        // tuple that moves on every content write, so `corpus_fingerprint`
+        // produces no signature there at all and the warm run must re-read
+        // the corpus and classify the content that is actually on disk.
+        //
+        // The cache entry is doctored to empty first, so serving it is
+        // observable: an empty result means the stale entry was served, a
+        // non-empty result means the swapped content was read. Until #3848
+        // this test asserted the empty result as the intended behavior.
+        //
+        // On unix the same rewrite invalidates through the inode change time
+        // instead — see the unix-gated companion test below.
+        let root = make_tempdir("fingerprint-stale-refused")?;
         write_file(
             &root.join("src/foo.rs"),
             "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
@@ -2502,10 +2510,22 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             .map_err(|err| format!("set_modified: {err}"))?;
 
         let warm = inventory_classified_seams_at(&root)?;
-        if !warm.is_empty() {
+        if warm.is_empty() {
+            return Err(
+                "a same-length edit that restores the modification time must not be answered \
+                 from the mapping written before it: with no content-change witness in the \
+                 non-unix stat tuple the warm run must re-read the corpus and return the \
+                 swapped content's seams, and it returned the doctored (empty) cache entry \
+                 instead"
+                    .into(),
+            );
+        }
+        if warm.len() != cold.len() {
             return Err(format!(
-                "fingerprint hit should reuse the stored hash and return the cached (empty) seams without re-reading the corpus, got {} seams",
-                warm.len()
+                "the re-read run should classify the same seam count as a cold run over the \
+                 swapped content, got {} against {} cold",
+                warm.len(),
+                cold.len()
             ));
         }
 
@@ -2516,7 +2536,9 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     /// Unix companion to the test above (codex P2 on #2175): the same
     /// mtime-preserving rewrite bumps the inode change time, so the
     /// fingerprint changes, the doctored cache entry under the old key is
-    /// NOT served, and the rerun recomputes from the swapped content.
+    /// NOT served, and the rerun recomputes from the swapped content. Both
+    /// platforms therefore refuse the stale entry; they differ in how, since
+    /// unix has a witness to invalidate against and non-unix has none.
     #[cfg(unix)]
     #[test]
     fn given_mtime_preserving_rewrite_when_inventory_reruns_then_ctime_invalidates_mapping()
