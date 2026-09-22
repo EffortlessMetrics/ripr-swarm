@@ -138,8 +138,14 @@ fn source(changed: bool) -> String {
 }
 
 fn assert_source_patch(patch: &str) {
-    assert!(!patch.contains('\u{1b}'), "analysis patch must not contain color");
-    assert_eq!(patch.lines().filter(|line| line.starts_with("@@ ")).count(), 2);
+    assert!(
+        !patch.contains('\u{1b}'),
+        "analysis patch must not contain color"
+    );
+    assert_eq!(
+        patch.lines().filter(|line| line.starts_with("@@ ")).count(),
+        2
+    );
     assert!(!patch.lines().any(|line| line.starts_with(' ')));
     let files = parse_unified_diff(patch);
     assert_eq!(files.len(), 1);
@@ -198,8 +204,14 @@ fn loaders_ignore_textconv_even_when_external_diff_is_disabled() -> io::Result<(
     // shell script, executable permission, or global environment mutation.
     repo.config("diff.audit.textconv", "git --version")?;
     let range = format!("{}...HEAD", repo.base);
-    let raw = git(&repo.root, &["diff", "--no-ext-diff", "--unified=0", &range])?;
-    assert!(raw.is_empty(), "the constant textconv must hide the source edit");
+    let raw = git(
+        &repo.root,
+        &["diff", "--no-ext-diff", "--unified=0", &range],
+    )?;
+    assert!(
+        raw.is_empty(),
+        "the constant textconv must hide the source edit"
+    );
     let actual = repo.patches()?;
     assert_eq!(actual, expected);
     for patch in &actual {
@@ -214,7 +226,10 @@ fn loaders_ignore_color_always() -> io::Result<()> {
     let expected = repo.patches()?;
     repo.config("color.diff", "always")?;
     let raw = git(&repo.root, &["diff", "--no-ext-diff", &repo.base])?;
-    assert!(raw.contains('\u{1b}'), "fixture must enable color in captured output");
+    assert!(
+        raw.contains('\u{1b}'),
+        "fixture must enable color in captured output"
+    );
     let actual = repo.patches()?;
     assert_eq!(actual, expected);
     for patch in &actual {
@@ -238,7 +253,10 @@ fn loaders_do_not_expand_context_or_fuse_distant_hunks() -> io::Result<()> {
     repo.config("diff.context", "0")?;
     repo.config("diff.interHunkContext", "10000")?;
     let fused = git(&repo.root, &["diff", "--unified=0", &repo.base])?;
-    assert_eq!(fused.lines().filter(|line| line.starts_with("@@ ")).count(), 1);
+    assert_eq!(
+        fused.lines().filter(|line| line.starts_with("@@ ")).count(),
+        1
+    );
     let actual = repo.patches()?;
     assert_eq!(actual, expected);
     for patch in &actual {
@@ -267,11 +285,17 @@ fn worktree_loader_keeps_staged_and_unstaged_source_edits() -> io::Result<()> {
     for file in &files {
         assert_eq!(file.path, PathBuf::from("src/lib.rs"));
         assert_eq!(
-            file.added_lines.iter().map(|line| line.line).collect::<Vec<_>>(),
+            file.added_lines
+                .iter()
+                .map(|line| line.line)
+                .collect::<Vec<_>>(),
             vec![100, 500, 1_500, 1_900]
         );
         assert_eq!(
-            file.removed_lines.iter().map(|line| line.line).collect::<Vec<_>>(),
+            file.removed_lines
+                .iter()
+                .map(|line| line.line)
+                .collect::<Vec<_>>(),
             vec![100, 500, 1_500, 1_900]
         );
     }
