@@ -137,8 +137,9 @@ mod tests {
         std::fs::write(&blocker, b"not a directory")
             .map_err(|err| format!("fixture blocker setup failed: {err}"))?;
         let destination = blocker.join("entry.json");
-        let error = write_cache(&destination, b"cache", "test cache")
-            .expect_err("a cache path below a regular file must fail");
+        let Err(error) = write_cache(&destination, b"cache", "test cache") else {
+            return Err("a cache path below a regular file unexpectedly succeeded".to_string());
+        };
         let _ = std::fs::remove_dir_all(root);
         Ok(error)
     }
@@ -176,8 +177,9 @@ mod tests {
         let destination = root.join("existing-directory");
         std::fs::create_dir(&destination)
             .map_err(|err| format!("fixture destination setup failed: {err}"))?;
-        let error = write_cache(&destination, b"cache", "test cache")
-            .expect_err("publishing a file over a directory must fail");
+        let Err(error) = write_cache(&destination, b"cache", "test cache") else {
+            return Err("publishing a cache file over a directory unexpectedly succeeded".to_string());
+        };
         assert!(
             error.starts_with("failed to finalize test cache:"),
             "unexpected error: {error}"
@@ -204,8 +206,9 @@ mod tests {
         let destination = root.join("existing-directory");
         std::fs::create_dir(&destination)
             .map_err(|err| format!("fixture destination setup failed: {err}"))?;
-        let error = write(&destination, b"artifact", "test artifact")
-            .expect_err("publishing a file over a directory must fail");
+        let Err(error) = write(&destination, b"artifact", "test artifact") else {
+            return Err("publishing an artifact file over a directory unexpectedly succeeded".to_string());
+        };
         assert!(
             error.starts_with("failed to finalize test artifact "),
             "unexpected error: {error}"
