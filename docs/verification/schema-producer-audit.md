@@ -42,6 +42,7 @@ routes the missing producer proof to its owning issue.
 | `schemas/ripr/repair-assurance.schema.json` `#/$defs/verification_command_spec` | `1` | same producer, verify route | live | same golden, `…/command_specs/verify` | `cargo xtask check-verification-contracts --check` | `verification_command_spec_contract_rejects_a_receipt_route` | registered | — |
 | `schemas/ripr/repair-assurance.schema.json` `#/$defs/execution_result` | `1` | `ripr agent verify-execute` → `crates/ripr/src/app/verification_execution.rs`, `ripr::domain::VerificationExecutionResultV1` | live | none committed — the producer only emits bytes from a real bounded execution | `cargo test -p ripr --test verification_result`; `cargo test -p ripr --test cli_smoke agent_verify_execute` | `serialized_result_conforms_to_the_published_schema` fails on a serde-defaulted field becoming schema-required | **exempt (partial)** | No committed producer-byte artifact exists. The narrower authorities are the serde↔schema field/required parity test and `VerificationExecutionResultV1::validate_against`, which enforce root, HEAD, digest, and disposition bindings the schema cannot express. Capturing a real `verify-execute` result as a committed fixture is deferred. |
 | `schemas/ripr/repair-assurance.schema.json` (envelope) | `1` | none — `implementation_state` is pinned to `const "design_only"` | reserved | `fixtures/assurance_vocabulary/assurance/corpus.json` `/cases/*/record` (design corpus, **not** producer bytes) | `cargo xtask check-verification-contracts --check` | `assurance_corpus_rejects_an_absolute_command_working_directory` | registered as design corpus | No producer emits a whole `RepairAssuranceV1` record. `RIPR-SPEC-0135` and ADR 0021 reserve the envelope for a future slice that joins the static-movement, verification, receipt, and runtime-mutation axes. The corpus makes the vocabulary claim enforceable; it does not make the envelope producer-backed. |
+| `schemas/ripr/repair-attempt.schema.json` | `0.1` | `ripr agent repair --phase before` and `--phase after` → `crates/ripr/src/app/repair_attempt.rs` (`write_repair_attempt_manifest`) | live | none committed — the manifest is a per-attempt runtime artifact at `target/ripr/repair-attempts/<attempt-id>/attempt.json` | `cargo test -p ripr --test python_repair_attempt` | `published_schema_conformance_rejects_manifests_the_schema_forbids`, and a schema requirement the producer does not emit fails `clean_test_only_edit_binds_prepare_and_apply` | **exempt (partial)** | No committed producer-byte artifact exists, so the xtask contract table has nothing to register. The narrower authority is `assert_manifest_matches_published_schema` in `crates/ripr/tests/python_repair_attempt.rs`, which checks bytes the real `before` and `after` phases wrote — both branches of the state-to-`after` conditional — against the published closed property set, required fields, and pinned `const` and `enum` values. It does not evaluate the schema's `pattern` constraints; those identity shapes are enforced by `RepairAttemptId::parse` and the producer's digest helpers. `repair_attempt_schema_carries_terminal_after_contract` asserts what the schema declares, not that a producer matches it, so it is not a producer binding on its own. |
 | `schemas/ripr/ripr-agent-capability.schema.json` | `0.2` | `crates/ripr/src/lsp/agent_protocol.rs` — only `ripr/listActionableItems` is implemented | reserved | none | none | none | **exempt — out of scope** | Routed to #3009 (`0.13`) after #1599/#1602/#1603 establish live handler authority. Freezing the shape now would ratify a protocol that has no handler. |
 | `schemas/ripr/ripr-agent-request.schema.json` | `0.2` | same | reserved | none | none | none | **exempt — out of scope** | #3009. |
 | `schemas/ripr/ripr-agent-success.schema.json` | `0.2` | same | reserved | none | none | none | **exempt — out of scope (narrower authorities named)** | No live producer emits the full envelope, so a registered contract would resolve no subject; registration stays routed to #3009. The narrower authorities covering this schema today: the route-coherence conditionals are pinned by the resolver tests in `crates/ripr/src/lsp/agent_protocol.rs` (`readiness_must_agree_with_route_and_spec`, `schema_0_2_payload_omitting_route_field_is_rejected`, `command_spec_decoding_is_closed_to_the_published_shape`), and the envelope example in `fixtures/lsp_agent_protocol/success-envelope.json` tracks the producer-shaped contract. |
@@ -84,11 +85,25 @@ The design-only assurance envelope keeps `implementation_state`,
 `non_claims` as independent axes, so a static comparison can never be read as
 an executed test or a runtime mutation outcome.
 
+## The inventory this table covers
+
+`cargo xtask check-verification-contracts --check` reads every
+`schemas/**/*.schema.json` file from disk and requires each one to appear both
+here and in [the verification README](README.md). The inventory is not a list
+kept inside the checker, because a list is a second place to remember and the
+schema it forgets is the one no reader learns is unaudited. That is how
+`schemas/ripr/repair-attempt.schema.json` — a schema with a live producer —
+sat outside this table while the gate reported success.
+
+A schema whose producer state is `reserved` still needs a row. The row is what
+records that no producer emits it.
+
 ## Claim boundary
 
-This audit proves that each currently reachable non-`riprAgent` published
+This audit records that each currently reachable non-`riprAgent` published
 schema is either bound to producer or corpus-of-record bytes with a
 discriminating negative mutation, or carries an explicit exemption naming the
-narrower authority that replaces fixture validation. It does not prove the
+narrower authority that replaces fixture validation. Table completeness is
+enforced; the strength of each individual row is not. It does not establish the
 semantic correctness of the analysis behind those bytes, and it establishes
 nothing about the reserved `riprAgent` protocol.

@@ -7,6 +7,14 @@ use serde_json::Value;
 use crate::schema_pattern::SchemaPattern;
 
 const VERIFICATION_README: &str = "docs/verification/README.md";
+const SCHEMA_PRODUCER_AUDIT: &str = "docs/verification/schema-producer-audit.md";
+const SCHEMAS_DIRECTORY: &str = "schemas";
+const RIPR_SCHEMA_PREFIX: &str = "schemas/ripr/";
+/// Every JSON file under `schemas/` is a published schema. Matching the
+/// broader extension keeps the `schema_version` rule below over exactly the
+/// set it covered before the inventory was derived, and makes a non-schema
+/// parked in `schemas/` declare itself in the audit rather than slip past.
+const SCHEMA_FILE_SUFFIX: &str = ".json";
 
 /// Which value inside `fixture_path` a contract validates.
 ///
@@ -214,6 +222,7 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
 
     let root = repo_root()?;
     let readme = read_text(root.join(VERIFICATION_README))?;
+    let audit = read_text(root.join(SCHEMA_PRODUCER_AUDIT))?;
     let mut violations = Vec::new();
 
     for required in [
@@ -221,19 +230,30 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         "pr-evidence-contract.md",
         "artifact-layout.md",
         "annotation-policy.md",
-        "schemas/badges/shields-endpoint.schema.json",
-        "schemas/ripr/pr-evidence.schema.json",
-        "schemas/ripr/review-comments.schema.json",
-        "schemas/ripr/gate-decision.schema.json",
-        "schemas/ripr/check.schema.json",
-        "schemas/ripr/repair-assurance.schema.json",
-        "schemas/ripr/rust-repair-trust-corpus.schema.json",
         "schema-producer-audit.md",
     ] {
         if !readme.contains(required) {
             violations.push(format!("{VERIFICATION_README} does not link `{required}`"));
         }
     }
+
+    // The published-schema inventory is read from disk rather than listed
+    // here. A literal list is a second place to remember, and the schema it
+    // forgets is the one no reader ever learns is unaudited: both documents
+    // state that they cover every published schema, so a schema missing from
+    // either made that claim false while this gate reported success.
+    let published_schemas = published_schema_paths(&root)?;
+    if published_schemas.is_empty() {
+        violations.push(format!(
+            "{} contains no published schema, so the audited inventory is empty",
+            SCHEMAS_DIRECTORY
+        ));
+    }
+    violations.extend(schema_documentation_violations(
+        &published_schemas,
+        &readme,
+        &audit,
+    ));
 
     let mut subjects_checked = 0usize;
     for contract in CONTRACTS {
@@ -281,51 +301,39 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         }
     }
 
-    // Reverse-direction check: every schemas/ripr/*.json must define a
+    // Reverse-direction check: every schemas/ripr/*.schema.json must define a
     // schema_version property with a const value. This is the first
     // enforcement step toward #1720 (per-output version reconciliation).
-    let ripr_schema_dir = root.join("schemas/ripr");
-    if ripr_schema_dir.is_dir() {
-        let mut schema_files = fs::read_dir(&ripr_schema_dir)
-            .map_err(|error| format!("failed to read schemas/ripr: {error}"))?
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| {
-                let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "json") {
-                    Some(path)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        schema_files.sort();
-        for schema_path in &schema_files {
-            let rel = schema_path.strip_prefix(&root).unwrap_or(schema_path);
-            let rel_str = rel.to_string_lossy();
-            let schema = read_json(schema_path.clone())?;
-            let props = schema.get("properties").and_then(Value::as_object);
-            let Some(props) = props else {
-                violations.push(format!("{rel_str} has no properties"));
-                continue;
-            };
-            let Some(sv_prop) = props.get("schema_version") else {
-                violations.push(format!(
-                    "{rel_str} is missing `schema_version` property — every ripr output schema must declare a version (#1720)"
-                ));
-                continue;
-            };
-            if sv_prop.get("const").is_none() {
-                violations.push(format!(
-                    "{rel_str} schema_version must use `const` for a pinned version (#1720)"
-                ));
-            }
+    for rel_str in published_schemas
+        .iter()
+        .filter(|path| path.starts_with(RIPR_SCHEMA_PREFIX))
+    {
+        let schema = read_json(root.join(rel_str))?;
+        let props = schema.get("properties").and_then(Value::as_object);
+        let Some(props) = props else {
+            violations.push(format!("{rel_str} has no properties"));
+            continue;
+        };
+        let Some(sv_prop) = props.get("schema_version") else {
+            violations.push(format!(
+                "{rel_str} is missing `schema_version` property — every ripr output schema must declare a version (#1720)"
+            ));
+            continue;
+        };
+        if sv_prop.get("const").is_none() {
+            violations.push(format!(
+                "{rel_str} schema_version must use `const` for a pinned version (#1720)"
+            ));
         }
     }
 
     if violations.is_empty() {
+        // The audited count is reported beside the contract count so a run
+        // cannot imply coverage of an inventory it never enumerated.
         println!(
-            "verification contracts: checked {} contracts over {subjects_checked} producer subjects",
-            CONTRACTS.len()
+            "verification contracts: checked {} contracts over {subjects_checked} producer subjects; audited {} published schemas",
+            CONTRACTS.len(),
+            published_schemas.len()
         );
         Ok(())
     } else {
@@ -405,6 +413,85 @@ impl VerificationContract {
             }
         }
     }
+}
+
+/// Every published schema under `schemas/`, as repository-relative paths with
+/// forward slashes, sorted.
+///
+/// This is the inventory both verification documents claim to cover. Deriving
+/// it from disk is what makes that claim checkable: a schema added without a
+/// README link or an audit row is reported here instead of sitting unaudited
+/// behind a passing gate.
+fn published_schema_paths(root: &Path) -> Result<Vec<String>, String> {
+    let mut paths = Vec::new();
+    collect_published_schemas(root, &root.join(SCHEMAS_DIRECTORY), &mut paths)?;
+    paths.sort();
+    Ok(paths)
+}
+
+fn collect_published_schemas(
+    root: &Path,
+    directory: &Path,
+    paths: &mut Vec<String>,
+) -> Result<(), String> {
+    if !directory.is_dir() {
+        return Ok(());
+    }
+    let mut entries = fs::read_dir(directory)
+        .map_err(|error| format!("failed to read {}: {error}", directory.display()))?
+        .map(|entry| {
+            entry
+                .map(|entry| entry.path())
+                .map_err(|error| format!("failed to read a {SCHEMAS_DIRECTORY} entry: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            collect_published_schemas(root, &path, paths)?;
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !name.ends_with(SCHEMA_FILE_SUFFIX) {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| format!("{} is outside the repository: {error}", path.display()))?;
+        paths.push(relative.to_string_lossy().replace('\\', "/"));
+    }
+    Ok(())
+}
+
+/// Reports each published schema that one of the two verification documents
+/// does not mention.
+///
+/// The two rules stay separate on purpose. The README says where a schema
+/// lives; the audit says which producer emits the bytes it describes and which
+/// negative mutation proves that. A schema listed in one and absent from the
+/// other is the case that actually occurred, so collapsing them into a single
+/// "documented somewhere" test would have reported nothing.
+fn schema_documentation_violations(
+    published_schemas: &[String],
+    readme: &str,
+    audit: &str,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    for schema_path in published_schemas {
+        if !readme.contains(schema_path.as_str()) {
+            violations.push(format!(
+                "{VERIFICATION_README} does not link `{schema_path}`"
+            ));
+        }
+        if !audit.contains(schema_path.as_str()) {
+            violations.push(format!(
+                "{SCHEMA_PRODUCER_AUDIT} has no row for `{schema_path}` — every published schema must name its producer and canonical subject, or carry an explicit exemption"
+            ));
+        }
+    }
+    violations
 }
 
 pub(crate) fn validate_json_file_against_schema(
@@ -898,6 +985,100 @@ fn compact_json(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn published_schema_inventory_is_read_from_disk() -> Result<(), String> {
+        let inventory = published_schema_paths(&repo_root()?)?;
+        // Both published directories must be reached, or the inventory would
+        // silently exclude a whole tree instead of one file.
+        for expected in [
+            "schemas/badges/shields-endpoint.schema.json",
+            "schemas/ripr/check.schema.json",
+            "schemas/ripr/repair-attempt.schema.json",
+        ] {
+            if !inventory.iter().any(|path| path == expected) {
+                return Err(format!("the inventory omits `{expected}`: {inventory:?}"));
+            }
+        }
+        for path in &inventory {
+            if !path.ends_with(SCHEMA_FILE_SUFFIX) {
+                return Err(format!("`{path}` is not a published schema"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn documentation_coverage_is_silent_when_both_documents_carry_the_inventory() {
+        let inventory = vec!["schemas/ripr/example.schema.json".to_string()];
+        let violations = schema_documentation_violations(
+            &inventory,
+            "see [example](../../schemas/ripr/example.schema.json)",
+            "| `schemas/ripr/example.schema.json` | live |",
+        );
+        assert!(
+            violations.is_empty(),
+            "a documented schema was reported: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn documentation_coverage_reports_a_schema_missing_only_from_the_audit() {
+        // The case that actually occurred: the schema was reachable from the
+        // repository but no row named its producer. The README rule must stay
+        // silent here, or one omission would report as two and neither
+        // message would say which document to repair.
+        let inventory = vec!["schemas/ripr/example.schema.json".to_string()];
+        let violations = schema_documentation_violations(
+            &inventory,
+            "see [example](../../schemas/ripr/example.schema.json)",
+            "| `schemas/ripr/other.schema.json` | live |",
+        );
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected exactly the audit violation: {violations:?}"
+        );
+        assert!(
+            violations[0].starts_with(SCHEMA_PRODUCER_AUDIT),
+            "the violation does not name the audit document: {violations:?}"
+        );
+        assert!(
+            violations[0].contains("schemas/ripr/example.schema.json"),
+            "the violation does not name the schema: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn documentation_coverage_reports_a_schema_missing_only_from_the_readme() {
+        let inventory = vec!["schemas/ripr/example.schema.json".to_string()];
+        let violations = schema_documentation_violations(
+            &inventory,
+            "see [other](../../schemas/ripr/other.schema.json)",
+            "| `schemas/ripr/example.schema.json` | live |",
+        );
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected exactly the README violation: {violations:?}"
+        );
+        assert!(
+            violations[0].starts_with(VERIFICATION_README),
+            "the violation does not name the README: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn documentation_coverage_reports_a_schema_missing_from_both_documents() {
+        let inventory = vec!["schemas/ripr/example.schema.json".to_string()];
+        let violations =
+            schema_documentation_violations(&inventory, "no links here", "no rows here");
+        assert_eq!(
+            violations.len(),
+            2,
+            "an undocumented schema must be reported by both rules: {violations:?}"
+        );
+    }
 
     #[test]
     fn command_accepts_default_and_check_modes() -> Result<(), String> {
