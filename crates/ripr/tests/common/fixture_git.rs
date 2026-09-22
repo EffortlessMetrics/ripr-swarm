@@ -349,9 +349,33 @@ mod tests {
                 return Err(format!("unexpected init error shape: {error}"));
             }
         }
+        // Either refusal is correct, and which one surfaces is a race the zero
+        // deadline cannot decide. `run_git_deadline` calls `try_wait` before it
+        // consults the deadline, so a child that has already exited is reported
+        // as `Finished` however short the deadline is. The
+        // pre-commit probe runs `rev-parse --verify HEAD` against an unborn
+        // repository, which exits non-zero almost immediately:
+        //
+        // - not yet reaped at the first poll: `TimedOut`, and the probe
+        //   refuses with `probe fixture HEAD`;
+        // - already reaped: `Finished` with a non-zero status, which is the
+        //   unborn-HEAD answer rather than an error, so the probe returns
+        //   `Ok(None)` and the bare `fixture_git_timeout` from the commit
+        //   itself propagates instead.
+        //
+        // Asserting one of those shapes made this test fail whenever
+        // scheduling favored the child, which is why it went red under
+        // full-suite parallelism while passing in isolation (#3742). The
+        // property the test exists for is that a zero deadline never lets the
+        // commit succeed, and that is still asserted below.
         match fixture_git_ok_with_deadline(&root, &["commit", "-m", "x"], Duration::ZERO) {
             Ok(()) => Err("zero-deadline commit unexpectedly succeeded".to_string()),
-            Err(error) if error.contains("probe fixture HEAD") => Ok(()),
+            Err(error)
+                if error.contains("probe fixture HEAD")
+                    || error.contains("fixture_git_timeout") =>
+            {
+                Ok(())
+            }
             Err(error) => Err(format!("unexpected commit error shape: {error}")),
         }
     }
