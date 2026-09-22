@@ -1296,9 +1296,85 @@ pub(crate) struct FileFactCacheStats {
     /// content-invalidation signal; other input families remain explicit
     /// `not_available` limitations until they have equivalent provenance.
     pub(crate) invalidated_files: BTreeSet<PathBuf>,
+    /// Bounded per-file store-failure rows (path, stage, error). The count
+    /// in `store_errors` stays authoritative; rows are diagnostic detail
+    /// capped at `MAX_STORE_FAILURE_ROWS`, with the remainder counted in
+    /// `store_failures_dropped`.
+    pub(crate) store_failures: Vec<FileFactStoreFailure>,
+    pub(crate) store_failures_dropped: usize,
 }
 
+/// Pipeline stage at which a file-fact store failed. Assigned at the exact
+/// `?` site inside `store_file_facts`, never parsed back out of a message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FileFactStoreStage {
+    CreateDir,
+    Encode,
+    Write,
+}
+
+impl FileFactStoreStage {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            FileFactStoreStage::CreateDir => "create_dir",
+            FileFactStoreStage::Encode => "encode",
+            FileFactStoreStage::Write => "write",
+        }
+    }
+}
+
+/// Typed file-fact store failure. Renders as the bare message so every
+/// existing `?` and `format!("{err}")` call site keeps working through the
+/// `Display` and `From<FileFactStoreError> for String` impls below.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FileFactStoreError {
+    pub(crate) stage: FileFactStoreStage,
+    pub(crate) message: String,
+}
+
+impl std::fmt::Display for FileFactStoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl From<FileFactStoreError> for String {
+    fn from(error: FileFactStoreError) -> Self {
+        error.message
+    }
+}
+
+/// One retained store-failure row. `path` is repository-relative and
+/// portable; absolute roots never enter a row. `stage` is the fixed
+/// vocabulary from [`FileFactStoreStage::as_str`], stored rendered so rows
+/// stay portable without re-mapping at every consumer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FileFactStoreFailure {
+    pub(crate) path: PathBuf,
+    pub(crate) stage: &'static str,
+    pub(crate) error: String,
+}
+
+/// Maximum retained store-failure rows per stats object. Past the cap,
+/// `store_failures_dropped` counts the remainder.
+pub(crate) const MAX_STORE_FAILURE_ROWS: usize = 32;
+
 impl FileFactCacheStats {
+    /// Record one store failure against `store_errors`, retaining the
+    /// bounded diagnostic row.
+    pub(crate) fn record_store_failure(&mut self, path: PathBuf, error: FileFactStoreError) {
+        self.store_errors += 1;
+        if self.store_failures.len() < MAX_STORE_FAILURE_ROWS {
+            self.store_failures.push(FileFactStoreFailure {
+                path,
+                stage: error.stage.as_str(),
+                error: error.message,
+            });
+        } else {
+            self.store_failures_dropped += 1;
+        }
+    }
+
     pub(crate) fn status_label(&self) -> String {
         format!(
             "hits_{}_misses_{}_corrupt_{}_store_errors_{}",
@@ -1375,12 +1451,22 @@ impl RepoFileFactCache {
         &self,
         key: &RepoFileFactCacheKey,
         facts: &FileFacts,
-    ) -> Result<(), String> {
-        std::fs::create_dir_all(&self.dir)
-            .map_err(|err| format!("create file fact cache dir failed: {err}"))?;
+    ) -> Result<(), FileFactStoreError> {
+        std::fs::create_dir_all(&self.dir).map_err(|err| FileFactStoreError {
+            stage: FileFactStoreStage::CreateDir,
+            message: format!("create file fact cache dir failed: {err}"),
+        })?;
         let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
-        let bytes = codec::encode_file_facts(&envelope)?;
-        crate::atomic_file::write_cache(&self.entry_path(key), &bytes, "file fact cache")?;
+        let bytes = codec::encode_file_facts(&envelope).map_err(|message| FileFactStoreError {
+            stage: FileFactStoreStage::Encode,
+            message,
+        })?;
+        crate::atomic_file::write_cache(&self.entry_path(key), &bytes, "file fact cache").map_err(
+            |message| FileFactStoreError {
+                stage: FileFactStoreStage::Write,
+                message,
+            },
+        )?;
         Ok(())
     }
 
@@ -4935,11 +5021,96 @@ mod tests {
             stores: 3,
             store_errors: 0,
             invalidated_files: BTreeSet::new(),
+            store_failures: Vec::new(),
+            store_failures_dropped: 0,
         };
         assert_eq!(
             stats.status_label(),
             "hits_2_misses_3_corrupt_1_store_errors_0"
         );
+    }
+
+    #[test]
+    fn store_failure_row_names_path_stage_and_error() -> Result<(), String> {
+        // Deterministic cross-platform store failure: the cache dir sits
+        // under a regular file, so directory creation cannot succeed.
+        let dir = isolated_dir("store-failure-row");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("fixture setup failed: {err}"))?;
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"not a directory")
+            .map_err(|err| format!("fixture setup failed: {err}"))?;
+        let cache = RepoFileFactCache::at_dir(blocker.join("entries"));
+        let key = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"fn main() {}");
+        let error = match cache.store_file_facts(&key, &FileFacts::default()) {
+            Ok(()) => return Err("store under a file path should fail".to_string()),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.stage,
+            FileFactStoreStage::CreateDir,
+            "dir creation is the failing stage: {error:?}"
+        );
+        assert!(
+            error
+                .message
+                .starts_with("create file fact cache dir failed:"),
+            "unexpected error vocabulary: {error:?}"
+        );
+        let mut stats = FileFactCacheStats::default();
+        stats.record_store_failure(PathBuf::from("src/lib.rs"), error);
+        assert_eq!(stats.store_errors, 1);
+        assert_eq!(stats.store_failures.len(), 1);
+        let row = &stats.store_failures[0];
+        assert_eq!(row.path, PathBuf::from("src/lib.rs"));
+        assert_eq!(row.stage, "create_dir");
+        assert!(
+            row.error.starts_with("create file fact cache dir failed:"),
+            "row must carry the error text: {row:?}"
+        );
+        assert!(stats.status_label().ends_with("store_errors_1"));
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn store_failure_rows_bound_overflow_with_count() {
+        let mut stats = FileFactCacheStats::default();
+        for index in 0..(MAX_STORE_FAILURE_ROWS + 5) {
+            stats.record_store_failure(
+                PathBuf::from(format!("src/file{index}.rs")),
+                FileFactStoreError {
+                    stage: FileFactStoreStage::Write,
+                    message: format!("write failure {index}"),
+                },
+            );
+        }
+        assert_eq!(stats.store_errors, MAX_STORE_FAILURE_ROWS + 5);
+        assert_eq!(stats.store_failures.len(), MAX_STORE_FAILURE_ROWS);
+        assert_eq!(stats.store_failures_dropped, 5);
+        assert_eq!(
+            stats.store_failures[0].path,
+            PathBuf::from("src/file0.rs"),
+            "retained rows stay in encounter order"
+        );
+    }
+
+    #[test]
+    fn store_stage_labels_are_stable() {
+        assert_eq!(FileFactStoreStage::CreateDir.as_str(), "create_dir");
+        assert_eq!(FileFactStoreStage::Encode.as_str(), "encode");
+        assert_eq!(FileFactStoreStage::Write.as_str(), "write");
+    }
+
+    #[test]
+    fn store_error_renders_as_bare_message_for_legacy_callers() {
+        let error = FileFactStoreError {
+            stage: FileFactStoreStage::Encode,
+            message: "encode file facts failed: boom".to_string(),
+        };
+        assert_eq!(error.to_string(), "encode file facts failed: boom");
+        let rendered: String = error.into();
+        assert_eq!(rendered, "encode file facts failed: boom");
     }
 
     #[test]

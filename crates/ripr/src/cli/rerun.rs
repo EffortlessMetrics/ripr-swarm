@@ -1170,6 +1170,14 @@ fn add_cache_stats(
     target.corrupt_ignored += source.corrupt_ignored;
     target.stores += source.stores;
     target.store_errors += source.store_errors;
+    for failure in source.store_failures.iter().cloned() {
+        if target.store_failures.len() < crate::analysis::seam_cache::MAX_STORE_FAILURE_ROWS {
+            target.store_failures.push(failure);
+        } else {
+            target.store_failures_dropped += 1;
+        }
+    }
+    target.store_failures_dropped += source.store_failures_dropped;
 }
 
 fn display_scope(scope: &GapRerunScope) -> String {
@@ -1906,7 +1914,7 @@ mod tests {
         TargetedRerunInputFingerprint, TargetedRerunMissingDiscriminator, TargetedRerunMovement,
         TargetedRerunPathDependencyGraph, TargetedRerunPathDependencyNeighbors,
         TargetedRerunRelatedTest, TargetedRerunReport, TargetedRerunSeam, TargetedRerunSelector,
-        cache_from, compare_selector_scoped_seams, entry_matches_selected_gap,
+        add_cache_stats, cache_from, compare_selector_scoped_seams, entry_matches_selected_gap,
         graph_provenance_unavailable_fields, input_fingerprint_changes, parity_mismatch_fields,
         parse_options, render_human, rerun_gap, resolve_gap_records, route_from_gap_records,
         same_root, scopes_from_gap_records, seam_from, seam_matches_resolved_scope,
@@ -2476,6 +2484,48 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn add_cache_stats_merges_store_failure_rows_bounded() {
+        use crate::analysis::seam_cache::{
+            FileFactStoreFailure, FileFactStoreStage, MAX_STORE_FAILURE_ROWS,
+        };
+        let row = |name: &str| FileFactStoreFailure {
+            path: PathBuf::from(name),
+            stage: FileFactStoreStage::Write.as_str(),
+            error: "write failure".to_string(),
+        };
+        let mut target = FileFactCacheStats {
+            store_errors: 1,
+            store_failures: vec![row("src/a.rs")],
+            ..FileFactCacheStats::default()
+        };
+        let source = FileFactCacheStats {
+            store_errors: 2,
+            store_failures: vec![row("src/b.rs"), row("src/c.rs")],
+            store_failures_dropped: 3,
+            ..FileFactCacheStats::default()
+        };
+        add_cache_stats(&mut target, &source);
+        assert_eq!(target.store_errors, 3);
+        assert_eq!(
+            target
+                .store_failures
+                .iter()
+                .map(|failure| failure.path.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("src/a.rs"),
+                PathBuf::from("src/b.rs"),
+                PathBuf::from("src/c.rs"),
+            ]
+        );
+        assert_eq!(target.store_failures_dropped, 3);
+        assert!(
+            target.store_failures.len() <= MAX_STORE_FAILURE_ROWS,
+            "merged rows respect the bound"
+        );
     }
 
     #[test]
