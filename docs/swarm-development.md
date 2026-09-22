@@ -366,8 +366,8 @@ Source proof to run:
 Deferred swarm PRs:
   <number/title/disposition>
 
-Conflict resolution:
-  <path>: <source commits> / <swarm commits> -> <resolution and why>
+Conflict resolution (ripr#1770 manifest; one row per identity):
+  <path or object>: <source commits> / <swarm commits> -> <disposition>: <semantic reason>
 
 Review evidence in the promoted range:
   <PRs whose external review was skipped or unavailable, and what
@@ -394,62 +394,90 @@ authority.
 
 ### Resolving the join
 
+For 0.11.0, the sync into source is owned by
+[ripr#1768](https://github.com/EffortlessMetrics/ripr/issues/1768) and its
+children #1769 (P0) → #1770 (P1) → #1771 → #1772 → #1773. Those issues are
+the authority for the sequence below. This section records how to work
+within them.
+
 The source repository can carry product work of its own between syncs. For
 0.11.0, about fourteen product fixes landed directly on `ripr` after the
 previous join (for example ripr#1741, ripr#1747 and ripr#1751). Swarm did not
 have them, so the joins conflict where both lines fixed the same code
-differently. The join has to keep the accepted behavior from both parents.
-It must not take either side wholesale. Source-only fixes then return to swarm
+differently. The join has to keep the accepted behavior from both parents. It
+must not take either side wholesale. Source-only fixes return to swarm
 through `K`.
 
-Size the conflicts before the pin. Build a disposable trial join of the current
-source and swarm heads in a separate worktree with `git rerere` enabled. Never
-push it and never reuse it as `J`:
+**Size the conflicts before P0.** Build a disposable trial join of the current
+source and swarm heads in a separate worktree. Never push it, and never reuse
+it as `J`:
 
 ```bash
 git -C ripr-promote worktree add -b trial/join ../ripr-trial-join origin/main
 cd ../ripr-trial-join
 git config rerere.enabled true
 git merge --no-ff --no-commit swarm/main
-# resolve, build, test; rerere records each reviewed resolution
+# resolve, build, test; rerere records each resolution for reuse
 git merge --abort
 ```
 
-When the real `J` is built from the pinned pair, the same worktree's rerere
-cache replays the reviewed resolutions. Only conflicts introduced by commits
-after the trial need fresh review. `git rerere` output is a convenience, not
-evidence: review every replayed path again against the final pair.
+The trial is evidence for #1770, not its output. `git rerere` can replay
+resolutions into the #1770 tree, but a replayed hunk is not a reviewed
+disposition. Every path is reviewed again against the exact P0 pair.
 
-Every conflicted path gets one row in the resolution manifest. The row names:
+**Dispositions.** #1770 gives every conflict, both-sides change,
+authority-sensitive survivor and generated consequence exactly one
+disposition. The allowed values are:
 
-- the source commits and the swarm commits that touched the path since
-  `MERGE_BASE`;
-- what each side intended;
-- the resolution;
-- why it keeps both behaviors, or why one side's implementation replaces the
-  other's.
+- `select_source_authority`
+- `select_swarm_authority`
+- `semantic_union`
+- `regenerate_from_accepted_inputs`
+- `retain_both_distinct`
+- `exclude_source_repository_authority`
+- `exclude_swarm_only_control`
+- `superseded_historical_evidence`
+- `blocked_unknown`
 
-Also list any change made outside the conflict markers to fix breakage the
-merge introduced, such as a struct field one side added and the other side's
-new constructor omitted. The manifest goes in the promotion PR body. The tree
-it describes is the `--resolved-tree` passed to source preflight.
+Each row names its semantic reason. "Ours", "theirs", a newer timestamp, or a
+clean auto-merge is not a disposition. Lockfiles and generated outputs are
+regenerated from accepted inputs, never hand-edited.
 
-In `J`, resolve `CHANGELOG.md` as a union. Keep the source parent's version
-sections and the swarm parent's `Unreleased` entries, and do not add a new
-version section. The release section is assembled in the metadata PR after `J`
-lands.
+A change made outside the conflict markers is also a manifest row. For
+example, a struct field one side added may be missing from the other side's
+new constructor.
 
-The join is not finished until the resolved tree builds, and until the full
-workspace tests, fmt, clippy, fixtures and goldens pass on it. A test that
-fails identically on either unmodified parent is recorded as pre-existing with
-that evidence. It is not fixed inside `J`.
+**CHANGELOG.** Resolve `CHANGELOG.md` as a `semantic_union`: the source
+parent's sections plus the swarm parent's `Unreleased` entries, each entry
+exactly once, and no new version section. Folding `Unreleased` into the
+staged `0.11.0` section happens after `J`, in the source release-copy step
+(ripr#1466).
 
-On 2026-09-22 the owner directed that an agent session builds, publishes and
-merges the promotion PR itself, using a merge commit and
-`--match-head-commit "$J"`, once the swarm pin and qualification are in place.
-That direction covers only `J` and its merge. Tags, GitHub Releases,
-crates.io, marketplaces, secrets and settings still require source issue
-#1470.
+**Cache generations.** When both parents advanced a cache schema generation
+with different semantics, the joined analyzer takes a new generation distinct
+from both. Otherwise a cache written by either parent would be read as
+current.
+
+**Qualify the tree.** #1771 qualifies the reviewed tree before any `J` exists.
+A test that fails identically on either unmodified parent is recorded as
+pre-existing with that evidence. It is not fixed inside `J`.
+
+**Construct and merge.** #1772 builds `J` with the source repository's
+guarded constructor: `source-promotion admit-resolved-tree`,
+`construct-exact-join` and `publish-candidate-ref`, documented in ripr
+`docs/SOURCE_PROMOTION.md`. The raw `git merge` block in
+[`RELEASE_TRANSACTION.md`](RELEASE_TRANSACTION.md) §4 shows the required graph
+shape only. An ad hoc `git commit-tree`, or a branch push after a manual
+merge, is not accepted even when the graph looks equivalent.
+
+#1773 merges the exact `J` PR with the guarded expected-head and
+expected-base **Create a merge commit** operation. The ordinary swarm squash
+merge does not apply here.
+
+The owner delegated the `J` merge to an agent session: Steven's project
+direction of 2026-09-22, and his 2026-09-17 comments on #2379 and ripr#1470.
+Tags, GitHub Releases, crates.io, marketplaces, secrets and settings still
+require the per-channel record on ripr#1470.
 
 ## Post-Publication Back-Sync To Swarm
 

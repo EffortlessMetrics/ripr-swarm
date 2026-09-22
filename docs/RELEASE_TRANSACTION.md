@@ -411,8 +411,12 @@ git -C "$SOURCE_ROOT" merge-base --is-ancestor "$SWARM_PARENT" "$J"
 test "$(git -C "$SOURCE_ROOT" rev-parse "$J^{tree}")" = "$JOIN_TREE"
 ```
 
-Conflict sizing, the trial join, the resolution manifest, and the build/test
-bar for the resolved tree are described in
+The commands above state the required graph. For 0.11.0, ripr#1772 builds
+and publishes `J` with the source repository's guarded constructor
+(`source-promotion admit-resolved-tree`, `construct-exact-join`,
+`publish-candidate-ref`; see ripr `docs/SOURCE_PROMOTION.md`), and ripr#1773
+merges it with a guarded expected-head and expected-base merge commit. Conflict
+dispositions, the trial join, and tree qualification are described in
 [`swarm-development.md`](swarm-development.md#resolving-the-join).
 
 Never append a repair commit; squash, rebase, cherry-pick, and tree-equivalent
