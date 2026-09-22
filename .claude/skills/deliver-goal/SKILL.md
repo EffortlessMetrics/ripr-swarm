@@ -21,7 +21,7 @@ The user's original end state remains the parent authority, the selected release
 At session start, after compaction, or after a handoff, reconstruct the goal from this order:
 
 1. the current user instruction;
-2. root `AGENTS.md` and the applicable skill;
+2. root `CLAUDE.md` and the applicable `.claude/skills/**` procedure;
 3. live repository source plus current GitHub issues, PRs, checks, and retained artifacts;
 4. prior summaries, subagent reports, progress recaps, and local notes.
 
