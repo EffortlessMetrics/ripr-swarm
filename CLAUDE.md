@@ -7,6 +7,15 @@ Claude root instruction set. Do not import or route through `AGENTS.md` or
 
 ## Authority and session rehydration
 
+Core operating contract markers:
+
+- `root_contract:primary_sources_before_summary`
+- `root_contract:parent_goal_denominator`
+- `root_contract:routine_repo_writes`
+- `root_contract:ordinary_squash_merge`
+- `root_contract:waiting_lane_not_global_blocker`
+- `root_contract:environment_detection`
+
 Reconstruct each session from the current user instruction, this root file and
 the applicable Claude skill, then current repository/GitHub artifacts. Treat
 compaction summaries, prior-turn recaps, subagent reports, and local notes as
