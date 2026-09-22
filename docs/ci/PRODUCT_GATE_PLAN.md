@@ -9,9 +9,9 @@ changing required-check routing.
 ## Current producer inventory
 
 The current producer is the `Required Rust gates` step in
-`.github/workflows/routed-rust.yml`. The same command set is repeated in the
-CX43, CPX42, and CX53 routed jobs. Runner identity and matrix shape are route
-details, not product meaning.
+`.github/workflows/rust-gates.yml`. The routed implementations in
+`.github/workflows/routed-rust.yml` all delegate to that reusable workflow.
+Runner identity and matrix shape are route details, not product meaning.
 
 | Canonical gate | Current command | Role | Surface |
 | --- | --- | --- | --- |
@@ -19,6 +19,7 @@ details, not product meaning.
 | `product.rust.workspace_check` | `cargo check --workspace --all-targets` | required | Rust |
 | `product.rust.clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | required | Rust |
 | `product.rust.workspace_tests` | `cargo nextest run --workspace` | required | Rust |
+| `product.rust.workspace_doc_tests` | `cargo test --workspace --doc` | required | Rust |
 | `product.repository.precommit` | `cargo xtask precommit` | required | repository policy |
 | `product.evidence.promotion_honesty` | `cargo xtask check-evidence-promotion-honesty` | required | evidence |
 | `product.repository.agent_skills` | `cargo xtask check-agent-skills` | required | repository policy |
@@ -27,6 +28,12 @@ details, not product meaning.
 | `product.repository.network_policy` | `cargo xtask check-network-policy` | required | repository policy |
 | `product.evidence.goldens` | `cargo xtask goldens check` | required | evidence |
 | `product.evidence.fixtures` | `cargo xtask fixtures` | required | evidence |
+
+The Rust test contract is intentionally dual. Nextest owns the compiled test
+binaries that it selects; Cargo and rustdoc own workspace doctests, which
+nextest does not execute. Both propositions are required in the routed merge
+lane. The all-feature Test Analytics replay remains advisory telemetry and does
+not substitute for either required gate.
 
 The following current workflow producers are deliberately not ordinary
 product-gate rows: advisory reports, uploaded artifacts, PR summaries,

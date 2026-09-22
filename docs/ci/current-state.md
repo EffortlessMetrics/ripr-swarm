@@ -21,6 +21,7 @@ cargo fmt --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo nextest run --workspace
+cargo test --workspace --doc
 cargo xtask precommit
 cargo xtask check-evidence-promotion-honesty
 cargo xtask check-agent-skills
@@ -30,6 +31,12 @@ cargo xtask check-network-policy
 cargo xtask goldens check
 cargo xtask fixtures
 ```
+
+The two Rust test commands have distinct required roles: nextest executes the
+compiled test binaries it selects, while Cargo and rustdoc compile and execute
+workspace doctests. A green nextest run cannot stand in for the doctest row,
+and the advisory all-feature Test Analytics replay cannot stand in for either
+protected-lane proposition.
 
 Formatting runs before nextest installation and hosted cache restoration. A
 required failure skips broad advisory report generation. Ordinary successful
