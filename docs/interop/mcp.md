@@ -17,9 +17,11 @@ ripr mcp --stdio [--root PATH]
 
 `--stdio` is the default and only transport. With `--root`, RIPR uses that
 exact directory. Without it, RIPR starts at the current directory and walks up
-to the nearest repository marker (such as `.git` or `Cargo.toml`). Clients
-often start servers outside the repository, so pass an absolute `--root` when
-yours does.
+to the nearest directory containing `.git`, falling back to the nearest one
+with a project file such as `Cargo.toml`, `package.json`, or `pyproject.toml`.
+Either way, the chosen root must itself contain a project file: a repository
+with only `.git` reports `repository_marker_missing` (#3927). Clients often start
+servers outside the repository, so pass an absolute `--root` when yours does.
 
 A generic MCP client entry:
 
@@ -56,9 +58,13 @@ which wraps a `ripr-workspace-status-v1` workspace block:
 - `claim_boundary` and `limitations`, as plain text;
 - the transport, tool, resource, and byte bounds under `mcp`.
 
-The server negotiates the legacy `initialize` handshake for protocol versions
-`2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`, and
-`server/discover` for `2026-07-28`.
+Supported protocol versions are `2024-11-05`, `2025-03-26`, `2025-06-18`,
+`2025-11-25`, and `2026-07-28`. A client can open with `initialize`, where an
+unsupported requested version is answered with `2026-07-28`, or with
+`server/discover`, where every request carries
+`io.modelcontextprotocol/protocolVersion` and
+`io.modelcontextprotocol/clientCapabilities` in `params._meta` and an
+unsupported version is refused.
 
 ## What it does not do
 

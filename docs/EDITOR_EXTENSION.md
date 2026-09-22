@@ -83,7 +83,7 @@ The editor path should not require report-format knowledge:
 3. Check the `ripr` status bar item for server state, workspace state,
    analysis progress, stale analysis, analysis failure, recommended next
    action, or "no focused test gap found." (Internal status IDs such as
-   `no_actionable_seam` and `first-useful-action` remain stable in the JSON
+   `no_actionable_seam` and `first_useful_action` remain stable in the JSON
    contract.)
 4. Let the saved-workspace analysis refresh, or run `ripr: Refresh Diagnostics`
    (use `ripr: Restart Server` after server or setting changes).
@@ -148,7 +148,8 @@ see [Static limits](STATIC_LIMITS.md).
 The extension passes `ripr.baseRef`, `ripr.check.mode`,
 `ripr.includeUnchangedTests`, `ripr.seamDiagnostics`, and
 `ripr.diagnosticProfile` to the language server as initialization options, and
-serves every `ripr.*` value through `workspace/configuration`. Changing
+serves those five plus `ripr.gitTimeoutMs` and `ripr.refreshDeadlineMs` through
+`workspace/configuration`. Changing
 `ripr.enabled`, `ripr.server.*`, `ripr.check.mode`, or `ripr.baseRef` restarts
 the client so the next diagnostic refresh uses the new configuration.
 `ripr.trace.server` applies live. The server re-reads the other keys without a

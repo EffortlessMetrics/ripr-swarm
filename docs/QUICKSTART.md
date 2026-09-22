@@ -287,7 +287,7 @@ See [LLM operator guide](LLM_OPERATOR_GUIDE.md).
 | Diagnostics look stale. | Save the workspace file or run `Refresh Analysis - Saved Workspace Check`. |
 | CI has no top recommendation. | Open the advisory job summary, then inspect the uploaded report packet. |
 | Agent status says artifacts are missing. | Run the `next_command` printed by `ripr agent status`. |
-| Local CLI behavior is surprising. | Run `ripr doctor` (or `ripr doctor --json`), then `ripr config validate` to check `ripr.toml`. Inspect or reset the analysis cache with `ripr cache status` and `ripr cache clear --dry-run`. See [Configuration](CONFIGURATION.md). |
+| Local CLI behavior is surprising. | Run `ripr doctor` (or `ripr doctor --json`), then `ripr config validate` to check `ripr.toml`. Inspect the analysis cache with `ripr cache status`; preview a reset with `ripr cache clear --dry-run`, then reset with `ripr cache clear --force`. See [Configuration](CONFIGURATION.md). |
 | `check` reports no changed scope after an edit. | The edit is not committed. Commit it or rerun with `--worktree`. |
 
 ## Known Limits

@@ -110,7 +110,7 @@ carries:
 | `must_not_change` | Fields the edit must leave unchanged to satisfy the packet contract. |
 | `repair_kind` | The category of repair (e.g. `add_boundary_assertion`, `add_exact_error_variant`, or ledger route kinds such as `AddBoundaryAssertion`). Used by route-quality reporting. |
 | `source_location` | File and line of the primary anchor, or `source_location_unresolved`. |
-| `confidence` | Always `static_only`: the packet is static evidence, not a runtime result. |
+| `confidence` | The packet's `confidence_basis`, such as `static_only` or `fixture_backed`; `static_only` when the packet names none. Either way it is static evidence, not a runtime result. |
 
 If the packet field is absent or the status reported `not_available`, the packet
 is not ready. Do not fabricate a packet or attempt an edit without one.
