@@ -452,7 +452,9 @@ Do not pause merely to commit, push, open a PR, update a PR, or merge a clean
 PR.
 
 Merge method is squash. Never restack or rebase a PR to chase `main`;
-resolve only conflicts GitHub actually reports (see `finish-pr`).
+resolve only conflicts GitHub actually reports (see `finish-pr`). The
+inherited-failure recovery rebase below is the exception: it follows an
+already-fixed `main`, not a moving one.
 
 For scoped implementation, docs, tests, and refactors, use this default flow:
 
