@@ -475,47 +475,21 @@ only the lane-only gates enumerated (`check-evidence-promotion-honesty`,
 for docs-only pull requests. It keeps advisory evidence artifacts
 non-blocking and uploads the normal `target/ripr` report packet when present.
 
-The legacy Rust workflow currently runs on pushes to `main` or `master`, manual
-dispatches, pull requests labeled `release-check`, and pull requests labeled
-`full-ci`:
+The legacy `CI` workflow (`.github/workflows/ci.yml`) no longer runs the
+workspace test suite; the routed `Ripr Rust Small` lane owns ordinary
+merge-safety, and its runner contract is in
+[PRODUCT_GATE_PLAN.md](ci/PRODUCT_GATE_PLAN.md) (#3825). The legacy workflow's
+`Perl and release proof` job runs on pushes to `main` or `master`, manual
+dispatches, and pull requests labeled `release-check` or `full-ci`, and keeps
+only the proof unique to it, the non-default `lang-perl` feature:
 
 ```bash
-cargo fmt --check
-cargo check --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo xtask check-static-language
-cargo xtask check-no-panic-family
-cargo xtask check-allow-attributes
-cargo xtask check-local-context
-cargo xtask check-file-policy
-cargo xtask check-covered-by
-cargo xtask check-executable-files
-cargo xtask check-workflows
-cargo xtask check-spec-format
-cargo xtask check-spec-numbering
-cargo xtask check-fixture-contracts
-cargo xtask check-traceability
-cargo xtask check-capabilities
-cargo xtask check-workspace-shape
-cargo xtask check-architecture
-cargo xtask check-public-api
-cargo xtask check-output-contracts
-cargo xtask check-doc-index
-cargo xtask check-readme-state
-cargo xtask markdown-links
-cargo xtask check-pr-shape
-cargo xtask check-generated
-cargo xtask check-badge-diff-policy
-cargo xtask check-generated-clean
-cargo xtask check-dependencies
-cargo xtask check-process-policy
-cargo xtask check-network-policy
+cargo check -p ripr --features lang-perl
+cargo test -p ripr --features lang-perl --lib analysis::language::perl
 ```
 
-On those same Rust workflow runs, pull requests labeled `release-check`, pull
-requests labeled `full-ci`, and pushes to `main` or `master` also run the
-release-surface package checks:
+On pushes to `main` or `master` and on pull requests labeled `release-check`
+or `full-ci`, the same job also runs the release-surface package checks:
 
 ```bash
 cargo package -p ripr --list
@@ -533,7 +507,7 @@ cargo check --workspace --all-targets
 The main Rust job stays on `stable` so routine CI also proves the current stable
 toolchain, while the MSRV job proves the declared workspace baseline.
 
-The legacy Rust workflow's `rust` and `msrv` jobs run on `ubuntu-latest`. These
+The legacy workflow's `release-proof` and `msrv` jobs run on `ubuntu-latest`. These
 jobs are release-surface proof on main and manual dispatches; they must not
 depend on self-hosted runner capacity when preparing a source release. The
 routed Rust-small workflow remains the swarm development lane that selects
