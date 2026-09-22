@@ -267,9 +267,8 @@ fn build_clear_plan(cache_dir: &Path) -> Result<ClearPlan, String> {
                 reject_symlinked_ancestor(&layer_path)?;
                 let status = inspect_cache_dir(&layer_path);
                 let layer = layer_from_status(cache_dir, marker, layer_path, status)?;
-                plan.total_size_bytes = plan
-                    .total_size_bytes
-                    .saturating_add(layer.total_size_bytes);
+                plan.total_size_bytes =
+                    plan.total_size_bytes.saturating_add(layer.total_size_bytes);
                 plan.entry_count = plan.entry_count.saturating_add(layer.entry_count);
                 plan.layers.push(layer);
             }
@@ -502,8 +501,7 @@ mod tests {
     fn populated_cache_root(label: &str) -> Result<(PathBuf, PathBuf), String> {
         let base = temp_dir(label);
         let cache_dir = base.join("target").join("ripr").join("cache");
-        fs::create_dir_all(cache_dir.join("repo-seam-facts"))
-            .map_err(|error| error.to_string())?;
+        fs::create_dir_all(cache_dir.join("repo-seam-facts")).map_err(|error| error.to_string())?;
         fs::write(cache_dir.join("repo-seam-facts").join("entry.json"), b"{}")
             .map_err(|error| error.to_string())?;
         Ok((base, cache_dir))
@@ -542,10 +540,7 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_str(&json).map_err(|error| error.to_string())?;
         if value.get("status").and_then(serde_json::Value::as_str) != Some("partial")
-            || value
-                .get("entry_count")
-                .and_then(serde_json::Value::as_u64)
-                != Some(2)
+            || value.get("entry_count").and_then(serde_json::Value::as_u64) != Some(2)
         {
             return Err(format!("JSON status output drifted: {json}"));
         }
@@ -692,7 +687,9 @@ mod tests {
             || !dry_run.contains("repo-seam-facts")
             || !dry_run.contains("unrelated siblings would remain")
         {
-            return Err(format!("dry-run plan was not exact and non-destructive: {dry_run}"));
+            return Err(format!(
+                "dry-run plan was not exact and non-destructive: {dry_run}"
+            ));
         }
         Ok(())
     }
@@ -722,7 +719,9 @@ mod tests {
             return Err("clear did not confine deletion to the owned cache layer".to_string());
         }
         if !result.contains("Preserved the cache root and unrelated siblings") {
-            return Err(format!("clear did not disclose its bounded scope: {result}"));
+            return Err(format!(
+                "clear did not disclose its bounded scope: {result}"
+            ));
         }
         Ok(())
     }
@@ -821,10 +820,9 @@ mod tests {
                     entry_count: 0,
                 },
             );
-            if result
-                .err()
-                .is_none_or(|error| !error.contains(state) || !error.contains("no files were removed"))
-            {
+            if result.err().is_none_or(|error| {
+                !error.contains(state) || !error.contains("no files were removed")
+            }) {
                 return Err(format!("{state} layer inspection did not fail closed"));
             }
         }
@@ -887,7 +885,9 @@ mod tests {
         let missing = temp_dir("missing-clear");
         let missing_message = clear_cache_dir(&missing, ClearOptions::default())?;
         if !missing_message.contains("removed nothing") {
-            return Err(format!("unexpected missing-cache report: {missing_message}"));
+            return Err(format!(
+                "unexpected missing-cache report: {missing_message}"
+            ));
         }
 
         let empty = temp_dir("empty-clear");
