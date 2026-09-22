@@ -39,8 +39,6 @@ What are you trying to do?
   Repair one named gap  ripr agent repair --seam-id ID --phase before
                         # edit one focused test
                         ripr agent repair --attempt ID --phase after
-                        # verify the applied attempt
-                        ripr agent repair --attempt ID --phase verify
   Compose PR evidence   ripr first-pr --root . --base origin/main --head HEAD
   Work in an editor     ripr lsp --stdio
   Adopt advisory CI     ripr init --ci github
@@ -88,17 +86,19 @@ Analysis:
   ripr diff [--root .] [--base origin/main] [--head HEAD] [--mode draft] [--json]
   ripr explain [--base REV|--diff PATH] <finding-id|file:line>
   ripr context [--base REV|--diff PATH] --at <finding-id|file:line>
-  ripr rerun --changed-test PATH [--root PATH] [--json] [--out PATH]
+  ripr rerun (--changed-test PATH[::TEST_NODE] | --gap CANONICAL_GAP_ID --gap-ledger PATH) [--root PATH] [--json] [--out PATH]
   ripr evidence-health [--root PATH] [--out PATH] [--out-md PATH] [--mutation-calibration PATH]
   ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|json] [--out PATH]
 
 Editor & Agent:
   ripr lsp [--stdio]
-  ripr mcp --stdio [--root PATH]
-  ripr agent repair --root . --seam-id ID --phase before|after|verify
+  ripr mcp [--stdio] [--root PATH]
+  ripr agent repair --root . --seam-id ID --phase before
+  ripr agent repair --root . (--attempt ID | --seam-id ID) --phase after
+  ripr agent repair --root . --attempt ID --phase verify --verify-authorized --verify-authority ID
   ripr agent start --root . --seam-id ID [--out target/ripr/workflow]
   ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json
-  ripr agent packet --root . --seam-id ID --json
+  ripr agent packet --root . (--seam-id ID | --gap-ledger PATH --gap-id ID) --json
   ripr agent verify --root . --before before.json --after after.json --json
   ripr agent verify-execute --root . --packet packet.json --result-json result.json --authorize --json
   ripr agent receipt --root . --verify-json agent-verify.json --seam-id ID --json
@@ -126,7 +126,7 @@ PR & Review:
   ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json [--out target/ripr/reports/assistant-loop-health.json]
 
 Policy & Gate:
-  ripr gate evaluate --pr-guidance PATH [--mode visible-only|acknowledgeable] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
+  ripr gate evaluate --pr-guidance PATH [--mode visible-only|acknowledgeable|baseline-check|calibrated-gate] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
   # acknowledgeable mode blocks eligible gaps unless the PR carries the configured waiver label (default: ripr-waive)
   ripr baseline create --from target/ripr/reports/gate-decision.json [--out .ripr/gate-baseline.json] [--dry-run] [--force]
   ripr baseline diff --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json [--out target/ripr/reports/baseline-debt-delta.json] [--out-md target/ripr/reports/baseline-debt-delta.md]
@@ -142,9 +142,9 @@ Policy & Gate:
 
 Reports:
   ripr reports index [--reports-dir target/ripr/reports] [--review-dir target/ripr/review] [--out target/ripr/reports/index.json]
-  ripr reports gap-ledger --records fixtures/gap-decision-ledger/corpus.json [--out target/ripr/reports/gap-decision-ledger.json]
-  ripr reports ts-limitations --check-output <path> [--out target/ripr/reports/ts-limitations.json]
-  ripr reports ts-false-actionable --corpus <path> [--out target/ripr/reports/ts-false-actionable.json]
+  ripr reports gap-ledger (--records PATH | --repo-exposure PATH | --check-output PATH) [--out target/ripr/reports/gap-decision-ledger.json]
+  ripr reports ts-limitations --check-output <path> [--out target/ripr/reports/typescript-limitations.json]
+  ripr reports ts-false-actionable --corpus <path> [--out target/ripr/reports/typescript-false-actionable-audit.json]
   ripr receipt write --gap <canonical_gap_id> --verify-command "<cmd>" --status <verify_status> [--packet <packet_id>] [--out PATH] [--json]
   ripr receipt check [--path PATH] [--gap <canonical_gap_id>]
 
