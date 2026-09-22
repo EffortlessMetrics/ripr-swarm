@@ -5209,9 +5209,11 @@ fn check_workflows_impl() -> Result<(), String> {
             }
         }
     }
+    violations.extend(composite_action_run_block_violations(&budgets)?);
     violations.extend(repository_owned_review_thread_mutation_violations()?);
     validate_assistant_loop_health_fixture_corpus(&mut violations)?;
     violations.extend(routed_rust_workflow_contract_violations_for_repo()?);
+    violations.extend(policy::ci_scratch::scratch_lease_contract_violations_for_repo()?);
 
     finish_policy_report(
         PolicyReportSpec {
@@ -5233,6 +5235,51 @@ fn check_workflows_impl() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// Budget composite-action run blocks like workflow run blocks.
+///
+/// A local composite action is executed by the workflows that call it, so
+/// shell moved into `.github/actions/*/action.yml` must not escape the
+/// visible run-block budget that `policy/workflow_allowlist.txt` keeps for
+/// workflow YAML (#3841 moved scratch reclamation into such an action).
+fn composite_action_run_block_violations(
+    budgets: &BTreeMap<String, WorkflowBudget>,
+) -> Result<Vec<String>, String> {
+    let root = Path::new(".github/actions");
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut violations = Vec::new();
+    for path in collect_files(root)? {
+        let normalized = normalize_path(&path);
+        if !(normalized.ends_with("/action.yml") || normalized.ends_with("/action.yaml")) {
+            continue;
+        }
+        let text = read_text_lossy(&path)?;
+        let blocks = extract_workflow_run_blocks(&text);
+        if blocks.is_empty() {
+            continue;
+        }
+        let Some(budget) = budgets.get(&normalized) else {
+            violations.push(format!(
+                "missing composite action run-block budget for {normalized} in policy/workflow_allowlist.txt"
+            ));
+            continue;
+        };
+        for block in blocks {
+            if block.non_empty_lines > budget.max_non_empty_lines {
+                violations.push(format!(
+                    "{normalized}:{} run block has {} non-empty line(s), allowed {} ({})",
+                    block.line_number,
+                    block.non_empty_lines,
+                    budget.max_non_empty_lines,
+                    budget.reason
+                ));
+            }
+        }
+    }
+    Ok(violations)
 }
 
 /// Keep the scratch-GC matrix isolated by pool.
