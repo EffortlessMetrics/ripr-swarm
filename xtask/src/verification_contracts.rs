@@ -142,6 +142,29 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &[],
     },
+    // The `test_harnesses` projection is checked against a producer golden
+    // rather than a hand-written copy, for the reason stated below about the
+    // trust corpus: a hand-written instance lets the schema confirm itself
+    // while the bytes the product emits drift away. Both hand-written check
+    // fixtures above are harness-free, so before this row the published
+    // schema rejected real `ripr check --format json` output from any
+    // repository with `[analysis.test_harnesses]` registrations and the gate
+    // stayed green (#3883).
+    VerificationContract {
+        schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
+        fixture_path: "fixtures/harness_dead_construction_no_exposed_credit/expected/check.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "test_harnesses",
+            "registration_id",
+            "harness_kind",
+            "adapter",
+            "provenance",
+            "limitations[]",
+        ],
+    },
     // The trust corpus of record is its own canonical instance. Validating a
     // hand-written copy instead would let the schema confirm itself while the
     // artifact `cargo xtask rust-repair-trust` actually reads drifts away.
@@ -1284,6 +1307,84 @@ mod tests {
                 .iter()
                 .any(|violation| violation.contains("unexpected field `unexpected_release_field`")),
             "expected top-level schema drift rejection, got {violations:#?}"
+        );
+        Ok(())
+    }
+
+    /// Negative control for the `source_currentness` property added with
+    /// #3883. The producer emits this field on every finding from a closed
+    /// enum, so the schema states the enum rather than `type: string`; a
+    /// disposition outside it must be rejected rather than silently admitted.
+    #[test]
+    fn check_schema_rejects_an_unknown_source_currentness() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let mut fixture =
+            read_json(root.join("tests/fixtures/verification/ripr/check-complete.valid.json"))?;
+        fixture["findings"][0]["source_currentness"] = Value::String("probably_fine".to_string());
+        let mut violations = Vec::new();
+
+        validate_value_against_schema(
+            &fixture,
+            &schema,
+            &schema,
+            "unknown source currentness fixture".to_string(),
+            &mut violations,
+        );
+
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("is not in enum")),
+            "expected an enum rejection for the disposition itself, got {violations:#?}"
+        );
+        assert!(
+            !violations
+                .iter()
+                .any(|violation| violation.contains("unexpected field `source_currentness`")),
+            "the schema must know the field, so the rejection is about its value and not \
+             about the key: {violations:#?}"
+        );
+        Ok(())
+    }
+
+    /// Negative control for the `test_harness` definition added with #3883.
+    /// The producer always emits `limitations`, as `[]` when there are none,
+    /// so an entry without the key is producer drift and not an absent
+    /// optional.
+    #[test]
+    fn check_schema_rejects_a_harness_projection_without_limitations() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let mut fixture = read_json(
+            root.join("fixtures/harness_dead_construction_no_exposed_credit/expected/check.json"),
+        )?;
+        let entry = fixture["test_harnesses"][0]
+            .as_object_mut()
+            .ok_or("the golden's first harness projection should be an object")?;
+        entry
+            .remove("limitations")
+            .ok_or("the golden's first harness projection should carry limitations")?;
+        let mut violations = Vec::new();
+
+        validate_value_against_schema(
+            &fixture,
+            &schema,
+            &schema,
+            // Deliberately neutral: an earlier draft named this location
+            // "harness projection without limitations", and the assertion
+            // below then matched the label rather than the validator, so the
+            // control passed against a schema that knew nothing about the
+            // field at all.
+            "harness golden".to_string(),
+            &mut violations,
+        );
+
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("missing required field `limitations`")),
+            "expected a missing-limitations rejection, got {violations:#?}"
         );
         Ok(())
     }
