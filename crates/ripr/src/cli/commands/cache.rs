@@ -629,9 +629,9 @@ mod tests {
                 force: true,
             },
         );
-        let survived = sentinel.is_file();
+        let persisted = sentinel.is_file();
         remove_base(&base)?;
-        if result.is_ok() || !survived {
+        if result.is_ok() || !persisted {
             return Err("traversing cache path was accepted or deleted its sentinel".to_string());
         }
         Ok(())
@@ -650,14 +650,14 @@ mod tests {
                 force: true,
             },
         );
-        let survived = sentinel.is_file();
+        let persisted = sentinel.is_file();
         remove_base(&root)?;
         match result {
             Ok(message) => Err(format!("clear accepted an unknown-only root: {message}")),
             Err(error) if !error.contains("no independently recognized") => {
                 Err(format!("unexpected refusal message: {error}"))
             }
-            Err(_) if !survived => Err("clear deleted an unrelated file".to_string()),
+            Err(_) if !persisted => Err("clear deleted an unrelated file".to_string()),
             Err(_) => Ok(()),
         }
     }
@@ -893,9 +893,9 @@ mod tests {
         let empty = temp_dir("empty-clear");
         fs::create_dir_all(&empty).map_err(|error| error.to_string())?;
         let empty_message = clear_cache_dir(&empty, ClearOptions::default())?;
-        let survived = empty.is_dir();
+        let persisted = empty.is_dir();
         remove_base(&empty)?;
-        if !survived || !empty_message.contains("holds no entries") {
+        if !persisted || !empty_message.contains("holds no entries") {
             return Err(format!("unexpected empty-cache behavior: {empty_message}"));
         }
         Ok(())
