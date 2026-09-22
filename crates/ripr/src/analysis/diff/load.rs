@@ -23,18 +23,7 @@ pub fn load_diff(
 
     warn_if_git_operation_in_progress(root, git_timeout);
 
-    // RIPR-SPEC-0084: when the caller passes an explicit base, use it as-is
-    // (if it does not exist, git diff will surface a clear error that names
-    // the ref the user chose). When the caller passes None (bare `ripr check`,
-    // no --base flag), resolve the repo's real default branch rather than
-    // hardcoding origin/main.
-    let owned;
-    let base: &str = if let Some(explicit) = base {
-        explicit
-    } else {
-        owned = resolve_default_base(root, git_timeout)?;
-        &owned
-    };
+    let base = effective_base(root, base, git_timeout)?;
 
     run_git_diff(
         root,
@@ -56,15 +45,44 @@ pub fn load_worktree_diff(
 ) -> Result<String, String> {
     warn_if_git_operation_in_progress(root, git_timeout);
 
-    let owned;
-    let base: &str = if let Some(explicit) = base {
-        explicit
-    } else {
-        owned = resolve_default_base(root, git_timeout)?;
-        &owned
+    let base = effective_base(root, base, git_timeout)?;
+
+    run_git_diff(root, &base, &["--submodule=short"], git_timeout)
+}
+
+/// Resolve the base ref the diff will actually run against.
+///
+/// RIPR-SPEC-0084: an explicit `--base` is never substituted. It is only
+/// verified, so an unresolvable ref fails in ripr's own voice — naming the ref
+/// the user chose and saying the analysis did not run — instead of reaching
+/// `git diff` and surfacing git's `ambiguous argument` usage advice, which
+/// recommends `--` path separation for a mistake the user did not make. The
+/// zero-config path (no `--base`) still resolves the repository's real default
+/// branch below.
+///
+/// The probe is evidence, not an assumption: only a `rev-parse` that actually
+/// ran and reported the ref absent produces the named failure. A probe that
+/// could not complete (spawn failure, `git_timeout`) falls through to
+/// `run_git_diff`, which keeps the established error text for invalid roots
+/// and other git-level failures rather than claiming a bad ref on no evidence.
+fn effective_base(
+    root: &Path,
+    base: Option<&str>,
+    git_timeout: Option<Duration>,
+) -> Result<String, String> {
+    let Some(explicit) = base else {
+        return resolve_default_base(root, git_timeout);
     };
 
-    run_git_diff(root, base, &["--submodule=short"], git_timeout)
+    let commit = format!("{explicit}^{{commit}}");
+    match git_ref_output(root, &commit, git_timeout) {
+        Some(output) if !output.status.success() => Err(format!(
+            "the base `{explicit}` does not resolve to a commit (the analysis did not run). \
+             Fetch the ref (for example `git fetch origin`) or pass `--base <ref>` for a ref \
+             this repository has."
+        )),
+        _ => Ok(explicit.to_string()),
+    }
 }
 
 /// Resolve the best available base ref for `ripr check` when none was
@@ -813,24 +831,106 @@ mod tests {
     #[test]
     fn explicit_base_is_used_as_is_without_resolution() -> std::io::Result<()> {
         // When an explicit base is given, load_diff does not attempt resolution.
-        // A nonexistent explicit base should produce a git-diff error (not the
-        // named "could not resolve" message), confirming the explicit path is kept.
+        // A nonexistent explicit base must fail naming the ref the user chose,
+        // never the auto-resolve message (that would mean we silently
+        // substituted it).
         let dir = unique_fixture_root("explicit-base-no-subst")?;
         let _ = fs::remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
         let result = load_diff(&dir, Some("nonexistent-branch-xyz"), None, None);
         let err = result.expect_err("expected error for nonexistent explicit base");
-        // Must NOT contain the auto-resolve message (that would mean we silently
-        // substituted the explicit ref).
         assert!(
             !err.contains("could not resolve a default base"),
             "explicit base must not trigger auto-resolve fallback; got: {err}"
         );
-        // Must surface a git error referencing the chosen ref.
         assert!(
             err.contains("nonexistent-branch-xyz") || err.contains("git diff failed"),
-            "expected git-diff error for explicit bad base, got: {err}"
+            "expected error naming the chosen ref, got: {err}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn unresolvable_explicit_base_reports_the_ref_instead_of_git_usage_advice()
+    -> std::io::Result<()> {
+        // The user-facing defect: `ripr check --base origin/main` in a repo with
+        // no `origin` used to print git's raw `ambiguous argument` text, whose
+        // remedy ("use `--` to separate paths from revisions") addresses a
+        // mistake the user did not make. The failure now names the ref, says the
+        // analysis did not run, and gives the two real next actions.
+        let dir = unique_fixture_root("explicit-base-named-failure")?;
+        let _ = fs::remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        let err = load_diff(&dir, Some("origin/main"), None, None)
+            .expect_err("expected error for a base with no origin remote");
+
+        assert!(
+            err.contains("`origin/main`"),
+            "expected the chosen ref to be named, got: {err}"
+        );
+        assert!(
+            err.contains("does not resolve to a commit"),
+            "expected the named non-resolution state, got: {err}"
+        );
+        assert!(
+            err.contains("the analysis did not run"),
+            "expected an explicit did-not-run boundary so an unresolvable base \
+             is never read as an empty result, got: {err}"
+        );
+        assert!(
+            err.contains("--base <ref>"),
+            "expected the next action, got: {err}"
+        );
+        // Discriminator: git's usage advice for a different mistake must be gone.
+        assert!(
+            !err.contains("ambiguous argument") && !err.contains("separate paths from revisions"),
+            "raw git usage advice must not reach the user, got: {err}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn resolvable_explicit_base_still_loads_its_diff() -> std::io::Result<()> {
+        // Negative control for the preflight above: a base that does resolve is
+        // analyzed exactly as before, so the new check cannot pass by rejecting
+        // every explicit base.
+        let dir = unique_fixture_root("explicit-base-resolvable")?;
+        let _ = fs::remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        fs::write(dir.join("src.rs"), "pub fn added() -> i32 { 1 }\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "add src"])?;
+
+        let diff = load_diff(&dir, Some("HEAD~1"), None, None)
+            .expect("expected a resolvable explicit base to analyze");
+        assert!(
+            diff.contains("src.rs"),
+            "expected the changed file in the loaded diff, got: {diff}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_load_reports_an_unresolvable_explicit_base_by_name() -> std::io::Result<()> {
+        // `--worktree` shares the same base authority, so it shares the fix.
+        let dir = unique_fixture_root("worktree-base-named-failure")?;
+        let _ = fs::remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        let err = load_worktree_diff(&dir, Some("origin/main"), None)
+            .expect_err("expected error for a worktree base with no origin remote");
+        assert!(
+            err.contains("`origin/main`") && err.contains("does not resolve to a commit"),
+            "expected the named non-resolution state, got: {err}"
         );
 
         let _ = fs::remove_dir_all(&dir);
