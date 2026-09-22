@@ -411,6 +411,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         vec![missing()],
         vec![related_test()],
     );
+    let seam_id = entry.seam.id().as_str().to_string();
     let artifacts = pilot_artifacts();
     let terminal = render_pilot_terminal(&[entry], pilot_context(&artifacts));
 
@@ -420,7 +421,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         "mode: draft",
         "config: loaded ripr.toml",
         "Top recommendation:",
-        "inspected seam: src/pricing.rs:88 predicate_boundary in pricing::discounted_total (weakly_gripped)",
+        "inspected seam:",
         "why it matters: missing discriminator: input that hits the boundary: amount >= discount_threshold",
         "focused test: not applicable (route limited: producer-owned route readiness is not eligible for a repair target)",
         "assertion: not_applicable",
@@ -437,6 +438,25 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
             "missing terminal needle: {needle}"
         );
     }
+
+    // The id leads the line, so the next documented step
+    // (`ripr agent repair --seam-id <id>`) is reachable from the screen alone.
+    assert!(
+        terminal.contains(&format!(
+            "inspected seam: {seam_id} src/pricing.rs:88 predicate_boundary in pricing::discounted_total (weakly_gripped)"
+        )),
+        "the terminal seam line must lead with the seam id:\n{terminal}"
+    );
+
+    // This seam's repair route is limited, so the paste-ready repair command
+    // must not appear: the id is what the user needs here, not a transaction
+    // against a target the route does not have. The applicable-route half of
+    // this contract is proved end to end by
+    // `pilot_writes_default_packet_outputs_for_boundary_gap_fixture`.
+    assert!(
+        !terminal.contains("repair this seam:"),
+        "a route-limited seam must not be offered a repair transaction:\n{terminal}"
+    );
 }
 
 #[test]
