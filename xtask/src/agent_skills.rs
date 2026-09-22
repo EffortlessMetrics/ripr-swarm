@@ -129,6 +129,48 @@ const OPERATING_MARKER_PREFIXES: [&str; 4] = [
     "finish_contract:",
 ];
 
+
+const ROOT_OPERATING_REQUIRED_MARKERS: [&str; 6] = [
+    "root_contract:primary_sources_before_summary",
+    "root_contract:parent_goal_denominator",
+    "root_contract:routine_repo_writes",
+    "root_contract:ordinary_squash_merge",
+    "root_contract:waiting_lane_not_global_blocker",
+    "root_contract:environment_detection",
+];
+
+const DELIVER_GOAL_REQUIRED_MARKERS: [&str; 6] = [
+    "goal_contract:parent_end_state",
+    "goal_contract:progress_denominator",
+    "goal_contract:local_work_not_delivery",
+    "goal_contract:waiting_lane_not_global_blocker",
+    "goal_contract:subgoal_does_not_close_parent",
+    "goal_contract:primary_sources_before_summary",
+];
+
+const DELIVER_PR_REQUIRED_MARKERS: [&str; 6] = [
+    "pr_contract:current_claim_search",
+    "pr_contract:duplicate_check_before_conflict",
+    "pr_contract:behind_only_no_restack",
+    "pr_contract:routine_repo_writes",
+    "pr_contract:ordinary_squash_merge",
+    "pr_contract:local_commit_not_delivery",
+];
+
+const BUILD_CANDIDATE_REQUIRED_MARKERS: [&str; 4] = [
+    "candidate_contract:host_shell_detection",
+    "candidate_contract:focused_local_proof",
+    "candidate_contract:one_writer_worktree",
+    "candidate_contract:publish_for_remote_evidence",
+];
+
+const FINISH_PR_REQUIRED_MARKERS: [&str; 4] = [
+    "finish_contract:routine_repo_writes",
+    "finish_contract:ordinary_squash_merge",
+    "finish_contract:duplicate_recheck",
+    "finish_contract:behind_only_no_restack",
+];
+
 const PROVIDERS: [(&str, &str, &str, &str, Option<&str>); 3] = [
     (
         "codex",
@@ -195,6 +237,7 @@ pub(crate) fn check() -> Result<(), String> {
         }
         let routing_text = provider_text.clone();
         validate_root_review_route(provider, &routing_text, &mut findings);
+        validate_root_operating_contract(provider, &routing_text, &mut findings);
         for skill in SKILLS {
             let relative = format!("{root}/{skill}/SKILL.md");
             let path = Path::new(&relative);
@@ -461,6 +504,73 @@ fn closed_marker_findings(text: &str, prefix: &str, required: &[&str]) -> Vec<St
     for declared in counts.keys() {
         if !required.contains(&declared.as_str()) {
             findings.push(format!("declares unknown marker `{declared}`"));
+        }
+    }
+    findings
+}
+
+
+fn validate_root_operating_contract(
+    provider: &str,
+    routing_text: &str,
+    findings: &mut Vec<String>,
+) {
+    for finding in closed_marker_findings(
+        routing_text,
+        "root_contract:",
+        &ROOT_OPERATING_REQUIRED_MARKERS,
+    ) {
+        findings.push(format!("{provider}: root instructions {finding}"));
+    }
+}
+
+fn operating_contract_findings(skill: &str, skill_text: &str) -> Vec<String> {
+    match skill {
+        "deliver-goal" => closed_marker_findings(
+            skill_text,
+            "goal_contract:",
+            &DELIVER_GOAL_REQUIRED_MARKERS,
+        ),
+        "deliver-pr" => closed_marker_findings(
+            skill_text,
+            "pr_contract:",
+            &DELIVER_PR_REQUIRED_MARKERS,
+        ),
+        "build-candidate" => closed_marker_findings(
+            skill_text,
+            "candidate_contract:",
+            &BUILD_CANDIDATE_REQUIRED_MARKERS,
+        ),
+        "finish-pr" => closed_marker_findings(
+            skill_text,
+            "finish_contract:",
+            &FINISH_PR_REQUIRED_MARKERS,
+        ),
+        _ => Vec::new(),
+    }
+}
+
+fn closed_marker_findings(
+    text: &str,
+    prefix: &str,
+    required: &[&str],
+) -> Vec<String> {
+    let counts = declared_marker_counts(text, prefix);
+    let mut findings = Vec::new();
+    for marker in required {
+        match counts.get(*marker).copied().unwrap_or(0) {
+            0 => findings.push(format!("is missing operating contract marker `{marker}`")),
+            1 => {}
+            count => findings.push(format!(
+                "declares operating contract marker `{marker}` {count} times"
+            )),
+        }
+    }
+    for declared in counts.keys() {
+        if !required.contains(&declared.as_str()) {
+            findings.push(format!(
+                "declares unknown operating contract marker `{declared}`"
+            ));
         }
     }
     findings
