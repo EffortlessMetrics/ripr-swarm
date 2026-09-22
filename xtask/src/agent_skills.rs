@@ -129,7 +129,6 @@ const OPERATING_MARKER_PREFIXES: [&str; 4] = [
     "finish_contract:",
 ];
 
-
 const PROVIDERS: [(&str, &str, &str, &str, Option<&str>); 3] = [
     (
         "codex",
@@ -395,9 +394,7 @@ fn validate_agents_operating_contract(findings: &mut Vec<String>) {
             "operating_contract:",
             &AGENTS_ROOT_OPERATING_MARKERS,
         ) {
-            findings.push(format!(
-                "operating-contract: {instructions} {finding}"
-            ));
+            findings.push(format!("operating-contract: {instructions} {finding}"));
         }
 
         for skill in SKILLS {
@@ -475,7 +472,6 @@ fn closed_marker_findings(text: &str, prefix: &str, required: &[&str]) -> Vec<St
     }
     findings
 }
-
 
 fn validate_root_review_route(provider: &str, routing_text: &str, findings: &mut Vec<String>) {
     let counts = declared_marker_counts(routing_text, "review_route:");
