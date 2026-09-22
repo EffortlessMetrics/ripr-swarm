@@ -8,6 +8,14 @@
 //! range and then report a clean graph over issues it never saw. Comparing the
 //! manifest against live milestones is Slice C's separate, explicitly
 //! network-owned job.
+//!
+//! The same check owns candidate-artifact lifecycle for
+//! `docs/release-candidates/` (#3842) through [`candidate_registry`]: the
+//! registry's releases and current-row controllers are bound to this
+//! manifest's `[[release]]` records, so artifact lifecycle extends the one
+//! checked release graph instead of declaring a second one.
+
+mod candidate_registry;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -110,6 +118,7 @@ struct RollingRecord {
 #[derive(Clone, Debug)]
 pub(crate) struct ReleaseTargetsOutcome {
     violations: Vec<String>,
+    candidate_registry: Option<candidate_registry::CandidateRegistryOutcome>,
     releases: Vec<ReleaseSummary>,
     parents_outside_committed_sets: usize,
     prerequisite_edges: usize,
@@ -138,6 +147,7 @@ pub(crate) fn check_release_targets() -> Result<(), String> {
                 "release-targets.json",
                 &release_targets_json(&ReleaseTargetsOutcome {
                     violations: violations.clone(),
+                    candidate_registry: None,
                     releases: Vec::new(),
                     parents_outside_committed_sets: 0,
                     prerequisite_edges: 0,
@@ -148,22 +158,50 @@ pub(crate) fn check_release_targets() -> Result<(), String> {
         }
     };
 
-    let outcome = evaluate_release_targets(path, &text);
+    let mut outcome = evaluate_release_targets(path, &text);
+    attach_candidate_registry(&mut outcome, std::path::Path::new("."));
+    if let Some(registry) = &outcome.candidate_registry {
+        write_report(
+            candidate_registry::PROJECTION_REPORT_FILE,
+            &registry.projection,
+        )?;
+    }
     write_report("release-targets.json", &release_targets_json(&outcome))?;
     finish_policy_report(report_spec(), &outcome.violations)
+}
+
+/// Evaluate the candidate-artifact registry under `root` against the
+/// manifest's releases and fold its violations into the one check result.
+fn attach_candidate_registry(outcome: &mut ReleaseTargetsOutcome, root: &std::path::Path) {
+    let controllers = outcome
+        .releases
+        .iter()
+        .map(|release| candidate_registry::ReleaseController {
+            version: release.version.clone(),
+            goal_issue: release.goal_issue,
+        })
+        .collect::<Vec<_>>();
+    let tree = candidate_registry::read_artifact_tree(root);
+    let registry = candidate_registry::evaluate_candidate_registry(&tree, &controllers);
+    outcome
+        .violations
+        .extend(registry.violations.iter().cloned());
+    outcome.candidate_registry = Some(registry);
 }
 
 fn report_spec() -> PolicyReportSpec<'static> {
     PolicyReportSpec {
         report_file: "release-targets.md",
         check: "check-release-targets",
-        why_it_matters: "Milestone membership is the committed candidate denominator. When the manifest, the release-goal graph, and milestone objects drift apart, progress counts stop meaning what they claim and conditional or umbrella work silently inflates a release promise. This check keeps the checked-in membership graph internally coherent offline; it does not read GitHub and does not qualify or publish any candidate.",
+        why_it_matters: "Milestone membership is the committed candidate denominator. When the manifest, the release-goal graph, and milestone objects drift apart, progress counts stop meaning what they claim and conditional or umbrella work silently inflates a release promise. This check keeps the checked-in membership graph internally coherent offline; it does not read GitHub and does not qualify or publish any candidate. It also classifies every retained artifact under docs/release-candidates/ through the digest-bound lifecycle registry, so a superseded receipt cannot be reused as current authority from its filename or wording.",
         fix_kind: FixKind::AuthorDecisionRequired,
         recommended_fixes: &[
             "Give every issue exactly one role in exactly one release; conditional and rolling work belongs outside every committed set.",
             "Record an umbrella parent as `[[parent]]` with `counted_in = \"none\"` unless it owns distinct final acceptance beyond its leaves, and then state that acceptance in `justification`.",
             "Declare every prerequisite endpoint in the manifest and keep a prerequisite in the same or an earlier release than the issue consuming it.",
             "Update policy/release-targets.toml rather than a release-goal issue body: the manifest is the parsed authority and the goal bodies are human-validated documentation.",
+            "Register every file under docs/release-candidates/ in docs/release-candidates/index.json with its raw-byte sha256 and lifecycle state; never rewrite a historical receipt to change its state.",
+            "Replace docs/release-candidates/README.md with target/ripr/reports/release-candidate-registry.md when the registry projection is stale.",
         ],
         rerun_command: "cargo xtask check-release-targets",
         exception_template: None,
@@ -206,6 +244,7 @@ fn evaluate_release_targets(path: &str, text: &str) -> ReleaseTargetsOutcome {
 
     ReleaseTargetsOutcome {
         violations,
+        candidate_registry: None,
         releases: releases.iter().map(release_summary).collect(),
         parents_outside_committed_sets: parents
             .iter()
@@ -1071,6 +1110,10 @@ fn release_targets_json(outcome: &ReleaseTargetsOutcome) -> String {
         "parents_outside_committed_sets": outcome.parents_outside_committed_sets,
         "prerequisite_edges": outcome.prerequisite_edges,
         "rolling_issues": outcome.rolling_issues,
+        "candidate_registry": outcome
+            .candidate_registry
+            .as_ref()
+            .map(candidate_registry::registry_json),
         "violations": outcome.violations,
         "non_claim": "Offline manifest integrity only. This report does not read GitHub, does not establish milestone parity, and does not qualify or publish any release candidate.",
     });

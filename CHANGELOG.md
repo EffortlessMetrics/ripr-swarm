@@ -294,6 +294,14 @@ are scoped or reviewed.
 
 ### Changed
 
+- `cargo xtask check-allow-attributes` now fails a
+  `.ripr/allow-attributes.txt` row whose `max_count` is higher than the
+  current source count, including a row whose suppression is gone. The
+  live `path_dependencies.rs` `allow(dead_code)` budget is tightened from
+  7 to 4, matching the four remaining suppressions. Over-budget
+  suppressions still fail
+  ([#3923](https://github.com/EffortlessMetrics/ripr-swarm/issues/3923)).
+
 - `cargo xtask check-covered-by` now parses `policy/clippy-exceptions.toml`
   as TOML: unique ids, required nonblank fields, optional ISO `expires`
   dates that are not in the past, unknown fields, duplicate keys, and

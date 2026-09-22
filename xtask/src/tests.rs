@@ -76,8 +76,9 @@ use super::{
     USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES, USER_SURFACE_PROJECTION_REQUIRED_SURFACES,
     WorktreeDoctorFinding, WorktreeDoctorSeverity, actionable_gap_outcomes_json,
     actionable_gap_outcomes_markdown, actionable_gap_outcomes_report_from_values,
-    actionable_gap_outcomes_report_impl, badge_artifact_command_args, badge_artifact_command_label,
-    badge_artifact_jobs, badge_artifact_native_slot, badge_artifacts_impl_with_runners,
+    actionable_gap_outcomes_report_impl, allow_attribute_budget_violations,
+    badge_artifact_command_args, badge_artifact_command_label, badge_artifact_jobs,
+    badge_artifact_native_slot, badge_artifacts_impl_with_runners,
     badge_artifacts_summary_markdown, badge_basis_canonical_projection,
     badge_basis_derived_ripr_plus_snapshot, badge_basis_needs_repo_badge_plus_job,
     badge_basis_report_json, badge_basis_report_markdown, badge_basis_seam_native_counts,
@@ -8878,6 +8879,96 @@ fn allow_attribute_detection_ignores_untracked_lints() {
     let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
 
     assert!(findings.is_empty());
+}
+
+#[test]
+fn allow_attribute_budget_fails_stale_shrunk_and_orphaned_rows() {
+    let guarded = guarded_allow_attribute_lints();
+    let mut allowlist = BTreeMap::new();
+    allowlist.insert(("a.rs".to_string(), "allow(dead_code)".to_string()), 3);
+    allowlist.insert(("b.rs".to_string(), "allow(dead_code)".to_string()), 1);
+    allowlist.insert(("c.rs".to_string(), "expect(dead_code)".to_string()), 2);
+    allowlist.insert(
+        (
+            "d.rs".to_string(),
+            "allow(clippy::module_name_repetitions)".to_string(),
+        ),
+        2,
+    );
+    let mut counts = BTreeMap::new();
+    counts.insert(
+        ("a.rs".to_string(), "allow(dead_code)".to_string()),
+        vec![10, 20],
+    );
+    counts.insert(
+        ("c.rs".to_string(), "expect(dead_code)".to_string()),
+        vec![4, 8],
+    );
+
+    let violations = allow_attribute_budget_violations(&allowlist, &counts, &guarded);
+    let stale = |path: &str| {
+        violations
+            .iter()
+            .any(|violation| violation.contains(path) && violation.contains("count is stale"))
+    };
+    assert!(stale("a.rs"), "shrunk row should fail: {violations:?}");
+    assert!(
+        violations.iter().any(|violation| {
+            violation.contains("a.rs") && violation.contains("found 2, allowed 3")
+        }),
+        "shrunk row should name both counts: {violations:?}"
+    );
+    assert!(stale("b.rs"), "orphaned row should fail: {violations:?}");
+    assert!(
+        violations.iter().any(|violation| {
+            violation.contains("b.rs") && violation.contains("found 0, allowed 1")
+        }),
+        "orphaned row should name a zero count: {violations:?}"
+    );
+    assert!(
+        !violations
+            .iter()
+            .any(|violation| violation.contains("c.rs")),
+        "exact row should pass: {violations:?}"
+    );
+    assert!(
+        violations.iter().any(|violation| {
+            violation.contains("d.rs") && violation.contains("unsupported guarded attribute")
+        }),
+        "unsupported row should still fail: {violations:?}"
+    );
+    assert!(
+        !violations
+            .iter()
+            .any(|violation| violation.contains("d.rs") && violation.contains("count is stale")),
+        "unsupported row is not also a stale-count failure: {violations:?}"
+    );
+}
+
+#[test]
+fn allow_attribute_budget_still_fails_when_source_exceeds_the_row() {
+    let guarded = guarded_allow_attribute_lints();
+    let mut allowlist = BTreeMap::new();
+    allowlist.insert(("a.rs".to_string(), "allow(dead_code)".to_string()), 1);
+    let mut counts = BTreeMap::new();
+    counts.insert(
+        ("a.rs".to_string(), "allow(dead_code)".to_string()),
+        vec![3, 9],
+    );
+
+    let violations = allow_attribute_budget_violations(&allowlist, &counts, &guarded);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("a.rs:3,9") && violation.contains("allowed 1")),
+        "over-budget source should still fail with its lines: {violations:?}"
+    );
+    assert!(
+        !violations
+            .iter()
+            .any(|violation| violation.contains("count is stale")),
+        "over-budget is not a stale-count failure: {violations:?}"
+    );
 }
 
 #[test]

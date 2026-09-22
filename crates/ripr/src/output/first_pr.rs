@@ -117,8 +117,8 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         "{}",
         start_here_cli_summary(&packet, &json_path, &markdown_path)
     );
-    println!("Wrote {}", json_path.display());
-    println!("Wrote {}", markdown_path.display());
+    println!("Wrote {}", display_path(&json_path));
+    println!("Wrote {}", display_path(&markdown_path));
     Ok(())
 }
 
@@ -137,6 +137,7 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
             &json_path,
             &markdown_path,
             options,
+            &out_dir,
         ));
     }
     let packet = validate_start_here_packet(&json_path, &markdown_path)?;
@@ -153,20 +154,25 @@ fn first_pr_missing_packet_recovery_error(
     json_path: &Path,
     markdown_path: &Path,
     options: &FirstPrOptions,
+    out_dir: &Path,
 ) -> String {
     let missing = if !json_path.exists() {
         json_path
     } else {
         markdown_path
     };
+    // Render the already-resolved locations: the suggested command must
+    // reproduce the exact directory `--check` validated, even when pasted
+    // from a different working directory, and paths render with stable
+    // separators on every host.
     format!(
         "first-pr --check validates an existing start-here packet; it does not create one.\n\nMissing:\n  {}\n\nCreate and validate it with:\n  {}",
-        missing.display(),
-        first_pr_write_command(options)
+        display_path(missing),
+        first_pr_write_command(options, out_dir)
     )
 }
 
-fn first_pr_write_command(options: &FirstPrOptions) -> String {
+fn first_pr_write_command(options: &FirstPrOptions, out_dir: &Path) -> String {
     let mut parts = vec![
         "ripr".to_string(),
         "first-pr".to_string(),
@@ -186,7 +192,7 @@ fn first_pr_write_command(options: &FirstPrOptions) -> String {
         parts.push(shell_arg(&options.gap_ledger));
     }
     parts.push("--out-dir".to_string());
-    parts.push(shell_arg(&options.out_dir));
+    parts.push(shell_arg(&display_path(out_dir)));
     parts.join(" ")
 }
 
@@ -1727,30 +1733,48 @@ mod tests {
         };
         options.check = true;
         let err = first_pr_missing_packet_recovery_error(
-            Path::new("target/ripr/foo/reports/start-here.json"),
-            Path::new("target/ripr/foo/reports/start-here.md"),
+            Path::new("/repo/target/ripr/foo/reports/start-here.json"),
+            Path::new("/repo/target/ripr/foo/reports/start-here.md"),
             &options,
+            Path::new("/repo/target/ripr/foo/reports"),
         );
 
         assert!(err.contains("first-pr --check validates an existing start-here packet"));
         assert!(err.contains("it does not create one"));
-        assert!(err.contains("Missing:\n  target/ripr/foo/reports/start-here.json"));
+        assert!(err.contains("Missing:\n  /repo/target/ripr/foo/reports/start-here.json"));
         assert!(err.contains("--check-output target/ripr/foo/check.json"));
-        assert!(err.contains("--out-dir target/ripr/foo/reports"));
+        assert!(err.contains("--out-dir /repo/target/ripr/foo/reports"));
+        assert!(!err.contains("--out-dir target/ripr/foo/reports"));
         assert!(!err.trim_end().ends_with(" --check"));
     }
 
     #[test]
     fn first_pr_write_command_preserves_explicit_gap_ledger_only() {
         let implicit = FirstPrOptions::default();
-        assert!(!first_pr_write_command(&implicit).contains("--gap-ledger"));
+        assert!(
+            !first_pr_write_command(&implicit, Path::new("target/ripr/reports"))
+                .contains("--gap-ledger")
+        );
 
         let explicit = FirstPrOptions {
             gap_ledger: "target/custom/gaps.json".to_string(),
             gap_ledger_explicit: true,
             ..FirstPrOptions::default()
         };
-        assert!(first_pr_write_command(&explicit).contains("--gap-ledger target/custom/gaps.json"));
+        assert!(
+            first_pr_write_command(&explicit, Path::new("target/ripr/reports"))
+                .contains("--gap-ledger target/custom/gaps.json")
+        );
+    }
+
+    #[test]
+    fn first_pr_write_command_renders_resolved_out_dir() {
+        let options = FirstPrOptions::default();
+        // Mixed-case anchored path: proves the resolved directory renders
+        // verbatim (no CWD-relative fallback, no separator or case folding).
+        let rendered = first_pr_write_command(&options, Path::new("/Repo/out/Reports"));
+        assert!(rendered.contains("--out-dir /Repo/out/Reports"));
+        assert!(!rendered.contains("--out-dir target/ripr/reports"));
     }
 
     #[test]

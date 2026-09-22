@@ -445,7 +445,8 @@ the final report index.
 `check-allow-attributes` rejects guarded Rust lint suppressions such as
 panic-family, unsafe-code, dead-code, unused-code, and broad warning
 suppression attributes unless they are narrowly allowlisted in
-`.ripr/allow-attributes.txt`. It writes
+`.ripr/allow-attributes.txt`. The row count is exact: source above the row
+and a row above the source both fail. It writes
 `target/ripr/reports/allow-attributes.md`.
 
 `check-local-context` rejects committed local machine paths, Codex memory or
