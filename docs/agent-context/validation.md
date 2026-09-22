@@ -19,6 +19,13 @@ running multi-step commands.
   broad compiles on the same constrained host and do not kill unrelated Cargo
   processes.
 
+Bind background validation to its retained task/session handle. A process-name
+filter, unchanged report file, missing final binary, or quiet interval does not
+show that the driver died, stalled, or orphaned children. Do not call a process
+harmless, abandoned, or safe to ignore without parent/driver identity, terminal
+status, and cleanup evidence. When those facts are unavailable, preserve
+`unknown` and do not launch a competing broad run on the same worktree/host.
+
 A long-running command blocks only its candidate transition. Advance another
 independent claim in a separate worktree or worker when useful instead of
 polling unchanged process state.
