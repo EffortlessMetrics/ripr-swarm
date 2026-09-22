@@ -789,9 +789,11 @@ pub(crate) const CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// bumps on ANY content or metadata write — including writes by tools
 /// that restore mtime (`rsync -a`, `cp --preserve=timestamps`, archive
 /// extractors) — so a same-size content rewrite with a preserved mtime
-/// still invalidates the fingerprint. The only way to change bytes
-/// without changing the signature is to write without touching any file
-/// metadata at all, which no ordinary file API or tool can do.
+/// still invalidates the fingerprint, provided the filesystem records ctime
+/// at a granularity that separates successive writes (measured at 57µs minimum
+/// separation on ns-resolution filesystems). On a filesystem whose ctime
+/// granularity cannot separate two writes in one tick, two ordinary writes can
+/// reproduce the tuple; the witness claim does not extend there.
 ///
 /// On a platform with no such field the signature would remain
 /// mtime+size only, where an ordinary same-length edit that restores the
