@@ -617,6 +617,34 @@ fn normalized_output_is_byte_stable_across_roots_and_input_ordering() -> Result<
     Ok(())
 }
 
+/// The disk reader must descend into subdirectories: an unregistered file one
+/// level down is as unregistered as one at the top.
+#[test]
+fn an_unregistered_file_in_a_subdirectory_is_read_and_rejected() -> Result<(), String> {
+    let nested = "docs/release-candidates/archive/0.11.0-hard-cut.json";
+    let fixture = tree(&repository_registry(), &[(nested, bytes_of(HARD_CUT_JSON))]);
+    let root = crate::tests::temp_dir("candidate-registry-nested");
+    for (path, bytes) in &fixture.files {
+        let target = root.join(path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        std::fs::write(&target, bytes).map_err(|err| err.to_string())?;
+    }
+    let read = read_artifact_tree(&root);
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(read.files.contains_key(nested), "{:?}", read.files.keys());
+    assert_eq!(read, fixture);
+    let found = only_rule(&read, RULE_REGISTRATION);
+    assert!(
+        found
+            .iter()
+            .any(|v| v.contains(nested) && v.contains("is not registered")),
+        "{found:#?}"
+    );
+    Ok(())
+}
+
 // Control 11.
 #[test]
 fn missing_partial_or_unreadable_registry_input_is_not_proven() {
@@ -705,6 +733,87 @@ fn retiring_the_template_to_a_pinned_candidate_keeps_historical_rows() {
         CandidateOperation::ExactCandidate,
     );
     assert!(hard_cut.is_err(), "{hard_cut:?}");
+}
+
+/// Re-promoting a receipt through the registry alone must fail: a row
+/// registered `active_selection_template` needs an artifact that declares
+/// that status itself.
+#[test]
+fn a_template_row_requires_the_artifact_to_declare_template_status() {
+    let original: Value = serde_json::from_slice(&bytes_of(LIVE_HEAD_JSON)).unwrap_or(Value::Null);
+    assert_eq!(original["status"], "active_selection_template");
+    let frozen = serde_json::from_slice::<Value>(&bytes_of(FREEZE_JSON))
+        .ok()
+        .and_then(|value| value["status"].as_str().map(str::to_string));
+    assert_eq!(
+        frozen.as_deref(),
+        Some("selected_ref_created_qualification_pending")
+    );
+    for status in [frozen.map(Value::String), None] {
+        let mut artifact = original.clone();
+        match &status {
+            Some(value) => artifact["status"] = value.clone(),
+            None => {
+                if let Some(object) = artifact.as_object_mut() {
+                    object.remove("status");
+                }
+            }
+        }
+        let bytes = serde_json::to_vec_pretty(&artifact).unwrap_or_default();
+        let mut registry = repository_registry();
+        row_mut(&mut registry, LIVE_HEAD_JSON)["sha256"] = json!(sha256_hex(&bytes));
+        let found = only_rule(
+            &tree(&registry, &[(LIVE_HEAD_JSON, bytes)]),
+            RULE_STATE_IDENTITY,
+        );
+        assert!(
+            found.iter().any(|v| v
+                .contains("registered active_selection_template but the artifact declares status")),
+            "{status:?}: {found:#?}"
+        );
+    }
+}
+
+#[test]
+fn registered_schema_generation_must_match_the_artifact() {
+    let mut json_row = repository_registry();
+    row_mut(&mut json_row, HARD_CUT_JSON)["schema_generation"] = json!("ripr_other_kind/9.9");
+    let found = only_rule(&tree(&json_row, &[]), RULE_STATE_IDENTITY);
+    assert!(
+        found
+            .iter()
+            .any(|v| v.contains(HARD_CUT_JSON) && v.contains("registers schema_generation")),
+        "{found:#?}"
+    );
+
+    let mut markdown_row = repository_registry();
+    row_mut(&mut markdown_row, HARD_CUT_MD)["schema_generation"] = json!("ripr_other_kind/9.9");
+    let found = only_rule(&tree(&markdown_row, &[]), RULE_STATE_IDENTITY);
+    assert!(
+        found
+            .iter()
+            .any(|v| v.contains(HARD_CUT_MD) && v.contains("Markdown rows must declare")),
+        "{found:#?}"
+    );
+}
+
+#[test]
+fn a_pinned_row_must_name_the_artifact_selected_parent() {
+    let mut artifact: Value = serde_json::from_slice(&pinned_artifact()).unwrap_or(Value::Null);
+    artifact["selected_swarm_parent"] = json!("9".repeat(40));
+    let bytes = serde_json::to_vec_pretty(&artifact).unwrap_or_default();
+    let mut registry = retire_template(repository_registry());
+    row_mut(&mut registry, PINNED_JSON)["sha256"] = json!(sha256_hex(&bytes));
+    let found = only_rule(
+        &tree(&registry, &[(PINNED_JSON, bytes)]),
+        RULE_STATE_IDENTITY,
+    );
+    assert!(
+        found
+            .iter()
+            .any(|v| v.contains("the artifact's selected_swarm_parent is")),
+        "{found:#?}"
+    );
 }
 
 #[test]
