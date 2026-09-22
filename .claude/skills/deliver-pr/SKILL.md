@@ -22,7 +22,7 @@ One coherent claim has one current candidate, current proof and review for the a
 
 # Procedure
 
-1. Hydrate the selected claim from the current user instruction, root `AGENTS.md`, the issue, governing artifacts, current source, live GitHub state, and any existing PR. Prior summaries and subagent reports are leads until verified.
+1. Hydrate the selected claim from the current user instruction, root `CLAUDE.md`, the issue, governing artifacts, current source, live GitHub state, and any existing PR. Prior summaries and subagent reports are leads until verified.
 2. Search current source, all-state PRs, recently merged PRs, and the controlling issue for an equivalent implementation before creating a branch. Reuse the current candidate when one exists.
 3. Identify the earliest missing or stale judgment:
    - premise or issue quality;
