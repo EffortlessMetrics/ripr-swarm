@@ -3710,6 +3710,25 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         "before",
     ]);
     assert_success(&before);
+    // The before phase's stdout is the packet JSON alone, and its narration
+    // names a test-only edit without re-sending the user to take the before
+    // snapshot this phase already wrote.
+    let before_stdout: serde_json::Value = serde_json::from_slice(&before.stdout)?;
+    assert_eq!(before_stdout["packets"][0]["seam_id"], "67fc764ba37d77bd");
+    let before_stderr = String::from_utf8_lossy(&before.stderr);
+    assert!(
+        before_stderr
+            .contains("add or strengthen one focused test (leave production code unchanged)"),
+        "before phase must name a test-only edit:\n{before_stderr}"
+    );
+    assert!(
+        !before_stderr.contains("Edit the source code"),
+        "before phase must not ask for a source edit:\n{before_stderr}"
+    );
+    assert!(
+        !before_stderr.contains("Next: ripr check"),
+        "before phase must not re-issue the snapshot it already took:\n{before_stderr}"
+    );
 
     let before_snapshot = root.join("target/ripr/workflow/before.repo-exposure.json");
     assert!(before_snapshot.is_file());
@@ -3744,6 +3763,15 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         "after",
     ]);
     assert_success(&after);
+    let after_stderr = String::from_utf8_lossy(&after.stderr);
+    assert!(
+        after_stderr.contains("ripr: result for seam `67fc764ba37d77bd`: weakly_gripped -> "),
+        "after phase must name the seam's movement:\n{after_stderr}"
+    );
+    assert!(
+        after_stderr.contains("ripr: after phase complete. Receipt: "),
+        "after phase must name the receipt path:\n{after_stderr}"
+    );
     let after_snapshot_text = std::fs::read_to_string(&after_snapshot)?;
     assert!(!after_snapshot_text.contains("previous repair run"));
 
