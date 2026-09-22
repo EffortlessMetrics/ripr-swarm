@@ -2617,6 +2617,153 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         Ok(())
     }
 
+    /// Render a classified-seam inventory as comparable bytes. `ClassifiedSeam`
+    /// has no `PartialEq`, and the serialized form is what the cache itself
+    /// stores, so comparing it compares the thing a warm run would serve.
+    fn rendered_inventory(seams: &[ClassifiedSeam]) -> Result<String, String> {
+        serde_json::to_string(seams).map_err(|err| format!("encode inventory: {err}"))
+    }
+
+    /// The acceptance discriminator for #3848, run end to end on the analysis
+    /// result rather than on the cache key.
+    ///
+    /// A changed cache key and a non-empty rerun are both weaker than the
+    /// property that matters. What has to hold is that a warm run over an
+    /// edited corpus produces **exactly what a cold run over that same edited
+    /// corpus produces** — anything else is stale semantic reuse wearing a
+    /// fresh key. The edit is the one that defeats a stat-only signature:
+    /// identical byte length, modification time restored afterwards, which is
+    /// what `rsync -a` and `cp --preserve=timestamps` leave behind.
+    ///
+    /// The assertion is deliberately platform-neutral, because the two
+    /// platforms reach it by different routes and both routes must land here:
+    /// unix invalidates the signature through the inode change time, and a
+    /// platform with no content-change witness refuses to sign at all and
+    /// recomputes (#3848). This test cannot tell those apart, and does not try
+    /// to — it states the consequence they must share. Which mechanism ran on
+    /// which platform is `corpus_fingerprint`'s own contract, locked
+    /// separately, and native-platform identity belongs to the Windows
+    /// evidence packet, not here.
+    fn equal_length_timestamp_restored_edit_replays_a_cold_run(
+        label: &str,
+        relative: &str,
+        fixed: &[(&str, &str)],
+        before: &str,
+        after: &str,
+    ) -> Result<(), String> {
+        if before.len() != after.len() {
+            return Err(format!(
+                "{label}: the edit must preserve byte length to be the stale-reuse case ({} vs {})",
+                before.len(),
+                after.len()
+            ));
+        }
+
+        // An independent cold run over the edited corpus, in its own root, so
+        // the expected value is never produced by the machinery under test.
+        let cold_root = make_tempdir(&format!("{label}-cold-after"))?;
+        for (path, content) in fixed {
+            write_file(&cold_root.join(path), content)?;
+        }
+        write_file(&cold_root.join(relative), after)?;
+        let cold_after = rendered_inventory(&inventory_classified_seams_at(&cold_root)?)?;
+
+        let root = make_tempdir(&format!("{label}-warm"))?;
+        for (path, content) in fixed {
+            write_file(&root.join(path), content)?;
+        }
+        write_file(&root.join(relative), before)?;
+        let cold_before = rendered_inventory(&inventory_classified_seams_at(&root)?)?;
+        if cold_before == cold_after {
+            return Err(format!(
+                "{label}: the two corpora classify identically, so the equality below \
+                 would hold even under stale reuse; this is not a discriminator"
+            ));
+        }
+
+        // Second run over the unedited corpus: this is what stores the
+        // fingerprint -> content-hash mapping the edit then has to defeat.
+        let _ = inventory_classified_seams_at(&root)?;
+
+        let edited = root.join(relative);
+        let original_mtime = std::fs::metadata(&edited)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|err| format!("{label}: stat mtime: {err}"))?;
+        let original_len = std::fs::metadata(&edited)
+            .map(|metadata| metadata.len())
+            .map_err(|err| format!("{label}: stat len: {err}"))?;
+        // Identical bytes, so content is untouched; this only guarantees the
+        // filesystem timestamp clock has advanced before the real edit, which
+        // coarse-granularity filesystems otherwise hide.
+        #[cfg(unix)]
+        wait_for_ctime_tick(&edited)?;
+        write_file(&edited, after)?;
+        let handle = std::fs::File::options()
+            .write(true)
+            .open(&edited)
+            .map_err(|err| format!("{label}: open for set_modified: {err}"))?;
+        handle
+            .set_modified(original_mtime)
+            .map_err(|err| format!("{label}: set_modified: {err}"))?;
+        drop(handle);
+
+        // Assert the observed filesystem state really is the trap, rather than
+        // assuming the rewrite and the restore both took effect.
+        let observed =
+            std::fs::metadata(&edited).map_err(|err| format!("{label}: re-stat: {err}"))?;
+        if observed.len() != original_len {
+            return Err(format!(
+                "{label}: the edit must preserve length on disk ({} vs {original_len})",
+                observed.len()
+            ));
+        }
+        if observed
+            .modified()
+            .map_err(|err| format!("{label}: re-stat mtime: {err}"))?
+            != original_mtime
+        {
+            return Err(format!("{label}: the edit must restore mtime on disk"));
+        }
+
+        let warm_after_edit = rendered_inventory(&inventory_classified_seams_at(&root)?)?;
+        if warm_after_edit != cold_after {
+            return Err(format!(
+                "{label}: #3848 stale semantic reuse — a warm run after an \
+                 equal-length, mtime-restored edit did not reproduce the cold \
+                 run over the same corpus"
+            ));
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&cold_root);
+        Ok(())
+    }
+
+    #[test]
+    fn source_only_equal_length_timestamp_restored_edit_replays_a_cold_run() -> Result<(), String> {
+        equal_length_timestamp_restored_edit_replays_a_cold_run(
+            "source-only",
+            "src/foo.rs",
+            &[],
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount <= threshold }\n",
+        )
+    }
+
+    #[test]
+    fn test_only_equal_length_timestamp_restored_edit_replays_a_cold_run() -> Result<(), String> {
+        equal_length_timestamp_restored_edit_replays_a_cold_run(
+            "test-only",
+            "tests/discount_test.rs",
+            &[(
+                "src/foo.rs",
+                "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+            )],
+            "#[test]\nfn discounts() { assert!(crate::discount(9, 4)); }\n",
+            "#[test]\nfn discounts() { assert!(crate::discount(4, 9)); }\n",
+        )
+    }
+
     #[test]
     fn fingerprint_cached_workspace_key_rebuilds_key_from_stored_hash() -> Result<(), String> {
         let root = make_tempdir("fingerprint-key-hit")?;
