@@ -66,6 +66,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      # #3841: ownership and liveness of this job's per-run scratch trees come
+      # from a kernel flock lease taken before any tree exists, never from a
+      # directory age. The same action is the scheduled scratch-gc.yml authority.
+      - name: Acquire scratch lease
+        if: inputs.use-scratch
+        uses: ./.github/actions/ci-scratch-lease
+        with:
+          mode: acquire
+          job-timeout-minutes: ${{ inputs.job-timeout-minutes }}
+
+      - name: Reclaim terminal scratch
+        if: inputs.use-scratch
+        uses: ./.github/actions/ci-scratch-lease
+        with:
+          mode: reclaim
+
       - name: Prepare toolchain temp
         if: inputs.use-scratch
         env:
@@ -95,7 +111,6 @@ jobs:
         id: scratch
         if: inputs.use-scratch
         run: |
-          find /mnt/ci-scratch/cargo-home /mnt/ci-scratch/target /mnt/ci-scratch/tmp -mindepth 1 -maxdepth 1 -mmin +30 -exec rm -rf {} + 2>/dev/null || true
           find /mnt/ci-cache/sccache -type f -mmin +1440 -delete 2>/dev/null || true
           du -sh /mnt/ci-scratch/* /mnt/ci-cache/* /mnt/actions/_work/* /var/log /var/lib/docker /home/* 2>/dev/null | sort -rh | head -20 || true
           df -h / /mnt/ci-scratch 2>/dev/null || true
@@ -262,3 +277,9 @@ jobs:
           cargo clean || true
           rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
           df -h /mnt/ci-scratch /mnt/ci-cache || true
+
+      - name: Release scratch lease
+        if: always() && inputs.use-scratch
+        uses: ./.github/actions/ci-scratch-lease
+        with:
+          mode: release
