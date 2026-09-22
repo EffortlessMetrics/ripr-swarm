@@ -118,7 +118,7 @@ fn write_with_sync(
 
 #[cfg(test)]
 mod tests {
-    use super::{write, write_cache, TEMP_FILE_SEQUENCE};
+    use super::{TEMP_FILE_SEQUENCE, write, write_cache};
     use std::path::{Path, PathBuf};
 
     fn isolated_dir(label: &str) -> PathBuf {
