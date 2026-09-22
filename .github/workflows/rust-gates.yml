@@ -152,12 +152,56 @@ jobs:
           mkdir -p "$CARGO_TARGET_DIR" "$SCCACHE_DIR"
           sccache --start-server || true
 
-      - name: Required Rust gates
+      - name: Required Rust compilation and lints
         run: |
           cargo check --workspace --all-targets
           cargo clippy --workspace --all-targets -- -D warnings
-          cargo nextest run --workspace
-          cargo test --workspace --doc
+
+      - name: Required Rust tests
+        id: rust-tests
+        run: |
+          mkdir -p target/nextest/ci
+          rm -f target/nextest/ci/junit.xml target/nextest/ci/run-context.txt
+          checkout_sha="$(git rev-parse HEAD)"
+          {
+            printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf 'profile=ci\ncommand=cargo nextest run --workspace --profile ci\n'
+            cargo nextest --version
+            rustc --version
+            cargo --version
+            printf 'input_blobs (Cargo.lock, nextest.toml, rust-gates.yml):\n'
+            git hash-object Cargo.lock .config/nextest.toml .github/workflows/rust-gates.yml
+          } > target/nextest/ci/run-context.txt
+          set +e
+          cargo nextest run --workspace --profile ci
+          test_exit=$?
+          set -e
+          printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
+          if [ "$test_exit" -eq 0 ] && [ ! -s target/nextest/ci/junit.xml ]; then
+            echo "::error::nextest succeeded without a fresh nonempty JUnit report"
+            exit 1
+          fi
+          exit "$test_exit"
+
+      # Retain the required run's small diagnostic packet, not another test run.
+      # A failed/aborted runner may have context only; it must not inherit XML.
+      - name: Upload required Rust test results
+        if: always() && steps.rust-tests.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}-nextest-${{ github.run_attempt }}
+          path: |
+            target/nextest/ci/junit.xml
+            target/nextest/ci/run-context.txt
+          if-no-files-found: warn
+          retention-days: 5
+
+      # Nextest does not execute Rust doctests; Cargo/rustdoc owns them (#3825).
+      - name: Required Rust doctests
+        run: cargo test --workspace --doc
+
+      - name: Required Rust gates
+        run: |
           cargo xtask precommit
           cargo xtask check-evidence-promotion-honesty
           cargo xtask check-agent-skills
