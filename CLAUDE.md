@@ -3,7 +3,7 @@
 This repository is the product repository for `ripr`, a static
 mutation-exposure analyzer for Rust/Cargo workspaces. This file is the complete
 Claude root instruction set. Do not import or route through `AGENTS.md` or
-`.agents/skills/**`; the AGENTS-consuming runtimes have their own file set.
+another provider's skill tree; the AGENTS-consuming runtimes have their own file set.
 
 ## Authority and session rehydration
 
