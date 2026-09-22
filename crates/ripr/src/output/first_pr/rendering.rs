@@ -1,4 +1,5 @@
 use super::{STATIC_EVIDENCE_BOUNDARY, string_path};
+use crate::agent::loop_commands::display_path;
 use crate::output::markdown::powershell_command;
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state,
@@ -67,7 +68,7 @@ pub(super) fn start_here_cli_summary(
     let selected = packet.get("selected").unwrap_or(&Value::Null);
     let state = string_path(selected, &["state"]).unwrap_or_else(|| "unknown".to_string());
     let mut out = String::new();
-    out.push_str(&format!("Start here: {}\n", markdown_path.display()));
+    out.push_str(&format!("Start here: {}\n", display_path(markdown_path)));
     out.push_str(&format!("State: {}\n", cli_state_label(&state)));
     out.push_str(&format!(
         "Output state: {}\n",
@@ -144,8 +145,8 @@ pub(super) fn start_here_cli_summary(
     }
     out.push_str(&format!(
         "Artifacts: `{}`, `{}`\n",
-        json_path.display(),
-        markdown_path.display()
+        display_path(json_path),
+        display_path(markdown_path)
     ));
     out.push_str(&format!("Boundary: {STATIC_EVIDENCE_BOUNDARY}\n"));
     out
@@ -505,4 +506,31 @@ fn sentence_case(value: &str) -> String {
         out.push(ch.to_ascii_lowercase());
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn mixed_separator_paths() -> (PathBuf, PathBuf) {
+        // A literal backslash survives inside a path on every host, so the
+        // normalization is pinned even where the OS join never mixes.
+        let dir = PathBuf::from("/Repo/out\\Reports");
+        (dir.join("start-here.json"), dir.join("start-here.md"))
+    }
+
+    #[test]
+    fn cli_summary_renders_stable_separators() {
+        let (json_path, markdown_path) = mixed_separator_paths();
+        let packet = serde_json::json!({
+            "selected": {"state": "no_action", "reason": "nothing to do"},
+        });
+        let summary = start_here_cli_summary(&packet, &json_path, &markdown_path);
+        assert!(summary.contains("Start here: /Repo/out/Reports/start-here.md"));
+        assert!(summary.contains(
+            "Artifacts: `/Repo/out/Reports/start-here.json`, `/Repo/out/Reports/start-here.md`"
+        ));
+        assert!(!summary.contains('\\'));
+    }
 }
