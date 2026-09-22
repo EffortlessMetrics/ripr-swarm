@@ -10,6 +10,8 @@ pub(crate) struct CompactGripContext<'a> {
     pub(in crate::analysis::test_grip_evidence) tests_by_call_name: BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_helper_owner_call_name:
         BTreeMap<String, Vec<usize>>,
+    pub(in crate::analysis::test_grip_evidence) tests_by_target_affinity_owner_call_name:
+        BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_assertion_token:
         BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_file_stem: BTreeMap<String, Vec<usize>>,
@@ -38,6 +40,8 @@ impl<'a> CompactGripContext<'a> {
     pub(crate) fn new(index: &'a RustIndex) -> Self {
         let mut tests_by_call_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_helper_owner_call_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut tests_by_target_affinity_owner_call_name: BTreeMap<String, Vec<usize>> =
+            BTreeMap::new();
         let mut tests_by_assertion_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_file_stem: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_import_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -153,6 +157,12 @@ impl<'a> CompactGripContext<'a> {
                         .or_default()
                         .push(test_index);
                 }
+                for owner_name in &target_affinity_owner_call_names {
+                    tests_by_target_affinity_owner_call_name
+                        .entry(owner_name.clone())
+                        .or_default()
+                        .push(test_index);
+                }
                 for token in &assertion_tokens {
                     tests_by_assertion_token
                         .entry(token.clone())
@@ -189,6 +199,7 @@ impl<'a> CompactGripContext<'a> {
             tests,
             tests_by_call_name,
             tests_by_helper_owner_call_name,
+            tests_by_target_affinity_owner_call_name,
             tests_by_assertion_token,
             tests_by_file_stem,
             tests_by_import_token,
