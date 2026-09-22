@@ -15516,9 +15516,7 @@ fn parse_clippy_lints_ledger(text: &str) -> (Vec<LedgerLintEntry>, Vec<String>) 
         };
         let key = key.trim();
         let value = raw_value.trim();
-        let unquoted = value
-            .strip_prefix('"')
-            .and_then(|rest| rest.split_once('"').map(|(token, _)| token.to_string()));
+        let unquoted = unquote_toml_basic_string(value);
         match key {
             "name" => {
                 if let Some(name) = unquoted {
@@ -15579,10 +15577,20 @@ fn parse_workspace_package_rust_version(text: &str) -> Option<String> {
         if key.trim() != "rust-version" {
             continue;
         }
-        return raw_value
-            .trim()
-            .strip_prefix('"')
-            .and_then(|rest| rest.split_once('"').map(|(token, _)| token.to_string()));
+        return unquote_toml_basic_string(raw_value.trim());
+    }
+    None
+}
+
+/// First basic TOML string on a value (`"..."` or `'...'`). Table-form and
+/// multiline strings are intentionally out of scope for these ledgers.
+fn unquote_toml_basic_string(value: &str) -> Option<String> {
+    let value = value.trim();
+    if let Some(rest) = value.strip_prefix('"') {
+        return rest.split_once('"').map(|(token, _)| token.to_string());
+    }
+    if let Some(rest) = value.strip_prefix('\'') {
+        return rest.split_once('\'').map(|(token, _)| token.to_string());
     }
     None
 }

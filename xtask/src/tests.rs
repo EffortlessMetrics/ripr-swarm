@@ -47626,6 +47626,34 @@ activate_when_msrv = "1.97"
         violations.is_empty(),
         "future activate_when_msrv does not require a reason yet: {violations:?}"
     );
+
+    let single_quoted = r#"
+[[planned]]
+name = 'clippy::indexing_slicing'
+level = 'deny'
+activate_when_msrv = '1.93'
+reason = 'per-call expect receipts, not MSRV'
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, single_quoted);
+    assert!(
+        violations.is_empty(),
+        "single-quoted planned fields must still bind the MSRV comparison: {violations:?}"
+    );
+
+    let single_quoted_overdue = r#"
+[[planned]]
+name = 'clippy::indexing_slicing'
+level = 'deny'
+activate_when_msrv = '1.93'
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, single_quoted_overdue);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy::indexing_slicing")
+                && row.contains("already met by workspace rust-version `1.95`")
+        }),
+        "single-quoted overdue activate_when_msrv without reason must fail: {violations:?}"
+    );
 }
 
 #[test]
@@ -47667,6 +47695,15 @@ rust-version = "1.70"
     assert_eq!(super::parse_msrv_triple("1.95"), Some((1, 95, 0)));
     assert_eq!(super::parse_msrv_triple("1.95.1"), Some((1, 95, 1)));
     assert!(super::parse_msrv_triple("1").is_none());
+
+    let single_quoted = r#"
+[workspace.package]
+rust-version = '1.95'
+"#;
+    assert_eq!(
+        super::parse_workspace_package_rust_version(single_quoted).as_deref(),
+        Some("1.95")
+    );
 }
 
 #[test]
