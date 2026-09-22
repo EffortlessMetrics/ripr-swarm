@@ -30,11 +30,15 @@
 //!
 //! A companion corpus fingerprint cache
 //! (`repo-corpus-fingerprint/{schema_version}/{fingerprint}.json`, issue
-//! #2108) maps a stat-only corpus signature — sorted `(path, mtime, size)`
-//! tuples, plus the inode change time on unix — to the aggregate `files_content_hash` previously computed for
-//! that signature, so a warm cache-key computation does not re-read the
-//! corpus. A fingerprint miss costs nothing: the content hash is then
-//! computed exactly as before and the mapping is stored.
+//! #2108) maps a stat-only corpus signature — sorted
+//! `(path, mtime, size, ctime)` tuples — to the aggregate
+//! `files_content_hash` previously computed for that signature, so a warm
+//! cache-key computation does not re-read the corpus. A fingerprint miss
+//! costs nothing: the content hash is then computed exactly as before and
+//! the mapping is stored. The signature is produced only where the inode
+//! change time supplies a content-change witness, so on a platform without
+//! one there is no signature and this cache is never consulted (issue
+//! #3848).
 //!
 //! When `RIPR_CACHE_DIR` is set (non-empty), all cache writes and reads
 //! use `{RIPR_CACHE_DIR}/...` as the cache base instead. When unset,

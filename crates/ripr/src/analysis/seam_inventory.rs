@@ -1190,7 +1190,10 @@ fn collect_workspace_state_from_files(
 
 /// Discover the corpus and compute its stat-only fingerprint in one pass
 /// (issue #2108). The fingerprint is `None` when any file cannot be
-/// stat'd; callers then fall back to the always-correct content read.
+/// stat'd, and on any platform where [`corpus_fingerprint`] refuses to
+/// sign because no field of the stat tuple is a content-change witness
+/// (issue #3848); callers then fall back to the always-correct content
+/// read.
 fn scan_corpus_fingerprint(root: &Path) -> Result<(Vec<PathBuf>, Option<String>), String> {
     let rust_files = workspace::discover_rust_files(root)?;
     let fingerprint = corpus_fingerprint(root, &rust_files);
