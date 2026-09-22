@@ -3,6 +3,34 @@
 This repository is the product repo for `ripr`: a static mutation-exposure
 analyzer for Rust/Cargo workspaces.
 
+## Operating authority and delivery state
+
+Rehydrate every session from primary authority in this order:
+
+1. the current user instruction;
+2. this root `AGENTS.md` and the applicable `.agents/skills/**` procedure;
+3. current repository source plus live GitHub issues, PRs, checks, and committed
+   or retained artifacts;
+4. compaction summaries, prior-turn recaps, subagent reports, and local notes.
+
+Lower-ranked material is context, not authority. It may not invent a permission
+boundary, user ruling, exact count, object identity, completion state, or release
+disposition. When a summary conflicts with a primary source, discard the summary
+claim and continue from the primary source.
+
+For a high-level goal, preserve the parent end state. Do not replace it with the
+current PR batch, a reconciliation task, a model/session "share", or another
+smaller checklist. Progress is measured against the complete selected parent
+denominator. A local edit or commit is an unpublished candidate; an open PR is
+in flight; a merged PR is implementation landed; terminal issue acceptance is a
+delivered claim. None of those states implies immutable-candidate qualification,
+source integration, a ship decision, publication, or public verification.
+
+A waiting PR, long build, or subagent blocks only that lane. Advance another
+independent ready claim in a separate worktree or worker when useful instead of
+polling unchanged state.
+
+
 ## Repository Operating Authority
 
 - `operating_contract:primary_authority`
@@ -178,7 +206,13 @@ when covered by policy metadata.
 
 ## Local validation
 
-Use focused proof during implementation. Before publication, run:
+Use focused proof during implementation. Detect the current host and shell before
+multi-step commands. On Windows use PowerShell grammar; on Linux/macOS use the
+active POSIX shell. Cargo progress on stderr is not failure; classify commands
+from their real terminal status and output. Bind background work to its retained
+task/session handle instead of guessing liveness from process names.
+
+Before publication, run:
 
 ```bash
 cargo xtask precommit
@@ -405,10 +439,12 @@ features unless the basic CLI, schema, packaging, and tests remain green.
   before the pipe. Likewise, a green required check is not proof an analyzer fix
   is correct — CI can pass on a fix the adversarial review knows is partial;
   judge the fix on its semantics, not its exit code.
-- Run the full `routed-rust.yml` `cargo xtask check-*` list, not `precommit` and
-  not a hand-picked subset. A partial list silently skips `check-network-policy`,
-  `check-dependencies`, and `check-generated`; CI will fail what local guessing
-  missed.
+- Keep local proof proportional. Focused tests, the narrow compile, `check-fast`,
+  and `precommit` support publication; required PR CI owns the full routed
+  merge-gate matrix. Run the complete routed list locally only when reproducing
+  a named CI failure, performing an explicit fixed-candidate/full-local proof,
+  or when the governing issue requires it. Do not serially duplicate hosted CI
+  before pushing a coherent candidate.
 - Verify with the *right* harness — "verify the artifact" cuts both ways, since a
   wrong harness manufactures false **negatives**. Run the **absolute** worktree
   binary (`<worktree>/target/debug/ripr.exe`, not a long `../` that escapes to the
@@ -525,8 +561,16 @@ explicit in PRs and planning docs.
 
 ## Commit, PR, and Merge Boundary
 
-Do not pause merely to commit, push, open a PR, update a PR, or merge a clean
-PR.
+Do not pause merely to commit, push, open a PR, update a PR, repair review/CI,
+or merge a clean PR. Those are routine reversible delivery steps inside the
+selected goal.
+
+Ordinary `ripr-swarm` development uses protected squash merge. A behind-only
+branch does not need a rebase/restack merely because `main` moved. Update only
+for an actual content conflict, changed explicit prerequisite, failed combined
+tree proof, or an exact-base rule that applies to the candidate. The controlled
+history-preserving swarm→`ripr` source integration is a separate transaction
+and follows its own release issue rather than this ordinary squash rule.
 
 For scoped implementation, docs, tests, and refactors, use this default flow:
 
@@ -672,6 +716,13 @@ Preserve the user's original goal, constraints, non-goals, assumptions, and
 acceptance predicates. The durable issue, specification, plan, policy, receipt,
 and closeout graph is the repository's source of truth for long-running work.
 
+A runtime `/goal` is an execution aid, not a replacement authority. Its
+denominator must remain the parent end state; do not shrink it to the current
+session, current PRs, or "my share" so that a local checklist can reach 100%.
+If runtime goal text becomes stale or contradictory, replace it with a successor
+that preserves the parent end state and continue without asking the user to
+restate an already recoverable goal.
+
 Use the seven operational procedures under `.agents/skills/**` as the
 entrypoints for any agent that reads this file (Codex, ZCode, and any future
 provider that consumes `AGENTS.md`). Select the narrowest procedure for the
@@ -705,6 +756,8 @@ For a high-level repository outcome:
   invoke the $deliver-goal skill
 
 For one issue/PR claim:
+  before creating a PR or resolving a conflict, search current source,
+  all-state/recent PRs, and the issue for an equivalent implementation
   invoke $deliver-pr or the earliest applicable atomic skill
   ($prepare-issue, $prepare-proof, $build-candidate)
 
