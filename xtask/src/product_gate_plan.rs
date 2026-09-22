@@ -18,6 +18,7 @@ pub(crate) enum ProductGateId {
     WorkspaceCheck,
     Clippy,
     WorkspaceTests,
+    WorkspaceDocTests,
     Precommit,
     EvidencePromotionHonesty,
     AgentSkills,
@@ -35,6 +36,7 @@ impl ProductGateId {
             Self::WorkspaceCheck => "product.rust.workspace_check",
             Self::Clippy => "product.rust.clippy",
             Self::WorkspaceTests => "product.rust.workspace_tests",
+            Self::WorkspaceDocTests => "product.rust.workspace_doc_tests",
             Self::Precommit => "product.repository.precommit",
             Self::EvidencePromotionHonesty => "product.evidence.promotion_honesty",
             Self::AgentSkills => "product.repository.agent_skills",
@@ -226,8 +228,16 @@ fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             ProductGateRole::Required,
             rust.clone(),
             "cargo nextest run --workspace",
-            "the workspace test suite passes",
-            "does not prove mutation resistance",
+            "the workspace test binaries selected by nextest pass",
+            "does not execute Rust doctests or prove mutation resistance",
+        ),
+        gate(
+            ProductGateId::WorkspaceDocTests,
+            ProductGateRole::Required,
+            rust.clone(),
+            "cargo test --workspace --doc",
+            "the workspace Rust doctests compile and pass under Cargo and rustdoc",
+            "does not replace nextest coverage of compiled test binaries",
         ),
         gate(
             ProductGateId::Precommit,
@@ -336,8 +346,30 @@ mod tests {
                 && row.selection == ProductGateSelection::Selected
         }));
         assert!(plan.rows.iter().any(|row| {
+            row.definition.id == ProductGateId::WorkspaceDocTests
+                && row.selection == ProductGateSelection::Selected
+        }));
+        assert!(plan.rows.iter().any(|row| {
             row.definition.id == ProductGateId::Dependencies
                 && row.selection == ProductGateSelection::NoOp
+        }));
+    }
+
+    #[test]
+    fn workspace_test_roles_keep_nextest_and_doctests_distinct() {
+        let definitions = product_gate_definitions();
+
+        assert!(definitions.iter().any(|gate| {
+            gate.id == ProductGateId::WorkspaceTests
+                && gate.command == "cargo nextest run --workspace"
+                && gate.non_claim.contains("does not execute Rust doctests")
+        }));
+        assert!(definitions.iter().any(|gate| {
+            gate.id == ProductGateId::WorkspaceDocTests
+                && gate.command == "cargo test --workspace --doc"
+                && gate
+                    .non_claim
+                    .contains("does not replace nextest coverage")
         }));
     }
 
