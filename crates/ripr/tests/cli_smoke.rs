@@ -6896,6 +6896,39 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
     assert!(packets.contains(r#""packets_total""#));
     assert!(packets.contains(r#""task": "write_targeted_test""#));
 
+    // The terminal is the only pilot surface a user sees without opening a
+    // file, and the next documented step is `ripr agent repair --seam-id <id>`,
+    // which accepts a seam id and nothing else. So the screen must carry the
+    // id, and it must be the same id the written packet carries — the packet
+    // is produced from the inventory `agent repair` resolves against, so a
+    // mismatch would mean the printed command names a seam the repair
+    // transaction cannot find.
+    let seam_line = stdout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("inspected seam: "))
+        .ok_or_else(|| format!("pilot terminal printed no inspected-seam line:\n{stdout}"))?;
+    let printed_id = seam_line
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| format!("inspected-seam line carried no id: {seam_line}"))?;
+    assert!(
+        printed_id.len() == 16 && printed_id.chars().all(|ch| ch.is_ascii_hexdigit()),
+        "expected a 16-hex seam id to lead the inspected-seam line, got: {seam_line}"
+    );
+    assert!(
+        packets.contains(&format!(r#""seam_id": "{printed_id}""#)),
+        "the printed seam id {printed_id} is absent from agent-seam-packets.json"
+    );
+    // This fixture's route is actionable, so the paste-ready repair command is
+    // present and names the same id.
+    assert!(
+        stdout.contains(&format!(
+            "repair this seam: ripr agent repair --root {} --seam-id {printed_id} --phase before",
+            root.display()
+        )),
+        "pilot did not print a paste-ready repair command:\n{stdout}"
+    );
+
     let _ = std::fs::remove_dir_all(&out_dir);
     Ok(())
 }

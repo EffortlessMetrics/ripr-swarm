@@ -82,6 +82,13 @@ ripr agent repair --root . --seam-id <seam-id> --phase before
 ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
+`<seam-id>` comes from `ripr pilot --root .`, which prints the seam it
+recommends and the exact `ripr agent repair` command for it, and writes the same
+IDs to `target/ripr/pilot/pilot-summary.md` and
+`target/ripr/pilot/agent-seam-packets.json`. The IDs `ripr check` prints are
+probe IDs over the changed diff, which are a different identifier from the
+repo-scoped seam IDs `agent repair` accepts.
+
 The before phase prints the exact `--attempt` command to run after the test
 edit. Keep that command: its repair-attempt ID identifies the prepared
 transaction. See [repair attempt identity](docs/REPAIR_ATTEMPT.md) for

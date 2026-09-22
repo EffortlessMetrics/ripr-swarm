@@ -2,6 +2,7 @@ use super::render_helpers::{
     push_markdown_recommendation, push_path_field, push_top_seam_json, yes_no,
 };
 use super::why_line;
+use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
@@ -287,8 +288,15 @@ pub(crate) fn render_pilot_terminal(
     let route_not_applicable = if let Some(entry) = top.first() {
         let outline = targeted_test_brief_outline_for_classified_seam(entry);
         out.push_str("Top recommendation:\n");
+        // The id leads the line, as it does in the Markdown sibling
+        // (`render_helpers::push_markdown_recommendation`). Until this was
+        // added, the terminal was the only one of the three pilot renderers
+        // that dropped it, so a user who ran `ripr pilot` and read the screen
+        // had no way to reach `ripr agent repair --seam-id <id>` — the step the
+        // README names next — without opening a written artifact.
         out.push_str(&format!(
-            "  inspected seam: {}:{} {} in {} ({})\n",
+            "  inspected seam: {} {}:{} {} in {} ({})\n",
+            entry.seam.id().as_str(),
             display_path(entry.seam.file()),
             entry.seam.display_line(),
             entry.seam.kind().as_str(),
@@ -311,7 +319,23 @@ pub(crate) fn render_pilot_terminal(
         if let Some(value) = outline.candidate_value.as_ref() {
             out.push_str(&format!("  candidate value: {value}\n"));
         }
-        out.push_str(&format!("  assertion: {}\n\n", outline.assertion_shape));
+        out.push_str(&format!("  assertion: {}\n", outline.assertion_shape));
+        // Only a seam whose repair route is actionable gets the paste-ready
+        // command. When the route is limited, the line above says so and the
+        // closing block already says what to run instead; offering a repair
+        // transaction there would promise a target the route does not have.
+        if !outline.is_not_applicable() {
+            // Built here rather than in `agent::loop_commands`: xtask includes
+            // that file into its own tree, so a template only the pilot
+            // renderer calls reads as dead code there and fails
+            // `-D warnings`. `shell_arg` still owns the quoting.
+            out.push_str(&format!(
+                "  repair this seam: ripr agent repair --root {} --seam-id {} --phase before\n",
+                loop_commands::shell_path(context.root),
+                loop_commands::shell_arg(entry.seam.id().as_str()),
+            ));
+        }
+        out.push('\n');
         outline.is_not_applicable()
     } else if let Some(card) = python_top_repair_card(context.python_first_use) {
         out.push_str("Top recommendation:\n");
