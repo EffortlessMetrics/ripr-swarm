@@ -29,6 +29,8 @@ Lower-ranked material is a lead, not authority. It may not create a permission b
 
 Preserve the user's original parent end state. A session, model, agent, worktree, issue slice, or current PR set does not create a smaller ownership boundary such as "my share" unless the user explicitly scoped the goal that way. A runtime `/goal` is an execution aid, not permission to replace the parent outcome with a convenient checklist.
 
+Write runtime goal text as a durable end condition. Current PR numbers, temporary issue states, current worker ownership, and the immediate queue belong in progress fields or the live graph, not in the objective. Do not make a moving pointer part of the definition of done.
+
 If a runtime goal is stale or contradicts the live instruction, replace it with a successor objective that preserves the parent end state and continue. Do not ask the user to restate a goal already recoverable from current authority merely because the runtime cannot edit a completed historical goal.
 
 # Procedure
