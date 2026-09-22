@@ -61,10 +61,18 @@ pub fn load_worktree_diff(
 /// branch below.
 ///
 /// The probe is evidence, not an assumption: only a `rev-parse` that actually
-/// ran and reported the ref absent produces the named failure. A probe that
-/// could not complete (spawn failure, `git_timeout`) falls through to
-/// `run_git_diff`, which keeps the established error text for invalid roots
-/// and other git-level failures rather than claiming a bad ref on no evidence.
+/// ran and reported the ref absent produces the named failure above. When the
+/// probe cannot complete at all — the spawn fails, or it exceeds `git_timeout`
+/// — this returns the base unverified and `run_git_diff` decides, exactly as
+/// before this check existed.
+///
+/// That fallback is deliberately unconditional about *why* the probe failed,
+/// so it also carries the case where the ref really is absent but nothing
+/// could establish it. Git's raw `ambiguous argument` advice can therefore
+/// still reach the user on that path; the trade is that a probe which never
+/// ran is never allowed to assert a bad ref, and an unusable root keeps
+/// producing the `failed to run git diff: ...` text that the `context` and
+/// `explain` invalid-root contract pins.
 fn effective_base(
     root: &Path,
     base: Option<&str>,
