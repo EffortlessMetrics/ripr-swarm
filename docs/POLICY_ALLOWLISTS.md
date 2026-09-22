@@ -13,7 +13,7 @@ undocumented override.
 | `policy/non-rust-allowlist.toml` | Non-Rust programming files | `cargo xtask check-file-policy` |
 | `policy/clippy-lints.toml` | Active and planned Clippy lint policy | `cargo xtask check-lint-policy` |
 | `policy/clippy-debt.toml` | Temporary Clippy debt entries | `cargo xtask check-lint-policy` |
-| `policy/clippy-exceptions.toml` | Per-site Clippy suppression receipts; test-valued `covered_by` claims | Advisory receipts (not consumed by `cargo xtask check-allow-attributes`; that gate reads `.ripr/allow-attributes.txt`); `cargo xtask check-covered-by` (`covered_by`) |
+| `policy/clippy-exceptions.toml` | Per-site Clippy suppression receipts; test-valued `covered_by` claims | `cargo xtask check-covered-by` (structural/expiry + `covered_by`); `check-allow-attributes` still reads only `.ripr/allow-attributes.txt` |
 | `policy/dependency_allowlist.txt` | Allowed crate dependencies | `cargo xtask check-dependencies` |
 | `policy/ci-budget.toml` | LEM bands and enforcement posture | `cargo xtask ci plan` |
 | `policy/ci-lane-whitelist.toml` | Lane definitions and base LEM | `cargo xtask ci plan` |
@@ -78,8 +78,11 @@ line/count caps bound the exception instead of authorizing growth.
 
 Source-level suppressions still require a reason-bearing `#[expect]`.
 Counted suppressions are budgeted in `.ripr/allow-attributes.txt`;
-`policy/clippy-exceptions.toml` is the reviewable TOML counterpart and is
-not yet a gate.
+`policy/clippy-exceptions.toml` is the reviewable TOML counterpart.
+`cargo xtask check-covered-by` parses that TOML for required fields,
+unique ids, optional ISO `expires` dates that are not in the past, and
+test-valued `covered_by` resolution. It is not a 1:1 match for every
+count-allowlist row.
 
 **Allowed form:**
 
@@ -99,7 +102,8 @@ not yet a gate.
 `cargo xtask check-allow-attributes` counts source suppressions against
 `.ripr/allow-attributes.txt`. It does not match
 `policy/clippy-exceptions.toml` (see [`docs/CLIPPY_POLICY.md`](CLIPPY_POLICY.md)
-Companion ledgers; that TOML is advisory until a receipt check lands).
+Companion ledgers; `check-covered-by` owns that TOML's structure, expiry,
+and `covered_by` claims).
 
 RIPR finding suppressions use `.ripr/suppressions.toml` instead of source
 attributes. See `docs/CONFIGURATION.md` for the suppression metadata fields

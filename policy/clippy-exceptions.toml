@@ -22,8 +22,11 @@ status = "active"
 #   expires         (optional) date the exception must be re-justified
 #
 # This file is the reviewable counterpart to `.ripr/allow-attributes.txt`.
-# Once the checker is updated to consume this file, .ripr/allow-attributes.txt
-# can be retired.
+# `cargo xtask check-covered-by` parses it as TOML: required nonblank
+# fields, unique ids, optional ISO `expires` dates that are not in the
+# past, and test-valued `covered_by` resolution. It does not match every
+# count-allowlist row; `.ripr/allow-attributes.txt` remains the counted
+# source-suppression budget.
 
 # Example shape (commented so it does not collide with live rows):
 #
