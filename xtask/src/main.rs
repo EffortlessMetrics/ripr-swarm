@@ -15661,9 +15661,15 @@ fn parse_clippy_debt_ledger(text: &str) -> (Vec<ClippyDebtEntry>, Vec<String>) {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if let Some(rest) = line.strip_prefix("[[") {
-            let header = rest.trim_end_matches(']').trim_end_matches('[').trim();
+        if line.starts_with("[[") {
             flush(&mut current, &mut entries, &mut violations);
+            if !line.ends_with("]]") {
+                violations.push(format!(
+                    "policy/clippy-debt.toml:{line_number} malformed array table `{line}`; expected `[[debt]]`."
+                ));
+                continue;
+            }
+            let header = line.trim_start_matches('[').trim_end_matches(']').trim();
             if header == "debt" {
                 current = Some(ClippyDebtEntry {
                     id: String::new(),
@@ -15675,6 +15681,10 @@ fn parse_clippy_debt_ledger(text: &str) -> (Vec<ClippyDebtEntry>, Vec<String>) {
                     target: String::new(),
                     block_line: line_number,
                 });
+            } else {
+                violations.push(format!(
+                    "policy/clippy-debt.toml:{line_number} unknown array table `[[{header}]]`; expected `[[debt]]`."
+                ));
             }
             continue;
         }
@@ -15719,7 +15729,6 @@ fn collect_clippy_debt_violations(
 ) -> Vec<String> {
     let (entries, mut violations) = parse_clippy_debt_ledger(debt_text);
     let cargo_clippy = parse_workspace_lints_section(cargo_text, "clippy");
-    let cargo_rust = parse_workspace_lints_section(cargo_text, "rust");
     let (lints, _) = parse_clippy_lints_ledger(lints_text);
 
     let mut seen_ids = BTreeSet::new();
@@ -15759,6 +15768,17 @@ fn collect_clippy_debt_violations(
                 entry.block_line, entry.id, entry.target
             ));
         }
+        let Some(bare) = entry
+            .lint
+            .strip_prefix("clippy::")
+            .filter(|bare| !bare.is_empty())
+        else {
+            violations.push(format!(
+                "policy/clippy-debt.toml:{} `{}` has lint `{}`; expected a `clippy::` lint name.",
+                entry.block_line, entry.id, entry.lint
+            ));
+            continue;
+        };
         if active.contains(&entry.lint) {
             violations.push(format!(
                 "policy/clippy-debt.toml:{} `{}` records `{}` which is already `[[active]]` in policy/clippy-lints.toml. Remove the debt row or demote the active entry.",
@@ -15771,14 +15791,9 @@ fn collect_clippy_debt_violations(
                 entry.block_line, entry.id, entry.lint
             ));
         }
-        let (bare, group) = ledger_name_to_lookup(&entry.lint);
-        let cargo_map = match group {
-            "clippy" => &cargo_clippy,
-            _ => &cargo_rust,
-        };
-        if let Some(level) = cargo_map.get(bare) {
+        if let Some(level) = cargo_clippy.get(bare) {
             violations.push(format!(
-                "policy/clippy-debt.toml:{} `{}` records `{}` which Cargo.toml `[workspace.lints.{group}]` already activates at level `{level}`. Pay the debt or remove the Cargo.toml line.",
+                "policy/clippy-debt.toml:{} `{}` records `{}` which Cargo.toml `[workspace.lints.clippy]` already activates at level `{level}`. Pay the debt or remove the Cargo.toml line.",
                 entry.block_line, entry.id, entry.lint
             ));
         }

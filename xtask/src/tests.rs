@@ -47850,6 +47850,80 @@ target = "2027-03-31"
         }),
         "planned lint duplicated into debt must fail: {violations:?}"
     );
+
+    let misspelled_table = r#"
+[[debts]]
+id = "clippy-debt-0001"
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "pervasive let _ = cleanup"
+blocked_by = "per-call review"
+target = "2027-03-31"
+"#;
+    let violations = super::collect_clippy_debt_violations(misspelled_table, cargo, lints, TODAY);
+    assert!(
+        violations
+            .iter()
+            .any(|row| row.contains("unknown array table `[[debts]]`")),
+        "misspelled [[debts]] must fail closed: {violations:?}"
+    );
+
+    let malformed_header = r#"
+[[debt
+id = "clippy-debt-0007"
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "malformed header"
+blocked_by = "schema"
+target = "2027-03-31"
+"#;
+    let violations = super::collect_clippy_debt_violations(malformed_header, cargo, lints, TODAY);
+    assert!(
+        violations
+            .iter()
+            .any(|row| row.contains("malformed array table `[[debt`")),
+        "unclosed [[debt header must fail closed: {violations:?}"
+    );
+
+    let unprefixed = r#"
+[[debt]]
+id = "clippy-debt-0005"
+lint = "let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "missing clippy prefix"
+blocked_by = "schema"
+target = "2027-03-31"
+"#;
+    let violations = super::collect_clippy_debt_violations(unprefixed, cargo, lints, TODAY);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy-debt-0005")
+                && row.contains("let_underscore_must_use")
+                && row.contains("expected a `clippy::` lint name")
+        }),
+        "unprefixed debt lint must fail: {violations:?}"
+    );
+
+    let impossible_date = r#"
+[[debt]]
+id = "clippy-debt-0006"
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "pervasive let _ = cleanup"
+blocked_by = "per-call review"
+target = "2027-02-31"
+"#;
+    let violations = super::collect_clippy_debt_violations(impossible_date, cargo, lints, TODAY);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy-debt-0006") && row.contains("malformed target `2027-02-31`")
+        }),
+        "impossible calendar date must fail: {violations:?}"
+    );
 }
 
 // RIPR-SPEC-0080 route-quality standalone report tests

@@ -1636,3 +1636,15 @@ fn expired_entry_is_flagged_by_evaluation() {
         report.violations
     );
 }
+
+#[test]
+fn iso_date_rejects_impossible_calendar_days() {
+    assert!(super::is_valid_iso_date("2027-03-31"));
+    assert!(super::is_valid_iso_date("2028-02-29"));
+    assert!(super::is_valid_iso_date("2000-02-29"));
+    assert!(!super::is_valid_iso_date("2027-02-29"));
+    assert!(!super::is_valid_iso_date("2027-02-31"));
+    assert!(!super::is_valid_iso_date("2027-04-31"));
+    assert!(!super::is_valid_iso_date("1900-02-29"));
+    assert!(!super::is_valid_iso_date("2026-13-45"));
+}
