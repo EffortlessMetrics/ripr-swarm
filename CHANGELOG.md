@@ -294,6 +294,13 @@ are scoped or reviewed.
 
 ### Changed
 
+- `cargo xtask check-lint-policy` now compares `[[planned]]`
+  `activate_when_msrv` to `[workspace.package] rust-version`. An already-met
+  value without a remaining non-MSRV `reason` fails the gate, including a
+  `reason` that only names an MSRV or Rust version. The four current planned
+  lints keep their existing `reason` blockers and are not promoted
+  ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
+
 - `crates/ripr/README.md` Development now leads with `cargo xtask precommit`
   and names `ci-full` as the complete local pass. The sequential cargo
   block is labeled targeted-rerun inventory, matching `AGENTS.md` (#3775)
@@ -314,11 +321,8 @@ are scoped or reviewed.
   ([#3820](https://github.com/EffortlessMetrics/ripr-swarm/issues/3820)).
 
 - `policy/clippy-lints.toml` no longer says planned lints wait for MSRV
-  and a matching xtask gate. `activate_when_msrv` is documentary metadata,
-  not a ratchet and not verified available-since; remaining blockers stay
-  in `reason`. `cargo xtask check-lint-policy` still dual-rails
-  `Cargo.toml` against the ledger and does not compare that field to
-  workspace `rust-version`
+  and a matching xtask gate. Remaining blockers stay in `reason`. The
+  values are not verified available-since
   ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
 
 - Live entry docs no longer name the deleted `.ripr/goals/active.toml` file as
