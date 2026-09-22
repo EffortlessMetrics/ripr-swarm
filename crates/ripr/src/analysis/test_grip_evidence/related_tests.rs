@@ -247,19 +247,24 @@ pub(super) fn match_target_affinity_owner_call(
     {
         return;
     }
-    for (test_index, test) in context.tests.iter().enumerate() {
-        if !test
-            .target_affinity_owner_call_names
-            .contains(owner.name.as_str())
-            || !test_assertion_mentions_any_target_token(test, target_tokens)
-        {
+    let Some(indices) = context
+        .tests_by_target_affinity_owner_call_name
+        .get(&owner.name)
+    else {
+        return;
+    };
+    for test_index in indices {
+        let Some(test) = context.tests.get(*test_index) else {
+            continue;
+        };
+        if !test_assertion_mentions_any_target_token(test, target_tokens) {
             continue;
         }
         insert_related_candidate(
             candidates,
             context,
             prefix,
-            test_index,
+            *test_index,
             RelationReason::HelperOwnerCall,
         );
     }
