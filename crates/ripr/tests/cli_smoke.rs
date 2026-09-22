@@ -2219,6 +2219,12 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     assert!(stdout.contains("git reads:       yes (diff between base and head)"));
     assert!(stdout.contains("network:         none"));
     assert!(stdout.contains("Start here:"));
+    // Summary and Wrote lines render the resolved locations with stable
+    // separators on every host (display_path, not Path::display).
+    let wrote_base = reports_arg.replace('\\', "/");
+    assert!(stdout.contains(&format!("Start here: {wrote_base}/start-here.md")));
+    assert!(stdout.contains(&format!("Wrote {wrote_base}/start-here.json")));
+    assert!(stdout.contains(&format!("Wrote {wrote_base}/start-here.md")));
     assert!(stdout.contains("State: top_gap"));
     assert!(stdout.contains("Safe next action: repair one named gap"));
     assert!(stdout.contains("Top actionable gap: missing boundary assertion"));
