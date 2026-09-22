@@ -480,18 +480,35 @@ fn schema_documentation_violations(
 ) -> Vec<String> {
     let mut violations = Vec::new();
     for schema_path in published_schemas {
-        if !readme.contains(schema_path.as_str()) {
+        if !lists_schema_in_a_table_row(readme, schema_path) {
             violations.push(format!(
-                "{VERIFICATION_README} does not link `{schema_path}`"
+                "{VERIFICATION_README} has no schema-table row linking `{schema_path}`"
             ));
         }
-        if !audit.contains(schema_path.as_str()) {
+        if !lists_schema_in_a_table_row(audit, schema_path) {
             violations.push(format!(
-                "{SCHEMA_PRODUCER_AUDIT} has no row for `{schema_path}` — every published schema must name its producer and canonical subject, or carry an explicit exemption"
+                "{SCHEMA_PRODUCER_AUDIT} has no audit-table row for `{schema_path}` — every published schema must name its producer and canonical subject, or carry an explicit exemption"
             ));
         }
     }
     violations
+}
+
+/// Whether `document` carries `schema_path` as a cell of a Markdown table
+/// row, which is how both verification documents list a schema.
+///
+/// Searching the whole document instead would accept a passing mention
+/// anywhere in it — a sentence, a note, a code block — while the violation
+/// that silences claims a row exists. That is the same overstated contract
+/// this gate exists to close, one level down.
+///
+/// The cell is matched with its backticks, so a longer path that merely
+/// begins with this one, such as a `.bak` copy, cannot stand in for it.
+fn lists_schema_in_a_table_row(document: &str, schema_path: &str) -> bool {
+    let cell = format!("`{schema_path}`");
+    document
+        .lines()
+        .any(|line| line.trim_start().starts_with('|') && line.contains(&cell))
 }
 
 pub(crate) fn validate_json_file_against_schema(
@@ -1008,13 +1025,25 @@ mod tests {
         Ok(())
     }
 
+    const EXAMPLE_SCHEMA: &str = "schemas/ripr/example.schema.json";
+
+    /// The shape both verification documents actually use: a Markdown table
+    /// row whose first cell is the backticked repository-relative path.
+    fn readme_row(path: &str) -> String {
+        format!("| [`{path}`](../../{path}) | An example. |")
+    }
+
+    fn audit_row(path: &str) -> String {
+        format!("| `{path}` | `0.1` | a producer | live |")
+    }
+
     #[test]
     fn documentation_coverage_is_silent_when_both_documents_carry_the_inventory() {
-        let inventory = vec!["schemas/ripr/example.schema.json".to_string()];
+        let inventory = vec![EXAMPLE_SCHEMA.to_string()];
         let violations = schema_documentation_violations(
             &inventory,
-            "see [example](../../schemas/ripr/example.schema.json)",
-            "| `schemas/ripr/example.schema.json` | live |",
+            &readme_row(EXAMPLE_SCHEMA),
+            &audit_row(EXAMPLE_SCHEMA),
         );
         assert!(
             violations.is_empty(),
@@ -1028,11 +1057,11 @@ mod tests {
         // repository but no row named its producer. The README rule must stay
         // silent here, or one omission would report as two and neither
         // message would say which document to repair.
-        let inventory = vec!["schemas/ripr/example.schema.json".to_string()];
+        let inventory = vec![EXAMPLE_SCHEMA.to_string()];
         let violations = schema_documentation_violations(
             &inventory,
-            "see [example](../../schemas/ripr/example.schema.json)",
-            "| `schemas/ripr/other.schema.json` | live |",
+            &readme_row(EXAMPLE_SCHEMA),
+            &audit_row("schemas/ripr/other.schema.json"),
         );
         assert_eq!(
             violations.len(),
@@ -1044,18 +1073,18 @@ mod tests {
             "the violation does not name the audit document: {violations:?}"
         );
         assert!(
-            violations[0].contains("schemas/ripr/example.schema.json"),
+            violations[0].contains(EXAMPLE_SCHEMA),
             "the violation does not name the schema: {violations:?}"
         );
     }
 
     #[test]
     fn documentation_coverage_reports_a_schema_missing_only_from_the_readme() {
-        let inventory = vec!["schemas/ripr/example.schema.json".to_string()];
+        let inventory = vec![EXAMPLE_SCHEMA.to_string()];
         let violations = schema_documentation_violations(
             &inventory,
-            "see [other](../../schemas/ripr/other.schema.json)",
-            "| `schemas/ripr/example.schema.json` | live |",
+            &readme_row("schemas/ripr/other.schema.json"),
+            &audit_row(EXAMPLE_SCHEMA),
         );
         assert_eq!(
             violations.len(),
@@ -1070,13 +1099,45 @@ mod tests {
 
     #[test]
     fn documentation_coverage_reports_a_schema_missing_from_both_documents() {
-        let inventory = vec!["schemas/ripr/example.schema.json".to_string()];
+        let inventory = vec![EXAMPLE_SCHEMA.to_string()];
         let violations =
-            schema_documentation_violations(&inventory, "no links here", "no rows here");
+            schema_documentation_violations(&inventory, "no rows here", "no rows here");
         assert_eq!(
             violations.len(),
             2,
             "an undocumented schema must be reported by both rules: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_mention_outside_a_table_row_is_not_a_row() {
+        // The violation says a row is missing, so a passing mention in prose
+        // or a code block must not silence it. Searching the whole document
+        // would have accepted every line below.
+        let inventory = vec![EXAMPLE_SCHEMA.to_string()];
+        let prose = format!(
+            "The audit covers `{EXAMPLE_SCHEMA}` and more.\n\n```text\n{EXAMPLE_SCHEMA}\n```\n"
+        );
+        let violations = schema_documentation_violations(&inventory, &prose, &prose);
+        assert_eq!(
+            violations.len(),
+            2,
+            "a schema mentioned only outside a table row must still be reported: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_longer_path_beginning_with_the_schema_path_is_not_that_schema() {
+        // `contains` on the bare path would accept a row for a neighbouring
+        // file whose name merely starts with this one.
+        let inventory = vec![EXAMPLE_SCHEMA.to_string()];
+        let decoy = format!("{EXAMPLE_SCHEMA}.bak");
+        let violations =
+            schema_documentation_violations(&inventory, &readme_row(&decoy), &audit_row(&decoy));
+        assert_eq!(
+            violations.len(),
+            2,
+            "a row for `{decoy}` must not document `{EXAMPLE_SCHEMA}`: {violations:?}"
         );
     }
 
