@@ -111,7 +111,18 @@ fn report_doctor_core_check(report: &output::doctor::DoctorReport, name: &str) -
 }
 
 fn print_doctor_start_here_guidance(root: &Path) {
-    println!("- Start-here packet: target/ripr/reports/start-here.md");
+    // First-run honesty: name the packet only as present when it exists.
+    // An unconditional path reads as an existing artifact on a fresh
+    // workspace where `ripr first-pr` has never run (RIPR-SPEC-0051 names
+    // the path, not its existence). `is_file` (not `exists`) so a directory
+    // squatting the packet path cannot read as openable evidence.
+    if root.join("target/ripr/reports/start-here.md").is_file() {
+        println!("- Start-here packet: target/ripr/reports/start-here.md (present; open it first)");
+    } else {
+        println!(
+            "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; run the safe next action below)"
+        );
+    }
     println!(
         "- Safe next action: run `ripr first-pr --root {} --base origin/main --head HEAD` after setup passes",
         root.display()
