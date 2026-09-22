@@ -5631,9 +5631,48 @@ fn doctor_reports_missing_config_defaults() -> Result<(), String> {
     assert!(stdout.contains("LSP seam diagnostics default: true"));
     assert!(stdout.contains("Suppressions path: .ripr/suppressions.toml"));
     assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
+    assert!(stdout.contains("(not yet generated; run the safe next action below)"));
+    assert!(!stdout.contains("(present; open it first)"));
     assert!(stdout.contains("Safe next action: run `ripr first-pr --root"));
     assert!(stdout.contains("Recovery states: missing artifact, stale evidence, wrong root"));
     assert!(stdout.contains("Proof rail: verify command, receipt command, and receipt path"));
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_present_start_here_packet() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let reports = workspace.join("target/ripr/reports");
+    std::fs::create_dir_all(&reports).map_err(|e| format!("create reports dir: {e}"))?;
+    std::fs::write(reports.join("start-here.md"), "# start here\n")
+        .map_err(|e| format!("write start-here.md: {e}"))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
+    assert!(stdout.contains("(present; open it first)"));
+    assert!(!stdout.contains("not yet generated"));
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_directory_squatting_packet_path_as_not_generated() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let squat = workspace.join("target/ripr/reports/start-here.md");
+    std::fs::create_dir_all(&squat).map_err(|e| format!("create squat dir: {e}"))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("(not yet generated; run the safe next action below)"));
+    assert!(!stdout.contains("(present; open it first)"));
 
     let _ = std::fs::remove_dir_all(&workspace);
     Ok(())
