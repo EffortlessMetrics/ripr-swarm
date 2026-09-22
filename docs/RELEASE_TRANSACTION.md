@@ -113,6 +113,23 @@ Historical candidate-only `C -> T`, hard-cut, replacement-freeze, and
 candidate-ref receipts remain audit evidence but are superseded. They are not
 the active `0.11.0` authority, denominator, pin, source parent, or permission.
 
+Lifecycle currentness for every retained artifact under
+`docs/release-candidates/` is machine-checked, not inferred from prose (#3842).
+The digest-bound registry
+[`docs/release-candidates/index.json`](release-candidates/index.json) and its
+derived projection [`README.md`](release-candidates/README.md) are validated by
+`cargo xtask check-release-targets`. An artifact is current only with a
+registry row, a matching raw-byte SHA-256, a state permitted for the operation
+(`active_selection_template` for the selection rule; `pinned_exact_candidate`
+for qualification, source preflight/sync, and publication), and every
+state-specific identity. `historical_evidence_only` rows may be cited but
+satisfy no prerequisite; `invalid` rows satisfy nothing. A filename, version
+string, "hard cut" wording, or presence in the directory confers no authority,
+and unregistered files fail the check. When #1609 records the exact candidate,
+register it as `pinned_exact_candidate` and retire the template row to
+`historical_evidence_only`; historical rows and receipt bytes are not
+rewritten.
+
 Stop at once when a repository identity, owner, version, exact input, receipt,
 expected head, policy state, or publication authorization is ambiguous. Green
 CI, a ship packet, J, or K is evidence only; none authorizes publication.
@@ -183,6 +200,8 @@ LIVE_HEAD_TEMPLATE="docs/release-candidates/0.11.0-live-head-selection.json"
 cp "$LIVE_HEAD_TEMPLATE" "$PACKET_ROOT/live-head-selection-template.json"
 jq -e '.schema_version == "1.0" and .status == "active_selection_template" and .selection_rule != null and .protected_candidate_tag == null' "$LIVE_HEAD_TEMPLATE" >/dev/null
 TEMPLATE_SHA256="$(sha256sum "$LIVE_HEAD_TEMPLATE" | awk '{print $1}')"
+cargo xtask check-release-targets
+jq -e --arg path "$LIVE_HEAD_TEMPLATE" --arg sha "$TEMPLATE_SHA256" '[.artifacts[] | select(.path == $path and .sha256 == $sha and .state == "active_selection_template" and .projection_of == null)] | length == 1' docs/release-candidates/index.json >/dev/null
 ```
 
 ```bash
