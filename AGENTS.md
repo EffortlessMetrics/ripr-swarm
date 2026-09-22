@@ -3,43 +3,6 @@
 This repository is the product repo for `ripr`: a static mutation-exposure
 analyzer for Rust/Cargo workspaces.
 
-## Operating authority and delivery state
-
-Core operating contract markers:
-
-- `root_contract:primary_sources_before_summary`
-- `root_contract:parent_goal_denominator`
-- `root_contract:routine_repo_writes`
-- `root_contract:ordinary_squash_merge`
-- `root_contract:waiting_lane_not_global_blocker`
-- `root_contract:environment_detection`
-
-Rehydrate every session from primary authority in this order:
-
-1. the current user instruction;
-2. this root `AGENTS.md` and the applicable `.agents/skills/**` procedure;
-3. current repository source plus live GitHub issues, PRs, checks, and committed
-   or retained artifacts;
-4. compaction summaries, prior-turn recaps, subagent reports, and local notes.
-
-Lower-ranked material is context, not authority. It may not invent a permission
-boundary, user ruling, exact count, object identity, completion state, or release
-disposition. When a summary conflicts with a primary source, discard the summary
-claim and continue from the primary source.
-
-For a high-level goal, preserve the parent end state. Do not replace it with the
-current PR batch, a reconciliation task, a model/session "share", or another
-smaller checklist. Progress is measured against the complete selected parent
-denominator. A local edit or commit is an unpublished candidate; an open PR is
-in flight; a merged PR is implementation landed; terminal issue acceptance is a
-delivered claim. None of those states implies immutable-candidate qualification,
-source integration, a ship decision, publication, or public verification.
-
-A waiting PR, long build, or subagent blocks only that lane. Advance another
-independent ready claim in a separate worktree or worker when useful instead of
-polling unchanged state.
-
-
 ## Repository Operating Authority
 
 - `operating_contract:primary_authority`
