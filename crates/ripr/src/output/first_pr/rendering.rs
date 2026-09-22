@@ -121,6 +121,7 @@ pub(super) fn start_here_cli_summary(
             }
             if let Some(command) = string_path(selected, &["regeneration_command"]) {
                 out.push_str(&format!("Regeneration command: `{command}`\n"));
+                push_recovery_powershell_variant(&mut out, "Regeneration command", &command);
             }
             out.push_str("Receipt path: `not_applicable`\n");
         }
@@ -138,6 +139,7 @@ pub(super) fn start_here_cli_summary(
             }
             if let Some(command) = string_path(selected, &["next_command"]) {
                 out.push_str(&format!("Next command: `{command}`\n"));
+                push_recovery_powershell_variant(&mut out, "Next command", &command);
             }
             out.push_str("Receipt path: `not_applicable`\n");
         }
@@ -415,6 +417,21 @@ fn push_shell_command_pair(
     }
 }
 
+/// Append the PowerShell form of one funnel recovery command (#3870).
+///
+/// The bash line stays authoritative and byte-identical. When the shared
+/// translator rewrites the command (a real `>` redirect becomes a guarded
+/// BOM-free UTF-8 write), the variant is printed so stock Windows
+/// PowerShell does not manufacture UTF-16 artifacts that readers reject.
+/// Commands the translator leaves unchanged render no second line.
+fn push_recovery_powershell_variant(out: &mut String, label: &str, command: &str) {
+    if let Some(line) = powershell_command(command)
+        && line != command
+    {
+        out.push_str(&format!("{label} (PowerShell): `{line}`\n"));
+    }
+}
+
 fn top_gap_language_label(selected: &Value) -> &'static str {
     match (
         string_path(selected, &["language"]).as_deref(),
@@ -447,6 +464,7 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     out.push_str(&format!("- Artifact path: `{path}`\n"));
     if let Some(command) = selected.get("regeneration_command").and_then(Value::as_str) {
         out.push_str(&format!("- Regeneration command: `{command}`\n"));
+        push_recovery_powershell_variant(out, "- Regeneration command", command);
     }
 }
 
@@ -493,6 +511,7 @@ fn render_blocked_markdown(selected: &Value, out: &mut String) {
     out.push_str(&format!("- Reason: {message}\n"));
     if let Some(command) = selected.get("next_command").and_then(Value::as_str) {
         out.push_str(&format!("- Next command: `{command}`\n"));
+        push_recovery_powershell_variant(out, "- Next command", command);
     }
 }
 
@@ -505,4 +524,57 @@ fn sentence_case(value: &str) -> String {
         out.push(ch.to_ascii_lowercase());
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn missing_artifact_packet(command: &str) -> Value {
+        serde_json::json!({
+            "selected": {
+                "state": "missing_artifact",
+                "artifact": {"label": "Repo exposure report"},
+                "regeneration_command": command,
+            }
+        })
+    }
+
+    #[test]
+    fn cli_summary_pairs_redirect_regeneration_with_powershell_form() {
+        let bash = "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json";
+        let summary = start_here_cli_summary(
+            &missing_artifact_packet(bash),
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(summary.contains(&format!("Regeneration command: `{bash}`")));
+        assert!(summary.contains("Regeneration command (PowerShell): `"));
+        assert!(summary.contains("WriteAllText"));
+        assert!(summary.contains("UTF8Encoding"));
+    }
+
+    #[test]
+    fn markdown_pairs_redirect_regeneration_with_powershell_bullet() {
+        let bash = "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json";
+        let selected = serde_json::json!({"regeneration_command": bash});
+        let mut out = String::new();
+        render_missing_artifact_markdown(&selected, &mut out);
+        assert!(out.contains(&format!("- Regeneration command: `{bash}`")));
+        assert!(out.contains("- Regeneration command (PowerShell): `"));
+        assert!(out.contains("WriteAllText"));
+    }
+
+    #[test]
+    fn cli_summary_leaves_plain_regeneration_without_powershell_line() {
+        let bash = "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md";
+        let summary = start_here_cli_summary(
+            &missing_artifact_packet(bash),
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(summary.contains(&format!("Regeneration command: `{bash}`")));
+        assert!(!summary.contains("(PowerShell)"));
+    }
 }
