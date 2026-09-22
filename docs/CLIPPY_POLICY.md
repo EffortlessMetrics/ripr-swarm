@@ -226,12 +226,14 @@ These companion ledgers are gated as follows:
   ISO `target` dates that are not in the past, and debt lints that are
   not already `[[active]]`, `[[planned]]`, or present in `Cargo.toml`.
   Invalid TOML, duplicate keys, unknown fields, and trailing garbage fail.
-- `check-allow-attributes` still reads only `.ripr/allow-attributes.txt`.
-  One exceptions slice already enforces coverage claims: `cargo xtask
-  check-covered-by` resolves every test-valued `covered_by` entry in
-  `policy/clippy-exceptions.toml` against a static scan of the workspace's
-  actual `#[test]`-family functions, so a claim that names a renamed or
-  deleted test fails the gate with the entry id and a repair hint (#3528).
+- `cargo xtask check-covered-by` reads `policy/clippy-exceptions.toml` as
+  TOML (`deny_unknown_fields`): unique ids, required nonblank fields
+  (`id`, `lint`, `path`, `selector`, `owner`, `reason`, `covered_by`),
+  optional ISO `expires` dates that are not in the past, and every
+  test-valued `covered_by` against a static scan of the workspace's
+  actual `#[test]`-family functions. Invalid TOML, duplicate keys,
+  unknown fields, and trailing garbage fail. `check-allow-attributes`
+  still reads only `.ripr/allow-attributes.txt`.
 
 ## MSRV 1.95 rollout
 
@@ -273,7 +275,7 @@ version is already met (MSRV-only `reason` text fails).
 - [`policy/clippy-debt.toml`](../policy/clippy-debt.toml) — deferred lints
   with owner and target date; consumed by `check-lint-policy`.
 - [`policy/clippy-exceptions.toml`](../policy/clippy-exceptions.toml) —
-  per-site suppressions.
+  per-site suppressions; consumed by `check-covered-by`.
 - [`docs/NO_PANIC_SEMANTIC_ALLOWLIST.md`](NO_PANIC_SEMANTIC_ALLOWLIST.md) —
   selector-based allowlist schema.
 - [`docs/NO_PANIC_POLICY.md`](NO_PANIC_POLICY.md) — no-panic policy overview.

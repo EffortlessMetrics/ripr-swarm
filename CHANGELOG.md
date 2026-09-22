@@ -294,6 +294,14 @@ are scoped or reviewed.
 
 ### Changed
 
+- `cargo xtask check-covered-by` now parses `policy/clippy-exceptions.toml`
+  as TOML: unique ids, required nonblank fields, optional ISO `expires`
+  dates that are not in the past, unknown fields, duplicate keys, and
+  trailing garbage. Test-valued `covered_by` resolution uses the
+  TOML-decoded command (including single-quoted strings).
+  `clippy-exception-0001` stays live
+  ([#3867](https://github.com/EffortlessMetrics/ripr-swarm/issues/3867)).
+
 - `cargo xtask check-lint-policy` now compares `[[planned]]`
   `activate_when_msrv` to `[workspace.package] rust-version`. An already-met
   value without a remaining non-MSRV `reason` fails the gate, including a
