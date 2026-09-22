@@ -165,6 +165,32 @@ const CONTRACTS: &[VerificationContract] = &[
             "limitations[]",
         ],
     },
+    // Two more producer goldens, for the two shapes the published schema
+    // rejected until #3912. The hand-written fixtures above carry neither, so
+    // nothing in the contract table consumed them and the gate stayed green
+    // while `ripr check --format json` emitted output the schema refused.
+    //
+    // `flow_sink: null` is the producer's answer when a missing discriminator
+    // has no local flow sink to name. 13 goldens carry it and
+    // `docs/OUTPUT_SCHEMA.md` documents it, but the schema demanded an object.
+    VerificationContract {
+        schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
+        fixture_path: "fixtures/helper_chain_one_hop/expected/check.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["flow_sink", "missing_discriminators"],
+    },
+    // An empty `recommended_next_step` is the producer's "no action to
+    // recommend". 40 goldens carry it, but the schema demanded `minLength: 1`.
+    VerificationContract {
+        schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
+        fixture_path: "fixtures/match_arm_positive/expected/check.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["recommended_next_step", "suggested_next_action"],
+    },
     // The trust corpus of record is its own canonical instance. Validating a
     // hand-written copy instead would let the schema confirm itself while the
     // artifact `cargo xtask rust-repair-trust` actually reads drifts away.
@@ -1315,6 +1341,86 @@ mod tests {
     /// #3883. The producer emits this field on every finding from a closed
     /// enum, so the schema states the enum rather than `type: string`; a
     /// disposition outside it must be rejected rather than silently admitted.
+    /// Negative control for the `flow_sink` relaxation added with #3912. The
+    /// producer emits `null` when a missing discriminator has no local flow
+    /// sink to name, so the schema admits `null` — but not any other
+    /// non-object, and not an absent key.
+    #[test]
+    fn check_schema_admits_a_null_flow_sink_without_admitting_anything_else() -> Result<(), String>
+    {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let golden = read_json(root.join("fixtures/helper_chain_one_hop/expected/check.json"))?;
+
+        let mut wrong_type = golden.clone();
+        wrong_type["findings"][0]["missing_discriminators"][0]["flow_sink"] =
+            Value::String("error_variant".to_string());
+        let violations = document_violations(&wrong_type, &schema, "wrong flow sink type");
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("expected type object|null, got string"))
+        {
+            return Err(format!(
+                "a string flow sink was not rejected as the wrong type: {violations:#?}"
+            ));
+        }
+
+        let mut absent = golden;
+        absent["findings"][0]["missing_discriminators"][0]
+            .as_object_mut()
+            .ok_or("the golden's first missing discriminator should be an object")?
+            .remove("flow_sink");
+        let violations = document_violations(&absent, &schema, "absent flow sink");
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("missing required field `flow_sink`"))
+        {
+            return Err(format!(
+                "admitting `null` must not make the key optional: {violations:#?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Negative control for the next-step relaxation added with #3912. The
+    /// producer emits `""` for "no action to recommend", so the schema drops
+    /// `minLength` — but the fields stay required strings.
+    #[test]
+    fn check_schema_admits_an_empty_next_step_without_admitting_a_non_string() -> Result<(), String>
+    {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let golden = read_json(root.join("fixtures/match_arm_positive/expected/check.json"))?;
+
+        let mut wrong_type = golden.clone();
+        wrong_type["findings"][0]["recommended_next_step"] = Value::from(0);
+        let violations = document_violations(&wrong_type, &schema, "non-string next step");
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("expected type string, got number"))
+        {
+            return Err(format!(
+                "a numeric next step was not rejected: {violations:#?}"
+            ));
+        }
+
+        let mut absent = golden;
+        absent["findings"][0]
+            .as_object_mut()
+            .ok_or("the golden's first finding should be an object")?
+            .remove("suggested_next_action");
+        let violations = document_violations(&absent, &schema, "absent next action");
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("missing required field `suggested_next_action`"))
+        {
+            return Err(format!(
+                "dropping minLength must not make the field optional: {violations:#?}"
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn check_schema_rejects_an_unknown_source_currentness() -> Result<(), String> {
         let root = repo_root()?;
@@ -1487,6 +1593,13 @@ mod tests {
     const ASSURANCE_CORPUS: &str = "fixtures/assurance_vocabulary/assurance/corpus.json";
     const AGENT_PACKET_GOLDEN: &str =
         "fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json";
+
+    /// Every violation one whole document raises against one whole schema.
+    fn document_violations(value: &Value, schema: &Value, location: &str) -> Vec<String> {
+        let mut violations = Vec::new();
+        validate_value_against_schema(value, schema, schema, location.to_string(), &mut violations);
+        violations
+    }
 
     fn violations_for(value: &Value, subschema: &Value, root_schema: &Value) -> Vec<String> {
         let mut violations = Vec::new();
