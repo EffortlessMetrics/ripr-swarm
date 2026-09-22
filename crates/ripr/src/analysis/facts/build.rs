@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod incremental_edit_tests;
+
 use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
 use super::model::{RustIndex, WorkspaceRootAuthority};
 use crate::analysis::cancellation;
