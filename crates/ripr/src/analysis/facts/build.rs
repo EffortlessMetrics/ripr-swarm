@@ -126,7 +126,7 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
                 };
                 match cache.store_file_facts(&key, &facts) {
                     Ok(()) => stats.stores += 1,
-                    Err(_) => stats.store_errors += 1,
+                    Err(error) => stats.record_store_failure(file.clone(), error),
                 }
                 facts
             }
