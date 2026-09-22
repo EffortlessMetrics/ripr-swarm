@@ -524,14 +524,57 @@ mod tests {
         steps
     }
 
-    /// A step-level key such as `if:` on a step's own lines.
+    /// Whether a YAML line (already trimmed) sets `key`, bare or quoted.
+    fn sets_key(trimmed: &str, key: &str) -> bool {
+        [
+            format!("{key}:"),
+            format!("\"{key}\":"),
+            format!("'{key}':"),
+        ]
+        .iter()
+        .any(|spelled| trimmed.starts_with(spelled.as_str()))
+    }
+
+    /// A step-level key such as `if` on a step's own lines.
     fn step_has_key(step: &[&str], key: &str) -> bool {
         step.iter().any(|line| {
             let trimmed = line.trim_start();
             let indent = line.len() - trimmed.len();
             let trimmed = trimmed.strip_prefix("- ").unwrap_or(trimmed);
-            matches!(indent, 6 | 8) && trimmed.starts_with(key)
+            matches!(indent, 6 | 8) && sets_key(trimmed, key)
         })
+    }
+
+    /// Workflow lines with shell `\` continuations joined, so a runner split
+    /// across lines is read as the command the shell executes.
+    fn logical_lines(workflow: &str) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut pending = String::new();
+        for line in workflow.lines() {
+            let trimmed = line.trim();
+            match trimmed.strip_suffix('\\') {
+                Some(head) => {
+                    pending.push_str(head);
+                    pending.push(' ');
+                }
+                None => {
+                    pending.push_str(trimmed);
+                    lines.push(std::mem::take(&mut pending));
+                }
+            }
+        }
+        if !pending.is_empty() {
+            lines.push(pending);
+        }
+        lines
+    }
+
+    /// Environment variables that re-policy a runner row without changing its
+    /// text: nextest settings, doctest filters, and target runner wrappers.
+    fn overrides_runner_environment(trimmed: &str) -> bool {
+        trimmed.contains("NEXTEST_")
+            || trimmed.contains("RUSTDOCFLAGS")
+            || (trimmed.contains("CARGO_TARGET_") && trimmed.contains("_RUNNER"))
     }
 
     fn required_workflow_runner_violations(workflow: &str) -> Vec<String> {
@@ -559,16 +602,16 @@ mod tests {
         })
         .collect();
         // Any executed line that invokes a test runner must be a declared row.
-        for line in workflow.lines().map(str::trim) {
-            let line = line.strip_prefix("run: ").unwrap_or(line);
+        for line in logical_lines(workflow) {
+            let line = line.strip_prefix("run: ").unwrap_or(&line);
             if !line.starts_with('#') && invokes_test_runner(line) && !runner_rows.contains(line) {
                 violations.push(format!(
                     "required workflow runs undeclared test command `{line}`"
                 ));
             }
         }
-        // A declared row must run unconditionally and fail the job when it
-        // fails, with nextest reading only the checked-in `ci` profile.
+        // Step- and job-level keys that could skip a declared row, ignore
+        // its failure, or run it under another shell are rejected by text.
         for step in workflow_steps(workflow) {
             let runs_row = step.iter().any(|line| {
                 let line = line.trim();
@@ -578,12 +621,29 @@ mod tests {
                 continue;
             }
             let name = step[0].trim().trim_start_matches("- ");
-            for key in ["if:", "continue-on-error:"] {
+            for key in ["if", "continue-on-error", "shell"] {
                 if step_has_key(&step, key) {
                     violations.push(format!(
-                        "required runner step `{name}` declares `{key}`, so the row can be skipped or ignored"
+                        "required runner step `{name}` declares `{key}:`, so the row can be skipped, ignored, or run by another shell"
                     ));
                 }
+            }
+            // The doctest row has no guard of its own: its step must be the
+            // bare command, so nothing in the step can swallow its exit.
+            let doc_row = product_gate_definitions()
+                .into_iter()
+                .find(|gate| gate.id == ProductGateId::WorkspaceDocTests)
+                .map(|gate| gate.command)
+                .unwrap_or_default();
+            let runs_doc_row = step.iter().any(|line| line.trim().ends_with(doc_row));
+            if runs_doc_row
+                && !step
+                    .iter()
+                    .any(|line| line.trim() == format!("run: {doc_row}"))
+            {
+                violations.push(format!(
+                    "required runner step `{name}` must be exactly `run: {doc_row}`"
+                ));
             }
         }
         for line in workflow.lines() {
@@ -591,15 +651,23 @@ mod tests {
             if trimmed.starts_with('#') {
                 continue;
             }
-            if line.len() - trimmed.len() == 4 && trimmed.starts_with("continue-on-error:") {
+            let indent = line.len() - trimmed.len();
+            for key in ["if", "continue-on-error"] {
+                if indent == 4 && sets_key(trimmed, key) {
+                    violations.push(format!(
+                        "a job in the required workflow declares `{key}:`, so a skipped or failing row can report success"
+                    ));
+                }
+            }
+            if indent <= 4 && sets_key(trimmed, "defaults") {
                 violations.push(
-                    "required job declares `continue-on-error:`, so a failing row cannot fail it"
+                    "required workflow declares `defaults:`, which can replace the runner shell"
                         .to_string(),
                 );
             }
-            if trimmed.contains("NEXTEST_") {
+            if overrides_runner_environment(trimmed) {
                 violations.push(format!(
-                    "required workflow sets nextest configuration through the environment: `{trimmed}`"
+                    "required workflow re-policies a runner through the environment: `{trimmed}`"
                 ));
             }
         }
@@ -734,7 +802,7 @@ mod tests {
             (
                 "    timeout-minutes: ${{ inputs.job-timeout-minutes }}\n",
                 "    timeout-minutes: ${{ inputs.job-timeout-minutes }}\n    continue-on-error: true\n",
-                "required job declares `continue-on-error:`",
+                "a job in the required workflow declares `continue-on-error:`",
             ),
             (
                 tests_step,
@@ -750,6 +818,46 @@ mod tests {
                 "        run: cargo test --workspace --doc\n",
                 "        run: |\n          cargo test --workspace --doc\n          cargo +1.95.0 nextest r --workspace -E 'not test(framed_lsp_)'\n",
                 "cargo +1.95.0 nextest r",
+            ),
+            (
+                "    timeout-minutes: ${{ inputs.job-timeout-minutes }}\n",
+                "    timeout-minutes: ${{ inputs.job-timeout-minutes }}\n    if: ${{ false }}\n",
+                "a job in the required workflow declares `if:`",
+            ),
+            (
+                doctest_step,
+                "      - name: Required Rust doctests\n        \"if\": false\n",
+                "declares `if:`",
+            ),
+            (
+                doctest_step,
+                "      - name: Required Rust doctests\n        shell: bash -c 'exit 0' {0}\n",
+                "declares `shell:`",
+            ),
+            (
+                "    steps:\n",
+                "    defaults:\n      run:\n        shell: bash -c 'exit 0' {0}\n    steps:\n",
+                "declares `defaults:`",
+            ),
+            (
+                doctest_step,
+                "      - name: Required Rust doctests\n        env:\n          RUSTDOCFLAGS: --test-args=--skip=value_resolution\n",
+                "through the environment",
+            ),
+            (
+                tests_step,
+                "      - name: Required Rust tests\n        id: rust-tests\n        env:\n          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: true\n",
+                "through the environment",
+            ),
+            (
+                "        run: cargo test --workspace --doc\n",
+                "        run: |\n          trap 'exit 0' EXIT\n          cargo test --workspace --doc\n",
+                "must be exactly `run: cargo test --workspace --doc`",
+            ),
+            (
+                "        run: cargo test --workspace --doc\n",
+                "        run: |\n          cargo test --workspace --doc\n          cargo \\\n            nextest run --workspace -E 'not test(framed_lsp_)'\n",
+                "nextest run --workspace -E 'not test(framed_lsp_)'`",
             ),
         ];
         for (anchor, replacement, expected) in cases {

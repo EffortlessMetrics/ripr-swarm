@@ -504,11 +504,12 @@ The CI workflow also has an explicit MSRV job that pins Rust `1.95.0` and runs:
 cargo check --workspace --all-targets
 ```
 
-The main Rust job stays on `stable` so routine CI also proves the current stable
-toolchain, while the MSRV job proves the declared workspace baseline.
+The `release-proof` job pins the declared `1.95.0` toolchain; the MSRV job
+duplicates that baseline and runs only on manual dispatch or `full-ci` pull
+requests.
 
-The legacy workflow's `release-proof` and `msrv` jobs run on `ubuntu-latest`. These
-jobs are release-surface proof on main and manual dispatches; they must not
+The legacy workflow's `release-proof` and `msrv` jobs run on `ubuntu-latest`.
+They carry release-surface and baseline proof and must not
 depend on self-hosted runner capacity when preparing a source release. The
 routed Rust-small workflow remains the swarm development lane that selects
 self-hosted runners when available and falls back to hosted capacity.

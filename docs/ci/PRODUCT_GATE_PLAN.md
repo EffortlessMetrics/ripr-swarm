@@ -56,10 +56,15 @@ Focused tests in `product_gate_plan.rs` read the real workflow, nextest
 config, and this table. Each of these fails `cargo nextest run`:
 
 - removing, filtering, or respelling a required runner row, or adding any
-  other line that invokes `cargo test`/`cargo t`/`cargo nextest run`/`r`,
-  including behind wrappers, leading flags, or a `+toolchain`;
-- an `if:` or `continue-on-error:` on a runner step, `continue-on-error:` on
-  the job, or any `NEXTEST_*` variable in the workflow;
+  other single logical line (backslash continuations joined) that invokes
+  `cargo test`/`cargo t`/`cargo nextest run`/`r`, including behind wrappers,
+  leading flags, or a `+toolchain`;
+- an `if:`, `continue-on-error:`, or `shell:` key (bare or quoted) on a runner
+  step; an `if:` or `continue-on-error:` on any job; a `defaults:` block; or a
+  doctest step that is anything other than exactly
+  `run: cargo test --workspace --doc`;
+- any `NEXTEST_*`, `RUSTDOCFLAGS`, or `CARGO_TARGET_*_RUNNER` variable in the
+  workflow;
 - a `default-filter`, `overrides`, non-zero or table `retries`, or a
   different JUnit path anywhere in the parsed nextest config, quoted or inline;
 - restating a different command in this table.
@@ -67,9 +72,14 @@ config, and this table. Each of these fails `cargo nextest run`:
 The `Required Rust tests` step body itself is executed under
 `bash -eo pipefail` with the runners stubbed: a zero-test, leading-zero, junk,
 missing, or stale-only report fails a green run, and a failing run keeps its
-exit code in the step result and in `run-context.txt`. These controls do not
-resolve repository-defined Cargo aliases, read runner-host environment, or
-guard a doctest run that selects zero doctests. The all-feature
+exit code in the step result and in `run-context.txt`.
+
+These are text- and step-level controls over one workflow file, not a YAML or
+shell interpreter. They do not resolve repository-defined Cargo aliases, read
+runner-host or caller environment, catch control flow added to the nextest
+step beyond the executed scenarios, assert the blob identities that
+`run-context.txt` records, or guard a doctest run that selects zero doctests.
+The all-feature
 Test Analytics replay remains advisory telemetry and does not substitute for
 either required gate.
 
