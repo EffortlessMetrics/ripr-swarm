@@ -148,6 +148,7 @@
         "gap_id": { "type": "string", "minLength": 1 },
         "gap_kind": { "type": "string", "minLength": 1 },
         "canonical_gap_id": { "type": "string", "minLength": 1 },
+        "baseline_match_kind": { "enum": ["legacy_path_line_class"] },
         "seam_id": { "$ref": "#/$defs/nullable_string" },
         "source_id": { "type": "string" },
         "gap_state": { "$ref": "#/$defs/nullable_string" },

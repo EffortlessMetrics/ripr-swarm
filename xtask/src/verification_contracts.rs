@@ -125,6 +125,26 @@ const CONTRACTS: &[VerificationContract] = &[
             "incomplete_repair_route",
         ],
     },
+    // `baseline_match_kind` is emitted only when a baseline match succeeded
+    // through the legacy path/line/static_class fallback selector (issue
+    // #1934, RIPR-SPEC-0014 § Baseline Comparison), so the hand-written
+    // fixture above never carries it. This golden does, and it carries a
+    // canonical-match decision beside it, so one subject binds both that the
+    // schema admits the field and that it does not require it.
+    VerificationContract {
+        schema_path: "schemas/ripr/gate-decision.schema.json",
+        schema_pointer: None,
+        fixture_path: concat!(
+            "fixtures/gate_baseline_fallback_disclosure/expected/gate-baseline/",
+            "mixed-canonical-and-legacy-entries/gate-decision.json"
+        ),
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "decisions[].baseline_match_kind",
+            "\"legacy_path_line_class\"",
+        ],
+    },
     VerificationContract {
         schema_path: "schemas/ripr/check.schema.json",
         schema_pointer: None,
@@ -1835,6 +1855,67 @@ mod tests {
     const ASSURANCE_CORPUS: &str = "fixtures/assurance_vocabulary/assurance/corpus.json";
     const AGENT_PACKET_GOLDEN: &str =
         "fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json";
+    const GATE_BASELINE_FALLBACK_GOLDEN: &str = concat!(
+        "fixtures/gate_baseline_fallback_disclosure/expected/gate-baseline/",
+        "mixed-canonical-and-legacy-entries/gate-decision.json"
+    );
+    /// Mirrors `BASELINE_MATCH_KIND_LEGACY_PATH_LINE_CLASS`, which is private
+    /// to the gate renderer. Stated here as the value the published schema is
+    /// expected to admit; the contract row is what binds it to real bytes.
+    const LEGACY_MATCH_KIND: &str = "legacy_path_line_class";
+
+    /// Negative control for the `baseline_match_kind` property added with
+    /// #3912. The producer emits exactly one value, from a constant
+    /// (`BASELINE_MATCH_KIND_LEGACY_PATH_LINE_CLASS`), and emits the key only
+    /// on fallback-only baseline matches. So the schema states the closed set
+    /// rather than `type: string`, and leaves the property optional. Both
+    /// halves are pinned here: an unrecognised match kind is rejected, and the
+    /// canonical-match decision beside it, which carries no such key, is not.
+    #[test]
+    fn gate_decision_schema_admits_only_the_disclosed_baseline_match_kind() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/gate-decision.schema.json"))?;
+        let golden = read_json(root.join(GATE_BASELINE_FALLBACK_GOLDEN))?;
+
+        // Assert the subject before claiming anything from it: this golden is
+        // useful only because it holds both shapes at once.
+        if golden["decisions"][0]["baseline_match_kind"] != Value::String(LEGACY_MATCH_KIND.into())
+        {
+            return Err(format!(
+                "the golden's first decision should disclose `{LEGACY_MATCH_KIND}`, got {}",
+                compact_json(&golden["decisions"][0]["baseline_match_kind"])
+            ));
+        }
+        if golden["decisions"][1].get("baseline_match_kind").is_some() {
+            return Err(
+                "the golden's second decision should be a canonical match carrying no \
+                 `baseline_match_kind`, so the optionality half of this control is real"
+                    .to_string(),
+            );
+        }
+
+        let mut drifted = golden;
+        drifted["decisions"][0]["baseline_match_kind"] =
+            Value::String("path_line_class".to_string());
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            &drifted,
+            &schema,
+            &schema,
+            "drifted gate decision".to_string(),
+            &mut violations,
+        );
+
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("value \"path_line_class\" is not in enum"))
+        {
+            return Err(format!(
+                "an unrecognised baseline match kind was not rejected: {violations:#?}"
+            ));
+        }
+        Ok(())
+    }
 
     /// Every violation one whole document raises against one whole schema.
     fn document_violations(value: &Value, schema: &Value, location: &str) -> Vec<String> {
