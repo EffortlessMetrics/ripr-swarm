@@ -6950,6 +6950,12 @@ language = "rust"
         for line in workflow.lines() {
             let trimmed = line.trim_start();
             if trimmed.starts_with(&format!("{name}:")) {
+                // An empty block means the comment moved away from the entry
+                // (a blank line between them also lands here). Fail with that
+                // as the reason rather than running `contains` on "".
+                if comment.is_empty() {
+                    return Err(format!("`{name}:` has no comment directly above it"));
+                }
                 return Ok(comment.join("\n"));
             }
             if let Some(text) = trimmed.strip_prefix("# ") {
@@ -6983,9 +6989,12 @@ language = "rust"
             "generated workflow no longer passes RIPR_GATE_BASELINE to --baseline"
         );
         let baseline = generated_workflow_env_comment(&workflow, "RIPR_GATE_BASELINE")?;
+        // The path comes from `ripr baseline create`'s own default rather than
+        // from a copy of the docs, so renaming the ledger fails here.
         assert!(
-            baseline.contains(".ripr/gate-baseline.json"),
-            "RIPR_GATE_BASELINE comment does not name a ledger path:\n{baseline}"
+            baseline.contains(crate::output::baseline::DEFAULT_BASELINE_OUT),
+            "RIPR_GATE_BASELINE comment does not name `{}`:\n{baseline}",
+            crate::output::baseline::DEFAULT_BASELINE_OUT
         );
         for ref_wording in ["git ref", "tag, branch", "SHA"] {
             assert!(
@@ -7029,6 +7038,12 @@ language = "rust"
             assert!(
                 mode_comment.contains(mode),
                 "generated workflow does not document gate mode `{mode}`:\n{mode_comment}"
+            );
+            // And each one is a mode the evaluator actually accepts, so a
+            // documented mode that no longer parses fails here too.
+            assert!(
+                crate::output::gate::GateMode::parse(mode).is_ok(),
+                "help and the workflow document `{mode}`, which `GateMode::parse` rejects"
             );
         }
 
