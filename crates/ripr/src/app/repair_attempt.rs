@@ -489,6 +489,56 @@ pub(crate) fn load_repair_attempt_manifest(
     Ok(manifest)
 }
 
+/// One entry of the read-only attempt inventory: a fully validated manifest,
+/// or the directory name and the reason its manifest was refused.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RepairAttemptInventoryEntry {
+    Valid(Box<RepairAttemptManifest>),
+    Invalid { directory: String, error: String },
+}
+
+/// Lists every attempt under `target/ripr/repair-attempts` without changing
+/// any of them, ordered by directory name. Each manifest goes through the same
+/// validation as the after phase, so a consumer never sees an attempt the
+/// after phase would refuse. Ordering is by identity, not creation time:
+/// consumers must not read "newest" into it (docs/REPAIR_ATTEMPT.md).
+/// A missing attempts directory is an empty inventory.
+pub(crate) fn inventory_repair_attempts(
+    root: &Path,
+) -> Result<Vec<RepairAttemptInventoryEntry>, String> {
+    let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+    if !manifests_root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&manifests_root)
+        .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
+    {
+        let entry = entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
+        let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
+        if !path.is_file() {
+            continue;
+        }
+        let directory = entry.file_name().to_string_lossy().into_owned();
+        entries.push(match read_repair_attempt_manifest_at(&root, &path) {
+            Ok(manifest) => RepairAttemptInventoryEntry::Valid(Box::new(manifest)),
+            Err(error) => RepairAttemptInventoryEntry::Invalid { directory, error },
+        });
+    }
+    entries.sort_by(|left, right| inventory_key(left).cmp(inventory_key(right)));
+    Ok(entries)
+}
+
+fn inventory_key(entry: &RepairAttemptInventoryEntry) -> &str {
+    match entry {
+        RepairAttemptInventoryEntry::Valid(manifest) => manifest.repair_attempt_id.as_str(),
+        RepairAttemptInventoryEntry::Invalid { directory, .. } => directory,
+    }
+}
+
 /// Finds one staged artifact by role, if the attempt carries it.
 pub(crate) fn find_manifest_artifact_by_role<'a>(
     manifest: &'a RepairAttemptManifest,

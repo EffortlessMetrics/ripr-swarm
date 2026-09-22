@@ -7,7 +7,11 @@ use crate::agent::loop_commands::{
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_brief_command, agent_packet_command,
     agent_receipt_command, agent_review_summary_command, agent_review_summary_markdown_command,
     agent_status_command, agent_status_markdown_command, agent_verify_command,
-    check_analysis_outcome_command, check_repo_exposure_command, display_path,
+    check_analysis_outcome_command, check_repo_exposure_command, display_path, shell_arg,
+};
+use crate::app::repair_attempt::{
+    REPAIR_ATTEMPT_DIRECTORY, RepairAttemptInventoryEntry, RepairAttemptManifest,
+    RepairAttemptState, inventory_repair_attempts,
 };
 use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, powershell_command};
 use serde_json::Value;
@@ -76,8 +80,30 @@ pub(crate) struct AgentStatusReport {
     pub(crate) root: String,
     pub(crate) seam: Option<AgentStatusSeam>,
     pub(crate) artifacts: Vec<AgentStatusArtifact>,
+    pub(crate) repair_attempts: Vec<AgentStatusRepairAttempt>,
     pub(crate) missing_commands: Vec<AgentStatusCommand>,
+    /// The one command status recommends, or `None` when it cannot choose
+    /// honestly (the warnings then say why). Selection order is documented in
+    /// RIPR-SPEC-0011: a current awaiting repair attempt first, then a new
+    /// attempt for a seam whose attempts ended without a receipt, then the
+    /// legacy artifact loop, which never emits a placeholder seam or a redirect
+    /// into a directory that does not exist.
+    pub(crate) next_command: Option<AgentStatusCommand>,
     pub(crate) warnings: Vec<AgentStatusWarning>,
+}
+
+/// One repair attempt as status sees it. `disposition` is status's reading of
+/// the manifest against the current `HEAD`; `command` is what would move that
+/// attempt forward, if anything.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AgentStatusRepairAttempt {
+    pub(crate) attempt_id: String,
+    pub(crate) seam_id: String,
+    pub(crate) state: &'static str,
+    pub(crate) head_current: Option<bool>,
+    pub(crate) disposition: &'static str,
+    pub(crate) manifest: String,
+    pub(crate) command: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -113,7 +139,7 @@ pub(crate) struct AgentStatusWarning {
 
 impl AgentStatusReport {
     pub(crate) fn status(&self) -> &'static str {
-        if self.artifacts.iter().any(|artifact| !artifact.present) {
+        if self.next_command.is_some() || self.artifacts.iter().any(|artifact| !artifact.present) {
             "incomplete"
         } else if self.warnings.is_empty() {
             "complete"
@@ -134,14 +160,299 @@ pub(crate) fn build_agent_status_report(root: &Path, root_argument: &Path) -> Ag
     let seam = recover_seam_id(root, &artifacts, &mut warnings);
     warnings.extend(stale_warnings(&artifacts));
     let missing_commands = missing_commands(root_argument, seam.as_ref(), &artifacts);
+    let repair_attempts = inspect_repair_attempts(root, &root_display, &mut warnings);
+    let next_command = select_next_command(
+        root,
+        &root_display,
+        seam.as_ref(),
+        repair_attempts.as_ref(),
+        &missing_commands,
+        &mut warnings,
+    );
 
     AgentStatusReport {
         root: root_display,
         seam,
         artifacts,
+        repair_attempts: repair_attempts.unwrap_or_default(),
         missing_commands,
+        next_command,
         warnings,
     }
+}
+
+/// Reads every repair attempt through the attempt authority. `None` means the
+/// inventory could not be trusted (an unreadable directory or manifest), in
+/// which case a warning says so and status selects no command.
+fn inspect_repair_attempts(
+    root: &Path,
+    root_display: &str,
+    warnings: &mut Vec<AgentStatusWarning>,
+) -> Option<Vec<AgentStatusRepairAttempt>> {
+    let entries = match inventory_repair_attempts(root) {
+        Ok(entries) => entries,
+        Err(error) => {
+            warnings.push(AgentStatusWarning {
+                kind: "repair_attempt_unreadable".to_string(),
+                artifact: REPAIR_ATTEMPT_DIRECTORY.to_string(),
+                message: format!("could not list repair attempts: {error}"),
+            });
+            return None;
+        }
+    };
+    if entries.is_empty() {
+        return Some(Vec::new());
+    }
+    let current_head = crate::agent::artifact::current_git_head(root).ok();
+    let mut attempts = Vec::new();
+    let mut trusted = true;
+    for entry in entries {
+        match entry {
+            RepairAttemptInventoryEntry::Valid(manifest) => attempts.push(status_repair_attempt(
+                root_display,
+                &manifest,
+                current_head.as_deref(),
+            )),
+            RepairAttemptInventoryEntry::Invalid { directory, error } => {
+                trusted = false;
+                warnings.push(AgentStatusWarning {
+                    kind: "repair_attempt_unreadable".to_string(),
+                    artifact: format!("{REPAIR_ATTEMPT_DIRECTORY}/{directory}/attempt.json"),
+                    message: format!(
+                        "repair attempt `{directory}` was refused ({error}); status selects no next command until it is repaired or removed"
+                    ),
+                });
+            }
+        }
+    }
+    trusted.then_some(attempts)
+}
+
+fn status_repair_attempt(
+    root_display: &str,
+    manifest: &RepairAttemptManifest,
+    current_head: Option<&str>,
+) -> AgentStatusRepairAttempt {
+    let head_current = current_head.map(|head| head == manifest.repository_head);
+    let restart = Some(new_repair_attempt_command(root_display, &manifest.seam_id));
+    let (state, disposition, command) = match manifest.state {
+        RepairAttemptState::AwaitingEdit => match head_current {
+            Some(true) => (
+                "awaiting_edit",
+                "resumable",
+                Some(manifest.next_command.clone()),
+            ),
+            Some(false) => ("awaiting_edit", "prepared_at_other_head", restart),
+            None => ("awaiting_edit", "head_unknown", None),
+        },
+        RepairAttemptState::Prepared => ("prepared", "not_published", restart),
+        RepairAttemptState::ReadyToFinish => ("ready_to_finish", "finished", None),
+        RepairAttemptState::Stale => ("stale", "ended", restart),
+        RepairAttemptState::Incomparable => ("incomparable", "ended", restart),
+        RepairAttemptState::Failed => ("failed", "ended", restart),
+    };
+    AgentStatusRepairAttempt {
+        attempt_id: manifest.repair_attempt_id.as_str().to_string(),
+        seam_id: manifest.seam_id.clone(),
+        state,
+        head_current,
+        disposition,
+        manifest: format!(
+            "{REPAIR_ATTEMPT_DIRECTORY}/{}/attempt.json",
+            manifest.repair_attempt_id.as_str()
+        ),
+        command,
+    }
+}
+
+/// The documented start of the repair transaction. It creates every artifact
+/// it needs, so it never depends on a workflow directory already existing.
+fn new_repair_attempt_command(root_display: &str, seam_id: &str) -> String {
+    format!(
+        "ripr agent repair --root {} --seam-id {} --phase before",
+        shell_arg(root_display),
+        shell_arg(seam_id)
+    )
+}
+
+fn select_next_command(
+    root: &Path,
+    root_display: &str,
+    seam: Option<&AgentStatusSeam>,
+    repair_attempts: Option<&Vec<AgentStatusRepairAttempt>>,
+    missing_commands: &[AgentStatusCommand],
+    warnings: &mut Vec<AgentStatusWarning>,
+) -> Option<AgentStatusCommand> {
+    // An inventory status could not read is not an empty one: choosing a
+    // command past it could resume or restart the wrong transaction.
+    let attempts = repair_attempts?;
+
+    let resumable = attempts
+        .iter()
+        .filter(|attempt| attempt.disposition == "resumable")
+        .collect::<Vec<_>>();
+    match resumable.as_slice() {
+        [attempt] => {
+            return Some(AgentStatusCommand {
+                step: "repair_attempt_after".to_string(),
+                artifact: attempt.manifest.clone(),
+                reason: format!(
+                    "repair attempt `{}` for seam `{}` is awaiting the focused test edit; once the test is in place, run the after phase its before phase recorded",
+                    attempt.attempt_id, attempt.seam_id
+                ),
+                command: attempt.command.clone().unwrap_or_default(),
+            });
+        }
+        [] => {}
+        several => {
+            warnings.push(AgentStatusWarning {
+                kind: "ambiguous_repair_attempts".to_string(),
+                artifact: REPAIR_ATTEMPT_DIRECTORY.to_string(),
+                message: format!(
+                    "{} repair attempts are awaiting an edit at the current HEAD; status does not choose between them. Run the after phase of the attempt you edited: {}",
+                    several.len(),
+                    attempt_command_list(several)
+                ),
+            });
+            return None;
+        }
+    }
+
+    let head_unknown = attempts
+        .iter()
+        .filter(|attempt| attempt.disposition == "head_unknown")
+        .collect::<Vec<_>>();
+    if !head_unknown.is_empty() {
+        warnings.push(AgentStatusWarning {
+            kind: "repair_attempt_head_unknown".to_string(),
+            artifact: REPAIR_ATTEMPT_DIRECTORY.to_string(),
+            message: format!(
+                "the current Git HEAD could not be read, so status cannot tell whether {} awaiting repair attempt(s) are still current",
+                head_unknown.len()
+            ),
+        });
+        return None;
+    }
+
+    // A seam is open when none of its attempts finished and at least one ended
+    // or went stale. Grouping by seam rather than picking "the latest" attempt
+    // keeps status from reading creation order into the inventory.
+    let finished_seams = attempts
+        .iter()
+        .filter(|attempt| attempt.disposition == "finished")
+        .map(|attempt| attempt.seam_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut open = std::collections::BTreeMap::<&str, Vec<&AgentStatusRepairAttempt>>::new();
+    for attempt in attempts {
+        if attempt.command.is_some() && !finished_seams.contains(attempt.seam_id.as_str()) {
+            open.entry(attempt.seam_id.as_str())
+                .or_default()
+                .push(attempt);
+        }
+    }
+    let mut open_seams = open.into_iter();
+    match (open_seams.next(), open_seams.next()) {
+        (Some((seam_id, ended)), None) => {
+            return Some(AgentStatusCommand {
+                step: "repair_attempt_before".to_string(),
+                artifact: REPAIR_ATTEMPT_DIRECTORY.to_string(),
+                reason: format!(
+                    "no repair attempt for seam `{seam_id}` can continue ({}); start a new attempt",
+                    ended
+                        .iter()
+                        .map(|attempt| format!(
+                            "`{}` is {}",
+                            attempt.attempt_id,
+                            attempt_condition(attempt)
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                command: new_repair_attempt_command(root_display, seam_id),
+            });
+        }
+        (Some((first, _)), Some((second, _))) => {
+            let mut seams = vec![first, second];
+            seams.extend(open_seams.map(|(seam_id, _)| seam_id));
+            warnings.push(AgentStatusWarning {
+                kind: "multiple_open_repair_seams".to_string(),
+                artifact: REPAIR_ATTEMPT_DIRECTORY.to_string(),
+                message: format!(
+                    "repair attempts for {} seams ended without a receipt; status does not choose between them. Start a new attempt for the seam you mean: {}",
+                    seams.len(),
+                    seams
+                        .iter()
+                        .map(|seam_id| format!("`{}`", new_repair_attempt_command(root_display, seam_id)))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                ),
+            });
+            return None;
+        }
+        (None, _) => {}
+    }
+
+    legacy_next_command(root, root_display, seam, missing_commands)
+}
+
+/// The legacy seven-artifact loop, kept for `agent start` and manual users,
+/// with two refusals: it never recommends a command that needs a seam status
+/// does not know, and never a redirect into a directory that does not exist.
+fn legacy_next_command(
+    root: &Path,
+    root_display: &str,
+    seam: Option<&AgentStatusSeam>,
+    missing_commands: &[AgentStatusCommand],
+) -> Option<AgentStatusCommand> {
+    let first = missing_commands.first()?;
+    let Some(seam) = seam else {
+        return Some(AgentStatusCommand {
+            step: "select_seam".to_string(),
+            artifact: "target/ripr/pilot".to_string(),
+            reason: "no repair seam is known yet; `ripr pilot` inspects the workspace and selects the seam to repair".to_string(),
+            command: format!("ripr pilot --root {}", shell_arg(root_display)),
+        });
+    };
+    let target_directory_exists = Path::new(&first.artifact)
+        .parent()
+        .is_none_or(|parent| root.join(parent).is_dir());
+    if !target_directory_exists {
+        return Some(AgentStatusCommand {
+            step: "repair_attempt_before".to_string(),
+            artifact: REPAIR_ATTEMPT_DIRECTORY.to_string(),
+            reason: format!(
+                "{}; start a repair attempt for seam `{}`, which writes the workflow artifacts itself",
+                first.reason, seam.seam_id
+            ),
+            command: new_repair_attempt_command(root_display, &seam.seam_id),
+        });
+    }
+    Some(first.clone())
+}
+
+fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
+    match attempt.disposition {
+        "prepared_at_other_head" => {
+            "awaiting an edit but was prepared at a different HEAD".to_string()
+        }
+        "not_published" => "prepared but never published".to_string(),
+        _ => attempt.state.to_string(),
+    }
+}
+
+fn attempt_command_list(attempts: &[&AgentStatusRepairAttempt]) -> String {
+    attempts
+        .iter()
+        .map(|attempt| {
+            format!(
+                "`{}` (seam `{}`): `{}`",
+                attempt.attempt_id,
+                attempt.seam_id,
+                attempt.command.as_deref().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 fn keep_follow_up_templates_reachable(root: &str) {
@@ -157,10 +468,7 @@ fn keep_follow_up_templates_reachable(root: &str) {
 }
 
 pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<String, String> {
-    let next_command = report
-        .missing_commands
-        .first()
-        .map(agent_status_command_json);
+    let next_command = report.next_command.as_ref().map(agent_status_command_json);
     let value = serde_json::json!({
         "schema_version": AGENT_STATUS_SCHEMA_VERSION,
         "tool": "ripr",
@@ -168,6 +476,7 @@ pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<Str
         "root": report.root,
         "seam": report.seam.as_ref().map(agent_status_seam_json),
         "artifacts": report.artifacts.iter().map(agent_status_artifact_json).collect::<Vec<_>>(),
+        "repair_attempts": report.repair_attempts.iter().map(agent_status_repair_attempt_json).collect::<Vec<_>>(),
         "missing_commands": report.missing_commands.iter().map(agent_status_command_json).collect::<Vec<_>>(),
         "next_command": next_command,
         "warnings": report.warnings.iter().map(agent_status_warning_json).collect::<Vec<_>>()
@@ -205,7 +514,19 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         ));
     }
 
-    if let Some(next) = report.missing_commands.first() {
+    if !report.repair_attempts.is_empty() {
+        rendered.push_str("\n## Repair Attempts\n\n");
+        rendered.push_str("| Attempt | Seam | State | Status reading |\n");
+        rendered.push_str("| --- | --- | --- | --- |\n");
+        for attempt in &report.repair_attempts {
+            rendered.push_str(&format!(
+                "| `{}` | `{}` | {} | {} |\n",
+                attempt.attempt_id, attempt.seam_id, attempt.state, attempt.disposition
+            ));
+        }
+    }
+
+    if let Some(next) = &report.next_command {
         rendered.push_str("\n## Next Command\n\n");
         rendered.push_str(&format!("{}\n\n", next.reason));
         rendered.push_str(COMMAND_SHELL_DISCLOSURE);
@@ -224,8 +545,10 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
                 next.command
             )),
         }
-    } else {
+    } else if report.missing_commands.is_empty() {
         rendered.push_str("\nNo missing agent-loop artifacts were detected.\n");
+    } else {
+        rendered.push_str("\n## Next Command\n\nStatus selects no next command; the warnings below say why and list the choices.\n");
     }
 
     if !report.warnings.is_empty() {
@@ -263,6 +586,18 @@ fn agent_status_artifact_json(artifact: &AgentStatusArtifact) -> Value {
         "state": if artifact.present { "present" } else { "missing" },
         "bytes": artifact.bytes,
         "modified_unix_ms": modified_unix_ms(artifact.modified)
+    })
+}
+
+fn agent_status_repair_attempt_json(attempt: &AgentStatusRepairAttempt) -> Value {
+    serde_json::json!({
+        "attempt_id": attempt.attempt_id,
+        "seam_id": attempt.seam_id,
+        "state": attempt.state,
+        "head_current": attempt.head_current,
+        "disposition": attempt.disposition,
+        "manifest": attempt.manifest,
+        "command": attempt.command
     })
 }
 
@@ -616,11 +951,12 @@ mod tests {
         assert_eq!(value["seam"], Value::Null);
         assert_eq!(value["artifacts"].as_array().map(Vec::len), Some(7));
         assert_eq!(value["missing_commands"].as_array().map(Vec::len), Some(7));
-        assert_eq!(value["next_command"]["step"], "before_snapshot");
-        assert_eq!(
-            value["next_command"]["command"],
-            "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json"
-        );
+        assert_eq!(value["repair_attempts"], serde_json::json!([]));
+        // A fresh workspace knows no seam and has no workflow directory, so the
+        // next command is the product route that selects a seam, not a
+        // redirect into `target/ripr/workflow/` (#3906).
+        assert_eq!(value["next_command"]["step"], "select_seam");
+        assert_eq!(value["next_command"]["command"], "ripr pilot --root .");
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
@@ -681,7 +1017,7 @@ mod tests {
         assert!(rendered.contains("Status: incomplete"));
         assert!(rendered.contains("| before snapshot | missing |"));
         assert!(rendered.contains("## Next Command"));
-        assert!(rendered.contains("ripr check --root . --mode draft"));
+        assert!(rendered.contains("ripr pilot --root ."));
         assert!(rendered.contains("No runtime mutation execution."));
         assert!(rendered.contains("No generated tests."));
 
@@ -697,7 +1033,12 @@ mod tests {
     #[test]
     fn agent_status_markdown_next_command_offers_powershell_variant() -> Result<(), String> {
         let root = unique_agent_status_test_dir("markdown-powershell");
-        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        // A known seam and an existing workflow directory keep the legacy
+        // redirect route selected, which is the translation this pins.
+        write_file(
+            &root.join(WORKFLOW_AGENT_PACKET_ARTIFACT),
+            r#"{"packets":[{"seam_id":"seam-a"}]}"#,
+        )?;
 
         let report = build_agent_status_report(&root, Path::new("repo root"));
         let rendered = render_agent_status_markdown(&report);
@@ -858,6 +1199,92 @@ mod tests {
                 .message
                 .contains("before snapshot is newer than after snapshot")
         );
+    }
+
+    fn synthetic_attempt(
+        id: &str,
+        seam: &str,
+        disposition: &'static str,
+        command: Option<&str>,
+    ) -> AgentStatusRepairAttempt {
+        AgentStatusRepairAttempt {
+            attempt_id: id.to_string(),
+            seam_id: seam.to_string(),
+            state: "failed",
+            head_current: Some(true),
+            disposition,
+            manifest: format!("{REPAIR_ATTEMPT_DIRECTORY}/{id}/attempt.json"),
+            command: command.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn agent_status_refuses_to_choose_between_open_seams() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("open-seams");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let attempts = vec![
+            synthetic_attempt("a", "seam-a", "ended", Some("restart a")),
+            synthetic_attempt("b", "seam-b", "ended", Some("restart b")),
+        ];
+        let mut warnings = Vec::new();
+        let next = select_next_command(&root, ".", None, Some(&attempts), &[], &mut warnings);
+        assert_eq!(next, None);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].kind, "multiple_open_repair_seams");
+        assert!(warnings[0].message.contains("--seam-id seam-a"));
+        assert!(warnings[0].message.contains("--seam-id seam-b"));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn agent_status_does_not_restart_a_seam_that_finished() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("finished-seam");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let attempts = vec![
+            synthetic_attempt("a", "seam-a", "ended", Some("restart a")),
+            synthetic_attempt("b", "seam-a", "finished", None),
+            synthetic_attempt("c", "seam-b", "ended", Some("restart c")),
+        ];
+        let mut warnings = Vec::new();
+        let next = select_next_command(&root, ".", None, Some(&attempts), &[], &mut warnings)
+            .ok_or_else(|| "expected a restart for the one open seam".to_string())?;
+        assert_eq!(next.step, "repair_attempt_before");
+        assert_eq!(
+            next.command,
+            "ripr agent repair --root . --seam-id seam-b --phase before"
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// A seam known only from the receipt, with no workflow directory: the
+    /// first missing artifact would be a redirect into that missing directory,
+    /// so status starts a repair attempt instead.
+    #[test]
+    fn agent_status_never_redirects_into_a_missing_workflow_directory() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("receipt-only");
+        write_file(
+            &root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
+            r#"{"seam":{"seam_id":"from-receipt"}}"#,
+        )?;
+
+        let report = build_agent_status_report(&root, Path::new("repo root"));
+        let next = report
+            .next_command
+            .as_ref()
+            .ok_or_else(|| "expected a next command".to_string())?;
+        assert_eq!(report.missing_commands[0].step, "before_snapshot");
+        assert_eq!(next.step, "repair_attempt_before");
+        assert_eq!(
+            next.command,
+            "ripr agent repair --root 'repo root' --seam-id from-receipt --phase before"
+        );
+        assert!(!next.command.contains('>'));
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
     }
 
     #[test]
