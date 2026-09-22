@@ -2324,6 +2324,34 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
+fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn std::error::Error>>
+{
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["first-pr", "--root", &root, "--check"]);
+    assert_failure(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("it does not create one"));
+    // The suggested recovery must reproduce the exact directory `--check`
+    // validated: rooted at `--root`, never CWD-relative, with stable
+    // separators on every host.
+    let expected_out_dir = workspace
+        .join("target/ripr/reports")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let plain = format!("--out-dir {expected_out_dir}");
+    let quoted = format!("--out-dir '{expected_out_dir}'");
+    assert!(stderr.contains(&plain) || stderr.contains(&quoted));
+    assert!(!stderr.contains("--out-dir target/ripr/reports"));
+    assert!(!stderr.contains("--out-dir 'target/ripr/reports'"));
+    // The missing path renders with stable separators even on Windows.
+    assert!(stderr.contains(&format!("Missing:\n  {expected_out_dir}/start-here.json")));
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
 fn report_packet_index_cli_writes_packet_index() -> Result<(), Box<dyn std::error::Error>> {
     let workspace = unique_temp_workspace("report-packet-index");
     let reports = workspace.join("target/ripr/reports");
