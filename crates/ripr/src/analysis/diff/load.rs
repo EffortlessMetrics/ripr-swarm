@@ -908,11 +908,10 @@ mod tests {
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "add src"])?;
 
-        let diff = load_diff(&dir, Some("HEAD~1"), None, None)
-            .expect("expected a resolvable explicit base to analyze");
+        let loaded = load_diff(&dir, Some("HEAD~1"), None, None);
         assert!(
-            diff.contains("src.rs"),
-            "expected the changed file in the loaded diff, got: {diff}"
+            loaded.as_ref().is_ok_and(|diff| diff.contains("src.rs")),
+            "expected a resolvable explicit base to analyze the changed file, got: {loaded:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);
