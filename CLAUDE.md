@@ -5,6 +5,19 @@ mutation-exposure analyzer for Rust/Cargo workspaces. This file is the complete
 Claude root instruction set. Do not import or route through `AGENTS.md` or
 `.agents/skills/**`; Codex has its own separate file set.
 
+## Authority and session rehydration
+
+Reconstruct each session from the current user instruction, this root file and
+the applicable Claude skill, then current repository/GitHub artifacts. Treat
+compaction summaries, prior-turn recaps, subagent reports, and local notes as
+fallible context only. They may not invent permission boundaries, user rulings,
+exact counts, completion state, object identity, or release dispositions.
+
+Preserve the parent end state across compaction and subgoals. A runtime goal or
+session-local checklist does not replace the repository outcome, and reaching
+100% on an atomic subgoal does not complete its parent.
+
+
 Claude procedures live under `.claude/skills/**`:
 
 ```text
@@ -109,11 +122,24 @@ only for:
 A behind-only branch needs no update. The affected lane owns its own conflict
 repair and affected re-proof after a real interaction appears.
 
+Ordinary ripr-swarm development uses protected squash merge. Main moving is not
+a reason to restack. Before opening a new PR or resolving a conflict, search
+current source plus open and recently merged PRs for an equivalent implementation
+so upstream delivery wins over duplicate conflict work.
+
+
 ## High-level goal delivery
 
 Preserve the user's original goal, current interpretation, constraints,
 non-goals, assumptions, and acceptance predicates. Do not substitute the first
 plausible issue for the actual outcome.
+
+Progress is measured against the complete parent denominator. Do not shrink the
+goal to the current PR batch or a session/model "share". Local edits and commits
+are unpublished candidates; PRs are in flight; merged PRs are landed
+implementation; release qualification, source integration, ship decision,
+publication, and public verification remain separate states.
+
 
 Evaluate goal predicates as:
 
@@ -188,6 +214,10 @@ Ask for an owner decision only when materially different viable outcomes remain
 after safe research and reversible engineering experiments, or when the choice
 changes external commitment, destructive action, exposure, or a non-derivable
 product preference.
+
+Routine commit, push, PR creation/update, review repair, and protected squash
+merge inside the selected goal do not require a separate approval pause.
+
 
 ## Evidence and actionability
 
@@ -264,7 +294,13 @@ that published-head pass may emit `REVIEW_READY` for merge convergence.
 
 ## Local validation
 
-Use focused proof during implementation. Before publication, run:
+Use focused proof during implementation. Detect the active host and shell before
+multi-step commands; use PowerShell grammar on Windows and the active POSIX shell
+on Linux/macOS. Cargo progress on stderr is not itself failure, and background
+task liveness must be bound to the retained task/session handle rather than
+guessed from process names.
+
+Before publication, run:
 
 ```bash
 cargo xtask precommit
