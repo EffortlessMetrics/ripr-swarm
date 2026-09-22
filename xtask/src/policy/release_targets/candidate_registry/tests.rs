@@ -425,7 +425,7 @@ type PinnedCase = (&'static str, fn(&mut Value), &'static str);
 // Control 6.
 #[test]
 fn pinned_rows_require_exact_sha_tree_ref_and_packet_digests() {
-    let cases: [PinnedCase; 6] = [
+    let cases: [PinnedCase; 7] = [
         (
             "sha",
             |row| row["candidate"]["sha"] = Value::Null,
@@ -439,6 +439,11 @@ fn pinned_rows_require_exact_sha_tree_ref_and_packet_digests() {
         (
             "ref",
             |row| row["candidate"]["ref"] = json!("ripr-release-0.11.0"),
+            "candidate ref",
+        ),
+        (
+            "bare refs/ prefix",
+            |row| row["candidate"]["ref"] = json!("refs/"),
             "candidate ref",
         ),
         (
@@ -772,6 +777,39 @@ fn a_template_row_requires_the_artifact_to_declare_template_status() {
             "{status:?}: {found:#?}"
         );
     }
+}
+
+#[test]
+fn a_template_row_may_not_carry_a_selection_template_digest() {
+    let mut registry = repository_registry();
+    row_mut(&mut registry, LIVE_HEAD_JSON)["selection_template_sha256"] = json!("5".repeat(64));
+    let found = only_rule(&tree(&registry, &[]), RULE_STATE_IDENTITY);
+    assert!(
+        found
+            .iter()
+            .any(|v| v.contains(LIVE_HEAD_JSON) && v.contains("carries pinned candidate identity")),
+        "{found:#?}"
+    );
+}
+
+/// A JSON row that claims to be a projection would skip its own lifecycle
+/// identity checks, so the claim itself is rejected.
+#[test]
+fn a_json_row_may_not_declare_itself_a_projection() {
+    let mut registry = repository_registry();
+    row_mut(&mut registry, FREEZE_JSON)["projection_of"] = json!(HARD_CUT_JSON);
+    let outcome = evaluate_candidate_registry(&tree(&registry, &[]), &controllers());
+    assert!(
+        outcome
+            .violations
+            .iter()
+            .any(|v| v.starts_with(RULE_PROJECTION)
+                && v.contains(FREEZE_JSON)
+                && v.contains("only Markdown rows are projections")),
+        "{:#?}",
+        outcome.violations
+    );
+    assert_eq!(outcome.status(), "not_proven");
 }
 
 #[test]
