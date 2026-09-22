@@ -183,10 +183,10 @@ verifies that:
 - every `[[planned]]` `activate_when_msrv` that is already met by
   `[workspace.package] rust-version` has a remaining non-MSRV `reason`
   (empty or MSRV-only `reason` text fails);
-- every `[[debt]]` row in `policy/clippy-debt.toml` has unique `id` /
-  `lint`, required fields, a `target` that is not in the past, and a
-  lint that is not already `[[active]]`, `[[planned]]`, or present in
-  `Cargo.toml`.
+- every `[[debt]]` row in `policy/clippy-debt.toml` is valid TOML with
+  unique `id` / `lint`, required nonblank fields, a `target` that is not
+  in the past, and a lint that is not already `[[active]]`, `[[planned]]`,
+  or present in `Cargo.toml`.
 
 `activate_when_msrv` on `[[planned]]` entries is compared to
 `[workspace.package] rust-version`. When the recorded MSRV is already
@@ -220,11 +220,12 @@ Two companion ledgers track Clippy state alongside the active/planned table:
 
 These companion ledgers are gated as follows:
 
-- `cargo xtask check-lint-policy` reads `policy/clippy-debt.toml`: unique
-  ids, required fields (`id`, `lint`, `level`, `owner`, `reason`,
-  `blocked_by`, `target`), ISO `target` dates that are not in the past,
-  and debt lints that are not already `[[active]]`, `[[planned]]`, or
-  present in `Cargo.toml`.
+- `cargo xtask check-lint-policy` reads `policy/clippy-debt.toml` as
+  TOML (`deny_unknown_fields`): unique ids, required nonblank fields
+  (`id`, `lint`, `level`, `owner`, `reason`, `blocked_by`, `target`),
+  ISO `target` dates that are not in the past, and debt lints that are
+  not already `[[active]]`, `[[planned]]`, or present in `Cargo.toml`.
+  Invalid TOML, duplicate keys, unknown fields, and trailing garbage fail.
 - `check-allow-attributes` still reads only `.ripr/allow-attributes.txt`.
   One exceptions slice already enforces coverage claims: `cargo xtask
   check-covered-by` resolves every test-valued `covered_by` entry in

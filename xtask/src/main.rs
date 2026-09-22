@@ -15594,18 +15594,67 @@ struct ClippyDebtEntry {
     block_line: usize,
 }
 
-fn parse_clippy_debt_ledger(text: &str) -> (Vec<ClippyDebtEntry>, Vec<String>) {
-    let mut entries = Vec::new();
-    let mut violations = Vec::new();
-    let mut current: Option<ClippyDebtEntry> = None;
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct ClippyDebtFile {
+    schema_version: String,
+    policy: String,
+    owner: String,
+    status: String,
+    debt: Vec<ClippyDebtRow>,
+}
 
-    fn flush(
-        current: &mut Option<ClippyDebtEntry>,
-        entries: &mut Vec<ClippyDebtEntry>,
-        violations: &mut Vec<String>,
-    ) {
-        let Some(entry) = current.take() else {
-            return;
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct ClippyDebtRow {
+    id: String,
+    lint: String,
+    level: String,
+    owner: String,
+    reason: String,
+    blocked_by: String,
+    target: String,
+}
+
+fn debt_id_line(text: &str, id: &str) -> usize {
+    if id.is_empty() {
+        return 0;
+    }
+    let double = format!("id = \"{id}\"");
+    let single = format!("id = '{id}'");
+    for (index, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.starts_with(&double) || line.starts_with(&single) {
+            return index + 1;
+        }
+    }
+    0
+}
+
+fn parse_clippy_debt_ledger(text: &str) -> (Vec<ClippyDebtEntry>, Vec<String>) {
+    let mut violations = Vec::new();
+    if text.trim().is_empty() {
+        return (Vec::new(), violations);
+    }
+    let parsed: ClippyDebtFile = match toml::from_str(text) {
+        Ok(file) => file,
+        Err(err) => {
+            violations.push(format!("policy/clippy-debt.toml: {err}"));
+            return (Vec::new(), violations);
+        }
+    };
+
+    let mut entries = Vec::new();
+    for row in parsed.debt {
+        let entry = ClippyDebtEntry {
+            id: row.id.trim().to_string(),
+            lint: row.lint.trim().to_string(),
+            level: row.level.trim().to_string(),
+            owner: row.owner.trim().to_string(),
+            reason: row.reason.trim().to_string(),
+            blocked_by: row.blocked_by.trim().to_string(),
+            target: row.target.trim().to_string(),
+            block_line: debt_id_line(text, row.id.trim()),
         };
         let mut missing = Vec::new();
         if entry.id.is_empty() {
@@ -15643,81 +15692,17 @@ fn parse_clippy_debt_ledger(text: &str) -> (Vec<ClippyDebtEntry>, Vec<String>) {
                 if missing.len() == 1 { "" } else { "s" },
                 missing.join(", ")
             ));
-            return;
+            continue;
         }
         if entry.level != "deny" && entry.level != "warn" {
             violations.push(format!(
                 "policy/clippy-debt.toml:{} `{}` has level `{}`; expected `deny` or `warn`.",
                 entry.block_line, entry.id, entry.level
             ));
-            return;
+            continue;
         }
         entries.push(entry);
     }
-
-    for (index, raw) in text.lines().enumerate() {
-        let line_number = index + 1;
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with("[[") {
-            flush(&mut current, &mut entries, &mut violations);
-            if !line.ends_with("]]") {
-                violations.push(format!(
-                    "policy/clippy-debt.toml:{line_number} malformed array table `{line}`; expected `[[debt]]`."
-                ));
-                continue;
-            }
-            let header = line.trim_start_matches('[').trim_end_matches(']').trim();
-            if header == "debt" {
-                current = Some(ClippyDebtEntry {
-                    id: String::new(),
-                    lint: String::new(),
-                    level: String::new(),
-                    owner: String::new(),
-                    reason: String::new(),
-                    blocked_by: String::new(),
-                    target: String::new(),
-                    block_line: line_number,
-                });
-            } else {
-                violations.push(format!(
-                    "policy/clippy-debt.toml:{line_number} unknown array table `[[{header}]]`; expected `[[debt]]`."
-                ));
-            }
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            flush(&mut current, &mut entries, &mut violations);
-            continue;
-        }
-        let Some(entry) = current.as_mut() else {
-            continue;
-        };
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        let value = raw_value.trim();
-        let unquoted = value
-            .strip_prefix('"')
-            .and_then(|rest| rest.split_once('"').map(|(token, _)| token.to_string()));
-        let Some(unquoted) = unquoted else {
-            continue;
-        };
-        match key {
-            "id" => entry.id = unquoted,
-            "lint" => entry.lint = unquoted,
-            "level" => entry.level = unquoted,
-            "owner" => entry.owner = unquoted,
-            "reason" => entry.reason = unquoted,
-            "blocked_by" => entry.blocked_by = unquoted,
-            "target" => entry.target = unquoted,
-            _ => {}
-        }
-    }
-    flush(&mut current, &mut entries, &mut violations);
     (entries, violations)
 }
 
@@ -15801,7 +15786,6 @@ fn collect_clippy_debt_violations(
 
     violations
 }
-
 
 /// First basic TOML string on a value (`"..."` or `'...'`). Table-form and
 /// multiline strings are intentionally out of scope for these ledgers.
@@ -16012,7 +15996,7 @@ fn check_lint_policy() -> Result<(), String> {
         PolicyReportSpec {
             report_file: "lint-policy.md",
             check: "check-lint-policy",
-            why_it_matters: "`policy/clippy-lints.toml` is the reviewable ledger of the workspace lint stance, including planned 1.94 / 1.95 flips. If Cargo.toml drifts from the ledger, reviewers lose the trajectory and the dual-rail design (clippy + semantic checker) loses its receipt. `activate_when_msrv` is compared to `[workspace.package] rust-version`; an already-met MSRV without a remaining non-MSRV `reason` is overdue. `policy/clippy-debt.toml` is the deferred-lint companion: ids, required fields, `target` dates, and dual-rail collisions are compared here rather than trusted as comments.",
+            why_it_matters: "`policy/clippy-lints.toml` is the reviewable ledger of the workspace lint stance, including planned 1.94 / 1.95 flips. If Cargo.toml drifts from the ledger, reviewers lose the trajectory and the dual-rail design (clippy + semantic checker) loses its receipt. `activate_when_msrv` is compared to `[workspace.package] rust-version`; an already-met MSRV without a remaining non-MSRV `reason` is overdue. `policy/clippy-debt.toml` is parsed as TOML: required nonblank fields, unknown fields, duplicate keys, trailing garbage, `target` dates, and dual-rail collisions fail here rather than being trusted as comments.",
             fix_kind: FixKind::PolicyExceptionRequired,
             recommended_fixes: &[
                 "Make `Cargo.toml` and `policy/clippy-lints.toml` agree: every `[[active.<group>]]` entry must appear in `[workspace.lints.*]` at the same level, and `[[planned]]` entries must not yet appear there.",
