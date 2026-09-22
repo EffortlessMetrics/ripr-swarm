@@ -365,6 +365,13 @@ Source proof to run:
 
 Deferred swarm PRs:
   <number/title/disposition>
+
+Conflict resolution:
+  <path>: <source commits> / <swarm commits> -> <resolution and why>
+
+Review evidence in the promoted range:
+  <PRs whose external review was skipped or unavailable, and what
+   review evidence exists for each instead>
 ```
 
 Abort promotion when any of these are true:
@@ -384,6 +391,65 @@ Abort promotion when any of these are true:
 The source repository CI remains the final release and publish proof. A green
 swarm route proves development readiness; it does not replace source release
 authority.
+
+### Resolving the join
+
+The source repository can carry product work of its own between syncs. For
+0.11.0, about fourteen product fixes landed directly on `ripr` after the
+previous join (for example ripr#1741, ripr#1747 and ripr#1751). Swarm did not
+have them, so the joins conflict where both lines fixed the same code
+differently. The join has to keep the accepted behavior from both parents.
+It must not take either side wholesale. Source-only fixes then return to swarm
+through `K`.
+
+Size the conflicts before the pin. Build a disposable trial join of the current
+source and swarm heads in a separate worktree with `git rerere` enabled. Never
+push it and never reuse it as `J`:
+
+```bash
+git -C ripr-promote worktree add -b trial/join ../ripr-trial-join origin/main
+cd ../ripr-trial-join
+git config rerere.enabled true
+git merge --no-ff --no-commit swarm/main
+# resolve, build, test; rerere records each reviewed resolution
+git merge --abort
+```
+
+When the real `J` is built from the pinned pair, the same worktree's rerere
+cache replays the reviewed resolutions. Only conflicts introduced by commits
+after the trial need fresh review. `git rerere` output is a convenience, not
+evidence: review every replayed path again against the final pair.
+
+Every conflicted path gets one row in the resolution manifest. The row names:
+
+- the source commits and the swarm commits that touched the path since
+  `MERGE_BASE`;
+- what each side intended;
+- the resolution;
+- why it keeps both behaviors, or why one side's implementation replaces the
+  other's.
+
+Also list any change made outside the conflict markers to fix breakage the
+merge introduced, such as a struct field one side added and the other side's
+new constructor omitted. The manifest goes in the promotion PR body. The tree
+it describes is the `--resolved-tree` passed to source preflight.
+
+In `J`, resolve `CHANGELOG.md` as a union. Keep the source parent's version
+sections and the swarm parent's `Unreleased` entries, and do not add a new
+version section. The release section is assembled in the metadata PR after `J`
+lands.
+
+The join is not finished until the resolved tree builds, and until the full
+workspace tests, fmt, clippy, fixtures and goldens pass on it. A test that
+fails identically on either unmodified parent is recorded as pre-existing with
+that evidence. It is not fixed inside `J`.
+
+On 2026-09-22 the owner directed that an agent session builds, publishes and
+merges the promotion PR itself, using a merge commit and
+`--match-head-commit "$J"`, once the swarm pin and qualification are in place.
+That direction covers only `J` and its merge. Tags, GitHub Releases,
+crates.io, marketplaces, secrets and settings still require source issue
+#1470.
 
 ## Post-Publication Back-Sync To Swarm
 

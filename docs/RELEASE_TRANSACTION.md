@@ -411,6 +411,10 @@ git -C "$SOURCE_ROOT" merge-base --is-ancestor "$SWARM_PARENT" "$J"
 test "$(git -C "$SOURCE_ROOT" rev-parse "$J^{tree}")" = "$JOIN_TREE"
 ```
 
+Conflict sizing, the trial join, the resolution manifest, and the build/test
+bar for the resolved tree are described in
+[`swarm-development.md`](swarm-development.md#resolving-the-join).
+
 Never append a repair commit; squash, rebase, cherry-pick, and tree-equivalent
 reconstruction fail the contract. Rebuild J from the held exact pair after a
 changed resolution or receipt.
