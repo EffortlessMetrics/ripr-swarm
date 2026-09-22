@@ -627,10 +627,11 @@ mod tests {
         if !findings.is_empty() {
             return Err(format!("checked-in bootstrap failed: {findings:?}"));
         }
-        let markers = AGENTS_ROOT_OPERATING_MARKERS
-            .iter()
-            .copied()
-            .chain(AGENTS_SKILL_OPERATING_MARKERS.iter().map(|(_, marker)| *marker));
+        let markers = AGENTS_ROOT_OPERATING_MARKERS.iter().copied().chain(
+            AGENTS_SKILL_OPERATING_MARKERS
+                .iter()
+                .map(|(_, marker)| *marker),
+        );
         for marker in markers {
             let mutated = format!("{bootstrap}\n- `{marker}`\n");
             let findings = override_operating_contract_findings(&mutated);
