@@ -757,9 +757,10 @@ above:
   candidate tournament.
 - A merged PR with an incomplete high-level goal must continue through
   `$deliver-goal`.
-- `check-agent-skills` validates the source-side route, skill set, and
-  architecture-map module tokens; it does not claim that a user's local
-  ZCode import or settings are enabled.
+- `check-agent-skills` validates the checked provider roots, skill sets,
+  operating-contract markers, review routes, and architecture-map module
+  tokens; it does not claim that a user's local provider import or settings
+  are enabled or that the declared prose is semantically obeyed.
 
 Keep PR head, integration basis, squash result, proof, review, and release
 state as separate judgments. Refresh only the proof/review dimensions affected
