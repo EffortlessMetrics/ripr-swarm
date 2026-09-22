@@ -18,6 +18,10 @@ pub(crate) const SCRATCH_LEASE_ACTION_PATH: &str = ".github/actions/ci-scratch-l
 const SCRATCH_LEASE_USES: &str = "uses: ./.github/actions/ci-scratch-lease";
 const RUST_GATES_PATH: &str = ".github/workflows/rust-gates.yml";
 const SCRATCH_GC_PATH: &str = ".github/workflows/scratch-gc.yml";
+/// scratch-gc.yml checks the action out here, never at the workspace root: a
+/// sparse checkout is blob-filtered and its promisor config would persist
+/// into the `fetch-depth: 0` rust-gates checkout on the same runner.
+const SCRATCH_GC_CHECKOUT: &str = ".ci-scratch-gc";
 const SCRATCH_ROOT: &str = "/mnt/ci-scratch";
 const SCRATCH_TREE_MARKER: &str = "CARGO_TARGET_DIR: /mnt/ci-scratch/";
 
@@ -153,9 +157,28 @@ fn rust_gates_violations(text: &str) -> Vec<String> {
 
 fn scratch_gc_violations(text: &str) -> Vec<String> {
     let mut violations = Vec::new();
-    let checkout = text
-        .lines()
+    let lines: Vec<&str> = text.lines().collect();
+    let checkout = lines
+        .iter()
         .position(|line| line.trim_start().starts_with("- uses: actions/checkout@"));
+    let dedicated = checkout.is_some_and(|index| {
+        let indent = lines[index].len() - lines[index].trim_start().len();
+        lines[index + 1..]
+            .iter()
+            .take_while(|next| {
+                let trimmed = next.trim_start();
+                trimmed.is_empty() || next.len() - trimmed.len() > indent
+            })
+            .any(|next| next.trim() == format!("path: {SCRATCH_GC_CHECKOUT}"))
+    });
+    let consumed = text.contains(&format!(
+        "uses: ./{SCRATCH_GC_CHECKOUT}/.github/actions/ci-scratch-lease"
+    ));
+    if !(dedicated && consumed) {
+        violations.push(format!(
+            "{SCRATCH_GC_PATH}: check out the lease action into `path: {SCRATCH_GC_CHECKOUT}` and call it from there; a sparse checkout at the workspace root leaves blob-filter promisor config in the rust-gates checkout (#3841)"
+        ));
+    }
     match (checkout, lease_step_line(text, "reclaim")) {
         (Some(first), Some(second)) if first < second => {}
         (_, None) => violations.push(format!(
@@ -203,7 +226,9 @@ fn lease_step_line(text: &str, mode: &str) -> Option<usize> {
     let expected = format!("mode: {mode}");
     lines.iter().enumerate().find_map(|(index, line)| {
         let trimmed = line.trim_start();
-        if trimmed != SCRATCH_LEASE_USES && trimmed != format!("- {SCRATCH_LEASE_USES}") {
+        let step = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+        let dedicated = format!("uses: ./{SCRATCH_GC_CHECKOUT}/.github/actions/ci-scratch-lease");
+        if step != SCRATCH_LEASE_USES && step != dedicated {
             return None;
         }
         let indent = line.len() - trimmed.len();

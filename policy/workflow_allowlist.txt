@@ -10,7 +10,7 @@
 # Local composite actions (.github/actions/*/action.yml) run inside the calling
 # workflow, so their run blocks carry the same visible budget (#3841).
 
-.github/actions/ci-scratch-lease/action.yml|76|Shared self-hosted scratch ownership authority (#3841): acquire/release a kernel flock lease per job and reclaim only terminal trees this repository owns while holding that lease. It must run before the Rust toolchain exists and on the toolchain-free scheduled GC lane, so it cannot be an xtask command; the executed behavior harness lives in xtask/src/policy/ci_scratch/tests.rs.
+.github/actions/ci-scratch-lease/action.yml|86|Shared self-hosted scratch ownership authority (#3841): acquire/release a kernel flock lease per job, self-check it at reclaim and release, and reclaim only terminal trees this repository owns while holding that lease. It must run before the Rust toolchain exists and on the toolchain-free scheduled GC lane, so it cannot be an xtask command; the executed behavior harness lives in xtask/src/policy/ci_scratch/tests.rs.
 .github/actions/ripr-check/action.yml|7|Adoption composite action installs ripr when missing and runs one ripr check command (#2626).
 
 .github/workflows/badge-endpoints.yml|1|Badge endpoint refresh delegates generation to cargo xtask and opens a PR.

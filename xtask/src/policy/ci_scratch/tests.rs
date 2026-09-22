@@ -55,7 +55,7 @@ fn checked_in_workflows_consume_one_lease_authority() -> Result<(), String> {
     let (workflows, action) = repo_contract_inputs()?;
     for (path, text) in &workflows {
         assert!(
-            text.contains("uses: ./.github/actions/ci-scratch-lease"),
+            text.contains("/.github/actions/ci-scratch-lease\n"),
             "{path} must call the shared lease authority"
         );
         assert!(
@@ -137,6 +137,27 @@ fn a_cleaner_that_bypasses_the_authority_is_rejected() -> Result<(), String> {
             .any(|violation| violation.contains("`mode: release` lease step must follow")),
         "{violations:#?}"
     );
+    Ok(())
+}
+
+#[test]
+fn a_gc_checkout_in_the_build_workspace_is_rejected() -> Result<(), String> {
+    for (from, to) in [
+        ("          path: .ci-scratch-gc\n", ""),
+        (
+            "uses: ./.ci-scratch-gc/.github/actions/ci-scratch-lease",
+            "uses: ./.github/actions/ci-scratch-lease",
+        ),
+    ] {
+        let violations = violations_after_edit(SCRATCH_GC_PATH, from, to)?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.starts_with(SCRATCH_GC_PATH)
+                    && violation.contains("path: .ci-scratch-gc")),
+            "{from}: {violations:#?}"
+        );
+    }
     Ok(())
 }
 
@@ -377,6 +398,19 @@ check "release keeps the lease while own trees remain" '[ -f "$root/leases/201-1
 for c in cargo-home target tmp; do rm -rf "$root/$c/201-1"; done
 run_mode release 201 1 > /dev/null 2>&1
 check "release drops the lease after own cleanup" '[ ! -e "$root/leases/201-1.lock" ]'
+check "release reports its lease as held while its holder lives" 'grep -qx "own_lease=held" "$work/out.201.release"'
+
+echo "== own lease self-check"
+run_mode reclaim 302 1 > /dev/null 2>&1
+check "reclaim reports its lease as held while its holder lives" 'grep -qx "own_lease=held" "$work/out.302.reclaim" && alltree 302-1'
+h9="$(acquire 700)"; mktree 700-1; kill_job "$h9" 700
+run_mode reclaim 700 1 > "$work/lost.log" 2>&1
+check "reclaim flags a lost own lease" 'grep -qx "own_lease=lost" "$work/out.700.reclaim" && grep -q "lease_lost" "$work/lost.log"'
+check "reclaim never deletes its own run's trees" 'alltree 700-1'
+for c in cargo-home target tmp; do rm -rf "$root/$c/700-1"; done
+run_mode release 700 1 > "$work/lost-release.log" 2>&1
+check "release flags a lease lost before job end" 'grep -qx "own_lease=lost" "$work/out.700.release" && grep -q "lease_lost" "$work/lost-release.log"'
+check "release still drops a lost lease" '[ ! -e "$root/leases/700-1.lock" ]'
 exit "$fail"
 "#;
 
@@ -412,6 +446,12 @@ exit "$fail"
         "each terminal id is reclaimed exactly once across cleaners",
         "release keeps the lease while own trees remain",
         "release drops the lease after own cleanup",
+        "release reports its lease as held while its holder lives",
+        "reclaim reports its lease as held while its holder lives",
+        "reclaim flags a lost own lease",
+        "reclaim never deletes its own run's trees",
+        "release flags a lease lost before job end",
+        "release still drops a lost lease",
     ];
 
     struct HarnessRun {

@@ -21,6 +21,12 @@ author: 'EffortlessMetrics'
 #   delete. There is no age threshold, and live trees are never walked.
 # release: after own-run cleanup, drop this job's lease once none of its
 #   trees remain.
+# Self-check: reclaim and release both probe this job's own lease and report
+#   `own_lease=held|lost|none`. `lost` means the holder died before the job
+#   ended, so the job's live trees were reclaimable by other cleaners; it is
+#   raised as an error annotation so every self-hosted job records whether
+#   the holder-survives-steps assumption held. Reclaim never deletes the
+#   trees of its own run id, even when its own lease is lost.
 #
 # Every failure path warns and exits 0: an unleased tree stays protected
 # (unknown), so a lease failure can leak disk but can never delete a live tree;
@@ -58,6 +64,14 @@ runs:
         command -v flock >/dev/null 2>&1 || finish flock_unavailable "flock unavailable; nothing leased or reclaimed"
         [[ "$repo" == */* ]] || finish owner_unknown "GITHUB_REPOSITORY is unset; ownership unknown"
         categories=(cargo-home target tmp)
+        own="$leases/$id.lock"
+        own_lease() {
+          local probe
+          [[ -f "$own" && ! -L "$own" ]] || { echo none; return; }
+          { exec {probe}< "$own"; } 2>/dev/null || { echo none; return; }
+          if flock -n -x "$probe"; then echo lost; else echo held; fi
+        }
+        lost() { echo "::error::ci-scratch-lease $mode: lease_lost: $own is no longer held, so this job's live trees were unprotected from other cleaners"; echo "- ci-scratch-lease $mode: \`lease_lost\` $own" >> "$summary"; }
         if [[ "$mode" == acquire ]]; then
           [[ "$id" =~ ^[0-9]+-[0-9]+$ ]] || finish unleased "run identity '$id' is malformed; trees stay unleased"
           lease="$leases/$id.lock"
@@ -79,6 +93,7 @@ runs:
           kill "$holder" 2>/dev/null || true; rm -f -- "$lease" || true
           finish unleased "lease holder never took $lease; trees stay unleased"
         elif [[ "$mode" == release ]]; then
+          ownstate="$(own_lease)"; echo "own_lease=$ownstate" >> "$out"; [[ "$ownstate" != lost ]] || lost
           for category in "${categories[@]}"; do
             if [[ -e "$root/$category/$id" || -L "$root/$category/$id" ]]; then finish lease_kept "$root/$category/$id remains; lease kept"; fi
           done
@@ -87,7 +102,8 @@ runs:
         fi
         [[ "$mode" == reclaim ]] || finish usage "unknown mode '$mode'"
         started=$SECONDS; ids=0; entries=0; kib=0; live=0; unknown=0; foreign=0; lease_only=0
-        declare -A decided=(); safe=()
+        ownstate="$(own_lease)"; [[ "$ownstate" != lost ]] || lost
+        declare -A decided=(["$id"]=live); safe=()
         for category in "${categories[@]}"; do
           base="$root/$category"
           if [[ -d "$base" && ! -L "$base" ]]; then safe+=("$category"); elif [[ -e "$base" || -L "$base" ]]; then unknown=$((unknown + 1)); fi
@@ -101,7 +117,7 @@ runs:
             case "${decided[$name]:-}" in live) live=$((live + 1)); continue ;; foreign) foreign=$((foreign + 1)); continue ;; ?*) unknown=$((unknown + 1)); continue ;; esac
             decided[$name]=unknown
             if [[ -L "$lease" || ! -f "$lease" || ! -r "$lease" ]] || ! grep -qx 'schema=ci-scratch-lease/v1' "$lease"; then unknown=$((unknown + 1)); continue; fi
-            owner="$(sed -n '/^repository=/{s///p;q;}' "$lease")"
+            owner="$(sed -n '/^repository=/{s///p;q;}' "$lease" 2>/dev/null)" || owner=""
             if [[ -z "$owner" ]]; then unknown=$((unknown + 1)); continue; fi
             if [[ "$owner" != "$repo" ]]; then decided[$name]=foreign; foreign=$((foreign + 1)); continue; fi
             exec {fd}< "$lease" || { unknown=$((unknown + 1)); continue; }
@@ -124,6 +140,6 @@ runs:
           for category in "${categories[@]}"; do if [[ -e "$root/$category/$name" || -L "$root/$category/$name" ]]; then orphan=0; fi; done
           lease_only=$((lease_only + orphan))
         done
-        report="reclaimed_ids=$ids reclaimed_entries=$entries reclaimed_kib=$kib skipped_live=$live skipped_foreign=$foreign skipped_unknown=$unknown lease_only=$lease_only elapsed_s=$((SECONDS - started))"
+        report="reclaimed_ids=$ids reclaimed_entries=$entries reclaimed_kib=$kib skipped_live=$live skipped_foreign=$foreign skipped_unknown=$unknown lease_only=$lease_only own_lease=$ownstate elapsed_s=$((SECONDS - started))"
         echo "ci-scratch-lease reclaim: $report"; echo "- ci-scratch-lease reclaim: \`$report\`" >> "$summary"
         { echo "status=reclaimed"; for field in $report; do echo "$field"; done; } >> "$out"

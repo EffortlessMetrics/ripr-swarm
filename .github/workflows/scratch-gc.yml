@@ -58,8 +58,14 @@ jobs:
       cancel-in-progress: false
     timeout-minutes: 15
     steps:
+      # A dedicated path keeps this sparse checkout out of the build
+      # workspace: checkout implies `--filter=blob:none` for sparse checkouts
+      # and leaves the promisor config behind, which would turn the
+      # `fetch-depth: 0` rust-gates checkout on the same runner into a blobless
+      # partial clone. rust-gates' own checkout cleans this directory away.
       - uses: actions/checkout@v6
         with:
+          path: .ci-scratch-gc
           sparse-checkout: .github/actions/ci-scratch-lease
           persist-credentials: false
 
@@ -67,7 +73,7 @@ jobs:
       # same flock lease authority as the inline rust-gates.yml reclaim. A live
       # lease, or any unknown/foreign entry, is skipped regardless of age.
       - name: Reclaim terminal scratch
-        uses: ./.github/actions/ci-scratch-lease
+        uses: ./.ci-scratch-gc/.github/actions/ci-scratch-lease
         with:
           mode: reclaim
 
