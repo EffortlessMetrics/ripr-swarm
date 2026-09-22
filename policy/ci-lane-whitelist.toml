@@ -42,19 +42,19 @@ description = "Documentation structure, links, and doc-index safety."
 [[lane]]
 id = "rust"
 posture = "required"
-workflow = ".github/workflows/ci.yml"
-jobs = ["rust"]
-commands = ["cargo fmt --check", "cargo check --workspace --all-targets", "cargo clippy --workspace --all-targets -- -D warnings", "cargo test --workspace"]
+workflow = ".github/workflows/rust-gates.yml"
+jobs = ["rust-gates"]
+commands = ["cargo fmt --check", "cargo check --workspace --all-targets", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc"]
 estimated_lem = 12
 artifact_families = []
-description = "Primary Rust merge-safety lane."
+description = "Reusable required Rust compile, lint, nextest, and doctest contract invoked by the routed lane."
 
 [[lane]]
 id = "routed-rust-small"
 posture = "required"
 workflow = ".github/workflows/routed-rust.yml"
 jobs = ["Ripr Rust Small Result"]
-commands = ["cargo fmt --check", "cargo check --workspace --all-targets", "cargo clippy --workspace --all-targets -- -D warnings", "cargo test --workspace", "cargo xtask precommit", "cargo xtask check-evidence-promotion-honesty", "cargo xtask check-dependencies", "cargo xtask check-process-policy", "cargo xtask check-network-policy", "cargo xtask goldens check", "cargo xtask fixtures"]
+commands = ["cargo fmt --check", "cargo check --workspace --all-targets", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc", "cargo xtask precommit", "cargo xtask check-evidence-promotion-honesty", "cargo xtask check-agent-skills", "cargo xtask check-dependencies", "cargo xtask check-process-policy", "cargo xtask check-network-policy", "cargo xtask goldens check", "cargo xtask fixtures"]
 estimated_lem = 12
 artifact_families = ["ripr-evidence"]
 description = "Swarm Rust Small result gate routed through CX53, CX43, or GitHub-hosted fallback."
@@ -167,7 +167,7 @@ jobs = ["rust-tests-junit"]
 commands = ["cargo nextest run --workspace --all-features --profile ci", "cargo test --workspace --doc"]
 estimated_lem = 12
 artifact_families = ["ripr-evidence"]
-description = "JUnit test-results artifact and trusted Codecov Test Analytics upload."
+description = "Advisory all-feature JUnit telemetry plus a duplicate doctest receipt; neither substitutes for the routed required gates."
 
 [[lane]]
 id = "ripr-self-dogfood"

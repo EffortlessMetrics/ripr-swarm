@@ -8,17 +8,20 @@ changing required-check routing.
 
 ## Current producer inventory
 
-The current producer is the `Required Rust gates` step in
-`.github/workflows/routed-rust.yml`. The same command set is repeated in the
-CX43, CPX42, and CX53 routed jobs. Runner identity and matrix shape are route
-details, not product meaning.
+The current producer is the sequence of `Formatting preflight`,
+`Required Rust compilation and lints`, `Required Rust tests`,
+`Required Rust doctests`, and `Required Rust gates` steps in
+`.github/workflows/rust-gates.yml`. The routed implementations in
+`.github/workflows/routed-rust.yml` all delegate to that reusable workflow.
+Runner identity and matrix shape are route details, not product meaning.
 
 | Canonical gate | Current command | Role | Surface |
 | --- | --- | --- | --- |
 | `product.rust.formatting` | `cargo fmt --check` | required | Rust |
 | `product.rust.workspace_check` | `cargo check --workspace --all-targets` | required | Rust |
 | `product.rust.clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | required | Rust |
-| `product.rust.workspace_tests` | `cargo nextest run --workspace` | required | Rust |
+| `product.rust.workspace_tests` | `cargo nextest run --workspace --profile ci` | required | Rust |
+| `product.rust.workspace_doc_tests` | `cargo test --workspace --doc` | required | Rust |
 | `product.repository.precommit` | `cargo xtask precommit` | required | repository policy |
 | `product.evidence.promotion_honesty` | `cargo xtask check-evidence-promotion-honesty` | required | evidence |
 | `product.repository.agent_skills` | `cargo xtask check-agent-skills` | required | repository policy |
@@ -27,6 +30,58 @@ details, not product meaning.
 | `product.repository.network_policy` | `cargo xtask check-network-policy` | required | repository policy |
 | `product.evidence.goldens` | `cargo xtask goldens check` | required | evidence |
 | `product.evidence.fixtures` | `cargo xtask fixtures` | required | evidence |
+
+The Rust test contract is `canonical_nextest_plus_cargo_doc` (#3825,
+`TEST_RUNNER_CONTRACT` in `xtask/src/product_gate_plan.rs`). It is
+intentionally dual:
+
+| Subject | Required owner | Features | Evidence retained |
+| --- | --- | --- | --- |
+| lib, bin, integration, and example test binaries | `cargo nextest run --workspace --profile ci` | default | fresh `junit.xml` naming at least one test, plus `run-context.txt` with checkout SHA, tool versions, and blob identities of `Cargo.lock`, `.config/nextest.toml`, and `rust-gates.yml` |
+| Rust doctests | `cargo test --workspace --doc` | default | job log only |
+| `lang-perl` and other non-default-feature tests | not in the required lane | all / perl / no-default | advisory Test Analytics, the `Perl and release proof` job, and the Windows advisory feature matrix |
+
+Nextest cannot execute doctests, so a green nextest row never stands in for the
+doctest row, and neither row claims non-default-feature subjects. The `ci`
+profile pins `retries = 0` and may not declare a `default-filter` or
+per-test overrides, so every test selected by default is required; the
+`framed_lsp_`/`editor_agent_loop_` skip in `.config/nextest.toml` is a local
+iteration hint and is never applied in CI. Nextest exit 0 without a fresh JUnit
+report naming at least one test fails the step, so an empty selection cannot
+render green. A change to the nextest config, the workflow, or `Cargo.lock`
+changes the blob identities recorded in `run-context.txt`, so an older receipt
+cannot be read as evidence for the new inputs.
+
+Focused tests in `product_gate_plan.rs` read the real workflow, nextest
+config, and this table. Each of these fails `cargo nextest run`:
+
+- removing, filtering, or respelling a required runner row, or adding any
+  other single logical line (backslash continuations joined) that invokes
+  `cargo test`/`cargo t`/`cargo nextest run`/`r`, including behind wrappers,
+  leading flags, or a `+toolchain`;
+- an `if:`, `continue-on-error:`, or `shell:` key (bare or quoted) on a runner
+  step; an `if:` or `continue-on-error:` on any job; a `defaults:` block; or a
+  doctest step that is anything other than exactly
+  `run: cargo test --workspace --doc`;
+- any `NEXTEST_*`, `RUSTDOCFLAGS`, or `CARGO_TARGET_*_RUNNER` variable in the
+  workflow;
+- a `default-filter`, `overrides`, non-zero or table `retries`, or a
+  different JUnit path anywhere in the parsed nextest config, quoted or inline;
+- restating a different command in this table.
+
+The `Required Rust tests` step body itself is executed under
+`bash -eo pipefail` with the runners stubbed: a zero-test, leading-zero, junk,
+missing, or stale-only report fails a green run, and a failing run keeps its
+exit code in the step result and in `run-context.txt`.
+
+These are text- and step-level controls over one workflow file, not a YAML or
+shell interpreter. They do not resolve repository-defined Cargo aliases, read
+runner-host or caller environment, catch control flow added to the nextest
+step beyond the executed scenarios, assert the blob identities that
+`run-context.txt` records, or guard a doctest run that selects zero doctests.
+The all-feature
+Test Analytics replay remains advisory telemetry and does not substitute for
+either required gate.
 
 The following current workflow producers are deliberately not ordinary
 product-gate rows: advisory reports, uploaded artifacts, PR summaries,
