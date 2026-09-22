@@ -587,7 +587,11 @@ fn negative_context(lines: &[&str], index: usize) -> bool {
             .and_then(|candidate| lines.get(candidate))
             .map(|line| line.to_ascii_lowercase())
             .is_some_and(|line| {
-                line.contains("do not") || line.contains("no ") || line.contains("without ")
+                line.contains("do not")
+                    || line.contains("no ")
+                    || line.contains("without ")
+                    || line.contains("instead of")
+                    || line.contains("rather than")
             })
     })
 }
@@ -595,6 +599,31 @@ fn negative_context(lines: &[&str], index: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn negative_context_accepts_rejection_phrases_but_not_active_state() -> Result<(), String> {
+        let instead_of = [
+            "Bind background work to its retained task/session handle",
+            "instead of guessing liveness from process names.",
+        ];
+        if !negative_context(&instead_of, 1) {
+            return Err("`instead of` should mark a rejected orchestration term".to_string());
+        }
+
+        let rather_than = [
+            "Task liveness must be bound to the retained task/session handle rather than",
+            "a guessed process name.",
+        ];
+        if !negative_context(&rather_than, 0) {
+            return Err("`rather than` should mark a rejected orchestration term".to_string());
+        }
+
+        let active = ["Track liveness with a process-name registry."];
+        if negative_context(&active, 0) {
+            return Err("active orchestration state must not be treated as rejected".to_string());
+        }
+        Ok(())
+    }
 
     #[test]
     fn operating_contract_markers_are_closed_and_discriminating() -> Result<(), String> {
