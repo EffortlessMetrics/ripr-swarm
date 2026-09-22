@@ -686,16 +686,8 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             apply_record_result?;
 
             let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
-            match std::fs::read_to_string(&receipt_path) {
-                Ok(receipt) => {
-                    for line in repair_receipt_summary_lines(&receipt) {
-                        eprintln!("ripr: {line}");
-                    }
-                }
-                Err(error) => eprintln!(
-                    "ripr: could not read {} to summarize the result: {error}",
-                    receipt_path.display()
-                ),
+            for line in repair_after_summary_lines(&receipt_path) {
+                eprintln!("ripr: {line}");
             }
             eprintln!(
                 "ripr: after phase complete. Receipt: {}",
@@ -809,6 +801,19 @@ fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), St
         return Err(format!("publish {} failed: {err}", path.display()));
     }
     Ok(())
+}
+
+/// Narration for the repair after phase: the receipt's summary, or a line
+/// naming the receipt that could not be read so the gap is visible rather
+/// than silently empty.
+fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
+    match std::fs::read_to_string(receipt_path) {
+        Ok(receipt) => repair_receipt_summary_lines(&receipt),
+        Err(error) => vec![format!(
+            "could not read {} to summarize the result: {error}",
+            receipt_path.display()
+        )],
+    }
 }
 
 /// One-line human result for the repair after phase, read from the receipt
@@ -1240,7 +1245,26 @@ mod tests {
 
 #[cfg(test)]
 mod repair_summary_tests {
-    use super::repair_receipt_summary_lines;
+    use super::{repair_after_summary_lines, repair_receipt_summary_lines};
+
+    #[test]
+    fn repair_after_summary_names_a_receipt_it_could_not_read() {
+        let missing = std::env::temp_dir()
+            .join(format!("ripr-missing-receipt-{}", std::process::id()))
+            .join("agent-receipt.json");
+        let lines = repair_after_summary_lines(&missing);
+        assert_eq!(lines.len(), 1, "expected one read-failure line: {lines:?}");
+        let expected_prefix = format!(
+            "could not read {} to summarize the result: ",
+            missing.display()
+        );
+        assert!(
+            lines
+                .first()
+                .is_some_and(|line| line.starts_with(&expected_prefix)),
+            "read failure must name the receipt path: {lines:?}"
+        );
+    }
 
     #[test]
     fn repair_summary_names_movement_and_next_action_from_the_receipt() {

@@ -3715,6 +3715,11 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     // snapshot this phase already wrote.
     let before_stdout: serde_json::Value = serde_json::from_slice(&before.stdout)?;
     assert_eq!(before_stdout["packets"][0]["seam_id"], "67fc764ba37d77bd");
+    let before_stdout_text = String::from_utf8_lossy(&before.stdout);
+    assert!(
+        !before_stdout_text.contains("ripr: ") && !before_stdout_text.contains("Next:"),
+        "before phase narration belongs on stderr, not in the packet JSON:\n{before_stdout_text}"
+    );
     let before_stderr = String::from_utf8_lossy(&before.stderr);
     assert!(
         before_stderr
@@ -3767,6 +3772,10 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     assert!(
         after_stderr.contains("ripr: result for seam `67fc764ba37d77bd`: weakly_gripped -> "),
         "after phase must name the seam's movement:\n{after_stderr}"
+    );
+    assert!(
+        !after_stderr.contains("could not read"),
+        "after phase must read the receipt it just wrote:\n{after_stderr}"
     );
     assert!(
         after_stderr.contains("ripr: after phase complete. Receipt: "),
