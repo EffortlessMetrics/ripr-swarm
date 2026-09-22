@@ -496,10 +496,16 @@ mod tests {
                 .map(|gate| gate.command)
         })
         .collect();
-        for line in &lines {
-            let runs_tests =
-                line.starts_with("cargo nextest run") || line.starts_with("cargo test");
-            if runs_tests && !runner_rows.contains(line) {
+        // Any executed line that invokes a test runner, including behind a
+        // wrapper such as `env`, `timeout`, or `&&`, must be a declared row.
+        // Only `printf`/`echo` lines, which record the command as text for
+        // the run context, may mention it without running it.
+        for line in workflow.lines().map(str::trim) {
+            let line = line.strip_prefix("run: ").unwrap_or(line);
+            let records_text = line.starts_with("printf ") || line.starts_with("echo ");
+            let runs_tests = line.contains("cargo nextest run") || line.contains("cargo test");
+            if runs_tests && !records_text && !line.starts_with('#') && !runner_rows.contains(line)
+            {
                 violations.push(format!(
                     "required workflow runs undeclared test command `{line}`"
                 ));
@@ -590,6 +596,20 @@ mod tests {
             violations
                 .iter()
                 .any(|v| v.contains("undeclared test command"))
+        );
+
+        let wrapped = REQUIRED_WORKFLOW.replace(
+            "        run: cargo test --workspace --doc\n",
+            "        run: |\n          cargo test --workspace --doc\n          timeout 60 cargo test --workspace --lib -- --skip framed_lsp_\n",
+        );
+        assert_ne!(
+            wrapped, REQUIRED_WORKFLOW,
+            "fixture must add a wrapped runner line"
+        );
+        assert!(
+            required_workflow_runner_violations(&wrapped)
+                .iter()
+                .any(|v| v.contains("timeout 60 cargo test"))
         );
     }
 
