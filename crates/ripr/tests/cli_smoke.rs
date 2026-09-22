@@ -10689,13 +10689,23 @@ fn agent_status_next_command_uses_the_workspace_root() -> Result<(), String> {
             "next command must not use the workflow directory as --root; got `{next}`"
         ));
     }
+    // Positive grip: the command and the report carry exactly the root the
+    // user passed (display paths use `/` on every platform).
+    let expected_root = root_str.replace('\\', "/");
+    let expected_prefix = format!("ripr check --root {expected_root} --mode");
+    let quoted_prefix = format!("ripr check --root '{expected_root}' --mode");
+    if !next.starts_with(&expected_prefix) && !next.starts_with(&quoted_prefix) {
+        return Err(format!(
+            "next command must target the given root `{expected_root}`; got `{next}`"
+        ));
+    }
     let reported_root = report
         .pointer("/root")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| format!("expected root string:\n{stdout}"))?;
-    if reported_root.contains("target/ripr/workflow") {
+    if reported_root != expected_root {
         return Err(format!(
-            "reported root must be the workspace, not the workflow dir; got `{reported_root}`"
+            "reported root must be the given workspace `{expected_root}`; got `{reported_root}`"
         ));
     }
 
