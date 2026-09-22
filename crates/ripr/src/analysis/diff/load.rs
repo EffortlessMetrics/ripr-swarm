@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+#[cfg(test)]
+mod contract_tests;
+
 pub fn load_diff(
     root: &Path,
     base: Option<&str>,
@@ -389,6 +392,17 @@ fn run_git_diff(
     // change.
     let mut args: Vec<&str> = vec!["-c", "core.quotePath=true", "diff"];
     args.extend_from_slice(extra_args);
+    // Analysis consumes source-coordinate patches, not human diff views.
+    // Pin every caller, including worktree mode: helpers can suppress real
+    // changes, textconv can invent source coordinates, and ambient context
+    // can expand a one-line edit into a full-file payload (#3850).
+    args.extend_from_slice(&[
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--unified=0",
+        "--inter-hunk-context=0",
+    ]);
     args.push(range);
     let output = match crate::git::run_git_output_with_deadline(root, &args, git_timeout) {
         Ok(output) => output,
