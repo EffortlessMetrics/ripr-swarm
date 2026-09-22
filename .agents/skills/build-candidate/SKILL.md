@@ -28,6 +28,8 @@ Before running shell commands, identify the current host, shell, repository root
 
 Cargo writes normal progress to stderr. Stderr output alone is not failure. Use the real process exit status and terminal test/build summary. If a wrapper obscures the exit status, rerun the command directly or capture the native status explicitly before classifying the result.
 
+Bind every background command to its retained task/session handle and terminal result. A process-name filter, missing child name, stale report file, or temporary lack of output does not establish that the driver died, stalled, or orphaned work. Do not call a process harmless, abandoned, or safe to ignore without ownership, parent/driver, terminal-status, and cleanup evidence. When those facts are unavailable, report process state as unknown and avoid launching a competing broad run.
+
 Run one broad Cargo command at a time in a candidate worktree and avoid stacking broad builds on the same constrained host. Do not kill or reinterpret unrelated processes. The parent goal may advance an independent claim in another worktree or worker while this candidate's command runs; the candidate writer remains the only mutator here.
 
 # Procedure
