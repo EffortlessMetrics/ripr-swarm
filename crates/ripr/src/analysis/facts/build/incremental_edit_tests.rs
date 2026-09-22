@@ -6,8 +6,8 @@
 //! not claim that semantic classification itself is incrementally cached.
 
 use super::{
-    CachedRustIndex, LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RepoFileFactCache,
-    RustIndex, RustSyntaxAdapter, build_index, build_index_with_file_fact_cache,
+    CachedRustIndex, LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RepoFileFactCache, RustIndex,
+    RustSyntaxAdapter, build_index, build_index_with_file_fact_cache,
 };
 use crate::analysis::classifier::classify_probe;
 use crate::analysis::facts::FileFacts;
@@ -159,11 +159,18 @@ impl EditFixture {
         );
         assert_eq!(
             cached.file_fact_cache.invalidated_files,
-            invalidated.iter().map(|path| PathBuf::from(*path)).collect()
+            invalidated
+                .iter()
+                .map(|path| PathBuf::from(*path))
+                .collect()
         );
         assert_eq!(cached.index.files.len(), self.files.len());
         assert!(
-            cached.index.files.values().all(|facts| !facts.used_lexical_fallback),
+            cached
+                .index
+                .files
+                .values()
+                .all(|facts| !facts.used_lexical_fallback),
             "the parser-count controls must exercise the primary syntax adapter"
         );
 
@@ -199,7 +206,10 @@ fn owner_findings(index: &RustIndex) -> Vec<Finding> {
     // Relative locations match the relative facts used by the classifier;
     // probe extraction reads the supplied index, not the current directory.
     let probes = probes_for_repo_file(Path::new(""), Path::new(OWNER), index);
-    assert!(!probes.is_empty(), "the fixture must emit actual owner probes");
+    assert!(
+        !probes.is_empty(),
+        "the fixture must emit actual owner probes"
+    );
     probes
         .iter()
         .map(|probe| classify_probe(probe, index, true, None))
@@ -290,7 +300,12 @@ fn added_and_deleted_test_refreshes_relations_without_false_invalidation() -> Te
     fixture.remove("tests/later.rs")?;
     let deleted = fixture.replay(FILE_COUNT, 0, &[])?;
     assert!(!relates(&deleted.index, "later_case"));
-    assert!(!deleted.index.files.contains_key(Path::new("tests/later.rs")));
+    assert!(
+        !deleted
+            .index
+            .files
+            .contains_key(Path::new("tests/later.rs"))
+    );
     Ok(())
 }
 
