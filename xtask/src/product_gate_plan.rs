@@ -367,9 +367,7 @@ mod tests {
         assert!(definitions.iter().any(|gate| {
             gate.id == ProductGateId::WorkspaceDocTests
                 && gate.command == "cargo test --workspace --doc"
-                && gate
-                    .non_claim
-                    .contains("does not replace nextest coverage")
+                && gate.non_claim.contains("does not replace nextest coverage")
         }));
     }
 
