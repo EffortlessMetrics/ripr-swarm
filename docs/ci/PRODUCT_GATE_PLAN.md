@@ -53,9 +53,23 @@ changes the blob identities recorded in `run-context.txt`, so an older receipt
 cannot be read as evidence for the new inputs.
 
 Focused tests in `product_gate_plan.rs` read the real workflow, nextest
-config, and this table: removing or filtering a required runner row, adding an
-undeclared test command, adding a filter/override/retry to the config, or
-restating a different command here fails `cargo nextest run`. The all-feature
+config, and this table. Each of these fails `cargo nextest run`:
+
+- removing, filtering, or respelling a required runner row, or adding any
+  other line that invokes `cargo test`/`cargo t`/`cargo nextest run`/`r`,
+  including behind wrappers, leading flags, or a `+toolchain`;
+- an `if:` or `continue-on-error:` on a runner step, `continue-on-error:` on
+  the job, or any `NEXTEST_*` variable in the workflow;
+- a `default-filter`, `overrides`, non-zero or table `retries`, or a
+  different JUnit path anywhere in the parsed nextest config, quoted or inline;
+- restating a different command in this table.
+
+The `Required Rust tests` step body itself is executed under
+`bash -eo pipefail` with the runners stubbed: a zero-test, leading-zero, junk,
+missing, or stale-only report fails a green run, and a failing run keeps its
+exit code in the step result and in `run-context.txt`. These controls do not
+resolve repository-defined Cargo aliases, read runner-host environment, or
+guard a doctest run that selects zero doctests. The all-feature
 Test Analytics replay remains advisory telemetry and does not substitute for
 either required gate.
 

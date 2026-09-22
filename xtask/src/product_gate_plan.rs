@@ -472,6 +472,68 @@ mod tests {
             .collect()
     }
 
+    /// Whether a shell line invokes a Cargo test runner however it is
+    /// spelled: behind a wrapper (`env`, `timeout`, `&&`), with flags or a
+    /// `+toolchain` before the subcommand, or through the `t`/`r` aliases.
+    /// Aliases a repository defines in `.cargo/config.toml` are not resolved.
+    fn invokes_test_runner(line: &str) -> bool {
+        let tokens: Vec<&str> = line
+            .split(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')'))
+            .filter(|token| !token.is_empty())
+            .collect();
+        tokens.iter().enumerate().any(|(index, token)| {
+            let program = token.rsplit('/').next().unwrap_or(token);
+            if program == "cargo-nextest" {
+                return true;
+            }
+            if program != "cargo" {
+                return false;
+            }
+            let mut rest = tokens[index + 1..].iter();
+            let mut positional = Vec::new();
+            while let Some(token) = rest.next() {
+                if matches!(*token, "--config" | "-Z" | "-C" | "--color") {
+                    rest.next();
+                } else if !token.starts_with('-') && !token.starts_with('+') {
+                    positional.push(*token);
+                    if positional.len() == 2 {
+                        break;
+                    }
+                }
+            }
+            matches!(
+                positional.as_slice(),
+                ["test" | "t", ..] | ["nextest", "run" | "r", ..]
+            )
+        })
+    }
+
+    /// The required job's steps, each as its YAML lines.
+    fn workflow_steps(workflow: &str) -> Vec<Vec<&str>> {
+        let mut steps: Vec<Vec<&str>> = Vec::new();
+        let mut in_steps = false;
+        for line in workflow.lines() {
+            if line.trim_end() == "    steps:" {
+                in_steps = true;
+            } else if in_steps && line.starts_with("      - ") {
+                steps.push(vec![line]);
+            } else if let Some(step) = steps.last_mut() {
+                step.push(line);
+            }
+        }
+        steps
+    }
+
+    /// A step-level key such as `if:` on a step's own lines.
+    fn step_has_key(step: &[&str], key: &str) -> bool {
+        step.iter().any(|line| {
+            let trimmed = line.trim_start();
+            let indent = line.len() - trimmed.len();
+            let trimmed = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+            matches!(indent, 6 | 8) && trimmed.starts_with(key)
+        })
+    }
+
     fn required_workflow_runner_violations(workflow: &str) -> Vec<String> {
         let lines = workflow_command_lines(workflow);
         let mut violations = Vec::new();
@@ -496,61 +558,103 @@ mod tests {
                 .map(|gate| gate.command)
         })
         .collect();
-        // Any executed line that invokes a test runner, including behind a
-        // wrapper such as `env`, `timeout`, or `&&`, must be a declared row.
-        // Only `printf`/`echo` lines, which record the command as text for
-        // the run context, may mention it without running it.
+        // Any executed line that invokes a test runner must be a declared row.
         for line in workflow.lines().map(str::trim) {
             let line = line.strip_prefix("run: ").unwrap_or(line);
-            let records_text = line.starts_with("printf ") || line.starts_with("echo ");
-            let runs_tests = line.contains("cargo nextest run") || line.contains("cargo test");
-            if runs_tests && !records_text && !line.starts_with('#') && !runner_rows.contains(line)
-            {
+            if !line.starts_with('#') && invokes_test_runner(line) && !runner_rows.contains(line) {
                 violations.push(format!(
                     "required workflow runs undeclared test command `{line}`"
+                ));
+            }
+        }
+        // A declared row must run unconditionally and fail the job when it
+        // fails, with nextest reading only the checked-in `ci` profile.
+        for step in workflow_steps(workflow) {
+            let runs_row = step.iter().any(|line| {
+                let line = line.trim();
+                runner_rows.contains(line.strip_prefix("run: ").unwrap_or(line))
+            });
+            if !runs_row {
+                continue;
+            }
+            let name = step[0].trim().trim_start_matches("- ");
+            for key in ["if:", "continue-on-error:"] {
+                if step_has_key(&step, key) {
+                    violations.push(format!(
+                        "required runner step `{name}` declares `{key}`, so the row can be skipped or ignored"
+                    ));
+                }
+            }
+        }
+        for line in workflow.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('#') {
+                continue;
+            }
+            if line.len() - trimmed.len() == 4 && trimmed.starts_with("continue-on-error:") {
+                violations.push(
+                    "required job declares `continue-on-error:`, so a failing row cannot fail it"
+                        .to_string(),
+                );
+            }
+            if trimmed.contains("NEXTEST_") {
+                violations.push(format!(
+                    "required workflow sets nextest configuration through the environment: `{trimmed}`"
                 ));
             }
         }
         violations
     }
 
-    fn nextest_config_violations(config: &str) -> Vec<String> {
-        let mut violations = Vec::new();
-        let mut section = String::new();
-        let mut ci_retries = None;
-        let mut ci_junit_path = None;
-        for raw in config.lines() {
-            let line = raw.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if line.starts_with('[') {
-                section = line.trim_matches(|c| c == '[' || c == ']').to_string();
-                if section.contains("overrides") {
-                    violations.push(format!("nextest config declares `[{section}]`"));
+    /// Keys that change which tests nextest selects or how it retries them,
+    /// wherever they appear in the parsed config, quoted or inline.
+    fn collect_selection_keys(value: &toml::Value, path: &str, violations: &mut Vec<String>) {
+        match value {
+            toml::Value::Table(table) => {
+                for (key, child) in table {
+                    let child_path = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    if key == "default-filter" || key == "overrides" {
+                        violations.push(format!(
+                            "nextest config declares `{child_path}`, which narrows or re-policies the selected tests"
+                        ));
+                    }
+                    collect_selection_keys(child, &child_path, violations);
                 }
-                continue;
             }
-            let Some((key, value)) = line.split_once('=') else {
-                continue;
-            };
-            let (key, value) = (key.trim(), value.trim());
-            if key == "default-filter" {
-                violations.push(format!(
-                    "`[{section}]` narrows the selected tests with `default-filter`"
-                ));
+            toml::Value::Array(items) => {
+                for item in items {
+                    collect_selection_keys(item, path, violations);
+                }
             }
-            if section == "profile.ci" && key == "retries" {
-                ci_retries = Some(value.to_string());
-            }
-            if section == "profile.ci.junit" && key == "path" {
-                ci_junit_path = Some(value.to_string());
-            }
+            _ => {}
         }
-        if ci_retries.as_deref() != Some("0") {
+    }
+
+    fn nextest_config_violations(config: &str) -> Vec<String> {
+        let value = match toml::from_str::<toml::Value>(config) {
+            Ok(value) => value,
+            Err(err) => return vec![format!("nextest config does not parse: {err}")],
+        };
+        let mut violations = Vec::new();
+        collect_selection_keys(&value, "", &mut violations);
+        let ci = value.get("profile").and_then(|profile| profile.get("ci"));
+        if ci
+            .and_then(|ci| ci.get("retries"))
+            .and_then(toml::Value::as_integer)
+            != Some(0)
+        {
             violations.push("`[profile.ci]` must pin `retries = 0`".to_string());
         }
-        if ci_junit_path.as_deref() != Some("\"junit.xml\"") {
+        if ci
+            .and_then(|ci| ci.get("junit"))
+            .and_then(|junit| junit.get("path"))
+            .and_then(toml::Value::as_str)
+            != Some("junit.xml")
+        {
             violations.push("`[profile.ci.junit]` must write `junit.xml`".to_string());
         }
         violations
@@ -611,6 +715,72 @@ mod tests {
                 .iter()
                 .any(|v| v.contains("timeout 60 cargo test"))
         );
+
+        // Respelled runners, a skipped or ignored row, and environment
+        // overrides of the `ci` profile each keep the row text intact.
+        let doctest_step = "      - name: Required Rust doctests\n";
+        let tests_step = "      - name: Required Rust tests\n        id: rust-tests\n";
+        let cases = [
+            (
+                doctest_step,
+                "      - name: Required Rust doctests\n        if: false\n",
+                "declares `if:`",
+            ),
+            (
+                doctest_step,
+                "      - name: Required Rust doctests\n        continue-on-error: true\n",
+                "declares `continue-on-error:`",
+            ),
+            (
+                "    timeout-minutes: ${{ inputs.job-timeout-minutes }}\n",
+                "    timeout-minutes: ${{ inputs.job-timeout-minutes }}\n    continue-on-error: true\n",
+                "required job declares `continue-on-error:`",
+            ),
+            (
+                tests_step,
+                "      - name: Required Rust tests\n        id: rust-tests\n        env:\n          NEXTEST_RETRIES: \"3\"\n",
+                "through the environment",
+            ),
+            (
+                "        run: cargo test --workspace --doc\n",
+                "        run: |\n          cargo test --workspace --doc\n          cargo --locked test --workspace --lib -- --skip framed_lsp_\n",
+                "cargo --locked test",
+            ),
+            (
+                "        run: cargo test --workspace --doc\n",
+                "        run: |\n          cargo test --workspace --doc\n          cargo +1.95.0 nextest r --workspace -E 'not test(framed_lsp_)'\n",
+                "cargo +1.95.0 nextest r",
+            ),
+        ];
+        for (anchor, replacement, expected) in cases {
+            assert_eq!(
+                REQUIRED_WORKFLOW.matches(anchor).count(),
+                1,
+                "fixture anchor must be unique: {anchor}"
+            );
+            let edited = REQUIRED_WORKFLOW.replacen(anchor, replacement, 1);
+            let violations = required_workflow_runner_violations(&edited);
+            assert!(
+                violations.iter().any(|v| v.contains(expected)),
+                "{expected}: {violations:#?}"
+            );
+        }
+        for spelled in [
+            "cargo --locked test --workspace",
+            "env CARGO_TERM_COLOR=never cargo t --workspace",
+            "cargo --config net.offline=true nextest run --workspace",
+            "true && ~/.cargo/bin/cargo-nextest nextest run",
+        ] {
+            assert!(invokes_test_runner(spelled), "{spelled}");
+        }
+        for not_a_runner in [
+            "cargo nextest --version",
+            "cargo xtask test-oracle-report",
+            "cargo clippy --workspace --all-targets -- -D warnings",
+            "printf 'profile=ci\\ncommand=cargo nextest run --workspace --profile ci\\n'",
+        ] {
+            assert!(!invokes_test_runner(not_a_runner), "{not_a_runner}");
+        }
     }
 
     #[test]
@@ -635,15 +805,151 @@ mod tests {
         let no_junit = NEXTEST_CONFIG.replace("path = \"junit.xml\"", "");
         assert_ne!(no_junit, NEXTEST_CONFIG, "fixture must drop the JUnit path");
         assert!(!nextest_config_violations(&no_junit).is_empty());
+
+        // Quoted and inline spellings parse to the same keys nextest reads.
+        let quoted = NEXTEST_CONFIG.replace(
+            "[profile.ci]\n",
+            "[profile.ci]\n\"default-filter\" = \"not test(framed_lsp_)\"\n",
+        );
+        assert_ne!(quoted, NEXTEST_CONFIG, "fixture must add a quoted filter");
+        assert!(
+            nextest_config_violations(&quoted)
+                .iter()
+                .any(|v| v.contains("profile.ci.default-filter"))
+        );
+        let inline = NEXTEST_CONFIG.replace(
+            "[profile.ci]\n",
+            "[profile.ci]\noverrides = [{ filter = \"test(slow)\", retries = 3 }]\n",
+        );
+        assert_ne!(inline, NEXTEST_CONFIG, "fixture must add inline overrides");
+        assert!(
+            nextest_config_violations(&inline)
+                .iter()
+                .any(|v| v.contains("profile.ci.overrides"))
+        );
+        let table_retries = NEXTEST_CONFIG.replace(
+            "retries = 0",
+            "retries = { backoff = \"fixed\", count = 2 }",
+        );
+        assert_ne!(table_retries, NEXTEST_CONFIG, "fixture must retry");
+        assert!(!nextest_config_violations(&table_retries).is_empty());
+        assert!(!nextest_config_violations("[profile.ci\n").is_empty());
     }
 
-    #[test]
-    fn required_workflow_rejects_zero_test_junit_as_green() {
-        // The fresh-report guard must require at least one named test, so an
-        // empty selection or an unrelated nonempty file cannot pass.
-        assert!(REQUIRED_WORKFLOW.contains(
-            r#"grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml"#
-        ));
+    /// Runs the real `Required Rust tests` step body under the Actions
+    /// default shell (`bash -eo pipefail`) with `cargo`, `git`, and `rustc`
+    /// stubbed, so the fresh-report guard and exit propagation are executed,
+    /// not string-matched.
+    #[cfg(target_os = "linux")]
+    mod required_test_step {
+        use std::process::Command;
+
+        use super::REQUIRED_WORKFLOW;
+
+        const STUBS: &str = r#"
+cargo() {
+  if [ "$1 $2" = "nextest run" ]; then
+    if [ -n "${STUB_JUNIT:-}" ]; then printf '%s\n' "$STUB_JUNIT" > target/nextest/ci/junit.xml; fi
+    return "$STUB_EXIT"
+  fi
+  echo "cargo stub $*"
+}
+git() { echo 0000000000000000000000000000000000000000; }
+rustc() { echo "rustc stub"; }
+"#;
+
+        fn step_body() -> String {
+            crate::extract_workflow_run_blocks(REQUIRED_WORKFLOW)
+                .into_iter()
+                .find(|block| {
+                    block
+                        .text
+                        .contains("cargo nextest run --workspace --profile ci")
+                        && block.text.contains("junit.xml")
+                })
+                .map(|block| block.text)
+                .unwrap_or_default()
+        }
+
+        /// Returns the step's exit code and the run context it wrote.
+        fn run(
+            label: &str,
+            stub_exit: u8,
+            junit: &str,
+            stale: bool,
+        ) -> Result<(Option<i32>, String), String> {
+            let body = step_body();
+            assert!(!body.is_empty(), "Required Rust tests step not found");
+            let dir = crate::tests::temp_dir(&format!("required-test-step-{label}"));
+            let ci = dir.join("target/nextest/ci");
+            std::fs::create_dir_all(&ci).map_err(|err| err.to_string())?;
+            if stale {
+                let stale_report = r#"<testsuites name="nextest-run" tests="9">"#;
+                std::fs::write(ci.join("junit.xml"), stale_report)
+                    .map_err(|err| err.to_string())?;
+            }
+            let script = dir.join("step.sh");
+            std::fs::write(&script, format!("{STUBS}\n{body}\n")).map_err(|err| err.to_string())?;
+            let output = Command::new("bash")
+                .args(["--noprofile", "--norc", "-eo", "pipefail"])
+                .arg(&script)
+                .current_dir(&dir)
+                .env("STUB_EXIT", stub_exit.to_string())
+                .env("STUB_JUNIT", junit)
+                .env("GITHUB_REPOSITORY", "EffortlessMetrics/ripr-swarm")
+                .env("GITHUB_RUN_ID", "1")
+                .env("GITHUB_RUN_ATTEMPT", "1")
+                .output();
+            let context = std::fs::read_to_string(ci.join("run-context.txt")).unwrap_or_default();
+            let _ = std::fs::remove_dir_all(&dir);
+            let code = output.ok().and_then(|output| output.status.code());
+            Ok((code, context))
+        }
+
+        const NAMED: &str = r#"<testsuites name="nextest-run" tests="3" failures="0">"#;
+
+        #[test]
+        fn a_fresh_report_naming_tests_passes() -> Result<(), String> {
+            let (code, context) = run("pass", 0, NAMED, false)?;
+            assert_eq!(code, Some(0));
+            assert!(context.contains("nextest_exit=0"), "{context}");
+            assert!(
+                context.contains("command=cargo nextest run --workspace --profile ci"),
+                "{context}"
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn a_green_run_without_a_fresh_named_report_fails() -> Result<(), String> {
+            for (label, junit, stale) in [
+                (
+                    "zero",
+                    r#"<testsuites name="nextest-run" tests="0">"#,
+                    false,
+                ),
+                (
+                    "leading-zero",
+                    r#"<testsuites name="nextest-run" tests="05">"#,
+                    false,
+                ),
+                ("junk", "not xml", false),
+                ("missing", "", false),
+                ("stale", "", true),
+            ] {
+                let (code, _) = run(label, 0, junit, stale)?;
+                assert_eq!(code, Some(1), "{label}");
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn a_failing_run_keeps_its_exit_code_and_context() -> Result<(), String> {
+            let (code, context) = run("fail", 100, NAMED, false)?;
+            assert_eq!(code, Some(100));
+            assert!(context.contains("nextest_exit=100"), "{context}");
+            Ok(())
+        }
     }
 
     #[test]
