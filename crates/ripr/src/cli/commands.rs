@@ -6941,6 +6941,113 @@ language = "rust"
         );
     }
 
+    /// The contiguous `#` comment lines immediately above `<name>:` in the
+    /// generated workflow's `env:` block. Extracting the block is what makes
+    /// the negative assertions below mean anything: a phrase deleted from this
+    /// comment could still match somewhere else in a 2000-line workflow.
+    fn generated_workflow_env_comment(workflow: &str, name: &str) -> Result<String, String> {
+        let mut comment: Vec<&str> = Vec::new();
+        for line in workflow.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with(&format!("{name}:")) {
+                return Ok(comment.join("\n"));
+            }
+            if let Some(text) = trimmed.strip_prefix("# ") {
+                comment.push(text);
+            } else if trimmed.starts_with('#') {
+                comment.push("");
+            } else {
+                comment.clear();
+            }
+        }
+        Err(format!("generated workflow has no `{name}:` env entry"))
+    }
+
+    /// The generated workflow documents the gate to whoever adopts it, and
+    /// nothing else reads those comments, so they drift silently. Bind them to
+    /// the two contracts they describe rather than to their own wording.
+    #[test]
+    fn generated_workflow_env_comments_match_the_gate_contract() -> Result<(), String> {
+        let workflow = generated_github_actions_workflow();
+        let gate_help = crate::cli::help::help_text_for("gate")
+            .ok_or_else(|| "`ripr gate` has no help text".to_string())?;
+
+        // `--baseline` takes a filesystem path, and the workflow feeds this
+        // variable straight to that flag, so the comment cannot call it a ref.
+        assert!(
+            gate_help.contains("--baseline PATH"),
+            "gate help no longer declares --baseline as a PATH:\n{gate_help}"
+        );
+        assert!(
+            workflow.contains("--baseline \"$RIPR_GATE_BASELINE\""),
+            "generated workflow no longer passes RIPR_GATE_BASELINE to --baseline"
+        );
+        let baseline = generated_workflow_env_comment(&workflow, "RIPR_GATE_BASELINE")?;
+        assert!(
+            baseline.contains(".ripr/gate-baseline.json"),
+            "RIPR_GATE_BASELINE comment does not name a ledger path:\n{baseline}"
+        );
+        for ref_wording in ["git ref", "tag, branch", "SHA"] {
+            assert!(
+                !baseline.contains(ref_wording),
+                "RIPR_GATE_BASELINE comment describes a git ref, but the flag \
+                 takes a path:\n{baseline}"
+            );
+        }
+
+        // Every mode the CLI accepts is listed, derived from the help line
+        // rather than from a second list kept here.
+        let mode_line = gate_help
+            .lines()
+            .find(|line| line.trim_start().starts_with("--mode MODE"))
+            .ok_or_else(|| format!("gate help does not document --mode:\n{gate_help}"))?;
+        let modes: Vec<&str> = mode_line
+            .split_once("MODE")
+            .map(|(_, values)| values)
+            .unwrap_or(mode_line)
+            .split('.')
+            .next()
+            .unwrap_or_default()
+            .split(&[',', ' '][..])
+            .map(|token| token.trim())
+            .filter(|token| {
+                !token.is_empty()
+                    && *token != "or"
+                    && token
+                        .chars()
+                        .all(|character| character.is_ascii_lowercase() || character == '-')
+            })
+            .collect();
+        // Guards the parse above, not the mode set: modes are only ever added,
+        // so a short inventory means this stopped reading the help line.
+        assert!(
+            modes.len() >= 4,
+            "parsed no usable mode inventory from: {mode_line}"
+        );
+        let mode_comment = generated_workflow_env_comment(&workflow, "RIPR_GATE_MODE")?;
+        for mode in &modes {
+            assert!(
+                mode_comment.contains(mode),
+                "generated workflow does not document gate mode `{mode}`:\n{mode_comment}"
+            );
+        }
+
+        // calibrated-gate blocks a strict subset of what acknowledgeable
+        // blocks: `output::gate` requires a new baseline identity, supporting
+        // calibration evidence, and warning severity, where acknowledgeable
+        // blocks every policy-eligible candidate.
+        assert!(
+            !mode_comment.contains("any actionable finding"),
+            "calibrated-gate is described as the broadest mode:\n{mode_comment}"
+        );
+        assert!(
+            mode_comment.contains("new") && mode_comment.contains("policy-eligible"),
+            "calibrated-gate comment does not state what it narrows to:\n{mode_comment}"
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn init_generated_github_workflow_is_advisory() {
         let workflow = generated_github_actions_workflow();

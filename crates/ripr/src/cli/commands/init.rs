@@ -348,11 +348,14 @@ env:
   #   visible-only     gate runs and prints, but does not block the job
   #   acknowledgeable  gate runs; PR author can acknowledge to merge
   #   baseline-check   gate fails if exposure is worse than the baseline
-  #   calibrated-gate  gate fails on any actionable finding
+  #   calibrated-gate  gate fails only on new, high-confidence,
+  #                    policy-eligible gaps; needs baseline and
+  #                    calibration inputs
   # See docs/CALIBRATED_GATE_POLICY.md for the full policy.
   RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}
-  # Optional baseline git ref (tag, branch, or SHA) the gate compares
-  # against when RIPR_GATE_MODE includes a baseline check. Empty by default.
+  # Optional path to a reviewed baseline ledger file, such as
+  # .ripr/gate-baseline.json, that baseline-check and calibrated-gate
+  # compare current evidence against. Empty by default.
   RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}
   # PR review-comment publishing. Configure as a repository variable.
   # Allowed values:
