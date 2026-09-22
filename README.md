@@ -38,7 +38,8 @@
 
 - **Rust ≥ 1.95** (2024 edition). Check with `rustc --version`; update with `rustup update stable`.
 - **Git** on your `PATH`.
-- Run inside a **Git repository**. By default, ripr looks for `origin/main`, `origin/master`, `main`, or `master` as the diff base; pass `--base <ref>` when you need a different base.
+- Run inside a **Git repository**. By default, ripr uses the remote default branch (`origin/HEAD`), then `origin/main`, `origin/master`, `main`, or `master` as the diff base; pass `--base <ref>` when you need a different base.
+- ripr diffs committed history by default. Commit your change first, or pass `--worktree` to include staged and unstaged edits.
 
 ## The first useful run
 
@@ -64,6 +65,7 @@ docs expands on them:
 
 ```bash
 cargo install ripr
+ripr doctor
 ripr check --base origin/main
 ```
 
@@ -85,7 +87,9 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 The before phase prints the exact `--attempt` command to run after the test
 edit. Keep that command: its repair-attempt ID identifies the prepared
 transaction. See [repair attempt identity](docs/REPAIR_ATTEMPT.md) for
-continuation and recovery.
+continuation and recovery. For a trust-bound Python attempt, a third,
+separately authorized `--phase verify` runs the verify route; see the
+[command hierarchy](docs/COMMAND_HIERARCHY.md#repair-transaction).
 
 RIPR owns the before/after evidence plumbing. The human or external coding agent
 owns the focused test edit. `ripr pilot --root .` remains the guided
@@ -135,7 +139,8 @@ draft-time question between them.
 
 ## Example output
 
-Illustrative bounded `ripr check --format human` output (paths shortened):
+Illustrative bounded `ripr check --format human` output (summary header omitted,
+paths shortened):
 
 ```text
 Start here:
@@ -144,7 +149,7 @@ Start here:
   File: src/lib.rs:2
   Static exposure: weakly_exposed (warning, confidence 0.92)
   Why weakly_exposed: the evidence path is partially complete — see full form for details
-  Changed behavior: if amount >= discount_threshold {
+  Changed behavior: amount >= discount_threshold
   Missing discriminator: amount == discount_threshold
   Related test: tests/pricing.rs:4 below_threshold_has_no_discount
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
@@ -182,6 +187,7 @@ and gaps; it does not claim runtime mutation outcomes.
 | CI owner | `ripr init --ci github` for an advisory PR summary and artifact packet. | [Quickstart](docs/QUICKSTART.md#ci-first-hour) |
 | CLI user | `ripr check --base origin/main`, then repair the selected named gap. | [Quickstart](docs/QUICKSTART.md#cli-first-hour) |
 | Agent operator | `ripr agent repair --seam-id <id> --phase before`, then finish after the focused test edit. | [LLM operator guide](docs/LLM_OPERATOR_GUIDE.md) |
+| MCP client | `ripr mcp --stdio` for read-only workspace status. | [MCP workspace status server](docs/interop/mcp.md) |
 
 ## Status
 

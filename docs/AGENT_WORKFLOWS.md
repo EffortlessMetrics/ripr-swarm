@@ -172,8 +172,9 @@ clean review records what was inspected and what remains unverified. Naked LGTM,
 green CI and an empty thread list are not semantic review.
 
 Valid dispositions are `REVIEW_READY`, `REPAIR_REQUIRED`, `REVIEW_INCOMPLETE`,
-`INSTRUMENT_FAILURE`, `INFRASTRUCTURE_FAILURE` and `NOT_ESTABLISHED`. Missing
-hosted evidence prevents merge readiness, not publication to obtain that evidence.
+`INSTRUMENT_FAILURE`, `INFRASTRUCTURE_FAILURE`, `EXTERNAL_BLOCKER` and
+`NOT_ESTABLISHED`. Missing hosted evidence prevents merge readiness, not
+publication to obtain that evidence.
 On the author's own PR, use a `COMMENT` review with explicit disposition; the
 platform's author-review constraint is not approval.
 

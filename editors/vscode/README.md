@@ -74,7 +74,7 @@ surface keeps that vocabulary out of the first-hour path. See the
 [Terminology bridge](https://github.com/EffortlessMetrics/ripr/blob/main/docs/TERMINOLOGY.md)
 to map between the two.
 
-The 0.8.x extension surfaces saved-workspace diagnostics, evidence-aware
+The 0.11.x extension surfaces saved-workspace diagnostics, evidence-aware
 hovers, intent-titled code actions for inspecting the flagged change /
 writing the targeted test / copying the agent handoff / verifying after the
 test / reviewing the receipt / refreshing analysis, an LSP
@@ -103,21 +103,35 @@ confirmation.
 - `ripr.server.downloadBaseUrl`: override the manifest location for internal
   mirrors.
 - `ripr.check.mode`: preferred editor check mode. Defaults to `draft`.
-- `ripr.baseRef`: Git base ref used by context commands. Defaults to
-  `origin/main`.
+- `ripr.baseRef`: Git base ref used by editor diagnostics and context commands.
+  Defaults to `origin/main`.
+- `ripr.includeUnchangedTests`: include unchanged tests as static evidence.
+  Defaults to `true`.
+- `ripr.seamDiagnostics`: publish repository seam diagnostics in addition to
+  diff-derived findings. Defaults to `true`.
+- `ripr.diagnosticProfile`: `actionable` (default) publishes only
+  producer-backed bounded routes; `full` keeps audit and debug visibility.
+- `ripr.gitTimeoutMs`: deadline for each git invocation in the server's refresh
+  path. Defaults to `30000`.
+- `ripr.refreshDeadlineMs`: deadline for one whole refresh attempt; an attempt
+  that exceeds it is dropped fail-closed. Defaults to `600000`.
 - `ripr.trace.server`: language-server trace setting.
 
 ## Commands
 
 - `ripr: Restart Server`
+- `ripr: Refresh Diagnostics`
 - `ripr: Select Workspace Root`
-- `ripr: Diagnose Setup`
-- `ripr: Show Status`
 - `ripr: Show Output`
+- `ripr: Show Status`
+- `ripr: Diagnose Setup`
 - `ripr: Start Current Repair`
+- `ripr: Copy Current Repair Packet`
+- `ripr: Copy Repo Gap Map`
 - `ripr: First PR - Open Packet`
 - `ripr: First PR - Copy Summary`
 - `ripr: First PR - Copy Repair Packet`
+- `ripr: Copy Repair Packet at Cursor`
 - `ripr: First PR - Copy Verify Command`
 - `ripr: First PR - Copy Receipt Command`
 - `ripr: First PR - Copy Regeneration Guidance`
@@ -131,21 +145,32 @@ confirmation.
 - `ripr: Review Result - Copy Receipt Command`
 - `ripr: Write Targeted Test - Open Best Related Test`
 - `ripr: Open Settings`
+- `ripr: Copy Top Repair Packet`
+- `ripr: Copy Verify Command`
+- `ripr: Copy Receipt Command (Top Repair Packet)`
+- `ripr: Open Report`
+- `ripr: Show Top Limitation`
+- `ripr: Show Receipt Status`
+- `ripr: Copy Receipt Command`
+- `ripr: Open Attempt Ledger`
+- `ripr: Show Route Quality`
 
 The repair-loop commands also appear in the editor context menu for Rust
 and preview-language files (ripr groups, right-click in the editor). The
 targeted-test and agent-loop commands stay code-action-only because their
 handlers need the diagnostic payload a code action carries, which a
 context-menu click cannot supply. `ripr: Show Status` (`Ctrl+Alt+R`,
-`Cmd+Alt+R` on macOS) and `ripr: Copy Top Repair Packet` (`Ctrl+Alt+P`,
-`Cmd+Alt+P` on macOS) ship default keybindings; both are user-overridable.
+`Cmd+Alt+R` on macOS), `ripr: Copy Top Repair Packet` (`Ctrl+Alt+P`,
+`Cmd+Alt+P` on macOS), and `ripr: Copy Repair Packet at Cursor`
+(`Ctrl+Alt+Shift+P`, `Cmd+Alt+Shift+P` on macOS) ship default keybindings; all
+are user-overridable.
 VS Code when-clauses have no diagnostic-source context key, so the context
 menu is gated on the document language rather than on the `ripr` diagnostic
 source.
 
 ## Preview Limitations
 
-The `0.8.x` extension uses a universal VSIX and downloads native server
+The `0.11.x` extension uses a universal VSIX and downloads native server
 binaries from matching GitHub Releases when available. It does not auto-install
 Rust tooling, run mutation tests, make automatic edits, or analyze unsaved
 buffer overlays by default. Bundled platform-specific VSIXs are planned after
