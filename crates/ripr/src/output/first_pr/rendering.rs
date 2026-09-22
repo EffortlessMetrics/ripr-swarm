@@ -425,11 +425,39 @@ fn push_shell_command_pair(
 /// PowerShell does not manufacture UTF-16 artifacts that readers reject.
 /// Commands the translator leaves unchanged render no second line.
 fn push_recovery_powershell_variant(out: &mut String, label: &str, command: &str) {
-    if let Some(line) = powershell_command(command)
-        && line != command
-    {
-        out.push_str(&format!("{label} (PowerShell): `{line}`\n"));
+    match powershell_command(command) {
+        Some(line) if line != command => {
+            out.push_str(&format!("{label} (PowerShell): `{line}`\n"));
+        }
+        None => push_compound_powershell_variant(out, label, command),
+        Some(_) => {}
     }
+}
+
+/// Append numbered PowerShell steps for the canonical two-step `&&`
+/// recovery bridge (default Python/TypeScript check-then-ledger route).
+///
+/// The shared translator rejects compound Bash as one line, but each half
+/// is independently translatable. Halves render as ordered steps because
+/// `;`-joining would rerun the second half after a first-half failure.
+/// Anything that is not exactly two translatable halves under-emits (no
+/// variant): a mis-split quoted `&&` or an untranslatable half fails one
+/// of the per-half translations and the bash-only line stands alone.
+fn push_compound_powershell_variant(out: &mut String, label: &str, command: &str) {
+    let halves: Vec<&str> = command.split(" && ").collect();
+    if halves.len() != 2 {
+        return;
+    }
+    let (Some(first), Some(second)) =
+        (powershell_command(halves[0]), powershell_command(halves[1]))
+    else {
+        return;
+    };
+    if first == halves[0] && second == halves[1] {
+        return;
+    }
+    out.push_str(&format!("{label} (PowerShell 1/2): `{first}`\n"));
+    out.push_str(&format!("{label} (PowerShell 2/2): `{second}`\n"));
 }
 
 fn top_gap_language_label(selected: &Value) -> &'static str {
@@ -564,6 +592,34 @@ mod tests {
         assert!(out.contains(&format!("- Regeneration command: `{bash}`")));
         assert!(out.contains("- Regeneration command (PowerShell): `"));
         assert!(out.contains("WriteAllText"));
+    }
+
+    #[test]
+    fn cli_summary_splits_compound_bridge_into_powershell_steps() {
+        let bash = "ripr check --root . --base origin/main --json > target/ripr/reports/check.json && ripr reports gap-ledger --check-output target/ripr/reports/check.json --root . --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md";
+        let packet = missing_artifact_packet(bash);
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(summary.contains(&format!("Regeneration command: `{bash}`")));
+        assert!(summary.contains("Regeneration command (PowerShell 1/2): `"));
+        assert!(summary.contains("Regeneration command (PowerShell 2/2): `"));
+        assert!(summary.contains("WriteAllText"));
+    }
+
+    #[test]
+    fn cli_summary_under_emits_untranslatable_compound() {
+        let bash = "ripr check --root $(whoami) --json > check.json && ripr reports gap-ledger --out ledger.json";
+        let packet = missing_artifact_packet(bash);
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(summary.contains(&format!("Regeneration command: `{bash}`")));
+        assert!(!summary.contains("(PowerShell"));
     }
 
     #[test]
