@@ -376,11 +376,25 @@ fn run_agent_receipt_for_attempt(
 fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
     ensure_command_root(&options.root, "agent status")?;
 
-    let workflow_dir = match &options.out_dir {
-        Some(dir) => resolve_agent_start_out_dir(&options.root, dir),
-        None => options.root.join("target/ripr/workflow"),
-    };
-    let report = app::agent_status::build_agent_status_report(&options.root, &workflow_dir);
+    // The report inspects the fixed `target/ripr/workflow` and
+    // `target/ripr/reports` artifact paths under `--root`, and its second
+    // argument is the root as the user should retype it in the printed next
+    // commands. Passing the workflow directory there rendered
+    // `--root ./target/ripr/workflow`, a command that cannot run (#3893).
+    // A non-default `--out` is refused rather than silently ignored until
+    // the inspected paths can follow it.
+    if let Some(dir) = &options.out_dir {
+        let requested = resolve_agent_start_out_dir(&options.root, dir);
+        let default_dir = options.root.join("target/ripr/workflow");
+        if requested != default_dir {
+            return Err(format!(
+                "agent status --out {} is not supported: agent status reads the workflow artifacts under {}",
+                dir.display(),
+                default_dir.display()
+            ));
+        }
+    }
+    let report = app::agent_status::build_agent_status_report(&options.root, &options.root);
     if options.json {
         let rendered = app::agent_status::render_agent_status_json(&report)?;
         print!("{rendered}");
