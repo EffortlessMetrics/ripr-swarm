@@ -74,11 +74,11 @@ const REVIEW_PR_REQUIRED_MARKERS: [&str; 17] = [
     "review_contract:blocked_is_not_human_cause",
 ];
 
-/// ZCode/Muse continuously consumes AGENTS.md and the `.agents/skills` tree.
-/// Pin the operating contract that prevents session summaries, local progress,
-/// base movement, or routine repository writes from silently changing delivery
-/// semantics. Claude's separate provider tree remains governed by #3785's
-/// provider-parity acceptance and is intentionally not generated from this tree.
+/// Pin the cross-provider operating contract that prevents session summaries,
+/// local progress, base movement, or routine repository writes from silently
+/// changing delivery semantics. AGENTS/.agents is the Muse/ZCode/Codex route;
+/// CLAUDE/.claude is the separate Claude route. The marker set is shared even
+/// though provider prose may differ.
 const AGENTS_ROOT_OPERATING_MARKERS: [&str; 5] = [
     "operating_contract:primary_authority",
     "operating_contract:routine_repo_writes",
@@ -321,7 +321,7 @@ pub(crate) fn check() -> Result<(), String> {
             "equal model choices", "one role per pass",
             "one provider as generated canonical source", "mandatory separate reviewer identity",
             "semantic truth of declared review and operating contract markers",
-            "Claude provider prose parity with the AGENTS/ZCode operating contract"
+            "full prose identity beyond the checked operating markers"
         ]
     });
     crate::write_report(
@@ -377,34 +377,43 @@ fn architecture_map_findings(path: &str, text: &str) -> Vec<String> {
 }
 
 fn validate_agents_operating_contract(findings: &mut Vec<String>) {
-    let agents = match fs::read_to_string("AGENTS.md") {
-        Ok(text) => text,
-        Err(error) => {
-            findings.push(format!("operating-contract: AGENTS.md unreadable: {error}"));
-            return;
-        }
-    };
-    for finding in closed_marker_findings(
-        &agents,
-        "operating_contract:",
-        &AGENTS_ROOT_OPERATING_MARKERS,
-    ) {
-        findings.push(format!("operating-contract: AGENTS.md {finding}"));
-    }
-
-    for skill in SKILLS {
-        let relative = format!(".agents/skills/{skill}/SKILL.md");
-        let skill_text = match fs::read_to_string(&relative) {
+    for (instructions, skill_root) in [
+        ("AGENTS.md", ".agents/skills"),
+        ("CLAUDE.md", ".claude/skills"),
+    ] {
+        let root_text = match fs::read_to_string(instructions) {
             Ok(text) => text,
             Err(error) => {
                 findings.push(format!(
-                    "operating-contract: {relative} unreadable: {error}"
+                    "operating-contract: {instructions} unreadable: {error}"
                 ));
                 continue;
             }
         };
-        for finding in skill_operating_contract_findings(skill, &skill_text) {
-            findings.push(format!("operating-contract: {relative} {finding}"));
+        for finding in closed_marker_findings(
+            &root_text,
+            "operating_contract:",
+            &AGENTS_ROOT_OPERATING_MARKERS,
+        ) {
+            findings.push(format!(
+                "operating-contract: {instructions} {finding}"
+            ));
+        }
+
+        for skill in SKILLS {
+            let relative = format!("{skill_root}/{skill}/SKILL.md");
+            let skill_text = match fs::read_to_string(&relative) {
+                Ok(text) => text,
+                Err(error) => {
+                    findings.push(format!(
+                        "operating-contract: {relative} unreadable: {error}"
+                    ));
+                    continue;
+                }
+            };
+            for finding in skill_operating_contract_findings(skill, &skill_text) {
+                findings.push(format!("operating-contract: {relative} {finding}"));
+            }
         }
     }
 }
