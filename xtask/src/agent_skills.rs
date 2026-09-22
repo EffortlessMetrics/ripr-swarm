@@ -122,6 +122,13 @@ const AGENTS_SKILL_OPERATING_MARKERS: [(&str, &str); 20] = [
     ("finish-pr", "finish_contract:behind_only_no_restack"),
 ];
 
+const OPERATING_MARKER_PREFIXES: [&str; 4] = [
+    "goal_contract:",
+    "pr_contract:",
+    "candidate_contract:",
+    "finish_contract:",
+];
+
 const PROVIDERS: [(&str, &str, &str, &str, Option<&str>); 3] = [
     (
         "codex",
@@ -389,13 +396,6 @@ fn validate_agents_operating_contract(findings: &mut Vec<String>) {
     }
 
     for skill in SKILLS {
-        let required = AGENTS_SKILL_OPERATING_MARKERS
-            .iter()
-            .filter_map(|(owner, marker)| (*owner == skill).then_some(*marker))
-            .collect::<Vec<_>>();
-        if required.is_empty() {
-            continue;
-        }
         let relative = format!(".agents/skills/{skill}/SKILL.md");
         let skill_text = match fs::read_to_string(&relative) {
             Ok(text) => text,
@@ -406,15 +406,50 @@ fn validate_agents_operating_contract(findings: &mut Vec<String>) {
                 continue;
             }
         };
-        let prefix = required[0]
-            .split_once(':')
-            .map_or("", |(prefix, _)| prefix)
-            .to_string()
-            + ":";
-        for finding in closed_marker_findings(&skill_text, &prefix, &required) {
+        for finding in skill_operating_contract_findings(skill, &skill_text) {
             findings.push(format!("operating-contract: {relative} {finding}"));
         }
     }
+}
+
+fn skill_operating_contract_findings(skill: &str, text: &str) -> Vec<String> {
+    let counts = declared_operating_marker_counts(text);
+    let mut findings = Vec::new();
+
+    for (_, required) in AGENTS_SKILL_OPERATING_MARKERS
+        .iter()
+        .filter(|(owner, _)| *owner == skill)
+    {
+        match counts.get(*required).copied().unwrap_or(0) {
+            0 => findings.push(format!("is missing marker `{required}`")),
+            1 => {}
+            count => findings.push(format!("declares marker `{required}` {count} times")),
+        }
+    }
+
+    for declared in counts.keys() {
+        match AGENTS_SKILL_OPERATING_MARKERS
+            .iter()
+            .find(|(_, marker)| *marker == declared.as_str())
+        {
+            None => findings.push(format!("declares unknown marker `{declared}`")),
+            Some((owner, _)) if *owner != skill => findings.push(format!(
+                "declares marker `{declared}` owned by `{owner}`, not `{skill}`"
+            )),
+            Some(_) => {}
+        }
+    }
+    findings
+}
+
+fn declared_operating_marker_counts(text: &str) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for prefix in OPERATING_MARKER_PREFIXES {
+        for (marker, count) in declared_marker_counts(text, prefix) {
+            *counts.entry(marker).or_insert(0) += count;
+        }
+    }
+    counts
 }
 
 fn closed_marker_findings(text: &str, prefix: &str, required: &[&str]) -> Vec<String> {
@@ -601,6 +636,56 @@ mod tests {
         if findings != expected {
             return Err(format!(
                 "unknown operating contract marker was not isolated: {findings:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn skill_operating_markers_reject_foreign_and_ungoverned() -> Result<(), String> {
+        let complete = AGENTS_SKILL_OPERATING_MARKERS
+            .iter()
+            .filter(|(owner, _)| *owner == "deliver-pr")
+            .map(|(_, marker)| format!("- `{marker}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let findings = skill_operating_contract_findings("deliver-pr", &complete);
+        if !findings.is_empty() {
+            return Err(format!(
+                "complete deliver-pr operating contract unexpectedly failed: {findings:?}"
+            ));
+        }
+
+        let foreign_marker = "candidate_contract:host_shell_detection";
+        let foreign = format!("{complete}\n- `{foreign_marker}`");
+        let findings = skill_operating_contract_findings("deliver-pr", &foreign);
+        let expected = vec![format!(
+            "declares marker `{foreign_marker}` owned by `build-candidate`, not `deliver-pr`"
+        )];
+        if findings != expected {
+            return Err(format!(
+                "foreign-family marker bypassed ownership: {findings:?}"
+            ));
+        }
+
+        let unknown = format!("{complete}\n- `pr_contract:invented_permission`");
+        let findings = skill_operating_contract_findings("deliver-pr", &unknown);
+        let expected = vec!["declares unknown marker `pr_contract:invented_permission`".to_string()];
+        if findings != expected {
+            return Err(format!(
+                "unknown skill marker was not isolated: {findings:?}"
+            ));
+        }
+
+        let ungoverned = "- `goal_contract:parent_end_state`";
+        let findings = skill_operating_contract_findings("prepare-proof", ungoverned);
+        let expected = vec![
+            "declares marker `goal_contract:parent_end_state` owned by `deliver-goal`, not `prepare-proof`"
+                .to_string(),
+        ];
+        if findings != expected {
+            return Err(format!(
+                "operating marker in ungoverned skill was not rejected: {findings:?}"
             ));
         }
         Ok(())
