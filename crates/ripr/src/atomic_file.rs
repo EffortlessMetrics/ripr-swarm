@@ -178,7 +178,9 @@ mod tests {
         std::fs::create_dir(&destination)
             .map_err(|err| format!("fixture destination setup failed: {err}"))?;
         let Err(error) = write_cache(&destination, b"cache", "test cache") else {
-            return Err("publishing a cache file over a directory unexpectedly succeeded".to_string());
+            return Err(
+                "publishing a cache file over a directory unexpectedly succeeded".to_string(),
+            );
         };
         assert!(
             error.starts_with("failed to finalize test cache:"),
@@ -207,7 +209,9 @@ mod tests {
         std::fs::create_dir(&destination)
             .map_err(|err| format!("fixture destination setup failed: {err}"))?;
         let Err(error) = write(&destination, b"artifact", "test artifact") else {
-            return Err("publishing an artifact file over a directory unexpectedly succeeded".to_string());
+            return Err(
+                "publishing an artifact file over a directory unexpectedly succeeded".to_string(),
+            );
         };
         assert!(
             error.starts_with("failed to finalize test artifact "),
