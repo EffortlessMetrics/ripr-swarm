@@ -42,11 +42,27 @@ pub(crate) fn check_covered_by() -> Result<(), String> {
     }
     let mut violations = Vec::new();
     let exceptions_text = crate::read_text_lossy(Path::new(CLIPPY_EXCEPTIONS_PATH))?;
-    violations.extend(collect_clippy_exception_violations(
-        &exceptions_text,
-        &crate::no_panic::today_date_string(),
-    ));
+    let (entries, structural) =
+        parse_and_check_exceptions(&exceptions_text, &crate::no_panic::today_date_string());
+    violations.extend(structural);
+    for entry in &entries {
+        let covered = CoveredByEntry {
+            id: Some(entry.id.clone()),
+            id_line: Some(entry.block_line),
+            covered_by_line: entry.block_line,
+            commands: entry.commands.clone(),
+        };
+        validate_entry(
+            CLIPPY_EXCEPTIONS_PATH,
+            &covered,
+            &inventory,
+            &mut violations,
+        );
+    }
     for (path, section) in COVERED_BY_LEDGERS {
+        if *path == CLIPPY_EXCEPTIONS_PATH {
+            continue;
+        }
         let entries = read_covered_by_entries(path, section)?;
         for entry in entries {
             validate_entry(path, &entry, &inventory, &mut violations);
@@ -107,6 +123,7 @@ struct ClippyExceptionEntry {
     id: String,
     expires: Option<String>,
     block_line: usize,
+    commands: Vec<String>,
 }
 
 fn covered_by_is_blank(value: &Option<ClippyExceptionCoveredBy>) -> bool {
@@ -119,19 +136,57 @@ fn covered_by_is_blank(value: &Option<ClippyExceptionCoveredBy>) -> bool {
     }
 }
 
-fn exception_id_line(text: &str, id: &str) -> usize {
+fn covered_by_commands(value: &ClippyExceptionCoveredBy) -> Vec<String> {
+    match value {
+        ClippyExceptionCoveredBy::One(command) => {
+            let command = command.trim();
+            if command.is_empty() {
+                Vec::new()
+            } else {
+                vec![command.to_string()]
+            }
+        }
+        ClippyExceptionCoveredBy::Many(commands) => commands
+            .iter()
+            .map(|command| command.trim().to_string())
+            .filter(|command| !command.is_empty())
+            .collect(),
+    }
+}
+
+fn next_exception_header_line(text: &str, after_line: usize) -> usize {
+    for (index, raw) in text.lines().enumerate() {
+        let line_number = index + 1;
+        if line_number <= after_line {
+            continue;
+        }
+        if raw.trim() == "[[exception]]" {
+            return line_number;
+        }
+    }
+    0
+}
+
+fn id_line_in_block(text: &str, id: &str, block_line: usize) -> usize {
     if id.is_empty() {
-        return 0;
+        return block_line;
     }
     let double = format!("id = \"{id}\"");
     let single = format!("id = '{id}'");
     for (index, raw) in text.lines().enumerate() {
+        let line_number = index + 1;
+        if line_number <= block_line {
+            continue;
+        }
         let line = raw.trim();
+        if line == "[[exception]]" {
+            break;
+        }
         if line.starts_with(&double) || line.starts_with(&single) {
-            return index + 1;
+            return line_number;
         }
     }
-    0
+    block_line
 }
 
 fn parse_clippy_exceptions_ledger(text: &str) -> (Vec<ClippyExceptionEntry>, Vec<String>) {
@@ -148,6 +203,7 @@ fn parse_clippy_exceptions_ledger(text: &str) -> (Vec<ClippyExceptionEntry>, Vec
     };
 
     let mut entries = Vec::new();
+    let mut last_block_line = 0;
     for row in parsed.exception {
         let entry_id = row.id.trim().to_string();
         let lint = row.lint.trim().to_string();
@@ -156,7 +212,9 @@ fn parse_clippy_exceptions_ledger(text: &str) -> (Vec<ClippyExceptionEntry>, Vec
         let owner = row.owner.trim().to_string();
         let reason = row.reason.trim().to_string();
         let expires = row.expires.map(|value| value.trim().to_string());
-        let block_line = exception_id_line(text, &entry_id);
+        let block_line = next_exception_header_line(text, last_block_line);
+        last_block_line = block_line;
+        let id_line = id_line_in_block(text, &entry_id, block_line);
         let mut missing = Vec::new();
         if entry_id.is_empty() {
             missing.push("id");
@@ -183,7 +241,7 @@ fn parse_clippy_exceptions_ledger(text: &str) -> (Vec<ClippyExceptionEntry>, Vec
             let label = if entry_id.is_empty() {
                 format!("{CLIPPY_EXCEPTIONS_PATH}:{block_line}")
             } else {
-                format!("{CLIPPY_EXCEPTIONS_PATH}:{block_line} `{entry_id}`")
+                format!("{CLIPPY_EXCEPTIONS_PATH}:{id_line} `{entry_id}`")
             };
             violations.push(format!(
                 "{label} missing required field{}: {}",
@@ -195,16 +253,24 @@ fn parse_clippy_exceptions_ledger(text: &str) -> (Vec<ClippyExceptionEntry>, Vec
         entries.push(ClippyExceptionEntry {
             id: entry_id,
             expires,
-            block_line,
+            block_line: id_line,
+            commands: row
+                .covered_by
+                .as_ref()
+                .map(covered_by_commands)
+                .unwrap_or_default(),
         });
     }
     (entries, violations)
 }
 
-fn collect_clippy_exception_violations(text: &str, today: &str) -> Vec<String> {
-    let (entries, mut violations) = parse_clippy_exceptions_ledger(text);
+fn collect_clippy_exception_row_violations(
+    entries: &[ClippyExceptionEntry],
+    today: &str,
+) -> Vec<String> {
+    let mut violations = Vec::new();
     let mut seen_ids = BTreeSet::new();
-    for entry in &entries {
+    for entry in entries {
         if !seen_ids.insert(entry.id.clone()) {
             violations.push(format!(
                 "{CLIPPY_EXCEPTIONS_PATH}:{} duplicate exception id `{}`.",
@@ -227,6 +293,17 @@ fn collect_clippy_exception_violations(text: &str, today: &str) -> Vec<String> {
         }
     }
     violations
+}
+
+fn parse_and_check_exceptions(text: &str, today: &str) -> (Vec<ClippyExceptionEntry>, Vec<String>) {
+    let (entries, mut violations) = parse_clippy_exceptions_ledger(text);
+    violations.extend(collect_clippy_exception_row_violations(&entries, today));
+    (entries, violations)
+}
+
+#[cfg(test)]
+fn collect_clippy_exception_violations(text: &str, today: &str) -> Vec<String> {
+    parse_and_check_exceptions(text, today).1
 }
 
 /// One `covered_by` command occurrence with the ledger identity needed to
@@ -372,8 +449,8 @@ fn unquote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CoveredByEntry, collect_clippy_exception_violations, read_covered_by_entries,
-        validate_entry,
+        CoveredByEntry, collect_clippy_exception_violations, parse_and_check_exceptions,
+        read_covered_by_entries, validate_entry,
     };
     use crate::policy::test_inventory::TestInventory;
     use std::collections::BTreeMap;
@@ -625,7 +702,7 @@ reason = "second copy"
 covered_by = "cargo test -p xtask no_panic"
 expires = "2026-12-01"
 "#;
-        let violations = collect_clippy_exception_violations(&duplicate, TODAY);
+        let violations = collect_clippy_exception_violations(duplicate, TODAY);
         assert!(
             violations
                 .iter()
@@ -794,6 +871,58 @@ owners = "typo"
                 .any(|row| row.contains("owners") && row.contains("unknown field")),
             "unknown field must fail closed: {violations:?}"
         );
+    }
+
+    #[test]
+    fn toml_literal_covered_by_is_resolved_not_skipped() -> Result<(), String> {
+        let text = r#"
+[[exception]]
+id = "clippy-exception-0012"
+lint = "clippy::large_enum_variant"
+path = "xtask/src/no_panic.rs"
+selector = "enum PanicAllowEntryVersioned"
+owner = "core/policy"
+reason = "literal string must still resolve"
+covered_by = 'cargo test -p alpha definitely_missing'
+expires = "2026-12-01"
+"#;
+        let (entries, structural) = parse_and_check_exceptions(text, TODAY);
+        if !structural.is_empty() {
+            return Err(format!(
+                "literal covered_by failed structural parse: {structural:?}"
+            ));
+        }
+        if entries.len() != 1
+            || entries[0].commands.as_slice() != ["cargo test -p alpha definitely_missing"]
+        {
+            return Err(format!(
+                "literal covered_by was not decoded: {:?}",
+                entries
+                    .iter()
+                    .map(|entry| entry.commands.clone())
+                    .collect::<Vec<_>>()
+            ));
+        }
+        let inventory = inventory_with("alpha", &["tests::current_case"]);
+        let mut violations = Vec::new();
+        let covered = CoveredByEntry {
+            id: Some(entries[0].id.clone()),
+            id_line: Some(entries[0].block_line),
+            covered_by_line: entries[0].block_line,
+            commands: entries[0].commands.clone(),
+        };
+        validate_entry(
+            "policy/clippy-exceptions.toml",
+            &covered,
+            &inventory,
+            &mut violations,
+        );
+        if violations.len() != 1 || !violations[0].contains("definitely_missing") {
+            return Err(format!(
+                "stale literal covered_by was not resolved: {violations:?}"
+            ));
+        }
+        Ok(())
     }
 
     /// Build a `CoveredByEntry` from inline commands so validation tests can

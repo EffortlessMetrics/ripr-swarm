@@ -297,7 +297,8 @@ are scoped or reviewed.
 - `cargo xtask check-covered-by` now parses `policy/clippy-exceptions.toml`
   as TOML: unique ids, required nonblank fields, optional ISO `expires`
   dates that are not in the past, unknown fields, duplicate keys, and
-  trailing garbage. Test-valued `covered_by` resolution is unchanged.
+  trailing garbage. Test-valued `covered_by` resolution uses the
+  TOML-decoded command (including single-quoted strings).
   `clippy-exception-0001` stays live
   ([#3867](https://github.com/EffortlessMetrics/ripr-swarm/issues/3867)).
 
