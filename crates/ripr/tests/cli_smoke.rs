@@ -6933,6 +6933,68 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
     assert!(packets.contains(r#""packets_total""#));
     assert!(packets.contains(r#""task": "write_targeted_test""#));
 
+    // The terminal is the only pilot surface a user sees without opening a
+    // file, and the next documented step is `ripr agent repair --seam-id <id>`,
+    // which accepts a seam id and nothing else. So the screen must carry the
+    // id, and it must be the same id the written packet carries — the packet
+    // is produced from the inventory `agent repair` resolves against, so a
+    // mismatch would mean the printed command names a seam the repair
+    // transaction cannot find.
+    let seam_line = stdout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("inspected seam: "))
+        .ok_or_else(|| format!("pilot terminal printed no inspected-seam line:\n{stdout}"))?;
+    let printed_id = seam_line
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| format!("inspected-seam line carried no id: {seam_line}"))?;
+    assert!(
+        printed_id.len() == 16 && printed_id.chars().all(|ch| ch.is_ascii_hexdigit()),
+        "expected a 16-hex seam id to lead the inspected-seam line, got: {seam_line}"
+    );
+    assert!(
+        packets.contains(&format!(r#""seam_id": "{printed_id}""#)),
+        "the printed seam id {printed_id} is absent from agent-seam-packets.json"
+    );
+    // This fixture's route is actionable, so the paste-ready repair command is
+    // present and names the same id. The root is compared through the same
+    // normalization the renderer applies (`loop_commands::shell_path` →
+    // `display_path`, which rewrites `\` as `/`, then `shell_arg`, which may
+    // quote), because `Path::display` keeps native separators and would make
+    // this assertion fail on Windows for a command that is in fact correct.
+    let repair_line = stdout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("repair this seam: "))
+        .ok_or_else(|| format!("pilot did not print a repair command:\n{stdout}"))?;
+    let tokens: Vec<&str> = repair_line.split_whitespace().collect();
+    let flag_value = |flag: &str| -> Option<&str> {
+        tokens
+            .iter()
+            .position(|token| *token == flag)
+            .and_then(|at| tokens.get(at + 1))
+            .map(|value| value.trim_matches('\''))
+    };
+    assert_eq!(
+        tokens.first().copied(),
+        Some("ripr"),
+        "expected a paste-ready ripr command, got: {repair_line}"
+    );
+    assert_eq!(
+        flag_value("--seam-id"),
+        Some(printed_id),
+        "the repair command must name the seam printed above it: {repair_line}"
+    );
+    assert_eq!(
+        flag_value("--phase"),
+        Some("before"),
+        "expected the opening phase of the repair transaction: {repair_line}"
+    );
+    assert_eq!(
+        flag_value("--root").map(|value| value.replace('\\', "/")),
+        Some(root.display().to_string().replace('\\', "/")),
+        "the repair command must name the analyzed root: {repair_line}"
+    );
+
     let _ = std::fs::remove_dir_all(&out_dir);
     Ok(())
 }

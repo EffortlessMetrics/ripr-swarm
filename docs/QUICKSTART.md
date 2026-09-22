@@ -166,6 +166,11 @@ For a repair-ready gap, start the ordinary repair transaction:
 ripr agent repair --root . --seam-id <id> --phase before
 ```
 
+`--seam-id` takes a repo-scoped seam ID, which is a different identifier from
+the probe IDs `ripr check` prints. Run `ripr pilot --root .` to get one: it
+prints the seam it recommends and the ready-to-run `ripr agent repair` command
+for it.
+
 Make one focused test edit outside RIPR, then finish:
 
 ```bash
