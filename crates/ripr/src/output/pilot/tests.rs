@@ -438,6 +438,9 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
             "missing terminal needle: {needle}"
         );
     }
+    // A route-limited seam keeps the snapshot comparison: the repair
+    // transaction has no target here (#3906).
+    assert!(!terminal.contains("Next, in order:"), "{terminal}");
 
     // The id leads the line, so the next documented step
     // (`ripr agent repair --seam-id <id>`) is reachable from the screen alone.

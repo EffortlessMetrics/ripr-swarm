@@ -1,6 +1,25 @@
 use crate::agent::loop_commands::{self, display_path};
+use crate::analysis::ClassifiedSeam;
+use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::output::pilot::PilotSummaryContext;
 use std::path::{Path, PathBuf};
+
+/// The documented start of the repair transaction for `entry` (#3906), or
+/// `None` when the fail-closed repair-packet flip does not hold. The flip, not
+/// route readiness alone, is the authority here: a wrong actionable repair
+/// signal is worse than falling back to the snapshot comparison.
+///
+/// Built here rather than in `agent::loop_commands`, whose file xtask includes
+/// into its own tree: a template only pilot calls reads as dead code there.
+pub(super) fn repair_start_command(root: &Path, entry: &ClassifiedSeam) -> Option<String> {
+    repair_packet_eligibility(entry).eligible().then(|| {
+        format!(
+            "ripr agent repair --root {} --seam-id {} --phase before",
+            loop_commands::shell_path(root),
+            loop_commands::shell_arg(entry.seam.id().as_str()),
+        )
+    })
+}
 
 pub(super) struct PilotCommands {
     pub(super) after_snapshot: String,
