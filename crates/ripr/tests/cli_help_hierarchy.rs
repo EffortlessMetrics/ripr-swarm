@@ -89,6 +89,41 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
     Ok(())
 }
 
+/// `--base`'s help must describe the base the binary will actually pick.
+/// `analysis::diff::load::resolve_default_base` asks the remote for its own
+/// HEAD first and then walks `origin/main`, `origin/master`, `main`, `master`,
+/// so a flat "Defaults to origin/main" is wrong in every repository whose
+/// default branch is not `main` and in every clone with no `origin`. The
+/// negative assert is the discriminator: it fails on the old sentence while
+/// leaving the example commands, which legitimately use `origin/main` as an
+/// argument, untouched.
+#[test]
+fn base_help_states_the_real_default_resolution() -> Result<(), String> {
+    for args in [
+        ["check", "--help"].as_slice(),
+        ["diff", "--help"].as_slice(),
+    ] {
+        let stdout = normalized(&rendered_help(args)?);
+        assert_contains(
+            "`--base` help",
+            &stdout,
+            "resolved in order: the remote's HEAD, origin/main, origin/master, main, master",
+        )?;
+        assert_contains(
+            "`--base` help",
+            &stdout,
+            "the analysis does not run and the error says so",
+        )?;
+        if stdout.contains("Base revision for git diff. Defaults to origin/main.") {
+            return Err(format!(
+                "`ripr {}` still claims origin/main is the default base",
+                args.join(" ")
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn agent_help_makes_repair_primary_without_removing_control_surfaces() -> Result<(), String> {
     for args in [["agent", "--help"].as_slice(), ["agent"].as_slice()] {
