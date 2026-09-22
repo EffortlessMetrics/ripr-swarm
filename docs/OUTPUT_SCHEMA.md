@@ -691,6 +691,11 @@ The evidence-first fields are additive in schema `0.2`:
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
   integrations.
+- Both are always present and may be the empty string, which is the producer's
+  "no action to recommend" for this finding. Consumers should treat `""` as an
+  absent recommendation rather than as guidance. Whether an omitted field would
+  say this better than an empty string is a producer-shape question that is not
+  settled here; the published schema describes what the tool emits today.
 - `changed_sink`, `observed_sink`, `oracle_alignment`, and `alignment_reason`
   are additive optional fields (RIPR-SPEC-0028) that surface the Python
   classifier's **sink-alignment** decision — *why* a strong oracle did or did
