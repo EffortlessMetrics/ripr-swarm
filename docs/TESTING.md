@@ -215,7 +215,7 @@ does not use mutation-runtime terms such as `killed` or `survived`.
 The protected routed Rust lane has an intentional dual runner contract:
 
 ```bash
-cargo nextest run --workspace
+cargo nextest run --workspace --profile ci
 cargo test --workspace --doc
 ```
 

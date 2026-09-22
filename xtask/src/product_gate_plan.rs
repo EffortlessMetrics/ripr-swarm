@@ -12,6 +12,14 @@
 
 use std::collections::BTreeSet;
 
+/// The selected #3825 runner contract. Nextest owns compiled lib, bin,
+/// integration, and example test binaries; Cargo and rustdoc own doctests,
+/// which nextest cannot execute. Both rows are required, both run with default
+/// features, and neither stands in for the other. Non-default features are
+/// owned outside the required lane (Test Analytics all-features telemetry, the
+/// `lang-perl` job, and the Windows advisory feature matrix).
+pub(crate) const TEST_RUNNER_CONTRACT: &str = "canonical_nextest_plus_cargo_doc";
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum ProductGateId {
     Formatting,
@@ -227,16 +235,16 @@ fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             ProductGateId::WorkspaceTests,
             ProductGateRole::Required,
             rust.clone(),
-            "cargo nextest run --workspace",
-            "the workspace test binaries selected by nextest pass",
-            "does not execute Rust doctests or prove mutation resistance",
+            "cargo nextest run --workspace --profile ci",
+            "the default-feature workspace test binaries selected by nextest's unfiltered `ci` profile pass, and a fresh JUnit report names at least one of them",
+            "does not execute Rust doctests or non-default-feature tests such as `lang-perl`, and does not prove mutation resistance",
         ),
         gate(
             ProductGateId::WorkspaceDocTests,
             ProductGateRole::Required,
             rust.clone(),
             "cargo test --workspace --doc",
-            "the workspace Rust doctests compile and pass under Cargo and rustdoc",
+            "the default-feature workspace Rust doctests compile and pass under Cargo and rustdoc",
             "does not replace nextest coverage of compiled test binaries",
         ),
         gate(
@@ -359,10 +367,12 @@ mod tests {
     fn workspace_test_roles_keep_nextest_and_doctests_distinct() {
         let definitions = product_gate_definitions();
 
+        assert_eq!(TEST_RUNNER_CONTRACT, "canonical_nextest_plus_cargo_doc");
         assert!(definitions.iter().any(|gate| {
             gate.id == ProductGateId::WorkspaceTests
-                && gate.command == "cargo nextest run --workspace"
+                && gate.command == "cargo nextest run --workspace --profile ci"
                 && gate.non_claim.contains("does not execute Rust doctests")
+                && gate.non_claim.contains("non-default-feature tests")
         }));
         assert!(definitions.iter().any(|gate| {
             gate.id == ProductGateId::WorkspaceDocTests
@@ -442,5 +452,196 @@ mod tests {
                 .missing_from_producer
                 .contains(ProductGateId::WorkspaceTests.as_str())
         );
+    }
+
+    // #3825 runner contract: bind the typed rows to the producer bytes so a
+    // workflow, nextest-config, or documentation edit cannot silently drop,
+    // filter, or restate a required test proposition. The parity test above
+    // compares the plan with itself; these read the real files.
+    const REQUIRED_WORKFLOW: &str = include_str!("../../.github/workflows/rust-gates.yml");
+    const NEXTEST_CONFIG: &str = include_str!("../../.config/nextest.toml");
+    const GATE_PLAN_DOC: &str = include_str!("../../docs/ci/PRODUCT_GATE_PLAN.md");
+
+    /// Shell command lines in a workflow, with a single-line `run:` unwrapped.
+    fn workflow_command_lines(workflow: &str) -> Vec<&str> {
+        workflow
+            .lines()
+            .map(str::trim)
+            .map(|line| line.strip_prefix("run: ").unwrap_or(line))
+            .filter(|line| line.starts_with("cargo "))
+            .collect()
+    }
+
+    fn required_workflow_runner_violations(workflow: &str) -> Vec<String> {
+        let lines = workflow_command_lines(workflow);
+        let mut violations = Vec::new();
+        for gate in product_gate_definitions() {
+            if !lines.contains(&gate.command) {
+                violations.push(format!(
+                    "{} command `{}` is not executed by the required workflow",
+                    gate.id.as_str(),
+                    gate.command
+                ));
+            }
+        }
+        let runner_rows: BTreeSet<_> = [
+            ProductGateId::WorkspaceTests,
+            ProductGateId::WorkspaceDocTests,
+        ]
+        .into_iter()
+        .filter_map(|id| {
+            product_gate_definitions()
+                .into_iter()
+                .find(|gate| gate.id == id)
+                .map(|gate| gate.command)
+        })
+        .collect();
+        for line in &lines {
+            let runs_tests =
+                line.starts_with("cargo nextest run") || line.starts_with("cargo test");
+            if runs_tests && !runner_rows.contains(line) {
+                violations.push(format!(
+                    "required workflow runs undeclared test command `{line}`"
+                ));
+            }
+        }
+        violations
+    }
+
+    fn nextest_config_violations(config: &str) -> Vec<String> {
+        let mut violations = Vec::new();
+        let mut section = String::new();
+        let mut ci_retries = None;
+        let mut ci_junit_path = None;
+        for raw in config.lines() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line.starts_with('[') {
+                section = line.trim_matches(|c| c == '[' || c == ']').to_string();
+                if section.contains("overrides") {
+                    violations.push(format!("nextest config declares `[{section}]`"));
+                }
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let (key, value) = (key.trim(), value.trim());
+            if key == "default-filter" {
+                violations.push(format!(
+                    "`[{section}]` narrows the selected tests with `default-filter`"
+                ));
+            }
+            if section == "profile.ci" && key == "retries" {
+                ci_retries = Some(value.to_string());
+            }
+            if section == "profile.ci.junit" && key == "path" {
+                ci_junit_path = Some(value.to_string());
+            }
+        }
+        if ci_retries.as_deref() != Some("0") {
+            violations.push("`[profile.ci]` must pin `retries = 0`".to_string());
+        }
+        if ci_junit_path.as_deref() != Some("\"junit.xml\"") {
+            violations.push("`[profile.ci.junit]` must write `junit.xml`".to_string());
+        }
+        violations
+    }
+
+    #[test]
+    fn required_workflow_executes_exactly_the_declared_runner_rows() {
+        assert_eq!(
+            required_workflow_runner_violations(REQUIRED_WORKFLOW),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn dropping_or_filtering_a_required_runner_row_is_a_violation() {
+        let dropped_doctests =
+            REQUIRED_WORKFLOW.replace("run: cargo test --workspace --doc", "run: true");
+        assert_ne!(
+            dropped_doctests, REQUIRED_WORKFLOW,
+            "fixture must remove the doctest row"
+        );
+        assert!(
+            required_workflow_runner_violations(&dropped_doctests)
+                .iter()
+                .any(|violation| violation.contains("product.rust.workspace_doc_tests"))
+        );
+
+        let filtered = REQUIRED_WORKFLOW.replace(
+            "          cargo nextest run --workspace --profile ci\n",
+            "          cargo nextest run --workspace --profile ci -E 'not test(framed_lsp_)'\n",
+        );
+        assert_ne!(
+            filtered, REQUIRED_WORKFLOW,
+            "fixture must filter the nextest row"
+        );
+        let violations = required_workflow_runner_violations(&filtered);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("product.rust.workspace_tests"))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("undeclared test command"))
+        );
+    }
+
+    #[test]
+    fn required_nextest_profile_cannot_filter_retry_or_drop_junit() {
+        assert_eq!(
+            nextest_config_violations(NEXTEST_CONFIG),
+            Vec::<String>::new()
+        );
+
+        let filtered =
+            format!("{NEXTEST_CONFIG}\n[profile.default]\ndefault-filter = \"not test(slow)\"\n");
+        assert!(!nextest_config_violations(&filtered).is_empty());
+
+        let overridden =
+            format!("{NEXTEST_CONFIG}\n[[profile.ci.overrides]]\nfilter = \"test(slow)\"\n");
+        assert!(!nextest_config_violations(&overridden).is_empty());
+
+        let retried = NEXTEST_CONFIG.replace("retries = 0", "retries = 2");
+        assert_ne!(retried, NEXTEST_CONFIG, "fixture must change retries");
+        assert!(!nextest_config_violations(&retried).is_empty());
+
+        let no_junit = NEXTEST_CONFIG.replace("path = \"junit.xml\"", "");
+        assert_ne!(no_junit, NEXTEST_CONFIG, "fixture must drop the JUnit path");
+        assert!(!nextest_config_violations(&no_junit).is_empty());
+    }
+
+    #[test]
+    fn required_workflow_rejects_zero_test_junit_as_green() {
+        // The fresh-report guard must require at least one named test, so an
+        // empty selection or an unrelated nonempty file cannot pass.
+        assert!(REQUIRED_WORKFLOW.contains(
+            r#"grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml"#
+        ));
+    }
+
+    #[test]
+    fn gate_plan_document_restates_exactly_the_typed_rows() {
+        let documented: BTreeSet<(&str, &str)> = GATE_PLAN_DOC
+            .lines()
+            .filter_map(|line| {
+                let cells: Vec<_> = line.split('|').map(str::trim).collect();
+                let id = cells.get(1)?.strip_prefix('`')?.strip_suffix('`')?;
+                let command = cells.get(2)?.strip_prefix('`')?.strip_suffix('`')?;
+                id.starts_with("product.").then_some((id, command))
+            })
+            .collect();
+        let typed: BTreeSet<(&str, &str)> = product_gate_definitions()
+            .into_iter()
+            .map(|gate| (gate.id.as_str(), gate.command))
+            .collect();
+
+        assert_eq!(documented, typed);
     }
 }

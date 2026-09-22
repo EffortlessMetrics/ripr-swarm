@@ -20,7 +20,7 @@ Rust and repository-policy proof:
 cargo fmt --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
-cargo nextest run --workspace
+cargo nextest run --workspace --profile ci
 cargo test --workspace --doc
 cargo xtask precommit
 cargo xtask check-evidence-promotion-honesty

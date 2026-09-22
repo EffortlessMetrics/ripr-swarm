@@ -32,7 +32,7 @@ routed reusable Rust gate workflow.
 cargo fmt --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
-cargo nextest run --workspace
+cargo nextest run --workspace --profile ci
 cargo test --workspace --doc
 cargo xtask precommit
 + routed lane-only repository invariants

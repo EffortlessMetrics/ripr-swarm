@@ -177,8 +177,8 @@ jobs:
           test_exit=$?
           set -e
           printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
-          if [ "$test_exit" -eq 0 ] && [ ! -s target/nextest/ci/junit.xml ]; then
-            echo "::error::nextest succeeded without a fresh nonempty JUnit report"
+          if [ "$test_exit" -eq 0 ] && ! grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml; then
+            echo "::error::nextest succeeded without a fresh JUnit report naming at least one test"
             exit 1
           fi
           exit "$test_exit"
