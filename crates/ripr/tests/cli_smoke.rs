@@ -10654,6 +10654,107 @@ fn check_worktree_base_head_clean_worktree_has_no_scope_or_unanalyzed_disclosure
     Ok(())
 }
 
+/// #3893: `agent status` builds its printed next commands from the `--root`
+/// the user gave. It previously rendered `--root <root>/target/ripr/workflow`,
+/// so the command it told a first-time user to run could not succeed.
+#[test]
+fn agent_status_next_command_uses_the_workspace_root() -> Result<(), String> {
+    let root = unique_temp_workspace("agent-status-root");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"agent-status-root\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let json = run_ripr(&["agent", "status", "--root", &root_str, "--json"]);
+    assert_success(&json);
+    let stdout = String::from_utf8_lossy(&json.stdout);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("parse agent status JSON: {err}\n{stdout}"))?;
+    // Fixture precondition: a fresh workspace has no loop artifacts, so the
+    // first next command is the before snapshot.
+    let next = report
+        .pointer("/next_command/command")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("expected next_command.command:\n{stdout}"))?;
+    if !next.starts_with("ripr check --root ") || !next.contains("before.repo-exposure.json") {
+        return Err(format!(
+            "expected the before-snapshot command first; got `{next}`"
+        ));
+    }
+    if next.contains("target/ripr/workflow --mode") || next.contains("workflow' --mode") {
+        return Err(format!(
+            "next command must not use the workflow directory as --root; got `{next}`"
+        ));
+    }
+    let reported_root = report
+        .pointer("/root")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("expected root string:\n{stdout}"))?;
+    if reported_root.contains("target/ripr/workflow") {
+        return Err(format!(
+            "reported root must be the workspace, not the workflow dir; got `{reported_root}`"
+        ));
+    }
+
+    let markdown = run_ripr(&["agent", "status", "--root", &root_str]);
+    assert_success(&markdown);
+    let rendered = String::from_utf8_lossy(&markdown.stdout);
+    if rendered.contains("Root: ") && rendered.contains("target/ripr/workflow\n") {
+        return Err(format!("Markdown root must be the workspace:\n{rendered}"));
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #3893: `agent status` always inspects `target/ripr/workflow`, so a
+/// non-default `--out` fails closed instead of being accepted and ignored.
+#[test]
+fn agent_status_refuses_non_default_out_dir() -> Result<(), String> {
+    let root = unique_temp_workspace("agent-status-out");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"agent-status-out\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let custom = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_str,
+        "--out",
+        "elsewhere",
+        "--json",
+    ]);
+    if custom.status.success() {
+        return Err("agent status --out elsewhere must fail closed".to_string());
+    }
+    let stderr = String::from_utf8_lossy(&custom.stderr);
+    if !stderr.contains("agent status --out elsewhere is not supported") {
+        return Err(format!("expected a named --out refusal; got:\n{stderr}"));
+    }
+
+    let default = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_str,
+        "--out",
+        "target/ripr/workflow",
+        "--json",
+    ]);
+    assert_success(&default);
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
 // ── ripr pr-summary (Campaign 31 item 8: binary-first downstream CI) ──
 
 #[test]
