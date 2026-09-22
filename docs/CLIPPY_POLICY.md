@@ -182,7 +182,11 @@ verifies that:
 - every `[workspace.lints.*]` line has a matching ledger entry;
 - every `[[planned]]` `activate_when_msrv` that is already met by
   `[workspace.package] rust-version` has a remaining non-MSRV `reason`
-  (empty or MSRV-only `reason` text fails).
+  (empty or MSRV-only `reason` text fails);
+- every `[[debt]]` row in `policy/clippy-debt.toml` is valid TOML with
+  unique `id` / `lint`, required nonblank fields, a `target` that is not
+  in the past, and a lint that is not already `[[active]]`, `[[planned]]`,
+  or present in `Cargo.toml`.
 
 `activate_when_msrv` on `[[planned]]` entries is compared to
 `[workspace.package] rust-version`. When the recorded MSRV is already
@@ -214,14 +218,20 @@ Two companion ledgers track Clippy state alongside the active/planned table:
   counterpart to `.ripr/allow-attributes.txt`. It currently records
   `clippy-exception-0001`.
 
-These are advisory until the corresponding xtask ledger checks land in a
-follow-up PR (`check-lint-policy` still reads only `Cargo.toml` and
-`policy/clippy-lints.toml`; `check-allow-attributes` still reads only
-`.ripr/allow-attributes.txt`). One slice already enforces coverage claims: `cargo xtask
-check-covered-by` resolves every test-valued `covered_by` entry in
-`policy/clippy-exceptions.toml` against a static scan of the workspace's
-actual `#[test]`-family functions, so a claim that names a renamed or deleted
-test fails the gate with the entry id and a repair hint (#3528).
+These companion ledgers are gated as follows:
+
+- `cargo xtask check-lint-policy` reads `policy/clippy-debt.toml` as
+  TOML (`deny_unknown_fields`): unique ids, required nonblank fields
+  (`id`, `lint`, `level`, `owner`, `reason`, `blocked_by`, `target`),
+  ISO `target` dates that are not in the past, and debt lints that are
+  not already `[[active]]`, `[[planned]]`, or present in `Cargo.toml`.
+  Invalid TOML, duplicate keys, unknown fields, and trailing garbage fail.
+- `check-allow-attributes` still reads only `.ripr/allow-attributes.txt`.
+  One exceptions slice already enforces coverage claims: `cargo xtask
+  check-covered-by` resolves every test-valued `covered_by` entry in
+  `policy/clippy-exceptions.toml` against a static scan of the workspace's
+  actual `#[test]`-family functions, so a claim that names a renamed or
+  deleted test fails the gate with the entry id and a repair hint (#3528).
 
 ## MSRV 1.95 rollout
 
@@ -261,7 +271,7 @@ version is already met (MSRV-only `reason` text fails).
 - [`policy/clippy-lints.toml`](../policy/clippy-lints.toml) — declarative
   ledger and planned flips.
 - [`policy/clippy-debt.toml`](../policy/clippy-debt.toml) — deferred lints
-  with owner and target date.
+  with owner and target date; consumed by `check-lint-policy`.
 - [`policy/clippy-exceptions.toml`](../policy/clippy-exceptions.toml) —
   per-site suppressions.
 - [`docs/NO_PANIC_SEMANTIC_ALLOWLIST.md`](NO_PANIC_SEMANTIC_ALLOWLIST.md) —

@@ -47737,6 +47737,272 @@ level = "deny"
     );
 }
 
+#[test]
+fn check_lint_policy_parses_clippy_debt_and_rejects_stale_or_colliding_rows() {
+    const TODAY: &str = "2026-09-21";
+    let cargo = r#"
+[workspace.lints.clippy]
+unwrap_used = "deny"
+"#;
+    let lints = r#"
+[[active.panic_family]]
+name = "clippy::unwrap_used"
+level = "deny"
+
+[[planned]]
+name = "clippy::indexing_slicing"
+level = "deny"
+activate_when_msrv = "1.93"
+"#;
+    let valid = r#"
+[[debt]]
+id = "clippy-debt-0001"
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "pervasive let _ = cleanup"
+blocked_by = "per-call review"
+target = "2027-03-31"
+"#;
+    assert!(
+        super::collect_clippy_debt_violations(valid, cargo, lints, TODAY).is_empty(),
+        "live-shaped debt row must pass"
+    );
+
+    let missing = r#"
+[[debt]]
+id = "clippy-debt-0002"
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+"#;
+    let violations = super::collect_clippy_debt_violations(missing, cargo, lints, TODAY);
+    assert!(
+        violations.iter().any(|row| row.contains("clippy-debt-0002")
+            && row.contains("missing required field")
+            && row.contains("owner")
+            && row.contains("target")),
+        "missing required fields must fail: {violations:?}"
+    );
+
+    let duplicate = format!("{valid}\n{valid}");
+    let violations = super::collect_clippy_debt_violations(&duplicate, cargo, lints, TODAY);
+    assert!(
+        violations
+            .iter()
+            .any(|row| row.contains("duplicate debt id `clippy-debt-0001`")),
+        "duplicate id must fail: {violations:?}"
+    );
+
+    let past = r#"
+[[debt]]
+id = "clippy-debt-0001"
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "pervasive let _ = cleanup"
+blocked_by = "per-call review"
+target = "2026-09-01"
+"#;
+    let violations = super::collect_clippy_debt_violations(past, cargo, lints, TODAY);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy-debt-0001")
+                && row.contains("target `2026-09-01`")
+                && row.contains("before today `2026-09-21`")
+        }),
+        "past target must fail: {violations:?}"
+    );
+
+    let already_active = r#"
+[[debt]]
+id = "clippy-debt-0003"
+lint = "clippy::unwrap_used"
+level = "deny"
+owner = "core/rust"
+reason = "should not be debt"
+blocked_by = "already active"
+target = "2027-03-31"
+"#;
+    let violations = super::collect_clippy_debt_violations(already_active, cargo, lints, TODAY);
+    assert!(
+        violations
+            .iter()
+            .any(|row| row.contains("clippy::unwrap_used")
+                && (row.contains("already `[[active]]`")
+                    || row.contains("[workspace.lints.clippy]"))),
+        "debt that is already active/in Cargo.toml must fail: {violations:?}"
+    );
+
+    let planned_dup = r#"
+[[debt]]
+id = "clippy-debt-0004"
+lint = "clippy::indexing_slicing"
+level = "deny"
+owner = "core/rust"
+reason = "planned, not debt"
+blocked_by = "receipts"
+target = "2027-03-31"
+"#;
+    let violations = super::collect_clippy_debt_violations(planned_dup, cargo, lints, TODAY);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy::indexing_slicing") && row.contains("already `[[planned]]`")
+        }),
+        "planned lint duplicated into debt must fail: {violations:?}"
+    );
+
+    let misspelled_table = r#"
+[[debts]]
+id = "clippy-debt-0001"
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "pervasive let _ = cleanup"
+blocked_by = "per-call review"
+target = "2027-03-31"
+"#;
+    let violations = super::collect_clippy_debt_violations(misspelled_table, cargo, lints, TODAY);
+    assert!(
+        violations
+            .iter()
+            .any(|row| row.contains("debts") && row.contains("unknown field")),
+        "misspelled [[debts]] must fail closed: {violations:?}"
+    );
+
+    let malformed_header = r#"
+[[debt
+id = "clippy-debt-0007"
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "malformed header"
+blocked_by = "schema"
+target = "2027-03-31"
+"#;
+    let violations = super::collect_clippy_debt_violations(malformed_header, cargo, lints, TODAY);
+    assert!(
+        violations
+            .iter()
+            .any(|row| row.contains("policy/clippy-debt.toml:")),
+        "unclosed [[debt header must fail closed: {violations:?}"
+    );
+
+    let unprefixed = r#"
+[[debt]]
+id = "clippy-debt-0005"
+lint = "let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "missing clippy prefix"
+blocked_by = "schema"
+target = "2027-03-31"
+"#;
+    let violations = super::collect_clippy_debt_violations(unprefixed, cargo, lints, TODAY);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy-debt-0005")
+                && row.contains("let_underscore_must_use")
+                && row.contains("expected a `clippy::` lint name")
+        }),
+        "unprefixed debt lint must fail: {violations:?}"
+    );
+
+    let impossible_date = r#"
+[[debt]]
+id = "clippy-debt-0006"
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "pervasive let _ = cleanup"
+blocked_by = "per-call review"
+target = "2027-02-31"
+"#;
+    let violations = super::collect_clippy_debt_violations(impossible_date, cargo, lints, TODAY);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy-debt-0006") && row.contains("malformed target `2027-02-31`")
+        }),
+        "impossible calendar date must fail: {violations:?}"
+    );
+
+    let whitespace_only = r#"
+[[debt]]
+id = "   "
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+owner = " "
+reason = "	"
+blocked_by = "per-call review"
+target = "2027-03-31"
+"#;
+    let violations = super::collect_clippy_debt_violations(whitespace_only, cargo, lints, TODAY);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("missing required field")
+                && row.contains("id")
+                && row.contains("owner")
+                && row.contains("reason")
+        }),
+        "whitespace-only required fields must fail: {violations:?}"
+    );
+
+    let duplicate_target = r#"
+[[debt]]
+id = "clippy-debt-0008"
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "cleanup"
+blocked_by = "review"
+target = "2026-09-01"
+target = "2027-03-31"
+"#;
+    let violations = super::collect_clippy_debt_violations(duplicate_target, cargo, lints, TODAY);
+    assert!(
+        violations
+            .iter()
+            .any(|row| row.contains("duplicate") && row.contains("target")),
+        "duplicate target key must fail closed: {violations:?}"
+    );
+
+    let trailing_garbage = r#"
+[[debt]]
+id = "clippy-debt-0009"
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "cleanup"
+blocked_by = "review"
+target = "2027-03-31" trailing garbage
+"#;
+    let violations = super::collect_clippy_debt_violations(trailing_garbage, cargo, lints, TODAY);
+    assert!(
+        violations
+            .iter()
+            .any(|row| row.contains("policy/clippy-debt.toml:")),
+        "trailing garbage after a quoted value must fail closed: {violations:?}"
+    );
+
+    let unknown_field = r#"
+[[debt]]
+id = "clippy-debt-0010"
+lint = "clippy::let_underscore_must_use"
+level = "deny"
+owner = "core/rust"
+reason = "cleanup"
+blocked_by = "review"
+target = "2027-03-31"
+owners = "typo"
+"#;
+    let violations = super::collect_clippy_debt_violations(unknown_field, cargo, lints, TODAY);
+    assert!(
+        violations
+            .iter()
+            .any(|row| row.contains("owners") && row.contains("unknown field")),
+        "unknown field must fail closed: {violations:?}"
+    );
+}
+
 // RIPR-SPEC-0080 route-quality standalone report tests
 
 #[test]

@@ -1291,7 +1291,7 @@ fn semantic_selector_identity(entry: &PanicAllowEntryV2, selector: &PanicFamilyS
 /// the gate has no external date dependency. Returns a fallback far-future
 /// date if the system clock is before the Unix epoch (a pre-epoch clock
 /// would make expired entries appear valid — fail-safe, not fail-open).
-fn today_date_string() -> String {
+pub(crate) fn today_date_string() -> String {
     match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(duration) => date_from_secs(duration.as_secs()),
         Err(_) => "9999-12-31".to_string(), // clock before epoch: fail-safe
@@ -1315,10 +1315,11 @@ fn date_from_secs(secs: u64) -> String {
     format!("{year:04}-{m:02}-{d:02}")
 }
 
-/// Validate that `date` is a well-formed `YYYY-MM-DD` string with plausible
-/// month (01-12) and day (01-31) values. Used to guard the expiry comparison
-/// so a malformed date like `2026-13-45` does not silently bypass the check.
-fn is_valid_iso_date(date: &str) -> bool {
+/// Validate that `date` is a real Gregorian `YYYY-MM-DD` (month-specific
+/// day limits and leap years). Used to guard expiry/target comparison so a
+/// malformed date like `2026-13-45` or `2027-02-31` does not silently bypass
+/// the check.
+pub(crate) fn is_valid_iso_date(date: &str) -> bool {
     let bytes = date.as_bytes();
     if bytes.len() != 10
         || bytes[4] != b'-'
@@ -1329,9 +1330,19 @@ fn is_valid_iso_date(date: &str) -> bool {
     {
         return false;
     }
+    let year = date[..4].parse::<u32>().unwrap_or(0);
     let month = date[5..7].parse::<u32>().unwrap_or(0);
     let day = date[8..10].parse::<u32>().unwrap_or(0);
-    (1..=12).contains(&month) && (1..=31).contains(&day)
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+            if leap { 29 } else { 28 }
+        }
+        _ => return false,
+    };
+    (1..=max_day).contains(&day)
 }
 
 /// Short label for an entry, preferring the stable `id` when available.
