@@ -5634,6 +5634,23 @@ fn doctor_reports_present_start_here_packet() -> Result<(), String> {
 }
 
 #[test]
+fn doctor_reports_directory_squatting_packet_path_as_not_generated() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let squat = workspace.join("target/ripr/reports/start-here.md");
+    std::fs::create_dir_all(&squat).map_err(|e| format!("create squat dir: {e}"))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("(not yet generated; run the safe next action below)"));
+    assert!(!stdout.contains("(present; open it first)"));
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
 fn config_validate_rejects_missing_and_file_roots() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let missing = workspace.join("missing-root");
