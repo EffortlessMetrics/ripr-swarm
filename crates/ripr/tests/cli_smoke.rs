@@ -4844,8 +4844,8 @@ fn agent_receipt_writes_one_seam_handoff_json() -> Result<(), Box<dyn std::error
 /// directory. Runs the full command path with the child process CWD
 /// pinned to a separate launch dir (no in-process CWD change).
 #[test]
-fn agent_receipt_relative_out_anchors_at_root_from_foreign_cwd(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn agent_receipt_relative_out_anchors_at_root_from_foreign_cwd()
+-> Result<(), Box<dyn std::error::Error>> {
     let root = unique_temp_workspace("agent-receipt-out-anchor");
     let launch = unique_temp_workspace("agent-receipt-out-launch");
     std::fs::create_dir_all(&root)?;
@@ -4904,7 +4904,9 @@ fn agent_receipt_relative_out_anchors_at_root_from_foreign_cwd(
     let text = std::fs::read_to_string(&anchored)?;
     assert!(text.contains(r#""seam_id": "seam-a""#));
     assert!(
-        !launch.join("target/ripr/reports/agent-receipt.json").exists(),
+        !launch
+            .join("target/ripr/reports/agent-receipt.json")
+            .exists(),
         "relative --out must not write under the launch directory"
     );
     std::fs::remove_dir_all(root)?;
