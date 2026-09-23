@@ -218,7 +218,7 @@ Repair attempts fail closed:
 - ambiguous seam-selected after phases are rejected with an instruction to pass `--attempt`;
 - stale `HEAD`, incomparable evidence, and edit-cage violations do not produce a receipt-ready state;
 - tracked differences from the prepared head outside the trusted edit surface block receipt admission, committed or not, and so do untracked paths the attempt wrote outside it; an untracked file that already existed at the before phase and is byte-identical afterwards was not written by the attempt and does not block admission;
-- the after phase prints `next: … include this receipt in review` only for a receipt whose `status` is `advisory`. For an `incomplete` or `invalid` receipt it prints the status and reason instead and says the receipt is not review evidence.
+- only a receipt whose `status` is `advisory` recommends including it in review. For an `incomplete` or `invalid` receipt, the receipt's own `summary.next_action.recommended_action` and `summary.next_recommendation` state the status and reason, say the receipt is not review evidence, and name the recovery; the after phase prints that same field as its `next:` line.
 
 Two refusals happen before the attempt is finished, so the attempt stays `awaiting_edit` and the printed rerun works: changed analysis inputs ([Cargo.lock between the phases](#cargolock-between-the-phases)) and a `HEAD` that no longer descends from the prepared head ([Committing between the phases](#committing-between-the-phases)).
 
