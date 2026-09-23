@@ -111,6 +111,12 @@ pub fn load_worktree_diff_with_effective_base(
 /// zero-config path (no `--base`) still resolves the repository's real default
 /// branch below.
 ///
+/// Both of those failures ask [`not_a_work_tree`] first, because neither
+/// names the right thing when the root is not a repository: no ref resolves
+/// there, so blaming the chosen ref or the default-base search sends the user
+/// to a repair that cannot work. When that probe answers, its message replaces
+/// theirs; otherwise they stand.
+///
 /// The probe is evidence, not an assumption: only a `rev-parse` that actually
 /// ran and reported the ref absent produces the named failure above. When the
 /// probe cannot complete at all — the spawn fails, or it exceeds `git_timeout`
