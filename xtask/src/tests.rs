@@ -47711,6 +47711,51 @@ blocked_by = "waiting for Rust 1.97"
         "overdue activate_when_msrv with an MSRV-only blocked_by must fail even when reason names a blocker: {violations:?}"
     );
 
+    let escaped_newline = r#"
+[[planned]]
+name = "clippy::indexing_slicing"
+level = "deny"
+activate_when_msrv = "1.93"
+blocked_by = "waiting for Rust 1.97\n"
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, escaped_newline);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy::indexing_slicing")
+                && row.contains("is MSRV-only")
+                && row.contains("waiting for Rust 1.97")
+        }),
+        "an escaped newline must not count as a non-MSRV token: {violations:?}"
+    );
+
+    let escaped_unicode_newline = r#"
+[[planned]]
+name = "clippy::indexing_slicing"
+level = "deny"
+activate_when_msrv = "1.93"
+blocked_by = "waiting for Rust 1.97\u000a"
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, escaped_unicode_newline);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy::indexing_slicing") && row.contains("is MSRV-only")
+        }),
+        "a unicode newline escape must not count as a non-MSRV token: {violations:?}"
+    );
+
+    let literal_newline = r#"
+[[planned]]
+name = "clippy::indexing_slicing"
+level = "deny"
+activate_when_msrv = "1.93"
+blocked_by = 'waiting for Rust 1.97\n'
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, literal_newline);
+    assert!(
+        violations.is_empty(),
+        "a single-quoted backslash-n is literal TOML and stays a non-MSRV token: {violations:?}"
+    );
+
     let clippy_unrecognized = r#"
 [[planned]]
 name = "clippy::manual_pop_if"

@@ -15859,15 +15859,77 @@ fn collect_clippy_debt_violations(
 
 /// First basic TOML string on a value (`"..."` or `'...'`). Table-form and
 /// multiline strings are intentionally out of scope for these ledgers.
+/// Double-quoted strings decode basic escapes so `\n` is whitespace, not the
+/// token `n`. Single-quoted strings stay literal, matching TOML.
 fn unquote_toml_basic_string(value: &str) -> Option<String> {
     let value = value.trim();
     if let Some(rest) = value.strip_prefix('"') {
-        return rest.split_once('"').map(|(token, _)| token.to_string());
+        return rest
+            .split_once('"')
+            .map(|(token, _)| decode_toml_basic_escapes(token));
     }
     if let Some(rest) = value.strip_prefix('\'') {
         return rest.split_once('\'').map(|(token, _)| token.to_string());
     }
     None
+}
+
+/// Decode TOML basic-string escapes. Invalid sequences are left intact so
+/// they still count as leftover tokens in the MSRV filter.
+fn decode_toml_basic_escapes(token: &str) -> String {
+    let mut out = String::with_capacity(token.len());
+    let bytes = token.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'\\' {
+            let Some(ch) = token[index..].chars().next() else {
+                break;
+            };
+            out.push(ch);
+            index += ch.len_utf8();
+            continue;
+        }
+        let Some(esc) = bytes.get(index + 1).copied() else {
+            out.push('\\');
+            break;
+        };
+        let simple = match esc {
+            b'b' => Some('\u{0008}'),
+            b't' => Some('\t'),
+            b'n' => Some('\n'),
+            b'f' => Some('\u{000c}'),
+            b'r' => Some('\r'),
+            b'"' => Some('"'),
+            b'\\' => Some('\\'),
+            _ => None,
+        };
+        if let Some(ch) = simple {
+            out.push(ch);
+            index += 2;
+            continue;
+        }
+        let width = match esc {
+            b'u' => Some(4),
+            b'U' => Some(8),
+            _ => None,
+        };
+        if let Some(width) = width {
+            let start = index + 2;
+            let end = start + width;
+            if end <= bytes.len()
+                && let Ok(hex) = std::str::from_utf8(&bytes[start..end])
+                && let Ok(code) = u32::from_str_radix(hex, 16)
+                && let Some(ch) = char::from_u32(code)
+            {
+                out.push(ch);
+                index = end;
+                continue;
+            }
+        }
+        out.push('\\');
+        index += 1;
+    }
+    out
 }
 
 /// Parse `1.95` / `1.95.0` into a comparable triple. Rejects empty or extra parts.
@@ -15998,7 +16060,7 @@ fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<St
                         let blocked_by = entry.blocked_by.as_deref().map(str::trim).unwrap_or("");
                         if blocked_by.is_empty() {
                             violations.push(format!(
-                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. Record a non-MSRV `blocked_by` why it is still `[[planned]]`, or promote it.",
+                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. Record a non-MSRV `blocked_by` explaining why it is still `[[planned]]`, or promote it.",
                                 entry.block_line, entry.name
                             ));
                         } else if planned_blocker_text_is_msrv_only(blocked_by) {
