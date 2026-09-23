@@ -369,6 +369,7 @@ fn run_agent_receipt_for_attempt(
 
     match options.out {
         Some(path) => {
+            let path = resolve_agent_receipt_out_path(&options.root, &path)?;
             if let Some(parent) = path
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty())
@@ -388,6 +389,28 @@ fn run_agent_receipt_for_attempt(
             Ok(())
         }
     }
+}
+
+/// Anchor a relative `agent receipt --out` at the resolved `--root` (issue
+/// #3967): the product renders `--out` relative next to an absolute
+/// `--root`, so resolving it at the paste-site process CWD wrote genuine
+/// receipts outside the selected root. An absolute `--out` passes through;
+/// a relative one joins `--root`, resolved against the process working
+/// directory exactly as `--root` itself resolves (mirrors the input-side
+/// `validate_agent_receipt_artifact_path` root join and the #3872 redirect
+/// anchor rule). Sibling `--out` surfaces keep their own contracts.
+fn resolve_agent_receipt_out_path(root: &Path, out: &Path) -> Result<PathBuf, String> {
+    if out.is_absolute() {
+        return Ok(out.to_path_buf());
+    }
+    let base = if root.is_absolute() {
+        root.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|err| format!("resolve agent receipt --out root failed: {err}"))?
+            .join(root)
+    };
+    Ok(base.join(out))
 }
 
 fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
@@ -879,6 +902,47 @@ mod tests {
     use crate::cli::commands_agent_support::{
         agent_brief_lines_from_diff, agent_brief_owners_for_lines, normalize_agent_brief_path,
     };
+
+    /// Issue #3967: a relative `agent receipt --out` anchors at the resolved
+    /// `--root` instead of the paste-site working directory, so the
+    /// product-rendered command writes under the selected root from any
+    /// CWD. An absolute `--out` passes through untouched.
+    #[test]
+    fn agent_receipt_out_path_anchors_relative_out_at_root() -> Result<(), String> {
+        let cwd = std::env::current_dir()
+            .map_err(|err| format!("read test working directory failed: {err}"))?;
+        let absolute_root = cwd.join("receipt-anchor-root");
+        let anchored = resolve_agent_receipt_out_path(
+            &absolute_root,
+            Path::new("target/ripr/reports/agent-receipt.json"),
+        )?;
+        let expected = absolute_root.join("target/ripr/reports/agent-receipt.json");
+        if anchored != expected {
+            return Err(format!(
+                "relative --out must anchor at --root: {}",
+                anchored.display()
+            ));
+        }
+        let absolute_out = cwd.join("elsewhere").join("receipt.json");
+        let passthrough = resolve_agent_receipt_out_path(&absolute_root, &absolute_out)?;
+        if passthrough != absolute_out {
+            return Err(format!(
+                "absolute --out must pass through: {}",
+                passthrough.display()
+            ));
+        }
+        let relative_root = Path::new("some-checkout");
+        let anchored_relative =
+            resolve_agent_receipt_out_path(relative_root, Path::new("out.json"))?;
+        let expected_relative = cwd.join(relative_root).join("out.json");
+        if anchored_relative != expected_relative {
+            return Err(format!(
+                "relative --out under a relative --root must resolve through the process working directory: {}",
+                anchored_relative.display()
+            ));
+        }
+        Ok(())
+    }
 
     #[test]
     fn agent_rejects_unknown_subcommands() {
