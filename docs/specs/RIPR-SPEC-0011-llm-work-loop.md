@@ -342,8 +342,9 @@ after phase applies) and selects `next_command` in this order:
 3. **Ambiguous.** More than one such attempt: select nothing and warn
    `ambiguous_repair_attempts`, listing each attempt's command. Status never
    picks the newest (docs/REPAIR_ATTEMPT.md).
-4. **Head unknown.** An awaiting attempt exists but `HEAD` cannot be read:
-   select nothing and warn `repair_attempt_head_unknown`.
+4. **Head unknown.** `HEAD` cannot be read, so rules 2 and 3 match no
+   attempt. If any attempt is `awaiting_edit`, select nothing and warn
+   `repair_attempt_head_unknown` rather than restarting its seam.
 5. **Restart.** Group attempts by seam. A seam with a `ready_to_finish`
    attempt is finished. A seam whose attempts all ended (`failed`, `stale`,
    `incomparable`), were prepared at another `HEAD`, or never left `prepared`
