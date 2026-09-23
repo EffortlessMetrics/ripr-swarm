@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::cli::commands_agent_support::{
-    agent_brief_lines_from_diff, agent_brief_owners_for_lines,
+    agent_brief_lines_from_diff, agent_brief_owner_attribution_for_lines,
 };
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
@@ -1458,7 +1458,8 @@ fn review_comments_with_diff_loader_at(
     receipt.phase("diff_discovery", "language_facts");
     receipt.write_atomic(&receipt_path)?;
     let changed_lines = agent_brief_lines_from_diff(&input.root, &diff_text);
-    let changed_owners = agent_brief_owners_for_lines(&input.root, &changed_lines);
+    let (changed_owners, enclosing_owners) =
+        agent_brief_owner_attribution_for_lines(&input.root, &changed_lines);
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -1470,7 +1471,8 @@ fn review_comments_with_diff_loader_at(
     receipt.phase("language_facts", "canonical_analysis");
     receipt.write_atomic(&receipt_path)?;
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
-        .with_changed_owners(changed_owners);
+        .with_changed_owners(changed_owners)
+        .with_enclosing_owners(enclosing_owners);
     let changed_owner_names = working_set
         .changed_owners
         .iter()
