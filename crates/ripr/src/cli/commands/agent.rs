@@ -1035,8 +1035,19 @@ fn repair_after_input_drift_lines(
                     attempt.repository_head
                 ),
             };
+            // Name the untrack route only when a lockfile is among the
+            // changed inputs; a manifest-only change has no lockfile to
+            // untrack, and the advice would send the reader after the wrong
+            // file.
+            let untrack = paths
+                .iter()
+                .find(|path| Path::new(path.as_str()).file_name() == Some("Cargo.lock".as_ref()))
+                .map(|path| {
+                    format!(", or `git rm --cached {path}` for a lockfile that became tracked")
+                })
+                .unwrap_or_default();
             lines.push(format!(
-                "to recover: {uncommit}restore those files to their before-phase state (for example `git checkout {} -- <path>`, or `git rm --cached Cargo.lock` for a lockfile that became tracked), then rerun `ripr agent repair --root {root_arg} --attempt {attempt_arg} --phase after`. To keep the change, set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before`, restore the edit, then run the new --attempt command it prints.",
+                "to recover: {uncommit}restore those files to their before-phase state (for example `git checkout {} -- <path>`{untrack}), then rerun `ripr agent repair --root {root_arg} --attempt {attempt_arg} --phase after`. To keep the change, set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before`, restore the edit, then run the new --attempt command it prints.",
                 attempt.repository_head
             ));
         }

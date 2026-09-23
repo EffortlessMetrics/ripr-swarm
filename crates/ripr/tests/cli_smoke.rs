@@ -4356,11 +4356,16 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
 /// F15-1 boundary: a Git-tracked `Cargo.lock` is an analysis input. Changing
 /// it between the phases, or starting to track a generated one, is refused
 /// with the named cause and a rerun route, and the attempt stays awaiting
-/// the edit so the route works.
+/// the edit so the route works. A manifest-only change names the manifest
+/// and no lockfile untrack route.
 #[test]
 fn agent_repair_refuses_a_tracked_cargo_lock_change_between_the_phases()
 -> Result<(), Box<dyn std::error::Error>> {
-    for scenario in ["tracked lockfile modified", "generated lockfile staged"] {
+    for scenario in [
+        "tracked lockfile modified",
+        "generated lockfile staged",
+        "manifest modified",
+    ] {
         let root = unbuilt_repair_fixture("agent-repair-tracked-lockfile")?;
         if scenario == "tracked lockfile modified" {
             simulate_first_cargo_test(&root)?;
@@ -4382,17 +4387,34 @@ fn agent_repair_refuses_a_tracked_cargo_lock_change_between_the_phases()
             lockfile
                 .push_str("\n[[package]]\nname = \"updated_dependency\"\nversion = \"1.0.1\"\n");
             std::fs::write(root.join("Cargo.lock"), lockfile)?;
+        } else if scenario == "manifest modified" {
+            let mut manifest = std::fs::read_to_string(root.join("Cargo.toml"))?;
+            manifest.push_str("\n# edited between the repair phases\n");
+            std::fs::write(root.join("Cargo.toml"), manifest)?;
         } else {
             simulate_first_cargo_test(&root)?;
             run_git(&root, &["add", "Cargo.lock"])?;
         }
+        let changed_input = if scenario == "manifest modified" {
+            "Cargo.toml"
+        } else {
+            "Cargo.lock"
+        };
 
         let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
         assert_failure(&after);
         let stderr = String::from_utf8_lossy(&after.stderr);
         assert!(
-            stderr.contains("ripr: analysis inputs changed after the before phase: Cargo.lock."),
+            stderr.contains(&format!(
+                "ripr: analysis inputs changed after the before phase: {changed_input}."
+            )),
             "{scenario}: the refusal must name the changed input:\n{stderr}"
+        );
+        // The untrack route is offered only when a lockfile moved.
+        assert_eq!(
+            stderr.contains("git rm --cached Cargo.lock"),
+            changed_input == "Cargo.lock",
+            "{scenario}: untrack advice must follow the changed input:\n{stderr}"
         );
         assert!(
             stderr.contains(
@@ -4416,9 +4438,9 @@ fn agent_repair_refuses_a_tracked_cargo_lock_change_between_the_phases()
         assert_eq!(manifest["state"], "awaiting_edit", "{scenario}: {manifest}");
 
         // The named route recovers the same attempt.
-        if scenario == "tracked lockfile modified" {
+        if scenario == "tracked lockfile modified" || scenario == "manifest modified" {
             let head = git_stdout(&root, &["rev-parse", "HEAD"])?;
-            run_git(&root, &["checkout", &head, "--", "Cargo.lock"])?;
+            run_git(&root, &["checkout", &head, "--", changed_input])?;
         } else {
             run_git(&root, &["rm", "--cached", "-q", "Cargo.lock"])?;
         }
