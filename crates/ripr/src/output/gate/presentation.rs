@@ -219,7 +219,12 @@ pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String
                 }
                 (_, None) => {}
             }
-            if let Some(command) = first.repair_route.inspection_command.as_deref() {
+            // An eligible seam's route starts the repair transaction, which
+            // prints its own after-phase command (#3906); the inspection
+            // brief stays the route for everything else.
+            if let Some(command) = first.repair_route.repair_command.as_deref() {
+                let _ = write!(detail, "; start the repair with `{command}`");
+            } else if let Some(command) = first.repair_route.inspection_command.as_deref() {
                 let _ = write!(detail, "; inspect with `{command}`");
             }
             return detail;
@@ -412,6 +417,7 @@ pub(super) fn repair_route_json(route: &GateRepairRoute) -> Value {
         "missing_discriminator": route.missing_discriminator,
         "repair_target": repair_target,
         "test_intent": route.test_intent,
+        "repair_command": route.repair_command,
         "verify_command": route.verify_command,
         "receipt_command": route.receipt_command,
         "inspection_command": route.inspection_command,
@@ -487,6 +493,7 @@ fn push_repair_route(out: &mut String, route: &GateRepairRoute) {
         route.missing_discriminator.as_deref(),
     );
     push_repair_target(out, route.repair_target.as_ref());
+    push_optional_code(out, "Start repair", route.repair_command.as_deref());
     push_optional_text(out, "Add", route.test_intent.as_deref());
     push_optional_code(out, "Verify", route.verify_command.as_deref());
     push_optional_code(out, "Receipt", route.receipt_command.as_deref());
@@ -585,6 +592,55 @@ fn md_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn route_with_repair(repair_command: Option<&str>) -> GateRepairRoute {
+        GateRepairRoute {
+            canonical_gap_id: Some("gap:shared".to_string()),
+            seam_id: Some("seam-a".to_string()),
+            classification: Some("weakly_gripped".to_string()),
+            changed_owner: Some("pricing::discounted_total".to_string()),
+            changed_behavior: Some("amount >= discount_threshold".to_string()),
+            missing_discriminator: Some("amount == discount_threshold".to_string()),
+            repair_target: None,
+            test_intent: Some("Assert the equality boundary.".to_string()),
+            repair_command: repair_command.map(ToString::to_string),
+            verify_command: Some("ripr agent verify --root . --json".to_string()),
+            receipt_command: None,
+            inspection_command: Some(
+                "ripr agent brief --root . --seam-id seam-a --json".to_string(),
+            ),
+            authority_boundary: "static_ripr_evidence_only".to_string(),
+            limitation: None,
+        }
+    }
+
+    /// #3906: the gate Markdown leads a route that carries the repair start
+    /// with it, and JSON keeps the field (null when absent).
+    #[test]
+    fn repair_route_leads_with_the_repair_start_when_carried() -> Result<(), String> {
+        let command = "ripr agent repair --root . --seam-id seam-a --phase before";
+        let mut with = String::new();
+        push_repair_route(&mut with, &route_with_repair(Some(command)));
+        let start = with
+            .find(&format!("  - Start repair: `{command}`\n"))
+            .ok_or_else(|| format!("missing start line:\n{with}"))?;
+        let verify = with
+            .find("  - Verify:")
+            .ok_or_else(|| format!("missing verify line:\n{with}"))?;
+        if start > verify {
+            return Err(format!("the repair start must come first:\n{with}"));
+        }
+
+        let mut without = String::new();
+        push_repair_route(&mut without, &route_with_repair(None));
+        if without.contains("Start repair") {
+            return Err(format!("no repair start without the field:\n{without}"));
+        }
+        if repair_route_json(&route_with_repair(None)).get("repair_command") != Some(&Value::Null) {
+            return Err("JSON must carry repair_command as null when absent".to_string());
+        }
+        Ok(())
+    }
 
     #[test]
     fn production_caller_target_markdown_preserves_explicit_location() -> Result<(), String> {

@@ -181,6 +181,10 @@ pub(super) struct GateRepairRoute {
     pub(super) missing_discriminator: Option<String>,
     pub(super) repair_target: Option<GateRepairTarget>,
     pub(super) test_intent: Option<String>,
+    /// The repair transaction's start (#3906). Present only when the
+    /// upstream card carries it, which it does only past the fail-closed
+    /// repair-packet flip; the gate never derives it.
+    pub(super) repair_command: Option<String>,
     pub(super) verify_command: Option<String>,
     pub(super) receipt_command: Option<String>,
     pub(super) inspection_command: Option<String>,
@@ -288,6 +292,10 @@ pub(super) struct GateRouteFacts {
     pub(super) missing_discriminator: Option<String>,
     pub(super) repair_target: Option<GateRepairTarget>,
     pub(super) test_intent: Option<String>,
+    /// The repair transaction's start (#3906). Present only when the
+    /// upstream card carries it, which it does only past the fail-closed
+    /// repair-packet flip; the gate never derives it.
+    pub(super) repair_command: Option<String>,
     pub(super) verify_command: Option<String>,
     pub(super) receipt_command: Option<String>,
     pub(super) inspection_command: Option<String>,

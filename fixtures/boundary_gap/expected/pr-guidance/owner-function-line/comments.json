@@ -33,6 +33,7 @@
       "llm_guidance": {
         "command": "ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json",
         "prompt": "Write one focused Rust test for amount == discount_threshold. Place it in tests/pricing.rs near above_threshold_gets_discount. Do not change production code. Preserve existing fixture style. Verify with ripr agent verify.",
+        "repair_command": "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before",
         "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
       },
       "missing_discriminator": "amount == discount_threshold",
