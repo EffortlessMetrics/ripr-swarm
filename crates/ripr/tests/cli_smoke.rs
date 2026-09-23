@@ -4838,6 +4838,80 @@ fn agent_receipt_writes_one_seam_handoff_json() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+/// Issue #3967: a relative `agent receipt --out` anchors at the resolved
+/// `--root`, so the product-rendered command pasted from a foreign
+/// directory writes under the selected root instead of the launch
+/// directory. Runs the full command path with the child process CWD
+/// pinned to a separate launch dir (no in-process CWD change).
+#[test]
+fn agent_receipt_relative_out_anchors_at_root_from_foreign_cwd(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-receipt-out-anchor");
+    let launch = unique_temp_workspace("agent-receipt-out-launch");
+    std::fs::create_dir_all(&root)?;
+    std::fs::create_dir_all(&launch)?;
+    init_git_fixture_repo(&root)?;
+    std::fs::create_dir_all(root.join("target/ripr/workflow"))?;
+    let before = root.join("target/ripr/workflow/before.repo-exposure.json");
+    let after = root.join("target/ripr/workflow/after.repo-exposure.json");
+    write_bound_repo_exposure_fixture(
+        &root,
+        &before,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
+    )?;
+    advance_fixture_head(&root, "after movement")?;
+    write_bound_repo_exposure_fixture(
+        &root,
+        &after,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
+    )?;
+    let verify = root.join("agent-verify.json");
+    let verify_output = run_ripr(&[
+        "agent",
+        "verify",
+        "--root",
+        &root.display().to_string(),
+        "--before",
+        &before.display().to_string(),
+        "--after",
+        &after.display().to_string(),
+        "--json",
+    ]);
+    assert_success(&verify_output);
+    std::fs::write(&verify, verify_output.stdout)?;
+
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let output = run_command(
+        bin,
+        Some(&launch),
+        &[
+            "agent",
+            "receipt",
+            "--root",
+            &root.display().to_string(),
+            "--verify-json",
+            &verify.display().to_string(),
+            "--seam-id",
+            "seam-a",
+            "--json",
+            "--out",
+            "target/ripr/reports/agent-receipt.json",
+        ],
+    )?;
+    assert_success(&output);
+
+    let anchored = root.join("target/ripr/reports/agent-receipt.json");
+    let text = std::fs::read_to_string(&anchored)?;
+    assert!(text.contains(r#""seam_id": "seam-a""#));
+    assert!(
+        !launch.join("target/ripr/reports/agent-receipt.json").exists(),
+        "relative --out must not write under the launch directory"
+    );
+    std::fs::remove_dir_all(root)?;
+    std::fs::remove_dir_all(launch)?;
+    Ok(())
+}
+
 #[test]
 fn agent_receipt_rejects_fabricated_verify_json() -> Result<(), Box<dyn std::error::Error>> {
     let root = unique_temp_workspace("agent-receipt-fabricated");
