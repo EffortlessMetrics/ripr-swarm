@@ -2399,6 +2399,15 @@ mod tests {
                     item["repair_command"]
                 ));
             }
+            // Today actionability already refuses what the flip refuses, so
+            // the record above cannot tell the two checks apart. Hand the
+            // builder an actionable state directly: the flip alone must still
+            // withhold the command if actionability ever drifts wider.
+            if canonical_repair_command_for(&entry, "actionable").is_some() != want {
+                return Err(format!(
+                    "builder must follow the flip, not gap_state, for eligible={want}"
+                ));
+            }
         }
         Ok(())
     }

@@ -48,6 +48,7 @@
         "limitation": null,
         "missing_discriminator": "amount == discount_threshold",
         "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 8f7fa8644fd12280 --json --out target/ripr/reports/agent-receipt.json",
+        "repair_command": "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before",
         "repair_target": {
           "file": "tests/pricing.rs",
           "kind": "related_test",
