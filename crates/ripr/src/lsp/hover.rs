@@ -1650,7 +1650,7 @@ mod seam_hover_tests {
         // Issue #3872: handoff redirects anchor at the resolved --root. The
         // markup projects to `<cwd>/` first, so the needles hold on
         // checkouts whose machine prefix needs shell quoting.
-        let md = crate::testing::cwd_placeholder::project_cwd_text(&md);
+        let md = crate::testing::cwd_placeholder::project_cwd_text(md);
         for needle in [
             "--json > <cwd>/target/ripr/agent/agent-packet.json",
             "--json > <cwd>/target/ripr/agent/agent-brief.json",

@@ -9,7 +9,7 @@
 //! helpers: `xtask` compiles `agent::loop_commands` into its own crate via
 //! `#[path]`, where cross-module test callers do not exist.)
 
-use crate::agent::loop_commands::{display_path, shell_arg};
+use crate::agent::loop_commands::display_path;
 use std::path::PathBuf;
 
 /// The machine prefix that anchored redirect targets embed: the renderer
