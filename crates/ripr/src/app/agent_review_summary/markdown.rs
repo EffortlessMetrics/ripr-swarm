@@ -53,6 +53,12 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
     }
     if let Some(next_command) = &report.next_command {
         rendered.push_str("\nNext command:\n\n");
+        if next_command.runs_after_test_edit() {
+            rendered.push_str(&format!(
+                "{}\n\n",
+                crate::app::agent_status::AFTER_TEST_EDIT_NOTE
+            ));
+        }
         rendered.push_str(COMMAND_SHELL_DISCLOSURE);
         rendered.push_str("```bash\n");
         rendered.push_str(&next_command.command);

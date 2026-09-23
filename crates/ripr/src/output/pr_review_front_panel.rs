@@ -1,7 +1,9 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use super::first_pr::STATIC_EVIDENCE_BOUNDARY;
+use super::first_pr::{
+    RECEIPT_AFTER_VERIFY_LABEL, STATIC_EVIDENCE_BOUNDARY, VERIFY_AFTER_EDIT_LABEL,
+};
 use super::receipt_lifecycle::{
     RECEIPT_MISSING, RECEIPT_NOT_APPLICABLE, receipt_lifecycle_state,
     receipt_lifecycle_state_from_movement, receipt_lifecycle_state_from_receipt_value,
@@ -460,11 +462,11 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
             out.push_str(&format!("- Related test: {related}\n"));
         }
         out.push_str(&format!(
-            "- Verify command: {}\n",
+            "- {VERIFY_AFTER_EDIT_LABEL}: {}\n",
             markdown_command_or(issue.verify_command.as_deref(), "not_available")
         ));
         if let Some(command) = &issue.receipt_command {
-            out.push_str(&format!("- Receipt command: `{command}`\n"));
+            out.push_str(&format!("- {RECEIPT_AFTER_VERIFY_LABEL}: `{command}`\n"));
         }
         out.push_str(&format!("- Receipt: {}\n", issue_receipt_summary(issue)));
         out.push_str(&format!("- Boundary: {}\n", issue.static_evidence_boundary));
@@ -589,7 +591,7 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
                 out.push_str(&format!("- Agent handoff: `{command}`\n"));
             }
             if let Some(command) = &issue.verify_command {
-                out.push_str(&format!("- Verify: `{command}`\n"));
+                out.push_str(&format!("- {VERIFY_AFTER_EDIT_LABEL}: `{command}`\n"));
             }
         }
         out.push_str(&format!(

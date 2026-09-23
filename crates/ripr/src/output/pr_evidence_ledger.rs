@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+use super::first_pr::{RECEIPT_AFTER_VERIFY_LABEL, VERIFY_AFTER_EDIT_LABEL};
 use super::receipt_lifecycle::{
     RECEIPT_MISSING, receipt_lifecycle_state, receipt_lifecycle_state_from_movement,
     receipt_lifecycle_state_from_receipt_value,
@@ -369,10 +370,10 @@ pub(crate) fn render_pr_evidence_ledger_markdown(report: &PrEvidenceLedgerReport
             out.push_str(&format!("- Related test: {related}\n"));
         }
         if let Some(verify) = route.verify_command.as_deref() {
-            out.push_str(&format!("- Verify command: `{verify}`\n"));
+            out.push_str(&format!("- {VERIFY_AFTER_EDIT_LABEL}: `{verify}`\n"));
         }
         if let Some(receipt) = route.receipt_command.as_deref() {
-            out.push_str(&format!("- Receipt command: `{receipt}`\n"));
+            out.push_str(&format!("- {RECEIPT_AFTER_VERIFY_LABEL}: `{receipt}`\n"));
         }
         out.push_str(&format!(
             "- Receipt state: {}\n",
@@ -1743,7 +1744,9 @@ mod tests {
         assert!(markdown.contains("src/pricing.rs:42"));
         assert!(markdown.contains("Gap: gap:pr:pricing:threshold-boundary"));
         assert!(markdown.contains("Gap decision ledger: gap-ledger.json"));
-        assert!(markdown.contains("Verify command: `cargo xtask fixtures boundary_gap`"));
+        assert!(
+            markdown.contains("Verify after the test edit: `cargo xtask fixtures boundary_gap`")
+        );
         Ok(())
     }
 

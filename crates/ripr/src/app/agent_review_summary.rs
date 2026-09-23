@@ -750,6 +750,44 @@ mod tests {
         Ok(())
     }
 
+    /// #3906 (F60-2): with only the before side a CI run writes, the review
+    /// packet's next command is the after snapshot. The summary must say it
+    /// runs after the focused test edit; the before-snapshot command must not.
+    #[test]
+    fn agent_review_summary_markdown_labels_post_edit_next_command() -> Result<(), String> {
+        let empty = unique_agent_review_summary_test_dir("markdown-next-command-before-side");
+        std::fs::create_dir_all(&empty).map_err(|err| format!("create root: {err}"))?;
+        let report = build_agent_review_summary_report(&empty, Path::new("."));
+        let rendered = render_agent_review_summary_markdown(&report);
+        assert!(rendered.contains("Next command:"), "{rendered}");
+        assert!(
+            !rendered.contains(crate::app::agent_status::AFTER_TEST_EDIT_NOTE),
+            "{rendered}"
+        );
+        std::fs::remove_dir_all(&empty).map_err(|err| format!("remove root: {err}"))?;
+
+        let root = unique_agent_review_summary_test_dir("markdown-next-command-after-side");
+        write_file(&root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT), "{}")?;
+        write_file(&root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT), "{}")?;
+        write_file(&root.join(WORKFLOW_AGENT_PACKET_ARTIFACT), "{}")?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let rendered = render_agent_review_summary_markdown(&report);
+        let next = check_repo_exposure_command(".", "draft", WORKFLOW_AFTER_SNAPSHOT_ARTIFACT);
+        let heading = rendered
+            .find("Next command:")
+            .ok_or_else(|| format!("next command missing:\n{rendered}"))?;
+        let note = rendered
+            .find(crate::app::agent_status::AFTER_TEST_EDIT_NOTE)
+            .ok_or_else(|| format!("post-edit note missing:\n{rendered}"))?;
+        let fence = rendered
+            .find(format!("```bash\n{next}\n```\n").as_str())
+            .ok_or_else(|| format!("after-snapshot command missing:\n{rendered}"))?;
+        assert!(heading < note && note < fence, "{rendered}");
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
     /// The review-summary Next command block must offer both shells (#2628):
     /// the bash fence stays byte-identical, the PowerShell fence derives
     /// through the shared `powershell_command` translation, and the cmd.exe

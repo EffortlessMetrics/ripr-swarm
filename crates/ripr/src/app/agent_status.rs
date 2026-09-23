@@ -71,6 +71,21 @@ const MISSING_COMMAND_ORDER: &[&str] = &[
     "agent_receipt",
 ];
 
+/// Loop steps that need a snapshot taken after the focused test edit.
+///
+/// Before that edit, the after snapshot equals the before snapshot and
+/// verify has no movement to compare (#3906), so human renderings label
+/// these steps instead of presenting them as runnable now.
+const AFTER_TEST_EDIT_STEPS: &[&str] = &[
+    "after_snapshot",
+    "analysis_outcome",
+    "agent_verify",
+    "agent_receipt",
+];
+
+/// Human note printed with a next command that belongs after the test edit.
+pub(crate) const AFTER_TEST_EDIT_NOTE: &str = "Run this after the focused test edit, not before: it needs a snapshot taken after the edit. Inside a repair transaction, the `--attempt ... --phase after` command runs this step instead.";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentStatusReport {
     pub(crate) root: String,
@@ -109,6 +124,13 @@ pub(crate) struct AgentStatusWarning {
     pub(crate) kind: String,
     pub(crate) artifact: String,
     pub(crate) message: String,
+}
+
+impl AgentStatusCommand {
+    /// Whether this step only makes sense after the focused test edit.
+    pub(crate) fn runs_after_test_edit(&self) -> bool {
+        AFTER_TEST_EDIT_STEPS.contains(&self.step.as_str())
+    }
 }
 
 impl AgentStatusReport {
@@ -208,6 +230,9 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
     if let Some(next) = report.missing_commands.first() {
         rendered.push_str("\n## Next Command\n\n");
         rendered.push_str(&format!("{}\n\n", next.reason));
+        if next.runs_after_test_edit() {
+            rendered.push_str(&format!("{AFTER_TEST_EDIT_NOTE}\n\n"));
+        }
         rendered.push_str(COMMAND_SHELL_DISCLOSURE);
         rendered.push_str("```bash\n");
         rendered.push_str(&next.command);
@@ -684,6 +709,61 @@ mod tests {
         assert!(rendered.contains("ripr check --root . --mode draft"));
         assert!(rendered.contains("No runtime mutation execution."));
         assert!(rendered.contains("No generated tests."));
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #3906 (F60-2): the before side a CI run writes leaves the after
+    /// snapshot as the next missing step. It must render as a post-edit step:
+    /// run before the test edit, verify would have nothing to compare.
+    #[test]
+    fn agent_status_markdown_labels_post_edit_next_commands() -> Result<(), String> {
+        let empty = unique_agent_status_test_dir("markdown-before-side-missing");
+        std::fs::create_dir_all(&empty).map_err(|err| format!("create root: {err}"))?;
+        let report = build_agent_status_report(&empty, Path::new("."));
+        let next = report
+            .missing_commands
+            .first()
+            .ok_or("an empty root has a next command")?;
+        assert_eq!(next.step, "before_snapshot");
+        assert!(!next.runs_after_test_edit());
+        assert!(!render_agent_status_markdown(&report).contains(AFTER_TEST_EDIT_NOTE));
+        std::fs::remove_dir_all(&empty).map_err(|err| format!("remove root: {err}"))?;
+
+        let root = unique_agent_status_test_dir("markdown-before-side-present");
+        write_file(&root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT), "{}")?;
+        write_file(&root.join(WORKFLOW_AGENT_PACKET_ARTIFACT), "{}")?;
+        write_file(&root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT), "{}")?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        let next = report
+            .missing_commands
+            .first()
+            .ok_or("a before-side root has a next command")?;
+        assert_eq!(next.step, "after_snapshot");
+        let steps = report
+            .missing_commands
+            .iter()
+            .map(|command| (command.step.as_str(), command.runs_after_test_edit()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            steps,
+            vec![
+                ("after_snapshot", true),
+                ("analysis_outcome", true),
+                ("agent_verify", true),
+                ("agent_receipt", true),
+            ]
+        );
+        let rendered = render_agent_status_markdown(&report);
+        let reason = rendered
+            .find("after snapshot artifact is missing")
+            .ok_or("next-command reason missing")?;
+        let note = rendered
+            .find(AFTER_TEST_EDIT_NOTE)
+            .ok_or("post-edit note missing")?;
+        let fence = rendered.find("```bash").ok_or("bash fence missing")?;
+        assert!(reason < note && note < fence, "{rendered}");
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())

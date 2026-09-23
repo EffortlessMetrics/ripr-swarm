@@ -427,48 +427,27 @@ jobs:
       - name: Generate RIPR agent loop artifacts
         if: always() && env.RIPR_TOP_SEAM_ID != ''
         continue-on-error: true
+        # CI writes the before side of the repair loop only: the workflow
+        # manifest, brief, and packet the focused-test edit starts from.
+        # The after snapshot, verify, and receipt need that edit between
+        # the snapshots, so the repair's `--attempt ... --phase after`
+        # command produces them where the edit happens (#3906). The packet
+        # lands through a temporary file so a failed render never leaves an
+        # empty JSON artifact for later steps or the upload.
         run: |
           ripr agent start \
             --root . \
             --seam-id "$RIPR_TOP_SEAM_ID" \
             --out target/ripr/workflow
+          packet_tmp="$(mktemp)"
           ripr agent packet \
             --root . \
             --seam-id "$RIPR_TOP_SEAM_ID" \
             --json \
-            > target/ripr/workflow/agent-packet.json
+            > "$packet_tmp"
+          mv "$packet_tmp" target/ripr/workflow/agent-packet.json
           cp target/ripr/workflow/agent-packet.json target/ripr/agent/agent-packet.json
           cp target/ripr/workflow/agent-brief.json target/ripr/agent/agent-brief.json
-          ripr check \
-            --root . \
-            --mode ready \
-            --format repo-exposure-json \
-            > target/ripr/workflow/after.repo-exposure.json
-          cp target/ripr/workflow/after.repo-exposure.json target/ripr/pilot/after.repo-exposure.json
-          ripr check \
-            --root . \
-            --mode draft \
-            --format json \
-            > target/ripr/workflow/analysis-outcome.json
-          ripr agent verify \
-            --root . \
-            --before target/ripr/workflow/before.repo-exposure.json \
-            --after target/ripr/workflow/after.repo-exposure.json \
-            --json \
-            > target/ripr/workflow/agent-verify.json
-          cp target/ripr/workflow/agent-verify.json target/ripr/agent/agent-verify.json
-          ripr agent receipt \
-            --root . \
-            --verify-json target/ripr/workflow/agent-verify.json \
-            --seam-id "$RIPR_TOP_SEAM_ID" \
-            --json \
-            --out target/ripr/reports/agent-receipt.json
-          cp target/ripr/reports/agent-receipt.json target/ripr/agent/agent-receipt.json
-          ripr outcome \
-            --before target/ripr/workflow/before.repo-exposure.json \
-            --after target/ripr/workflow/after.repo-exposure.json \
-            --format json \
-            --out target/ripr/reports/targeted-test-outcome.json
 
       - name: Render RIPR gap decision ledger
         if: always() && hashFiles('target/ripr/reports/repo-exposure.json') != ''
@@ -1322,7 +1301,7 @@ jobs:
             echo '- Then open `target/ripr/reports/index.md` to navigate deeper evidence artifacts.'
             echo '- Safe next action: repair one named gap, regenerate missing or malformed artifacts, refresh stale evidence, fix wrong-root setup, or stop on no-action.'
             echo '- Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, and preview-limited evidence are explicit stop or regeneration states.'
-            echo '- Proof rail: verify command, receipt command, and receipt path are static movement evidence only.'
+            echo '- Proof rail: the repair start, verify, receipt, and receipt path are static movement evidence only; verify and receipt run after the test edit.'
             echo '- Preview boundary: preview-limited evidence stays syntax-first and advisory, with static limits before repair language.'
             echo '- Gate authority: `ripr gate evaluate` remains the pass/fail source only when `RIPR_GATE_MODE` is configured.'
             if [ -f target/ripr/reports/start-here.md ]; then
@@ -1360,7 +1339,8 @@ jobs:
               start_receipt="$(jq -r '.selected.receipt_command // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
               start_receipt_path="$(jq -r '.selected.receipt_path // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
               start_receipt_state="$(jq -r '.selected.receipt_state // "receipt_missing"' "$start_json" 2>/dev/null || echo unknown)"
-              start_next="$(jq -r '.selected.next_command // .selected.regeneration_command // "none"' "$start_json" 2>/dev/null || echo unknown)"
+              start_repair_command="$(jq -r '.selected.repair_command // empty' "$start_json" 2>/dev/null || true)"
+              start_next="$(jq -r '.selected.repair_command // .selected.next_command // .selected.regeneration_command // "none"' "$start_json" 2>/dev/null || echo unknown)"
               start_warnings="$(jq -r '(.warnings // [] | length)' "$start_json" 2>/dev/null || echo 0)"
               start_status="$(markdown_inline "$start_status")"
               start_state="$(markdown_inline "$start_state")"
@@ -1382,6 +1362,19 @@ jobs:
               start_receipt_state="$(markdown_inline "$start_receipt_state")"
               start_next="$(markdown_inline "$start_next")"
               start_warnings="$(markdown_inline "$start_warnings")"
+              # A carried repair start leads the block (#3906): its after
+              # phase runs verify and writes the receipt, so the low-level
+              # verify and receipt commands below are the manual alternative.
+              if [ -n "$start_repair_command" ]; then
+                start_repair_command="$(markdown_inline "$start_repair_command")"
+                echo "- Start repair: \`$start_repair_command\`"
+                echo '- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.'
+                start_verify_label='Manual verify without a repair attempt'
+                start_receipt_label='Manual receipt without a repair attempt'
+              else
+                start_verify_label='Verify after the test edit'
+                start_receipt_label='Receipt after verify'
+              fi
               echo "- Status: \`$start_status\`"
               echo "- Selected state: \`$start_state\`"
               echo "- Canonical gap: \`$start_gap\`"
@@ -1396,8 +1389,8 @@ jobs:
               echo "- Repair target: \`$start_target\`"
               echo "- Related test: \`$start_related\`"
               echo "- Static limit: \`$start_limit\`"
-              echo "- Verify command: \`$start_verify\`"
-              echo "- Receipt command: \`$start_receipt\`"
+              echo "- $start_verify_label: \`$start_verify\`"
+              echo "- $start_receipt_label: \`$start_receipt\`"
               echo "- Receipt path: \`$start_receipt_path\`"
               echo "- Receipt state: \`$start_receipt_state\`"
               echo "- Safe next action command: \`$start_next\`"
@@ -1451,8 +1444,8 @@ jobs:
               echo "- Gap: \`$first_gap\`"
               echo "- Repair target: \`$first_target\`"
               echo "- Agent packet: \`$first_packet\`"
-              echo "- Verify command: \`$first_verify\`"
-              echo "- Receipt command: \`$first_receipt\`"
+              echo "- Verify after the test edit: \`$first_verify\`"
+              echo "- Receipt after verify: \`$first_receipt\`"
               echo "- Fallback/no-action: \`$first_fallback\`"
               echo "- Warnings: \`$first_warnings\`"
               echo "- Artifacts: \`target/ripr/reports/first-useful-action.json\`, \`target/ripr/reports/first-useful-action.md\`, \`target/ripr/workflow/agent-packet.json\`"
@@ -1620,7 +1613,7 @@ jobs:
                 echo "- Missing discriminator: \`$panel_missing\`"
                 echo "- Suggested focused test: \`$panel_suggested\`"
                 echo "- Related test: \`$panel_related\`"
-                echo "- Verify command: \`$panel_verify\`"
+                echo "- Verify after the test edit: \`$panel_verify\`"
                 echo "- Agent handoff: \`$panel_agent\`"
                 echo "- Receipt: \`$panel_receipt\`"
                 echo "- Gate: mode=\`$panel_gate_mode\`, decision=\`$panel_gate_decision\`"
@@ -1668,8 +1661,8 @@ jobs:
                 echo "- Why: \`$action_why\`"
                 echo "- Seam: \`$action_seam\`"
                 echo "- Target: \`$action_target\`"
-                echo "- Verify command: \`$action_verify\`"
-                echo "- Receipt command: \`$action_receipt\`"
+                echo "- Verify after the test edit: \`$action_verify\`"
+                echo "- Receipt after verify: \`$action_receipt\`"
                 echo "- Fallback: \`$action_fallback\`"
                 echo "- Warnings: \`$action_warning_count\`"
                 echo "- Action artifacts: \`target/ripr/reports/first-useful-action.json\`, \`target/ripr/reports/first-useful-action.md\`"
@@ -1791,7 +1784,7 @@ jobs:
               echo "- Gate: mode=\`$ledger_gate_mode\`, decision=\`$ledger_gate_decision\`"
               echo "- Counts: new_policy_eligible=\`$ledger_new_policy_eligible\`, baseline_still_present=\`$ledger_still_present\`, baseline_resolved=\`$ledger_resolved\`, acknowledged=\`$ledger_acknowledged\`, suppressed=\`$ledger_suppressed\`, blocking_candidates=\`$ledger_blocking\`, visible_unresolved=\`$ledger_visible\`"
               echo "- Top repair route: \`$ledger_route\`"
-              echo "- Verify command: \`$ledger_verify\`"
+              echo "- Verify after the test edit: \`$ledger_verify\`"
               echo "- Agent command: \`$ledger_agent\`"
               echo "- Coverage/grip frontier: \`$ledger_coverage_status\`"
               echo "- History trend: \`$ledger_trend\`"

@@ -1,4 +1,8 @@
-use super::{STATIC_EVIDENCE_BOUNDARY, string_path};
+use super::{
+    MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
+    REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, STATIC_EVIDENCE_BOUNDARY,
+    VERIFY_AFTER_EDIT_LABEL, string_path,
+};
 use crate::agent::loop_commands::display_path;
 use crate::output::markdown::powershell_command;
 use crate::output::start_here_state::{
@@ -102,15 +106,20 @@ pub(super) fn start_here_cli_summary(
                 out.push_str(&format!("Focused proof intent: {intent}\n"));
             }
             // The carried review-card repair start (#3906) leads the proof
-            // path; its before phase prints the after-phase command.
+            // path; its before phase prints the after-phase command, which
+            // runs verify and writes the receipt.
+            let labels = ProofPathLabels::for_selected(selected);
             if let Some(command) = string_path(selected, &["repair_command"]) {
                 out.push_str(&format!("Start repair: `{command}`\n"));
+                out.push_str(&format!(
+                    "{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+                ));
             }
             if let Some(command) = string_path(selected, &["verify_command"]) {
-                out.push_str(&format!("Verify command: `{command}`\n"));
+                out.push_str(&format!("{}: `{command}`\n", labels.verify));
             }
             if let Some(command) = string_path(selected, &["receipt_command"]) {
-                out.push_str(&format!("Receipt command: `{command}`\n"));
+                out.push_str(&format!("{}: `{command}`\n", labels.receipt));
             }
             out.push_str(&format!(
                 "Receipt path: `{}`\n",
@@ -325,14 +334,18 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     if let Some(intent) = selected.get("focused_proof_intent").and_then(Value::as_str) {
         out.push_str(&format!("- Focused proof intent: {intent}\n"));
     }
+    let labels = ProofPathLabels::for_selected(selected);
     if let Some(command) = string_path(selected, &["repair_command"]) {
         out.push_str(&format!("- Start repair: `{command}`\n"));
+        out.push_str(&format!(
+            "- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+        ));
     }
     if let Some(command) = selected.get("verify_command").and_then(Value::as_str) {
-        out.push_str(&format!("- Verify command: `{command}`\n"));
+        out.push_str(&format!("- {}: `{command}`\n", labels.verify));
     }
     if let Some(command) = selected.get("receipt_command").and_then(Value::as_str) {
-        out.push_str(&format!("- Receipt command: `{command}`\n"));
+        out.push_str(&format!("- {}: `{command}`\n", labels.receipt));
     }
     if let Some(path) = selected.get("receipt_path").and_then(Value::as_str) {
         out.push_str(&format!("- Receipt path: `{path}`\n"));
@@ -384,23 +397,47 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     }
     if let Some(command) = string_path(selected, &["repair_command"]) {
         push_shell_command_pair(out, "Start repair", &command, true);
+        out.push_str(&format!(
+            "{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n\n"
+        ));
     }
     if let Some(command) = selected.get("verify_command").and_then(Value::as_str) {
-        push_shell_command_pair(out, "Verify command", command, true);
+        push_shell_command_pair(out, labels.verify, command, true);
     }
     let agent_packet_command = selected.get("agent_packet_command").and_then(Value::as_str);
     if let Some(command) = selected.get("receipt_command").and_then(Value::as_str) {
         // A review-card selection has no agent packet block, so the receipt
         // block closes the section without a trailing blank line.
-        push_shell_command_pair(
-            out,
-            "Receipt command",
-            command,
-            agent_packet_command.is_some(),
-        );
+        push_shell_command_pair(out, labels.receipt, command, agent_packet_command.is_some());
     }
     if let Some(command) = agent_packet_command {
         push_shell_command_pair(out, "Agent packet command", command, false);
+    }
+}
+
+/// Labels for the selected gap's low-level verify and receipt commands.
+///
+/// Both run only after the test edit. With a carried repair start (#3906)
+/// the after phase runs them, so they render as the manual alternative
+/// rather than as peer steps of the transaction.
+struct ProofPathLabels {
+    verify: &'static str,
+    receipt: &'static str,
+}
+
+impl ProofPathLabels {
+    fn for_selected(selected: &Value) -> Self {
+        if string_path(selected, &["repair_command"]).is_some() {
+            Self {
+                verify: MANUAL_VERIFY_LABEL,
+                receipt: MANUAL_RECEIPT_LABEL,
+            }
+        } else {
+            Self {
+                verify: VERIFY_AFTER_EDIT_LABEL,
+                receipt: RECEIPT_AFTER_VERIFY_LABEL,
+            }
+        }
     }
 }
 

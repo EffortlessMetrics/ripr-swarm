@@ -2252,8 +2252,8 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     assert!(stdout.contains(
         "Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found for the changed behavior."
     ));
-    assert!(stdout.contains("Verify command: `cargo xtask fixtures boundary_gap`"));
-    assert!(stdout.contains("Receipt command: `ripr receipt write --gap "));
+    assert!(stdout.contains("Verify after the test edit: `cargo xtask fixtures boundary_gap`"));
+    assert!(stdout.contains("Receipt after verify: `ripr receipt write --gap "));
     assert!(stdout.contains("Receipt path: `target/ripr/receipts/"));
     assert!(stdout.contains("Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval."));
 
@@ -2304,7 +2304,7 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
         )
     );
     assert!(markdown.contains("- Missing discriminator: Equality-boundary assertion"));
-    assert!(markdown.contains("- Receipt command: `ripr receipt write --gap "));
+    assert!(markdown.contains("- Receipt after verify: `ripr receipt write --gap "));
     assert!(markdown.contains("- Receipt path: `target/ripr/receipts/"));
     assert!(markdown.contains("Pass/fail authority remains with explicit gate-decision artifacts"));
     let check_output = run_ripr_in_workspace(&[
@@ -6410,8 +6410,8 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(stdout.contains("RIPR advisory summary"));
     assert!(stdout.contains("target/ripr/review/comments.json"));
     assert!(stdout.contains("ripr agent start"));
-    assert!(stdout.contains("ripr agent verify"));
-    assert!(stdout.contains("ripr agent receipt"));
+    // #3906: CI writes only the before side of the repair loop.
+    assert!(!stdout.contains("ripr agent receipt"));
     assert!(stdout.contains("ripr agent status"));
     assert!(stdout.contains("ripr agent review-summary"));
     assert!(stdout.contains("target/ripr/workflow/agent-status.md"));
@@ -6475,8 +6475,11 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workflow.contains("--format repo-badge-json"));
     assert!(workflow.contains("ripr agent start"));
     assert!(workflow.contains("ripr agent packet"));
-    assert!(workflow.contains("ripr agent verify"));
-    assert!(workflow.contains("ripr agent receipt"));
+    // #3906 (F60-1): CI has no test edit between snapshots, so it runs no
+    // verify, receipt, or outcome; the repair's after phase writes those.
+    assert!(!workflow.contains("ripr agent receipt"));
+    assert!(!workflow.contains("ripr outcome"));
+    assert!(!workflow.contains("> target/ripr/workflow/agent-verify.json"));
     assert!(workflow.contains("ripr review-comments"));
     assert!(workflow.contains("RIPR_COMMENT_MODE"));
     assert!(workflow.contains("pr-comments plan"));
@@ -6496,9 +6499,9 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workflow.contains("target/ripr/workflow/agent-review-summary.md"));
     assert!(workflow.contains("target/ripr/agent/agent-packet.json"));
     assert!(workflow.contains("target/ripr/agent/agent-brief.json"));
-    assert!(workflow.contains("target/ripr/agent/agent-verify.json"));
-    assert!(workflow.contains("target/ripr/agent/agent-receipt.json"));
-    assert!(workflow.contains("target/ripr/reports/targeted-test-outcome.json"));
+    assert!(!workflow.contains("target/ripr/agent/agent-verify.json"));
+    assert!(!workflow.contains("target/ripr/agent/agent-receipt.json"));
+    assert!(!workflow.contains("target/ripr/reports/targeted-test-outcome.json"));
     assert!(workflow.contains("target/ripr/review"));
     assert!(workflow.contains("target/ripr/review/comments.json"));
     assert!(workflow.contains("Run RIPR PR guidance report"));

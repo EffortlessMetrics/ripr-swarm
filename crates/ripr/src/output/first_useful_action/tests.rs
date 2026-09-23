@@ -2024,7 +2024,7 @@ fn markdown_verify_section_present_for_actionable() -> Result<(), String> {
     let report = build_first_useful_action_report(input);
     let md = render_first_useful_action_markdown(&report);
     assert!(
-        md.contains("## Verify"),
+        md.contains("## Verify After The Test Edit"),
         "expected Verify section in actionable markdown: {md}"
     );
     Ok(())

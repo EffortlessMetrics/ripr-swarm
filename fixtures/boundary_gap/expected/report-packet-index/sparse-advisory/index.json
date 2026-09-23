@@ -90,7 +90,7 @@
           "required": false,
           "authority": false,
           "description": "No assistant proof input was present.",
-          "next_command": "ripr assistant-loop proof --out target/ripr/reports/test-oracle-assistant-proof.json --out-md target/ripr/reports/test-oracle-assistant-proof.md"
+          "next_command": "ripr assistant-loop proof --root . --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json --ledger target/ripr/reports/pr-evidence-ledger.json --out target/ripr/reports/test-oracle-assistant-proof.json --out-md target/ripr/reports/test-oracle-assistant-proof.md"
         }
       ]
     },
@@ -143,7 +143,7 @@
       "path": "target/ripr/reports/test-oracle-assistant-proof.md",
       "required": false,
       "reason": "input_not_available",
-      "next_command": "ripr assistant-loop proof --out target/ripr/reports/test-oracle-assistant-proof.json --out-md target/ripr/reports/test-oracle-assistant-proof.md"
+      "next_command": "ripr assistant-loop proof --root . --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json --ledger target/ripr/reports/pr-evidence-ledger.json --out target/ripr/reports/test-oracle-assistant-proof.json --out-md target/ripr/reports/test-oracle-assistant-proof.md"
     },
     {
       "id": "coverage_grip_frontier",

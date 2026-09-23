@@ -14,8 +14,8 @@ State: actionable
 - Current evidence strength: Static evidence found related TypeScript test context, but the current proof is weak because the discriminator is missing.
 - Missing discriminator: amount == threshold
 - Focused proof intent: Add a focused boundary assertion in `tests/discount.test.ts`.
-- Verify command: `jest tests/discount.test.ts`
-- Receipt command: `ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 --verify-command "jest tests/discount.test.ts" --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json`
+- Verify after the test edit: `jest tests/discount.test.ts`
+- Receipt after verify: `ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 --verify-command "jest tests/discount.test.ts" --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json`
 - Receipt path: `target/ripr/receipts/gap-pr-gap-typescript-typescript-preview-2396aec1.targeted-test-outcome.json`
 - Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.
 
@@ -33,18 +33,18 @@ Repair:
 - Route: `AddBoundaryAssertion`
 - Target: `tests/discount.test.ts`
 
-Verify command:
+Verify after the test edit:
 `jest tests/discount.test.ts`
 
-Verify command (PowerShell):
+Verify after the test edit (PowerShell):
 `jest tests/discount.test.ts`
 
 The first form is written for Bash; cmd.exe is not supported.
 
-Receipt command:
+Receipt after verify:
 `ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 --verify-command "jest tests/discount.test.ts" --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json`
 
-Receipt command (PowerShell):
+Receipt after verify (PowerShell):
 `ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 --verify-command "jest tests/discount.test.ts" --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json`
 
 The first form is written for Bash; cmd.exe is not supported.

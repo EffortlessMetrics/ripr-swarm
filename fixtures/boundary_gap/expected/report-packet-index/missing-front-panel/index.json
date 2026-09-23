@@ -36,7 +36,7 @@
           "required": true,
           "authority": false,
           "description": "First-screen PR review story was not generated.",
-          "next_command": "ripr pr-review front-panel --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md"
+          "next_command": "ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md"
         }
       ]
     },
@@ -102,7 +102,7 @@
       "path": "target/ripr/reports/pr-review-front-panel.md",
       "required": true,
       "reason": "not_generated",
-      "next_command": "ripr pr-review front-panel --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md"
+      "next_command": "ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md"
     }
   ],
   "warnings": [
