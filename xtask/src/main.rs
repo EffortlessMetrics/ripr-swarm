@@ -14725,6 +14725,7 @@ fn check_readme_state() -> Result<(), String> {
 
 fn markdown_links() -> Result<(), String> {
     let mut violations = Vec::new();
+    let mut heading_cache: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
     for file in tracked_files()? {
         if !file.ends_with(".md") {
             continue;
@@ -14738,14 +14739,47 @@ fn markdown_links() -> Result<(), String> {
         }
         let text = read_text_lossy(path)?;
         for link in markdown_links_in_text(&text) {
-            let Some(target_path) = local_markdown_target(&link.target) else {
+            let Some(target) = local_markdown_target(&link.target) else {
                 continue;
             };
-            let resolved = resolve_markdown_link(path, &target_path);
-            if !resolved.exists() {
+            let resolved = match target.path.as_deref() {
+                Some(target_path) => {
+                    let resolved = resolve_markdown_link(path, target_path);
+                    if !resolved.exists() {
+                        violations.push(format!(
+                            "{file}:{} links to missing local target `{}`",
+                            link.line, link.target
+                        ));
+                        continue;
+                    }
+                    resolved
+                }
+                None => path.to_path_buf(),
+            };
+            let Some(fragment) = target.fragment else {
+                continue;
+            };
+            // Only a Markdown document has headings to name. A fragment on any
+            // other target (`src/lib.rs#L20`) is not this check's subject.
+            if !resolved
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+            {
+                continue;
+            }
+            if !heading_cache.contains_key(&resolved) {
+                let target_text = read_text_lossy(&resolved)?;
+                heading_cache.insert(resolved.clone(), heading_slugs(&target_text));
+            }
+            let known = heading_cache
+                .get(&resolved)
+                .is_some_and(|slugs| slugs.contains(&fragment));
+            if !known {
                 violations.push(format!(
-                    "{file}:{} links to missing local target `{}`",
-                    link.line, link.target
+                    "{file}:{} links to `{}`, and `{}` has no heading with that anchor",
+                    link.line,
+                    link.target,
+                    resolved.display()
                 ));
             }
         }
@@ -14755,10 +14789,11 @@ fn markdown_links() -> Result<(), String> {
         PolicyReportSpec {
             report_file: "markdown-links.md",
             check: "markdown-links",
-            why_it_matters: "Markdown links are repo state for humans and long-context agents; links to deleted or renamed docs should fail before review.",
+            why_it_matters: "Markdown links are repo state for humans and long-context agents; links to deleted or renamed docs, and deep links to headings that have been renamed, should fail before review.",
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Update links when docs are renamed or deleted.",
+                "Update `#anchor` fragments when a heading is renamed.",
                 "Use relative links for repo-local Markdown targets.",
                 "Run cargo xtask markdown-links before opening docs-heavy PRs.",
             ],
@@ -14767,6 +14802,78 @@ fn markdown_links() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// The anchor GitHub gives a heading whose text is `text`.
+///
+/// GitHub lowercases the text, turns each space into `-`, and drops every other
+/// character that is not a letter, digit, `_` or `-`. Dropping rather than
+/// collapsing is load-bearing: an em-dash or a slash surrounded by spaces
+/// leaves both of those spaces behind and so produces a doubled dash, which
+/// links into this repository's own headings depend on.
+fn heading_slug(text: &str) -> String {
+    let mut slug = String::new();
+    for ch in text.chars() {
+        if ch.is_alphanumeric() || ch == '_' || ch == '-' {
+            slug.extend(ch.to_lowercase());
+        } else if ch == ' ' {
+            slug.push('-');
+        }
+    }
+    slug
+}
+
+/// Every anchor the headings of `text` offer.
+///
+/// Headings that slugify the same way are numbered the way GitHub numbers them:
+/// the first keeps the bare slug and later ones gain `-1`, `-2`, and so on.
+fn heading_slugs(text: &str) -> BTreeSet<String> {
+    let mut slugs = BTreeSet::new();
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    let mut in_fence = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let Some(title) = atx_heading_title(trimmed) else {
+            continue;
+        };
+        let base = heading_slug(title);
+        let count = seen.entry(base.clone()).or_insert(0);
+        let slug = if *count == 0 {
+            base
+        } else {
+            format!("{base}-{count}")
+        };
+        *count += 1;
+        slugs.insert(slug);
+    }
+    slugs
+}
+
+/// The heading text of an ATX heading line, or `None` when `trimmed` is not one.
+fn atx_heading_title(trimmed: &str) -> Option<&str> {
+    let rest = trimmed.trim_start_matches('#');
+    let level = trimmed.len() - rest.len();
+    if level == 0 || level > 6 {
+        return None;
+    }
+    if !rest.is_empty() && !rest.starts_with(' ') {
+        // `#hashtag` is body text, not a heading.
+        return None;
+    }
+    let title = rest.trim();
+    // A closing sequence of hashes is decoration when a space precedes it.
+    let without_closing = title.trim_end_matches('#');
+    if without_closing.len() < title.len() && without_closing.ends_with(' ') {
+        return Some(without_closing.trim_end());
+    }
+    Some(title)
 }
 
 fn next_checkpoints_from_capabilities(text: &str) -> Result<Vec<String>, String> {
@@ -14826,7 +14933,7 @@ fn markdown_links_in_line(line: &str, line_number: usize) -> Vec<MarkdownLink> {
     links
 }
 
-fn local_markdown_target(raw_target: &str) -> Option<String> {
+fn local_markdown_target(raw_target: &str) -> Option<LocalMarkdownTarget> {
     let mut target = raw_target.trim();
     if target.starts_with('<') {
         let end = target.find('>')?;
@@ -14834,7 +14941,7 @@ fn local_markdown_target(raw_target: &str) -> Option<String> {
     } else if let Some((first, _)) = target.split_once(char::is_whitespace) {
         target = first;
     }
-    if target.is_empty() || target.starts_with('#') {
+    if target.is_empty() {
         return None;
     }
     let lower = target.to_ascii_lowercase();
@@ -14846,14 +14953,25 @@ fn local_markdown_target(raw_target: &str) -> Option<String> {
     {
         return None;
     }
-    let without_query = target.split('?').next().unwrap_or(target);
-    let without_anchor = without_query.split('#').next().unwrap_or(without_query);
-    let local = without_anchor.trim();
-    if local.is_empty() {
+    let (document, fragment) = match target.split_once('#') {
+        Some((document, fragment)) => (document, Some(fragment)),
+        None => (target, None),
+    };
+    let without_query = document.split('?').next().unwrap_or(document);
+    let local = without_query.trim();
+    let path = if local.is_empty() {
         None
     } else {
         Some(local.trim_start_matches('/').to_string())
+    };
+    let fragment = fragment
+        .map(str::trim)
+        .filter(|fragment| !fragment.is_empty())
+        .map(str::to_string);
+    if path.is_none() && fragment.is_none() {
+        return None;
     }
+    Some(LocalMarkdownTarget { path, fragment })
 }
 
 fn resolve_markdown_link(source: &Path, target: &str) -> PathBuf {

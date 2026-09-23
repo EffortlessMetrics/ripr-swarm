@@ -60,7 +60,7 @@ use super::{
     GENERATED_CI_FIRST_PR_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
     GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
     Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
-    LocalContextAllow, LspCockpitFixture, LspCockpitReport, MarkdownLink,
+    LocalContextAllow, LocalMarkdownTarget, LspCockpitFixture, LspCockpitReport, MarkdownLink,
     PYTHON_REAL_REPO_EVAL_REQUIRED_CASES, PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
@@ -122,13 +122,14 @@ use super::{
     gh_pr_safe_next_action, gh_pr_status_json, gh_pr_status_markdown, gh_pr_status_readiness,
     github_event_pull_request_title_from_text, glob_matches, golden_changes_without_blessing,
     golden_drift_semantics, guarded_allow_attribute_lints, guarded_allow_attributes_in_text,
-    help_message, install_hooks_in, is_badge_refresh_context, is_bdd_test_name,
-    is_dependency_surface_candidate, is_generated_candidate, is_non_rust_programming_candidate,
-    is_public_badge_basis_surface, is_receipt_status, is_ripr_managed_hook, is_snake_case_id,
-    is_spec_id, json_escape, json_number_after, json_string_values_for_key, json_summary_count,
-    known_commands, known_xtask_command, lane1_actionable_gap_packets_json,
-    lane1_actionable_gap_packets_markdown, lane1_evidence_audit_from_repo_exposure,
-    lane1_evidence_audit_json, lane1_evidence_audit_limited_report, lane1_evidence_audit_markdown,
+    heading_slug, heading_slugs, help_message, install_hooks_in, is_badge_refresh_context,
+    is_bdd_test_name, is_dependency_surface_candidate, is_generated_candidate,
+    is_non_rust_programming_candidate, is_public_badge_basis_surface, is_receipt_status,
+    is_ripr_managed_hook, is_snake_case_id, is_spec_id, json_escape, json_number_after,
+    json_string_values_for_key, json_summary_count, known_commands, known_xtask_command,
+    lane1_actionable_gap_packets_json, lane1_actionable_gap_packets_markdown,
+    lane1_evidence_audit_from_repo_exposure, lane1_evidence_audit_json,
+    lane1_evidence_audit_limited_report, lane1_evidence_audit_markdown,
     lane1_evidence_audit_repo_exposure_args,
     lane1_evidence_audit_report_from_complete_repo_exposure, lane1_evidence_audit_timeout_error,
     lane1_readiness_packet_specs, limited_badge_artifacts_json, limited_badge_artifacts_markdown,
@@ -11856,14 +11857,26 @@ fn markdown_link_helpers_skip_fences_and_external_targets() {
     );
     assert_eq!(
         local_markdown_target("docs/README.md#top"),
-        Some("docs/README.md".to_string())
+        Some(LocalMarkdownTarget {
+            path: Some("docs/README.md".to_string()),
+            fragment: Some("top".to_string()),
+        })
     );
     assert_eq!(
         local_markdown_target("<docs/My File.md>"),
-        Some("docs/My File.md".to_string())
+        Some(LocalMarkdownTarget {
+            path: Some("docs/My File.md".to_string()),
+            fragment: None,
+        })
     );
     assert_eq!(local_markdown_target("https://example.com"), None);
-    assert_eq!(local_markdown_target("#section"), None);
+    assert_eq!(
+        local_markdown_target("#section"),
+        Some(LocalMarkdownTarget {
+            path: None,
+            fragment: Some("section".to_string()),
+        })
+    );
 }
 
 #[test]
@@ -21895,16 +21908,116 @@ fn local_markdown_target_filters_absolute_urls() {
     assert_eq!(local_markdown_target("https://example.com"), None);
     assert_eq!(local_markdown_target("http://example.com"), None);
     assert_eq!(local_markdown_target("mailto:test@example.com"), None);
-    assert_eq!(local_markdown_target("#anchor"), None);
+}
+
+#[test]
+fn local_markdown_target_keeps_a_same_document_anchor() {
+    assert_eq!(
+        local_markdown_target("#anchor"),
+        Some(LocalMarkdownTarget {
+            path: None,
+            fragment: Some("anchor".to_string()),
+        })
+    );
+    // A bare `#` names no heading, so there is nothing to resolve.
+    assert_eq!(local_markdown_target("#"), None);
 }
 
 #[test]
 fn local_markdown_target_returns_relative_local_paths() {
     let target = local_markdown_target("relative/path.md");
-    assert_eq!(target, Some("relative/path.md".to_string()));
+    assert_eq!(
+        target,
+        Some(LocalMarkdownTarget {
+            path: Some("relative/path.md".to_string()),
+            fragment: None,
+        })
+    );
 
     let target = local_markdown_target("../sibling.md");
-    assert_eq!(target, Some("../sibling.md".to_string()));
+    assert_eq!(
+        target,
+        Some(LocalMarkdownTarget {
+            path: Some("../sibling.md".to_string()),
+            fragment: None,
+        })
+    );
+}
+
+#[test]
+fn heading_slug_drops_punctuation_without_collapsing_the_spaces_around_it() -> Result<(), String> {
+    let mut failures = Vec::new();
+    // GitHub's own anchors for headings this repository links into. The doubled
+    // dashes are not a typo: the dropped em-dash and slash leave the spaces on
+    // both sides behind.
+    let cases = [
+        (
+            "Coverage / Grip Frontier Report",
+            "coverage--grip-frontier-report",
+        ),
+        (
+            "2026-07-25: A green check is not evidence \u{2014} five ways",
+            "2026-07-25-a-green-check-is-not-evidence--five-ways",
+        ),
+        ("`ripr+ 0`", "ripr-0"),
+        (
+            "Historical Operating Sequence: 0.9.0 Release",
+            "historical-operating-sequence-090-release",
+        ),
+        ("Non-Goals", "non-goals"),
+        ("agent_context_v2", "agent_context_v2"),
+    ];
+    for (heading, expected) in cases {
+        let slug = heading_slug(heading);
+        if slug != expected {
+            failures.push(format!(
+                "`{heading}` slugified to `{slug}`, expected `{expected}`"
+            ));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+#[test]
+fn heading_slugs_number_repeated_headings_the_way_github_does() -> Result<(), String> {
+    let text = "# Added\n\n## Added\n\n### Added\n";
+    let slugs = heading_slugs(text);
+    let expected = ["added", "added-1", "added-2"];
+    let missing: Vec<&str> = expected
+        .into_iter()
+        .filter(|slug| !slugs.contains(*slug))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("heading_slugs did not offer {missing:?}"))
+    }
+}
+
+#[test]
+fn heading_slugs_read_only_real_headings() -> Result<(), String> {
+    let text = "# Title\n\n```md\n# Fenced Heading\n```\n\n#hashtag not a heading\n\n## Closing Hashes ##\n\n####### Seven Hashes\n";
+    let slugs = heading_slugs(text);
+    let mut failures = Vec::new();
+    for offered in ["title", "closing-hashes"] {
+        if !slugs.contains(offered) {
+            failures.push(format!("expected the anchor `{offered}`"));
+        }
+    }
+    for withheld in ["fenced-heading", "hashtag-not-a-heading", "seven-hashes"] {
+        if slugs.contains(withheld) {
+            failures.push(format!("`{withheld}` is not a heading in this document"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 fn write_doc_artifact_fixture(root: &Path, path: &str, id: &str) {
