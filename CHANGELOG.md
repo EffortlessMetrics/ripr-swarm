@@ -295,6 +295,13 @@ are scoped or reviewed.
 
 ### Changed
 
+- `path_dependencies.rs` no longer carries `allow(dead_code)`.
+  `cycle_manifests`, `contains_node`, `forward_walk`, and the scope
+  expansion `status` accessor are `#[cfg(test)]`. Cycle-set recording
+  moves with the getter; reverse diff-scope reachability is unchanged.
+  The `.ripr/allow-attributes.txt` row for that file is removed
+  ([#3997](https://github.com/EffortlessMetrics/ripr-swarm/issues/3997)).
+
 - `PanicAllowEntryVersioned::V2` is now `Box<PanicAllowEntryV2>`, so
   `clippy::large_enum_variant` no longer needs an allow on that enum.
   `policy/clippy-exceptions.toml` has no live rows;
