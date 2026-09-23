@@ -1044,6 +1044,11 @@ mod tests {
         if !markdown.contains("## Limitations\n\n- none\n") {
             failures.push("markdown does not report none for a read artifact".to_string());
         }
+        // Both sections answer from `empty_state_line`, so both are pinned in
+        // both states: a single-site change is what used to be possible here.
+        if !markdown.contains("## Top Limitation\n\n- none\n") {
+            failures.push("top limitation does not report none for a read artifact".to_string());
+        }
         if failures.is_empty() {
             Ok(())
         } else {

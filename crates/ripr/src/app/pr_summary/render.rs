@@ -345,7 +345,7 @@ fn value_at_path<'a>(value: Option<&'a Value>, path: &[&str]) -> Option<&'a Valu
 
 /// Render the compact Markdown panel from the computed summary struct.
 pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> String {
-    use super::model::{LimitationsOrNotAvailable, NullableU64, U64OrNotAvailable};
+    use super::model::{NullableU64, U64OrNotAvailable};
     let mut out = String::new();
     out.push_str("# PR Evidence Summary v1\n\n");
     out.push_str(&format!("**Run Status**: `{}`\n\n", s.run_status));
@@ -422,17 +422,15 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
     out.push('\n');
 
     out.push_str("## Limitations\n\n");
-    match &s.limitations {
-        // `none` is a finding and `not_available` is the absence of one. A run
-        // whose repo-exposure artifact was never read has established neither.
-        LimitationsOrNotAvailable::NotAvailable => out.push_str("- not_available\n"),
-        LimitationsOrNotAvailable::Entries(entries) if entries.is_empty() => {
-            out.push_str("- none\n");
-        }
-        LimitationsOrNotAvailable::Entries(entries) => {
-            for lim in entries {
-                out.push_str(&format!("- `{}`: {}\n", lim.category, lim.repair_route));
-            }
+    // `none` is a finding and `not_available` is the absence of one. A run
+    // whose repo-exposure artifact was never read has established neither, and
+    // `empty_state_line` is the single owner of which of the two this is.
+    let limitations = s.limitations.entries();
+    if limitations.is_empty() {
+        out.push_str(s.limitations.empty_state_line());
+    } else {
+        for lim in limitations {
+            out.push_str(&format!("- `{}`: {}\n", lim.category, lim.repair_route));
         }
     }
     out.push('\n');
@@ -490,12 +488,11 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
             "- why not actionable: {}\n",
             lim.why_not_actionable
         ));
-    } else if matches!(s.limitations, LimitationsOrNotAvailable::NotAvailable) {
-        // Derived from `limitations`, so it inherits that field's state: with
-        // nothing read, there is no top limitation and no absence of one.
-        out.push_str("- not_available\n");
     } else {
-        out.push_str("- none\n");
+        // Derived from `limitations`, so it inherits that field's state and
+        // asks the same owner: with nothing read, there is no top limitation
+        // and no absence of one either.
+        out.push_str(s.limitations.empty_state_line());
     }
     out.push('\n');
 

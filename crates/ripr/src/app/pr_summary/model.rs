@@ -143,6 +143,20 @@ impl LimitationsOrNotAvailable {
             Self::NotAvailable => &[],
         }
     }
+
+    /// The line the Markdown panel prints where it has no limitation to show.
+    ///
+    /// `## Limitations` and `## Top Limitation` both reach that state, and
+    /// both must answer it the same way, because they describe the same
+    /// evidence. Owning the answer here is what keeps them from drifting: two
+    /// copies of this decision in the renderer would be the parallel table
+    /// this module already paid for once.
+    pub(super) fn empty_state_line(&self) -> &'static str {
+        match self {
+            Self::Entries(_) => "- none\n",
+            Self::NotAvailable => "- not_available\n",
+        }
+    }
 }
 
 pub(super) struct TopRepair {
