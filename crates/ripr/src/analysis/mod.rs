@@ -636,6 +636,11 @@ pub struct AnalysisResult {
     /// gate, baseline, badge, or RIPR Zero input — and the uninspected
     /// accounting on the record is a lower bound, not an estimate.
     pub partial_scope: Option<PartialDiffScope>,
+    /// The base ref the diff loader actually used for this run (#3940):
+    /// the explicit base when one was given, the resolved default base
+    /// otherwise, and `None` when no base was involved (diff-file/stdin
+    /// inputs, repo-scope runs, subject-materialized runs).
+    pub effective_base: Option<String>,
 }
 
 /// Default language list when callers do not pass `[languages]` config.

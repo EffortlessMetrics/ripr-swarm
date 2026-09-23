@@ -1499,7 +1499,14 @@ mod tests {
 
     fn normalize_fixture_output(text: &str, root: &Path) -> String {
         let root_prefix = format!("{}/", normalize_path(root));
-        normalize_newlines(text).replace(&root_prefix, "")
+        // Issue #3872: pilot/verify redirect targets anchor at the resolved
+        // --root (the renderer working directory), so that machine prefix
+        // projects to `<cwd>/` to keep the fixture machine-independent.
+        let renderer_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let cwd_prefix = format!("{}/", normalize_path(&renderer_cwd));
+        normalize_newlines(text)
+            .replace(&root_prefix, "")
+            .replace(&cwd_prefix, "<cwd>/")
     }
 
     fn normalize_newlines(text: &str) -> String {

@@ -12,7 +12,10 @@ pub(super) fn check_output_from_analysis(
         tool: "ripr".to_string(),
         mode: input.mode,
         root: input.root,
-        base: input.base,
+        // #3940: record the base the loader actually used (explicit or
+        // resolved default) rather than only an explicitly supplied one, so
+        // scope-less runs stay consumable by base-matching consumers.
+        base: analysis.effective_base.or(input.base),
         analysis_outcome: analysis.analysis_outcome,
         summary: analysis.summary,
         findings: analysis.findings,
