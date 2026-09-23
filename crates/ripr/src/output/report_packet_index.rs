@@ -97,6 +97,34 @@ struct IndexEntry {
     next_command: Option<String>,
 }
 
+/// An [`IndexEntry`] paired with the group the [`ArtifactSpec`] that produced
+/// it declared.
+///
+/// Carrying the group alongside the entry is what keeps one grouping
+/// authority: every entry is built from a spec, so the group travels with it
+/// and there is no id-to-group lookup that could fail and file an artifact
+/// somewhere its spec never asked for.
+#[derive(Clone, Debug)]
+struct GroupedEntry {
+    group: &'static str,
+    entry: IndexEntry,
+}
+
+/// The groups `docs/OUTPUT_SCHEMA.md` documents, in the order the index
+/// renders them. `group_entries` renders these and nothing else, so
+/// `every_declared_group_is_rendered` pins every declared group to this list.
+const GROUP_ORDER: [&str; 9] = [
+    START_HERE_GROUP,
+    "pr_review_story",
+    "repair_agent_handoff",
+    "evidence_movement",
+    "policy_gates",
+    "calibration",
+    "validation_receipts",
+    "sarif_badges",
+    "local_context",
+];
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct MissingExpected {
     id: String,
@@ -137,14 +165,20 @@ pub(crate) fn build_report_packet_index_report(
     let mut entries = Vec::new();
     for spec in &specs {
         if artifact_available(spec) {
-            entries.push(entry_from_spec(spec, true, status_for_spec(spec)));
+            entries.push(GroupedEntry {
+                group: spec.group,
+                entry: entry_from_spec(spec, true, status_for_spec(spec)),
+            });
         }
     }
 
     let missing_expected = missing_expected_surfaces(&specs);
     for missing in &missing_expected {
         if let Some(spec) = specs.iter().find(|spec| spec.id == missing.id) {
-            entries.push(entry_from_spec(spec, false, "missing".to_string()));
+            entries.push(GroupedEntry {
+                group: spec.group,
+                entry: entry_from_spec(spec, false, "missing".to_string()),
+            });
         }
     }
 
@@ -159,16 +193,19 @@ pub(crate) fn build_report_packet_index_report(
 
     let failures = entries
         .iter()
-        .filter(|entry| matches!(entry.status.as_str(), "fail" | "blocked"))
+        .filter(|grouped| matches!(grouped.entry.status.as_str(), "fail" | "blocked"))
         .count();
     let status = if entries.is_empty() {
         "incomplete"
     } else if failures > 0 {
         "fail"
     } else if !missing_expected.is_empty()
-        || entries
-            .iter()
-            .any(|entry| matches!(entry.status.as_str(), "warn" | "incomplete" | "unreadable"))
+        || entries.iter().any(|grouped| {
+            matches!(
+                grouped.entry.status.as_str(),
+                "warn" | "incomplete" | "unreadable"
+            )
+        })
     {
         "warn"
     } else {
@@ -178,18 +215,18 @@ pub(crate) fn build_report_packet_index_report(
 
     let start_here = entries
         .iter()
-        .find(|entry| entry.id == "first_pr_start_here" && entry.available)
+        .find(|grouped| grouped.entry.id == "first_pr_start_here" && grouped.entry.available)
         .or_else(|| {
-            entries
-                .iter()
-                .find(|entry| entry.id == "pr_review_front_panel" && entry.available)
+            entries.iter().find(|grouped| {
+                grouped.entry.id == "pr_review_front_panel" && grouped.entry.available
+            })
         })
-        .map(|entry| entry.path.clone());
+        .map(|grouped| grouped.entry.path.clone());
     let gate_authority = entries
         .iter()
-        .find(|entry| entry.id == "gate_decision" && entry.available)
-        .map(|entry| entry.path.clone());
-    let groups = group_entries(&specs, entries);
+        .find(|grouped| grouped.entry.id == "gate_decision" && grouped.entry.available)
+        .map(|grouped| grouped.entry.path.clone());
+    let groups = group_entries(entries);
     let entry_count = groups.iter().map(|group| group.entries.len()).sum();
     let available = groups
         .iter()
@@ -778,34 +815,19 @@ fn is_available(specs: &[ArtifactSpec], id: &str) -> bool {
 
 /// Group the entries by the group each artifact declares in [`ArtifactSpec`].
 ///
-/// The declared field is the only grouping authority. A second id-to-group
-/// table drifted from it and silently filed `first_pr_start_here` under
-/// `local_context`, against `docs/OUTPUT_SCHEMA.md`, which documents it as a
-/// `start_here` entry.
-fn group_entries(specs: &[ArtifactSpec], entries: Vec<IndexEntry>) -> Vec<IndexGroup> {
-    let declared_group = |id: &str| -> &'static str {
-        specs
-            .iter()
-            .find(|spec| spec.id == id)
-            .map_or("local_context", |spec| spec.group)
-    };
-    let order = [
-        START_HERE_GROUP,
-        "pr_review_story",
-        "repair_agent_handoff",
-        "evidence_movement",
-        "policy_gates",
-        "calibration",
-        "validation_receipts",
-        "sarif_badges",
-        "local_context",
-    ];
+/// The declared field is the only grouping authority, and each entry carries
+/// it from the spec that produced it, so this function never looks a group up
+/// by id and has no fallback to reach when a lookup misses. A second
+/// id-to-group table drifted from the declared field and silently filed
+/// `first_pr_start_here` under `local_context`, against
+/// `docs/OUTPUT_SCHEMA.md`, which documents it as a `start_here` entry.
+fn group_entries(entries: Vec<GroupedEntry>) -> Vec<IndexGroup> {
     let mut groups = Vec::new();
-    for group_name in order {
+    for group_name in GROUP_ORDER {
         let group_entries = entries
             .iter()
-            .filter(|entry| declared_group(entry.id.as_str()) == group_name)
-            .cloned()
+            .filter(|grouped| grouped.group == group_name)
+            .map(|grouped| grouped.entry.clone())
             .collect::<Vec<_>>();
         if group_entries.is_empty() {
             continue;
@@ -1333,19 +1355,11 @@ mod tests {
         let input = input_for_root(&root);
         let specs = artifact_specs(&input);
 
-        let known = [
-            "start_here",
-            "pr_review_story",
-            "repair_agent_handoff",
-            "evidence_movement",
-            "policy_gates",
-            "calibration",
-            "validation_receipts",
-            "sarif_badges",
-            "local_context",
-        ];
+        // `GROUP_ORDER` itself, not a copy of it: `group_entries` renders those
+        // groups and nothing else, so a declared group missing from that list
+        // would drop its artifacts from the index and from `summary.entries`.
         for spec in &specs {
-            if !known.contains(&spec.group) {
+            if !GROUP_ORDER.contains(&spec.group) {
                 let _ = std::fs::remove_dir_all(&root);
                 return Err(format!(
                     "artifact {:?} declares group {:?}, which no group section renders",
@@ -1354,17 +1368,43 @@ mod tests {
             }
         }
 
-        let first_pr = specs.iter().find(|spec| spec.id == "first_pr_start_here");
-        let result = match first_pr {
-            Some(spec) if spec.group == START_HERE_GROUP => Ok(()),
-            Some(spec) => Err(format!(
+        let mut failures: Vec<String> = Vec::new();
+        match specs.iter().find(|spec| spec.id == "first_pr_start_here") {
+            Some(spec) if spec.group == START_HERE_GROUP => {}
+            Some(spec) => failures.push(format!(
                 "first_pr_start_here declares group {:?}, want {START_HERE_GROUP:?}",
                 spec.group
             )),
-            None => Err("first_pr_start_here is not an indexed artifact".to_string()),
-        };
+            None => failures.push("first_pr_start_here is not an indexed artifact".to_string()),
+        }
+
+        // The declaration has to reach the rendered report, not just sit on the
+        // spec, so generate the packet and read back where the entry was filed.
+        write(&input.reports_dir.join("start-here.md"), "# start here\n")?;
+        write(&input.reports_dir.join("start-here.json"), "{}\n")?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let filed_under = report
+            .groups
+            .iter()
+            .find(|group| {
+                group
+                    .entries
+                    .iter()
+                    .any(|entry| entry.id == "first_pr_start_here")
+            })
+            .map(|group| group.group.clone());
+        if filed_under.as_deref() != Some(START_HERE_GROUP) {
+            failures.push(format!(
+                "generated index files first_pr_start_here under {filed_under:?}, want {START_HERE_GROUP:?}"
+            ));
+        }
+
         let _ = std::fs::remove_dir_all(&root);
-        result
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
     }
 
     /// The rendered Markdown carries exactly one `Start here:` heading, and it
