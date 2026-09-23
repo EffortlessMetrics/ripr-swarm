@@ -8767,7 +8767,8 @@ JSON shape:
       "suggested_test": "Add an equality-boundary assertion.",
       "related_test": "tests/pricing.rs::applies_discount_above_threshold",
       "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
-      "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow",
+      "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
+      "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
       "static_limitations": []
     }
   ],
@@ -8816,6 +8817,12 @@ Field contract:
   test, assertion shape, verification command, and static limitations while
   preserving legacy top-level fields as fallback. The report must not invent
   missing commands or generated tests.
+- `repair_routes[].repair_command` - present only when the delta item's
+  `evidence_record.canonical_item.repair_command` carries the repair start
+  (#3906), which that record names only past the fail-closed repair-packet
+  flip. `repair_routes[].agent_command` is that carried command or `null`;
+  RIPR Zero status never builds an `agent start` or `agent repair` command
+  from a seam id, and gap-record routes name none.
 - `warnings[]` - stale baseline metadata, missing inputs, unsupported schemas,
   ambiguous identities, and trend gaps.
 - `limits_note` - advisory boundary text for generated CI summaries.
@@ -10094,7 +10101,8 @@ JSON shape:
     "suggested_test": "Add an equality-boundary assertion.",
     "related_test": "tests/pricing.rs::applies_discount_above_threshold",
     "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
-    "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow"
+    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
+    "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before"
   },
   "history": {
     "source": ".ripr/pr-evidence-ledger.jsonl",
@@ -10148,6 +10156,18 @@ Field contract:
   artifacts. Missing fields are `null` plus warnings, not invented.
   `top_repair_route.gap_id` and `top_repair_route.canonical_gap_id` are copied
   from the selected source artifact when available.
+- `top_repair_route.repair_command` - present only when the selected source
+  carries the repair start (#3906): a review card's
+  `llm_guidance.repair_command`, a gate route's `repair_route.repair_command`,
+  or a RIPR Zero route's `repair_command`. Those producers name it only past
+  the fail-closed repair-packet flip; the ledger carries it and never derives
+  it. `top_repair_route.agent_command` is that command when present, else a
+  carried read-only inspection command, else `null`; the ledger never builds
+  an `agent start` or `agent repair` command from a bare seam id. Markdown
+  shows the carried command as `Repair start`, followed by the after-phase
+  step, with verify and receipt labelled as the manual alternative (#3906).
+  `top_repair_route.receipt_command` for a review card is read from the card
+  root.
 - `history.*` - present only when prior ledger history or previous ledger
   summary is supplied.
 - `warnings[]` - missing inputs, unavailable coverage, unsupported schemas,
@@ -10580,6 +10600,18 @@ Field contract:
   name, and assertion shape when supplied by existing artifacts.
 - `commands.*` records copyable commands from existing command templates or
   supplied artifacts. Missing commands become `null` and warnings.
+- `commands.repair` is present only when the first review card (inline
+  comments, then summary-only) carries `llm_guidance.repair_command` and no
+  assistant proof exists yet (#3906). The card names that command only past
+  the fail-closed repair-packet flip; first-action carries it verbatim, takes
+  every `selected` field from the same card, and never builds a repair
+  command from a bare seam id. Without it, a PR with review cards but no
+  assistant proof keeps the `missing_required_artifact` route. Markdown shows
+  the command under `Start Repair` and as `Repair start` in the one-screen
+  recommendation. The after-phase step follows it, and verify and receipt are
+  labelled as the manual alternative (`Manual verify without a repair
+  attempt`); without a repair start they read `Verify after the test edit`
+  and `Receipt after verify` (#3906). JSON fields are unchanged.
 - `evidence.*` records supporting artifact paths and static movement when
   supplied. Static movement is not runtime mutation confirmation.
 - `fallback` records the reason for non-actionable statuses and the next safe
@@ -10909,10 +10941,11 @@ JSON shape:
     "focused_proof_intent": "Add an equality-boundary assertion.",
     "related_test": "tests/pricing.rs::applies_discount_above_threshold",
     "suggested_test": "Add an equality-boundary assertion.",
+    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
     "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
     "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json",
     "static_evidence_boundary": "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.",
-    "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow",
+    "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
     "receipt": {
       "artifact": "target/ripr/reports/agent-receipt.json",
       "status": "present"
@@ -11020,7 +11053,15 @@ Field contract:
   `top_issue.missing_discriminator`, `top_issue.focused_proof_intent`,
   `top_issue.verify_command`, `top_issue.receipt_command`, and
   `top_issue.static_evidence_boundary` are the typed one-screen repair
-  vocabulary. They mirror the CLI first screen when the supplied artifacts
+  vocabulary.
+- `top_issue.repair_command` is present only when an input carries the repair
+  start (#3906): first-action `commands.repair`, a review card's
+  `llm_guidance.repair_command`, or an acknowledged gate route's
+  `repair_route.repair_command`. `top_issue.agent_command` is that command
+  when present, else a carried read-only inspection command (first-action
+  `commands.context_packet`, a card's `llm_guidance.command`, or a gate
+  route's `inspection_command`), else `null`. The panel never builds an
+  `agent start` or `agent repair` command from a bare seam id. They mirror the CLI first screen when the supplied artifacts
   carry the field. For `first_useful_action` inputs, current evidence strength
   must come from `selected.current_evidence_strength`. Legacy PR guidance,
   gate, baseline, and assistant-health inputs may normalize existing typed

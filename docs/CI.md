@@ -1357,6 +1357,7 @@ jobs:
                 action_why="$(jq -r '.why // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_seam="$(jq -r '.selected.seam_id // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_target="$(jq -r '(.target.file // "not_available") + (if .target.related_test then " related_test=" + .target.related_test else "" end)' "$action_json" 2>/dev/null || echo unknown)"
+                action_repair="$(jq -r '.commands.repair // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_verify="$(jq -r '.commands.verify // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_receipt="$(jq -r '.commands.receipt // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_fallback="$(jq -r '.fallback.kind // "none"' "$action_json" 2>/dev/null || echo unknown)"
@@ -1367,19 +1368,32 @@ jobs:
                 action_why="$(markdown_inline "$action_why")"
                 action_seam="$(markdown_inline "$action_seam")"
                 action_target="$(markdown_inline "$action_target")"
+                action_repair="$(markdown_inline "$action_repair")"
                 action_verify="$(markdown_inline "$action_verify")"
                 action_receipt="$(markdown_inline "$action_receipt")"
                 action_fallback="$(markdown_inline "$action_fallback")"
                 action_warning_count="$(markdown_inline "$action_warning_count")"
                 echo '#### Recommended next test at a glance'
+                # #3906: a carried repair start leads; its after phase runs verify
+                # and writes the receipt, so verify and receipt are the manual
+                # alternative. Without one they run after the focused test edit.
+                if [ "$action_repair" != not_available ] && [ "$action_repair" != unknown ]; then
+                  echo "- Repair start: \`$action_repair\`"
+                  echo '- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.'
+                  action_verify_label='Manual verify without a repair attempt'
+                  action_receipt_label='Manual receipt without a repair attempt'
+                else
+                  action_verify_label='Verify after the test edit'
+                  action_receipt_label='Receipt after verify'
+                fi
                 echo "- Status: \`$action_status\`"
                 echo "- Action: \`$action_kind\`"
                 echo "- Title: \`$action_title\`"
                 echo "- Why: \`$action_why\`"
                 echo "- Seam: \`$action_seam\`"
                 echo "- Target: \`$action_target\`"
-                echo "- Verify after the test edit: \`$action_verify\`"
-                echo "- Receipt after verify: \`$action_receipt\`"
+                echo "- $action_verify_label: \`$action_verify\`"
+                echo "- $action_receipt_label: \`$action_receipt\`"
                 echo "- Fallback: \`$action_fallback\`"
                 echo "- Warnings: \`$action_warning_count\`"
                 echo "- Action artifacts: \`target/ripr/reports/first-useful-action.json\`, \`target/ripr/reports/first-useful-action.md\`"

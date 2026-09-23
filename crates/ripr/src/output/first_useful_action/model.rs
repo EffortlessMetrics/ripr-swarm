@@ -103,6 +103,11 @@ pub(super) struct ActionTarget {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub(super) struct ActionCommands {
+    /// The repair transaction's start (#3906), carried verbatim from a review
+    /// card's `llm_guidance.repair_command`. The card names it only past the
+    /// fail-closed repair-packet flip; first-action never derives it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) repair: Option<String>,
     pub(super) context_packet: Option<String>,
     pub(super) after_snapshot: Option<String>,
     pub(super) verify: Option<String>,

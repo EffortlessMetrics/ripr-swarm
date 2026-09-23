@@ -180,6 +180,46 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         "summary still says there is no safe next action"
     );
 
+    // Every at-a-glance block whose artifact carries the same repair start
+    // leads with it and its after phase (#3906, F60-14). Precondition: each
+    // artifact really carries the command, so the block is held to it.
+    for (artifact, pointer, heading) in [
+        (
+            "target/ripr/reports/first-useful-action.json",
+            "/commands/repair",
+            "#### Recommended next test at a glance\n",
+        ),
+        (
+            "target/ripr/reports/pr-review-front-panel.json",
+            "/top_issue/repair_command",
+            "#### PR review at a glance\n",
+        ),
+        (
+            "target/ripr/reports/pr-evidence-ledger.json",
+            "/top_repair_route/repair_command",
+            "#### PR movement at a glance\n",
+        ),
+    ] {
+        let value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join(artifact))?)?;
+        assert_eq!(
+            value.pointer(pointer).and_then(serde_json::Value::as_str),
+            Some(repair_command),
+            "{artifact} must carry the repair start at {pointer}"
+        );
+        let block = summary
+            .split(heading)
+            .nth(1)
+            .ok_or_else(|| format!("summary has no {heading:?} block"))?;
+        assert!(
+            block.starts_with(&format!(
+                "- Repair start: `{repair_command}`\n- After the test edit: run the `--attempt ... --phase after` command"
+            )),
+            "{heading:?} must lead with the repair start:\n{}",
+            block.lines().take(4).collect::<Vec<_>>().join("\n")
+        );
+    }
+
     let commands = replay::printed_commands(&summary);
     let runnable = commands
         .iter()

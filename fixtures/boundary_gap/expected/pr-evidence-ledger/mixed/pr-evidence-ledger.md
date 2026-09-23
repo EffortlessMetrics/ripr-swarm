@@ -13,7 +13,6 @@ Start here:
 - Related test: tests/new.rs::boundary
 - Verify after the test edit: `ripr agent verify --json`
 - Receipt state: receipt_missing
-- Agent handoff: `ripr agent start --root . --seam-id new --out target/ripr/workflow`
 - Boundary: advisory static evidence only; raw counts below are supporting evidence and gate authority remains separate.
 
 Supporting movement counts:

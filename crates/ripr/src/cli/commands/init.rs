@@ -1413,6 +1413,7 @@ jobs:
               first_proof="$(jq -r '.selected.focused_proof_intent // .target.suggested_assertion // .title // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
               first_gap="$(jq -r 'if .selected == null then "none" else ((.selected.path // "unknown") + (if .selected.line then ":" + (.selected.line|tostring) else "" end) + " " + (.selected.missing_discriminator // .selected.classification // .selected.seam_id // "gap")) end' "$first_json" 2>/dev/null || echo unknown)"
               first_target="$(jq -r 'if .target == null then "none" else ((.target.file // "not_available") + (if .target.related_test then " related_test=" + .target.related_test else "" end) + (if .target.suggested_test_name then " suggested=" + .target.suggested_test_name else "" end)) end' "$first_json" 2>/dev/null || echo unknown)"
+              first_repair="$(jq -r '.commands.repair // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
               first_packet="$(jq -r '.commands.context_packet // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
               first_verify="$(jq -r '.commands.verify // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
               first_receipt="$(jq -r '.commands.receipt // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
@@ -1428,11 +1429,24 @@ jobs:
               first_proof="$(markdown_inline "$first_proof")"
               first_gap="$(markdown_inline "$first_gap")"
               first_target="$(markdown_inline "$first_target")"
+              first_repair="$(markdown_inline "$first_repair")"
               first_packet="$(markdown_inline "$first_packet")"
               first_verify="$(markdown_inline "$first_verify")"
               first_receipt="$(markdown_inline "$first_receipt")"
               first_fallback="$(markdown_inline "$first_fallback")"
               first_warnings="$(markdown_inline "$first_warnings")"
+              # #3906: a carried repair start leads the block; its after phase
+              # runs verify and writes the receipt, so verify and receipt below are
+              # the manual alternative. Without one they run after the test edit.
+              if [ "$first_repair" != not_available ] && [ "$first_repair" != unknown ]; then
+                echo "- Repair start: \`$first_repair\`"
+                echo '- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.'
+                first_verify_label='Manual verify without a repair attempt'
+                first_receipt_label='Manual receipt without a repair attempt'
+              else
+                first_verify_label='Verify after the test edit'
+                first_receipt_label='Receipt after verify'
+              fi
               echo "- Status: \`$first_status\`"
               echo "- Safe next action: \`$first_action_kind\`"
               echo "- Title: \`$first_title\`"
@@ -1444,8 +1458,8 @@ jobs:
               echo "- Gap: \`$first_gap\`"
               echo "- Repair target: \`$first_target\`"
               echo "- Agent packet: \`$first_packet\`"
-              echo "- Verify after the test edit: \`$first_verify\`"
-              echo "- Receipt after verify: \`$first_receipt\`"
+              echo "- $first_verify_label: \`$first_verify\`"
+              echo "- $first_receipt_label: \`$first_receipt\`"
               echo "- Fallback/no-action: \`$first_fallback\`"
               echo "- Warnings: \`$first_warnings\`"
               echo "- Artifacts: \`target/ripr/reports/first-useful-action.json\`, \`target/ripr/reports/first-useful-action.md\`, \`target/ripr/workflow/agent-packet.json\`"
@@ -1572,6 +1586,7 @@ jobs:
                 panel_suggested="$(jq -r '.top_issue.suggested_test // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_verify="$(jq -r '.top_issue.verify_command // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_agent="$(jq -r '.top_issue.agent_command // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
+                panel_repair="$(jq -r '.top_issue.repair_command // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_receipt="$(jq -r '.top_issue.receipt.artifact // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_gate_mode="$(jq -r '.policy.mode // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_gate_decision="$(jq -r '.policy.decision // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
@@ -1596,11 +1611,21 @@ jobs:
                 panel_suggested="$(markdown_inline "$panel_suggested")"
                 panel_verify="$(markdown_inline "$panel_verify")"
                 panel_agent="$(markdown_inline "$panel_agent")"
+                panel_repair="$(markdown_inline "$panel_repair")"
                 panel_receipt="$(markdown_inline "$panel_receipt")"
                 panel_gate_mode="$(markdown_inline "$panel_gate_mode")"
                 panel_gate_decision="$(markdown_inline "$panel_gate_decision")"
                 panel_warning_count="$(markdown_inline "$panel_warning_count")"
                 echo '#### PR review at a glance'
+                # #3906: a carried repair start leads; its after phase runs verify,
+                # so the verify command is the manual alternative.
+                if [ "$panel_repair" != not_available ] && [ "$panel_repair" != unknown ]; then
+                  echo "- Repair start: \`$panel_repair\`"
+                  echo '- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.'
+                  panel_verify_label='Manual verify without a repair attempt'
+                else
+                  panel_verify_label='Verify after the test edit'
+                fi
                 echo "- Status: \`$panel_status\`"
                 echo "- Headline: \`$panel_headline\`"
                 echo "- Top issue state: \`$panel_top_state\`"
@@ -1613,8 +1638,10 @@ jobs:
                 echo "- Missing discriminator: \`$panel_missing\`"
                 echo "- Suggested focused test: \`$panel_suggested\`"
                 echo "- Related test: \`$panel_related\`"
-                echo "- Verify after the test edit: \`$panel_verify\`"
-                echo "- Agent handoff: \`$panel_agent\`"
+                echo "- $panel_verify_label: \`$panel_verify\`"
+                if [ "$panel_agent" != "$panel_repair" ]; then
+                  echo "- Agent handoff: \`$panel_agent\`"
+                fi
                 echo "- Receipt: \`$panel_receipt\`"
                 echo "- Gate: mode=\`$panel_gate_mode\`, decision=\`$panel_gate_decision\`"
                 echo "- Warnings: \`$panel_warning_count\`"
@@ -1640,6 +1667,7 @@ jobs:
                 action_why="$(jq -r '.why // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_seam="$(jq -r '.selected.seam_id // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_target="$(jq -r '(.target.file // "not_available") + (if .target.related_test then " related_test=" + .target.related_test else "" end)' "$action_json" 2>/dev/null || echo unknown)"
+                action_repair="$(jq -r '.commands.repair // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_verify="$(jq -r '.commands.verify // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_receipt="$(jq -r '.commands.receipt // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_fallback="$(jq -r '.fallback.kind // "none"' "$action_json" 2>/dev/null || echo unknown)"
@@ -1650,19 +1678,32 @@ jobs:
                 action_why="$(markdown_inline "$action_why")"
                 action_seam="$(markdown_inline "$action_seam")"
                 action_target="$(markdown_inline "$action_target")"
+                action_repair="$(markdown_inline "$action_repair")"
                 action_verify="$(markdown_inline "$action_verify")"
                 action_receipt="$(markdown_inline "$action_receipt")"
                 action_fallback="$(markdown_inline "$action_fallback")"
                 action_warning_count="$(markdown_inline "$action_warning_count")"
                 echo '#### Recommended next test at a glance'
+                # #3906: a carried repair start leads; its after phase runs verify
+                # and writes the receipt, so verify and receipt are the manual
+                # alternative. Without one they run after the focused test edit.
+                if [ "$action_repair" != not_available ] && [ "$action_repair" != unknown ]; then
+                  echo "- Repair start: \`$action_repair\`"
+                  echo '- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.'
+                  action_verify_label='Manual verify without a repair attempt'
+                  action_receipt_label='Manual receipt without a repair attempt'
+                else
+                  action_verify_label='Verify after the test edit'
+                  action_receipt_label='Receipt after verify'
+                fi
                 echo "- Status: \`$action_status\`"
                 echo "- Safe next action: \`$action_kind\`"
                 echo "- Title: \`$action_title\`"
                 echo "- Why: \`$action_why\`"
                 echo "- Seam: \`$action_seam\`"
                 echo "- Target: \`$action_target\`"
-                echo "- Verify after the test edit: \`$action_verify\`"
-                echo "- Receipt after verify: \`$action_receipt\`"
+                echo "- $action_verify_label: \`$action_verify\`"
+                echo "- $action_receipt_label: \`$action_receipt\`"
                 echo "- Fallback: \`$action_fallback\`"
                 echo "- Warnings: \`$action_warning_count\`"
                 echo "- Action artifacts: \`target/ripr/reports/first-useful-action.json\`, \`target/ripr/reports/first-useful-action.md\`"
@@ -1764,6 +1805,7 @@ jobs:
               ledger_route="$(jq -r '(.top_repair_route | if . == null then "none" else ((.path // "unknown") + (if .line then ":" + (.line|tostring) else "" end) + " " + (.missing_discriminator // "missing discriminator unavailable")) end)' "$ledger_json" 2>/dev/null || echo unknown)"
               ledger_verify="$(jq -r '.top_repair_route.verify_command // "not_available"' "$ledger_json" 2>/dev/null || echo unknown)"
               ledger_agent="$(jq -r '.top_repair_route.agent_command // "not_available"' "$ledger_json" 2>/dev/null || echo unknown)"
+              ledger_repair="$(jq -r '.top_repair_route.repair_command // "not_available"' "$ledger_json" 2>/dev/null || echo unknown)"
               ledger_status="$(markdown_inline "$ledger_status")"
               ledger_gate_mode="$(markdown_inline "$ledger_gate_mode")"
               ledger_gate_decision="$(markdown_inline "$ledger_gate_decision")"
@@ -1779,13 +1821,25 @@ jobs:
               ledger_route="$(markdown_inline "$ledger_route")"
               ledger_verify="$(markdown_inline "$ledger_verify")"
               ledger_agent="$(markdown_inline "$ledger_agent")"
+              ledger_repair="$(markdown_inline "$ledger_repair")"
               echo '#### PR movement at a glance'
+              # #3906: a carried repair start leads; its after phase runs verify,
+              # so the verify command is the manual alternative.
+              if [ "$ledger_repair" != not_available ] && [ "$ledger_repair" != unknown ]; then
+                echo "- Repair start: \`$ledger_repair\`"
+                echo '- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.'
+                ledger_verify_label='Manual verify without a repair attempt'
+              else
+                ledger_verify_label='Verify after the test edit'
+              fi
               echo "- Status: \`$ledger_status\`"
               echo "- Gate: mode=\`$ledger_gate_mode\`, decision=\`$ledger_gate_decision\`"
               echo "- Counts: new_policy_eligible=\`$ledger_new_policy_eligible\`, baseline_still_present=\`$ledger_still_present\`, baseline_resolved=\`$ledger_resolved\`, acknowledged=\`$ledger_acknowledged\`, suppressed=\`$ledger_suppressed\`, blocking_candidates=\`$ledger_blocking\`, visible_unresolved=\`$ledger_visible\`"
               echo "- Top repair route: \`$ledger_route\`"
-              echo "- Verify after the test edit: \`$ledger_verify\`"
-              echo "- Agent command: \`$ledger_agent\`"
+              echo "- $ledger_verify_label: \`$ledger_verify\`"
+              if [ "$ledger_agent" != "$ledger_repair" ]; then
+                echo "- Agent command: \`$ledger_agent\`"
+              fi
               echo "- Coverage/grip frontier: \`$ledger_coverage_status\`"
               echo "- History trend: \`$ledger_trend\`"
               echo "- Ledger artifacts: \`target/ripr/reports/pr-evidence-ledger.json\`, \`target/ripr/reports/pr-evidence-ledger.md\`"

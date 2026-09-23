@@ -7493,6 +7493,53 @@ language = "rust"
         );
         assert!(summary.contains(".action_kind // \"unknown\""));
         assert!(summary.contains(".commands.context_packet // \"not_available\""));
+        // #3906: the first-action summary surfaces the carried repair start.
+        assert!(summary.contains(".commands.repair // \"not_available\""));
+        assert!(summary.contains("Repair start: \\`$first_repair\\`"));
+        assert!(summary.contains("Repair start: \\`$action_repair\\`"));
+        // #3906 (F60-14): in both first-action blocks the carried repair
+        // start leads, followed by its after phase; verify and receipt are
+        // the manual alternative, else steps after the test edit.
+        for (prefix, status_line) in [
+            ("first", "echo \"- Status: \\`$first_status\\`\""),
+            ("action", "echo \"- Status: \\`$action_status\\`\""),
+        ] {
+            let guard = format!(
+                "if [ \"${prefix}_repair\" != not_available ] && [ \"${prefix}_repair\" != unknown ]; then"
+            );
+            let lead = format!("echo \"- Repair start: \\`${prefix}_repair\\`\"");
+            assert!(summary.contains(&guard), "{prefix} guard");
+            let lead_at = summary.find(&lead).unwrap_or(usize::MAX);
+            let status_at = summary.find(status_line).unwrap_or(0);
+            assert!(lead_at < status_at, "{prefix} repair start must lead");
+            assert!(summary.contains(&format!(
+                "{prefix}_verify_label='Manual verify without a repair attempt'"
+            )));
+            assert!(summary.contains(&format!(
+                "{prefix}_receipt_label='Manual receipt without a repair attempt'"
+            )));
+            assert!(summary.contains(&format!(
+                "{prefix}_verify_label='Verify after the test edit'"
+            )));
+            assert!(summary.contains(&format!("{prefix}_receipt_label='Receipt after verify'")));
+            assert!(summary.contains(&format!(
+                "echo \"- ${prefix}_verify_label: \\`${prefix}_verify\\`\""
+            )));
+        }
+        for prefix in ["panel", "ledger"] {
+            assert!(summary.contains(&format!(
+                "if [ \"${prefix}_repair\" != not_available ] && [ \"${prefix}_repair\" != unknown ]; then\n"
+            )));
+            assert!(summary.contains(&format!("echo \"- Repair start: \\`${prefix}_repair\\`\"")));
+            assert!(summary.contains(&format!(
+                "{prefix}_verify_label='Manual verify without a repair attempt'"
+            )));
+            assert!(summary.contains(&format!(
+                "echo \"- ${prefix}_verify_label: \\`${prefix}_verify\\`\""
+            )));
+        }
+        assert!(!summary.contains("Verify command: \\`$first_verify\\`"));
+        assert!(!summary.contains("Verify command: \\`$action_verify\\`"));
         assert!(summary.contains("missing_start_here"));
         assert!(summary.contains("State: \\`missing_artifact\\`"));
         assert!(summary.contains(
