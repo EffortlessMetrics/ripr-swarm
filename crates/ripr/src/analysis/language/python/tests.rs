@@ -1710,6 +1710,17 @@ fn empty_delta_predicate_change_still_credits_outcome_oracle() -> Result<(), Str
         ExposureClass::Exposed,
         "a control-flow operator change observed by an outcome oracle stays exposed"
     );
+    // RIPR-SPEC-0028 boundary rule: the construct-call passes a dict, not a
+    // literal owner argument, so the boundary gate cannot see the activating
+    // input and keeps the oracle verdict with a named limitation.
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("boundary_activation_unresolved: ")),
+        "{:?}",
+        finding.evidence
+    );
     Ok(())
 }
 

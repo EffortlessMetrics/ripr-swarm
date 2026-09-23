@@ -190,3 +190,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_buffer_token (3)
+
+Reason:
+RIPR-SPEC-0028: predicate boundary activation rule populates observed_values with literal owner-call arguments from strong related tests; classification unchanged
+
+Command:
+`cargo xtask goldens bless python_adversarial_buffer_token --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

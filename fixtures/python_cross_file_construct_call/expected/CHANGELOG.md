@@ -167,3 +167,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_cross_file_construct_call (2)
+
+Reason:
+RIPR-SPEC-0028: predicate boundary activation rule names boundary_activation_unresolved when no strong related call binds a literal owner argument; exposed verdict unchanged
+
+Command:
+`cargo xtask goldens bless python_cross_file_construct_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
