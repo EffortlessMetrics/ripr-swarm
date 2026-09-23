@@ -74,6 +74,8 @@ pub(crate) struct BaselineUpdateOptions {
     pub(crate) current: PathBuf,
     pub(crate) out: Option<PathBuf>,
     pub(crate) remove_resolved: bool,
+    /// Deterministic legacy-to-canonical identity migration (issue #1964).
+    pub(crate) migrate_legacy_identities: bool,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct RiprZeroStatusOptions {
