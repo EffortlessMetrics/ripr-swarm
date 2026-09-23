@@ -843,3 +843,115 @@ fn why_line_falls_back_to_class_label_when_no_summary_or_missing_discriminator()
         "ungripped static seam evidence"
     );
 }
+
+/// A route-ready seam related to one test per file in `test_files` (#3906).
+/// The missing-discriminator shape and a fully observed `discriminate` stage
+/// are what `repair_route_readiness` needs to select a target.
+fn route_ready_entry(test_files: &[&str]) -> ClassifiedSeam {
+    let related = test_files
+        .iter()
+        .map(|file| {
+            let mut test = related_test();
+            test.file = PathBuf::from(file);
+            test
+        })
+        .collect();
+    let mut entry = classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![MissingDiscriminatorFact {
+            value: "discount_threshold (equality boundary)".to_string(),
+            reason: "observed values do not include the equality-boundary case".to_string(),
+            flow_sink: None,
+        }],
+        related,
+    );
+    entry.evidence.discriminate = stage(StageState::Yes);
+    entry
+}
+
+/// Every pilot surface offers `agent repair` only when the fail-closed
+/// repair-packet flip holds, not when route readiness alone does (#3906). The
+/// second entry adds a TypeScript observer beside the same Rust test: the Rust
+/// test still resolves a target, so the route stays ready and the focused-test
+/// outline stays applicable, but the oracle path is unresolved from Rust
+/// evidence. A renderer gated on readiness or on the outline passes the first
+/// half and fails the second.
+#[test]
+fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), String> {
+    use crate::analysis::repair_route::repair_packet_eligibility;
+    use crate::output::agent_seam_packets::targeted_test_brief_outline_for_classified_seam;
+
+    let artifacts = pilot_artifacts();
+    for (test_files, eligible) in [
+        (&["tests/pricing.rs"][..], true),
+        (&["tests/pricing.rs", "tests/pricing.test.ts"][..], false),
+    ] {
+        let test_file = test_files.join(" + ");
+        let entry = route_ready_entry(test_files);
+        // Fixture preconditions: both are route ready with an applicable
+        // focused-test outline; only the Rust-only one is eligible.
+        let eligibility = repair_packet_eligibility(&entry);
+        if !eligibility.readiness.is_repair_ready() {
+            return Err(format!("{test_file}: fixture must be route ready"));
+        }
+        if eligibility.eligible() != eligible {
+            return Err(format!("{test_file}: eligibility must be {eligible}"));
+        }
+        if targeted_test_brief_outline_for_classified_seam(&entry).is_not_applicable() {
+            return Err(format!(
+                "{test_file}: the focused-test outline must stay applicable"
+            ));
+        }
+        let command = format!(
+            "ripr agent repair --root . --seam-id {} --phase before",
+            entry.seam.id().as_str()
+        );
+        let entries = [entry];
+
+        let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
+        let json = render_pilot_summary_json(&entries, pilot_context(&artifacts));
+        let summary: serde_json::Value =
+            serde_json::from_str(&json).map_err(|e| format!("parse pilot JSON: {e}\n{json}"))?;
+        let md = render_pilot_summary_md(&entries, pilot_context(&artifacts));
+
+        // Both must be the ranked top seam, or the negative half is vacuous.
+        if !terminal.contains(&format!(
+            "inspected seam: {} ",
+            entries[0].seam.id().as_str()
+        )) {
+            return Err(format!("{test_file}: must be the top seam\n{terminal}"));
+        }
+        let offered = [
+            terminal.contains(&format!("  repair this seam: {command}\n")),
+            terminal.contains(&format!("  1. {command}\n")),
+            summary
+                .pointer("/next/repair_command")
+                .and_then(serde_json::Value::as_str)
+                == Some(command.as_str()),
+            md.contains(&command),
+        ];
+        if offered != [eligible; 4] {
+            return Err(format!(
+                "{test_file}: terminal line, closing step, JSON, Markdown = {offered:?}, want all {eligible}\n{terminal}\n{json}\n{md}"
+            ));
+        }
+        if !eligible {
+            if !summary
+                .pointer("/next/repair_command")
+                .is_some_and(serde_json::Value::is_null)
+            {
+                return Err(format!(
+                    "{test_file}: JSON repair_command must be null\n{json}"
+                ));
+            }
+            if terminal.contains("agent repair") || terminal.contains("Next, in order:") {
+                return Err(format!(
+                    "{test_file}: no repair route on screen\n{terminal}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}

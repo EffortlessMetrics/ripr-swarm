@@ -2,7 +2,6 @@ use super::render_helpers::{
     push_markdown_recommendation, push_path_field, push_top_seam_json, yes_no,
 };
 use super::why_line;
-use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
@@ -347,20 +346,13 @@ pub(crate) fn render_pilot_terminal(
             out.push_str(&format!("  candidate value: {value}\n"));
         }
         out.push_str(&format!("  assertion: {}\n", outline.assertion_shape));
-        // Only a seam whose repair route is actionable gets the paste-ready
-        // command. When the route is limited, the line above says so and the
-        // closing block already says what to run instead; offering a repair
-        // transaction there would promise a target the route does not have.
-        if !outline.is_not_applicable() {
-            // Built here rather than in `agent::loop_commands`: xtask includes
-            // that file into its own tree, so a template only the pilot
-            // renderer calls reads as dead code there and fails
-            // `-D warnings`. `shell_arg` still owns the quoting.
-            out.push_str(&format!(
-                "  repair this seam: ripr agent repair --root {} --seam-id {} --phase before\n",
-                loop_commands::shell_path(context.root),
-                loop_commands::shell_arg(entry.seam.id().as_str()),
-            ));
+        // Only a seam that passes the fail-closed repair-packet flip gets the
+        // paste-ready command. Route readiness alone is weaker: a ready seam
+        // can still be ineligible, and offering a repair transaction there
+        // would promise a target `agent repair` refuses. The closing block
+        // uses the same builder, so the two lines cannot disagree (#3906).
+        if let Some(command) = repair_start_command(context.root, entry) {
+            out.push_str(&format!("  repair this seam: {command}\n"));
         }
         out.push('\n');
         outline.is_not_applicable()
