@@ -1069,13 +1069,35 @@ mod tests {
         }
         fs::write(repo.join(".gitattributes"), "src/lib.rs diff=audit\n")
             .map_err(|error| format!("write gitattributes failed: {error}"))?;
-        fs::write(repo.join("src/lib.rs"), "pub const VALUE: u32 = 1;\n")
-            .map_err(|error| format!("write base source failed: {error}"))?;
+        // Seven lines with the edit on line 4: three context lines exist
+        // on each side, so `--unified=0` and `--unified=3` produce
+        // different bytes and the byte-identity pin below discriminates
+        // the evidence-path context selection.
+        fs::write(
+            repo.join("src/lib.rs"),
+            "pub const A: u32 = 1;\n\
+             pub const B: u32 = 2;\n\
+             pub const C: u32 = 3;\n\
+             pub const VALUE: u32 = 1;\n\
+             pub const D: u32 = 4;\n\
+             pub const E: u32 = 5;\n\
+             pub const F: u32 = 6;\n",
+        )
+        .map_err(|error| format!("write base source failed: {error}"))?;
         fixture_git_ok(&repo, &["add", "."])?;
         fixture_git_ok(&repo, &["commit", "--quiet", "-m", "base"])?;
         fixture_git_ok(&repo, &["tag", "evidence-base"])?;
-        fs::write(repo.join("src/lib.rs"), "pub const VALUE: u32 = 2;\n")
-            .map_err(|error| format!("write edited source failed: {error}"))?;
+        fs::write(
+            repo.join("src/lib.rs"),
+            "pub const A: u32 = 1;\n\
+             pub const B: u32 = 2;\n\
+             pub const C: u32 = 3;\n\
+             pub const VALUE: u32 = 2;\n\
+             pub const D: u32 = 4;\n\
+             pub const E: u32 = 5;\n\
+             pub const F: u32 = 6;\n",
+        )
+        .map_err(|error| format!("write edited source failed: {error}"))?;
         fixture_git_ok(&repo, &["add", "src/lib.rs"])?;
         fixture_git_ok(&repo, &["commit", "--quiet", "-m", "edit"])?;
         let range = "evidence-base...HEAD";
@@ -1118,6 +1140,10 @@ mod tests {
         assert!(
             diff.contains("pub const VALUE"),
             "packet diff must retain the source edit despite textconv"
+        );
+        assert!(
+            diff.contains("pub const C: u32 = 3;") && diff.contains("pub const D: u32 = 4;"),
+            "packet diff must keep the three-line presentation around the edit"
         );
         assert!(
             !diff.contains('\u{1b}'),
