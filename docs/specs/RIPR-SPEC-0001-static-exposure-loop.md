@@ -104,9 +104,9 @@ pub fn ships_free(items: u32) -> bool {
 ```
 
 When the changed comparison is the whole tail expression of an owner with a
-return type (no `;`, `if`, `let`, `return`, or continuation line), its boolean
-is the returned value, so the predicate propagates to the returned value
-without a branch. If tests reach the owner, directly or through a wrapper such
+return type (no `;`, `if`, `let`, `return`, or continuation line; comments are
+ignored when matching the line), its boolean is the returned value, so the
+predicate propagates to the returned value without a branch. If tests reach the owner, directly or through a wrapper such
 as `shipping(items)`, only at `20` and `2` items, `ripr` should report weak
 exposure naming `items == 10` with the boundary-test next step, not
 `propagation_unknown`. A predicate retargeted from a changed `let` initializer
@@ -169,6 +169,7 @@ Fixture coverage:
 - `fixtures/tail_comparison_boundary`
 - `predicate_that_is_the_owner_tail_flows_to_the_returned_value`
 - `predicate_tail_sink_fails_closed_off_the_bare_returned_comparison`
+- `predicate_tail_with_a_trailing_comment_still_flows_to_the_returned_value`
 - `given_direct_field_assignments_from_named_constant_boundaries_then_values_are_observed`
 - `given_other_object_or_field_assignments_then_boundary_value_is_not_credited`
 - `given_similarly_named_constant_then_equality_boundary_stays_missing`

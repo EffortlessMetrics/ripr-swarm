@@ -403,7 +403,15 @@ fn predicate_as_owner_tail(
     owner_fn: Option<&FunctionSummary>,
 ) -> Option<LocalTextFact> {
     let function = owner_fn?;
-    if probe.after.as_deref().map(str::trim) != Some(probe.expression.trim()) {
+    // Compare code only: a trailing `// note` on the changed line must not
+    // hide the tail, and comment text must not make two lines match.
+    let code = |text: &str| {
+        crate::analysis::language::mask_rust_comments_and_strings(text)
+            .trim()
+            .to_string()
+    };
+    let expression = code(&probe.expression);
+    if probe.after.as_deref().map(code).as_deref() != Some(expression.as_str()) {
         return None;
     }
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
@@ -414,7 +422,6 @@ fn predicate_as_owner_tail(
     }
     let offset = probe.location.line.checked_sub(function.start_line)?;
     let changed = masked.lines().nth(offset)?.trim();
-    let expression = probe.expression.trim();
     if offset == 0
         || changed != expression
         || changed.ends_with(';')
@@ -430,9 +437,9 @@ fn predicate_as_owner_tail(
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    (rest == ["}"]).then(|| LocalTextFact {
+    (rest == ["}"]).then_some(LocalTextFact {
         line: probe.location.line,
-        text: expression.to_string(),
+        text: expression,
     })
 }
 
@@ -893,6 +900,26 @@ mod tests {
     fn predicate_that_is_the_owner_tail_flows_to_the_returned_value() {
         let owner = tail_owner("pub fn ships_free(items: u32) -> bool {\n    items >= 10\n}");
         let probe = probe(ProbeFamily::Predicate, "items >= 10", 2);
+
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(sinks[0].text, "items >= 10");
+        assert_eq!(sinks[0].line, 2);
+    }
+
+    #[test]
+    fn predicate_tail_with_a_trailing_comment_still_flows_to_the_returned_value() {
+        let owner = tail_owner(
+            "pub fn ships_free(items: u32) -> bool {\n    items >= 10 // free-shipping line\n}",
+        );
+        let mut probe = probe(
+            ProbeFamily::Predicate,
+            "items >= 10 // free-shipping line",
+            2,
+        );
+        probe.after = Some("items >= 10 // free-shipping line".to_string());
 
         let sinks = local_flow_sinks(&probe, Some(&owner));
 
