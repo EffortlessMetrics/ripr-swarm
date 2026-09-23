@@ -257,8 +257,8 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
 fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
     let check = normalized(&rendered_help(&["check", "--help"])?);
     for needle in [
-        "the remote's own HEAD, then origin/main, origin/master, main, and master in order",
-        "when none of those resolves the analysis does not run",
+        "the local origin/HEAD ref, then origin/main, origin/master, main, and master in order",
+        "when none of those resolves, the analysis does not run",
     ] {
         assert_contains("check help (`ripr check --help`)", &check, needle)?;
     }

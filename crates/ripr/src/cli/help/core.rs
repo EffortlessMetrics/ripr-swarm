@@ -105,9 +105,9 @@ Options:
   --root PATH              Workspace root. Defaults to current directory, then
                            walks up to a Cargo.toml containing [workspace].
   --base REV               Base revision for git diff. When omitted, ripr uses
-                           the remote's own HEAD, then origin/main,
+                           the local origin/HEAD ref, then origin/main,
                            origin/master, main, and master in order; when none
-                           of those resolves the analysis does not run.
+                           of those resolves, the analysis does not run.
   --diff PATH              Read a unified diff file instead of running git diff.
                            Use --diff - to read from stdin (e.g.
                            `git diff origin/main | ripr check --diff -`).
