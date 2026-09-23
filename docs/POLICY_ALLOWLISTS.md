@@ -100,7 +100,10 @@ count-allowlist row.
 
 `clippy::allow_attributes_without_reason` is denied at the workspace level.
 `cargo xtask check-allow-attributes` counts source suppressions against
-`.ripr/allow-attributes.txt`. It does not match
+`.ripr/allow-attributes.txt`. A guarded suppression with no row, or a count
+above its row, fails. A row whose `max_count` is higher than the current
+source count also fails, including a row whose suppression is gone. It does
+not match
 `policy/clippy-exceptions.toml` (see [`docs/CLIPPY_POLICY.md`](CLIPPY_POLICY.md)
 Companion ledgers; `check-covered-by` owns that TOML's structure, expiry,
 and `covered_by` claims).

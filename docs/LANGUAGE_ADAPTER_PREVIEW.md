@@ -343,7 +343,7 @@ Preview language evidence does not mean:
   default;
 - RIPR edited source files or generated tests.
 
-The useful claim is narrower: for explicitly enabled preview languages, RIPR can
+The useful claim is narrower: for enabled (configured or detected) preview languages, RIPR can
 surface syntax-first static evidence, related tests, missing discriminators,
 static limits, and repair-oriented next actions in the same review surfaces used
 by Rust.

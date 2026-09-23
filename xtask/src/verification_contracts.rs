@@ -7,6 +7,14 @@ use serde_json::Value;
 use crate::schema_pattern::SchemaPattern;
 
 const VERIFICATION_README: &str = "docs/verification/README.md";
+const SCHEMA_PRODUCER_AUDIT: &str = "docs/verification/schema-producer-audit.md";
+const SCHEMAS_DIRECTORY: &str = "schemas";
+const RIPR_SCHEMA_PREFIX: &str = "schemas/ripr/";
+/// Every JSON file under `schemas/` is a published schema. Matching the
+/// broader extension keeps the `schema_version` rule below over exactly the
+/// set it covered before the inventory was derived, and makes a non-schema
+/// parked in `schemas/` declare itself in the audit rather than slip past.
+const SCHEMA_FILE_SUFFIX: &str = ".json";
 
 /// Which value inside `fixture_path` a contract validates.
 ///
@@ -117,6 +125,26 @@ const CONTRACTS: &[VerificationContract] = &[
             "incomplete_repair_route",
         ],
     },
+    // `baseline_match_kind` is emitted only when a baseline match succeeded
+    // through the legacy path/line/static_class fallback selector (issue
+    // #1934, RIPR-SPEC-0014 § Baseline Comparison), so the hand-written
+    // fixture above never carries it. This golden does, and it carries a
+    // canonical-match decision beside it, so one subject binds both that the
+    // schema admits the field and that it does not require it.
+    VerificationContract {
+        schema_path: "schemas/ripr/gate-decision.schema.json",
+        schema_pointer: None,
+        fixture_path: concat!(
+            "fixtures/gate_baseline_fallback_disclosure/expected/gate-baseline/",
+            "mixed-canonical-and-legacy-entries/gate-decision.json"
+        ),
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "decisions[].baseline_match_kind",
+            "\"legacy_path_line_class\"",
+        ],
+    },
     VerificationContract {
         schema_path: "schemas/ripr/check.schema.json",
         schema_pointer: None,
@@ -141,6 +169,55 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &[],
+    },
+    // The `test_harnesses` projection is checked against a producer golden
+    // rather than a hand-written copy, for the reason stated below about the
+    // trust corpus: a hand-written instance lets the schema confirm itself
+    // while the bytes the product emits drift away. Both hand-written check
+    // fixtures above are harness-free, so before this row the published
+    // schema rejected real `ripr check --format json` output from any
+    // repository with `[analysis.test_harnesses]` registrations and the gate
+    // stayed green (#3883).
+    VerificationContract {
+        schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
+        fixture_path: "fixtures/harness_dead_construction_no_exposed_credit/expected/check.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "test_harnesses",
+            "registration_id",
+            "harness_kind",
+            "adapter",
+            "provenance",
+            "limitations[]",
+        ],
+    },
+    // Two more producer goldens, for the two shapes the published schema
+    // rejected until #3912. The hand-written fixtures above carry neither, so
+    // nothing in the contract table consumed them and the gate stayed green
+    // while `ripr check --format json` emitted output the schema refused.
+    //
+    // `flow_sink: null` is the producer's answer when a missing discriminator
+    // has no local flow sink to name. 13 goldens carry it and
+    // `docs/OUTPUT_SCHEMA.md` documents it, but the schema demanded an object.
+    VerificationContract {
+        schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
+        fixture_path: "fixtures/helper_chain_one_hop/expected/check.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["flow_sink", "missing_discriminators"],
+    },
+    // An empty `recommended_next_step` is the producer's "no action to
+    // recommend". 40 goldens carry it, but the schema demanded `minLength: 1`.
+    VerificationContract {
+        schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
+        fixture_path: "fixtures/match_arm_positive/expected/check.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["recommended_next_step", "suggested_next_action"],
     },
     // The trust corpus of record is its own canonical instance. Validating a
     // hand-written copy instead would let the schema confirm itself while the
@@ -214,6 +291,7 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
 
     let root = repo_root()?;
     let readme = read_text(root.join(VERIFICATION_README))?;
+    let audit = read_text(root.join(SCHEMA_PRODUCER_AUDIT))?;
     let mut violations = Vec::new();
 
     for required in [
@@ -221,19 +299,30 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         "pr-evidence-contract.md",
         "artifact-layout.md",
         "annotation-policy.md",
-        "schemas/badges/shields-endpoint.schema.json",
-        "schemas/ripr/pr-evidence.schema.json",
-        "schemas/ripr/review-comments.schema.json",
-        "schemas/ripr/gate-decision.schema.json",
-        "schemas/ripr/check.schema.json",
-        "schemas/ripr/repair-assurance.schema.json",
-        "schemas/ripr/rust-repair-trust-corpus.schema.json",
         "schema-producer-audit.md",
     ] {
         if !readme.contains(required) {
             violations.push(format!("{VERIFICATION_README} does not link `{required}`"));
         }
     }
+
+    // The published-schema inventory is read from disk rather than listed
+    // here. A literal list is a second place to remember, and the schema it
+    // forgets is the one no reader ever learns is unaudited: both documents
+    // state that they cover every published schema, so a schema missing from
+    // either made that claim false while this gate reported success.
+    let published_schemas = published_schema_paths(&root)?;
+    if published_schemas.is_empty() {
+        violations.push(format!(
+            "{} contains no published schema, so the audited inventory is empty",
+            SCHEMAS_DIRECTORY
+        ));
+    }
+    violations.extend(schema_documentation_violations(
+        &published_schemas,
+        &readme,
+        &audit,
+    ));
 
     let mut subjects_checked = 0usize;
     for contract in CONTRACTS {
@@ -281,51 +370,39 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         }
     }
 
-    // Reverse-direction check: every schemas/ripr/*.json must define a
+    // Reverse-direction check: every schemas/ripr/*.schema.json must define a
     // schema_version property with a const value. This is the first
     // enforcement step toward #1720 (per-output version reconciliation).
-    let ripr_schema_dir = root.join("schemas/ripr");
-    if ripr_schema_dir.is_dir() {
-        let mut schema_files = fs::read_dir(&ripr_schema_dir)
-            .map_err(|error| format!("failed to read schemas/ripr: {error}"))?
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| {
-                let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "json") {
-                    Some(path)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        schema_files.sort();
-        for schema_path in &schema_files {
-            let rel = schema_path.strip_prefix(&root).unwrap_or(schema_path);
-            let rel_str = rel.to_string_lossy();
-            let schema = read_json(schema_path.clone())?;
-            let props = schema.get("properties").and_then(Value::as_object);
-            let Some(props) = props else {
-                violations.push(format!("{rel_str} has no properties"));
-                continue;
-            };
-            let Some(sv_prop) = props.get("schema_version") else {
-                violations.push(format!(
-                    "{rel_str} is missing `schema_version` property — every ripr output schema must declare a version (#1720)"
-                ));
-                continue;
-            };
-            if sv_prop.get("const").is_none() {
-                violations.push(format!(
-                    "{rel_str} schema_version must use `const` for a pinned version (#1720)"
-                ));
-            }
+    for rel_str in published_schemas
+        .iter()
+        .filter(|path| path.starts_with(RIPR_SCHEMA_PREFIX))
+    {
+        let schema = read_json(root.join(rel_str))?;
+        let props = schema.get("properties").and_then(Value::as_object);
+        let Some(props) = props else {
+            violations.push(format!("{rel_str} has no properties"));
+            continue;
+        };
+        let Some(sv_prop) = props.get("schema_version") else {
+            violations.push(format!(
+                "{rel_str} is missing `schema_version` property — every ripr output schema must declare a version (#1720)"
+            ));
+            continue;
+        };
+        if sv_prop.get("const").is_none() {
+            violations.push(format!(
+                "{rel_str} schema_version must use `const` for a pinned version (#1720)"
+            ));
         }
     }
 
     if violations.is_empty() {
+        // The audited count is reported beside the contract count so a run
+        // cannot imply coverage of an inventory it never enumerated.
         println!(
-            "verification contracts: checked {} contracts over {subjects_checked} producer subjects",
-            CONTRACTS.len()
+            "verification contracts: checked {} contracts over {subjects_checked} producer subjects; audited {} published schemas",
+            CONTRACTS.len(),
+            published_schemas.len()
         );
         Ok(())
     } else {
@@ -405,6 +482,102 @@ impl VerificationContract {
             }
         }
     }
+}
+
+/// Every published schema under `schemas/`, as repository-relative paths with
+/// forward slashes, sorted.
+///
+/// This is the inventory both verification documents claim to cover. Deriving
+/// it from disk is what makes that claim checkable: a schema added without a
+/// README link or an audit row is reported here instead of sitting unaudited
+/// behind a passing gate.
+fn published_schema_paths(root: &Path) -> Result<Vec<String>, String> {
+    let mut paths = Vec::new();
+    collect_published_schemas(root, &root.join(SCHEMAS_DIRECTORY), &mut paths)?;
+    paths.sort();
+    Ok(paths)
+}
+
+fn collect_published_schemas(
+    root: &Path,
+    directory: &Path,
+    paths: &mut Vec<String>,
+) -> Result<(), String> {
+    if !directory.is_dir() {
+        return Ok(());
+    }
+    let mut entries = fs::read_dir(directory)
+        .map_err(|error| format!("failed to read {}: {error}", directory.display()))?
+        .map(|entry| {
+            entry
+                .map(|entry| entry.path())
+                .map_err(|error| format!("failed to read a {SCHEMAS_DIRECTORY} entry: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            collect_published_schemas(root, &path, paths)?;
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !name.ends_with(SCHEMA_FILE_SUFFIX) {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| format!("{} is outside the repository: {error}", path.display()))?;
+        paths.push(relative.to_string_lossy().replace('\\', "/"));
+    }
+    Ok(())
+}
+
+/// Reports each published schema that one of the two verification documents
+/// does not mention.
+///
+/// The two rules stay separate on purpose. The README says where a schema
+/// lives; the audit says which producer emits the bytes it describes and which
+/// negative mutation proves that. A schema listed in one and absent from the
+/// other is the case that actually occurred, so collapsing them into a single
+/// "documented somewhere" test would have reported nothing.
+fn schema_documentation_violations(
+    published_schemas: &[String],
+    readme: &str,
+    audit: &str,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    for schema_path in published_schemas {
+        if !lists_schema_in_a_table_row(readme, schema_path) {
+            violations.push(format!(
+                "{VERIFICATION_README} has no schema-table row linking `{schema_path}`"
+            ));
+        }
+        if !lists_schema_in_a_table_row(audit, schema_path) {
+            violations.push(format!(
+                "{SCHEMA_PRODUCER_AUDIT} has no audit-table row for `{schema_path}` — every published schema must name its producer and canonical subject, or carry an explicit exemption"
+            ));
+        }
+    }
+    violations
+}
+
+/// Whether `document` carries `schema_path` as a cell of a Markdown table
+/// row, which is how both verification documents list a schema.
+///
+/// Searching the whole document instead would accept a passing mention
+/// anywhere in it — a sentence, a note, a code block — while the violation
+/// that silences claims a row exists. That is the same overstated contract
+/// this gate exists to close, one level down.
+///
+/// The cell is matched with its backticks, so a longer path that merely
+/// begins with this one, such as a `.bak` copy, cannot stand in for it.
+fn lists_schema_in_a_table_row(document: &str, schema_path: &str) -> bool {
+    let cell = format!("`{schema_path}`");
+    document
+        .lines()
+        .any(|line| line.trim_start().starts_with('|') && line.contains(&cell))
 }
 
 pub(crate) fn validate_json_file_against_schema(
@@ -900,6 +1073,144 @@ mod tests {
     use super::*;
 
     #[test]
+    fn published_schema_inventory_is_read_from_disk() -> Result<(), String> {
+        let inventory = published_schema_paths(&repo_root()?)?;
+        // Both published directories must be reached, or the inventory would
+        // silently exclude a whole tree instead of one file.
+        for expected in [
+            "schemas/badges/shields-endpoint.schema.json",
+            "schemas/ripr/check.schema.json",
+            "schemas/ripr/repair-attempt.schema.json",
+        ] {
+            if !inventory.iter().any(|path| path == expected) {
+                return Err(format!("the inventory omits `{expected}`: {inventory:?}"));
+            }
+        }
+        for path in &inventory {
+            if !path.ends_with(SCHEMA_FILE_SUFFIX) {
+                return Err(format!("`{path}` is not a published schema"));
+            }
+        }
+        Ok(())
+    }
+
+    const EXAMPLE_SCHEMA: &str = "schemas/ripr/example.schema.json";
+
+    /// The shape both verification documents actually use: a Markdown table
+    /// row whose first cell is the backticked repository-relative path.
+    fn readme_row(path: &str) -> String {
+        format!("| [`{path}`](../../{path}) | An example. |")
+    }
+
+    fn audit_row(path: &str) -> String {
+        format!("| `{path}` | `0.1` | a producer | live |")
+    }
+
+    #[test]
+    fn documentation_coverage_is_silent_when_both_documents_carry_the_inventory() {
+        let inventory = vec![EXAMPLE_SCHEMA.to_string()];
+        let violations = schema_documentation_violations(
+            &inventory,
+            &readme_row(EXAMPLE_SCHEMA),
+            &audit_row(EXAMPLE_SCHEMA),
+        );
+        assert!(
+            violations.is_empty(),
+            "a documented schema was reported: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn documentation_coverage_reports_a_schema_missing_only_from_the_audit() {
+        // The case that actually occurred: the schema was reachable from the
+        // repository but no row named its producer. The README rule must stay
+        // silent here, or one omission would report as two and neither
+        // message would say which document to repair.
+        let inventory = vec![EXAMPLE_SCHEMA.to_string()];
+        let violations = schema_documentation_violations(
+            &inventory,
+            &readme_row(EXAMPLE_SCHEMA),
+            &audit_row("schemas/ripr/other.schema.json"),
+        );
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected exactly the audit violation: {violations:?}"
+        );
+        assert!(
+            violations[0].starts_with(SCHEMA_PRODUCER_AUDIT),
+            "the violation does not name the audit document: {violations:?}"
+        );
+        assert!(
+            violations[0].contains(EXAMPLE_SCHEMA),
+            "the violation does not name the schema: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn documentation_coverage_reports_a_schema_missing_only_from_the_readme() {
+        let inventory = vec![EXAMPLE_SCHEMA.to_string()];
+        let violations = schema_documentation_violations(
+            &inventory,
+            &readme_row("schemas/ripr/other.schema.json"),
+            &audit_row(EXAMPLE_SCHEMA),
+        );
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected exactly the README violation: {violations:?}"
+        );
+        assert!(
+            violations[0].starts_with(VERIFICATION_README),
+            "the violation does not name the README: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn documentation_coverage_reports_a_schema_missing_from_both_documents() {
+        let inventory = vec![EXAMPLE_SCHEMA.to_string()];
+        let violations =
+            schema_documentation_violations(&inventory, "no rows here", "no rows here");
+        assert_eq!(
+            violations.len(),
+            2,
+            "an undocumented schema must be reported by both rules: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_mention_outside_a_table_row_is_not_a_row() {
+        // The violation says a row is missing, so a passing mention in prose
+        // or a code block must not silence it. Searching the whole document
+        // would have accepted every line below.
+        let inventory = vec![EXAMPLE_SCHEMA.to_string()];
+        let prose = format!(
+            "The audit covers `{EXAMPLE_SCHEMA}` and more.\n\n```text\n{EXAMPLE_SCHEMA}\n```\n"
+        );
+        let violations = schema_documentation_violations(&inventory, &prose, &prose);
+        assert_eq!(
+            violations.len(),
+            2,
+            "a schema mentioned only outside a table row must still be reported: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_longer_path_beginning_with_the_schema_path_is_not_that_schema() {
+        // `contains` on the bare path would accept a row for a neighbouring
+        // file whose name merely starts with this one.
+        let inventory = vec![EXAMPLE_SCHEMA.to_string()];
+        let decoy = format!("{EXAMPLE_SCHEMA}.bak");
+        let violations =
+            schema_documentation_violations(&inventory, &readme_row(&decoy), &audit_row(&decoy));
+        assert_eq!(
+            violations.len(),
+            2,
+            "a row for `{decoy}` must not document `{EXAMPLE_SCHEMA}`: {violations:?}"
+        );
+    }
+
+    #[test]
     fn command_accepts_default_and_check_modes() -> Result<(), String> {
         check_verification_contracts(&[])?;
         check_verification_contracts(&["--check".to_string()])
@@ -1288,6 +1599,164 @@ mod tests {
         Ok(())
     }
 
+    /// Negative control for the `source_currentness` property added with
+    /// #3883. The producer emits this field on every finding from a closed
+    /// enum, so the schema states the enum rather than `type: string`; a
+    /// disposition outside it must be rejected rather than silently admitted.
+    /// Negative control for the `flow_sink` relaxation added with #3912. The
+    /// producer emits `null` when a missing discriminator has no local flow
+    /// sink to name, so the schema admits `null` — but not any other
+    /// non-object, and not an absent key.
+    #[test]
+    fn check_schema_admits_a_null_flow_sink_without_admitting_anything_else() -> Result<(), String>
+    {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let golden = read_json(root.join("fixtures/helper_chain_one_hop/expected/check.json"))?;
+
+        let mut wrong_type = golden.clone();
+        wrong_type["findings"][0]["missing_discriminators"][0]["flow_sink"] =
+            Value::String("error_variant".to_string());
+        let violations = document_violations(&wrong_type, &schema, "wrong flow sink type");
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("expected type object|null, got string"))
+        {
+            return Err(format!(
+                "a string flow sink was not rejected as the wrong type: {violations:#?}"
+            ));
+        }
+
+        let mut absent = golden;
+        absent["findings"][0]["missing_discriminators"][0]
+            .as_object_mut()
+            .ok_or("the golden's first missing discriminator should be an object")?
+            .remove("flow_sink");
+        let violations = document_violations(&absent, &schema, "absent flow sink");
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("missing required field `flow_sink`"))
+        {
+            return Err(format!(
+                "admitting `null` must not make the key optional: {violations:#?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Negative control for the next-step relaxation added with #3912. The
+    /// producer emits `""` for "no action to recommend", so the schema drops
+    /// `minLength` — but the fields stay required strings.
+    #[test]
+    fn check_schema_admits_an_empty_next_step_without_admitting_a_non_string() -> Result<(), String>
+    {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let golden = read_json(root.join("fixtures/match_arm_positive/expected/check.json"))?;
+
+        let mut wrong_type = golden.clone();
+        wrong_type["findings"][0]["recommended_next_step"] = Value::from(0);
+        let violations = document_violations(&wrong_type, &schema, "non-string next step");
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("expected type string, got number"))
+        {
+            return Err(format!(
+                "a numeric next step was not rejected: {violations:#?}"
+            ));
+        }
+
+        let mut absent = golden;
+        absent["findings"][0]
+            .as_object_mut()
+            .ok_or("the golden's first finding should be an object")?
+            .remove("suggested_next_action");
+        let violations = document_violations(&absent, &schema, "absent next action");
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("missing required field `suggested_next_action`"))
+        {
+            return Err(format!(
+                "dropping minLength must not make the field optional: {violations:#?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_schema_rejects_an_unknown_source_currentness() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let mut fixture =
+            read_json(root.join("tests/fixtures/verification/ripr/check-complete.valid.json"))?;
+        fixture["findings"][0]["source_currentness"] = Value::String("probably_fine".to_string());
+        let mut violations = Vec::new();
+
+        validate_value_against_schema(
+            &fixture,
+            &schema,
+            &schema,
+            "unknown source currentness fixture".to_string(),
+            &mut violations,
+        );
+
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("is not in enum")),
+            "expected an enum rejection for the disposition itself, got {violations:#?}"
+        );
+        assert!(
+            !violations
+                .iter()
+                .any(|violation| violation.contains("unexpected field `source_currentness`")),
+            "the schema must know the field, so the rejection is about its value and not \
+             about the key: {violations:#?}"
+        );
+        Ok(())
+    }
+
+    /// Negative control for the `test_harness` definition added with #3883.
+    /// The producer always emits `limitations`, as `[]` when there are none,
+    /// so an entry without the key is producer drift and not an absent
+    /// optional.
+    #[test]
+    fn check_schema_rejects_a_harness_projection_without_limitations() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let mut fixture = read_json(
+            root.join("fixtures/harness_dead_construction_no_exposed_credit/expected/check.json"),
+        )?;
+        let entry = fixture["test_harnesses"][0]
+            .as_object_mut()
+            .ok_or("the golden's first harness projection should be an object")?;
+        entry
+            .remove("limitations")
+            .ok_or("the golden's first harness projection should carry limitations")?;
+        let mut violations = Vec::new();
+
+        validate_value_against_schema(
+            &fixture,
+            &schema,
+            &schema,
+            // Deliberately neutral: an earlier draft named this location
+            // "harness projection without limitations", and the assertion
+            // below then matched the label rather than the validator, so the
+            // control passed against a schema that knew nothing about the
+            // field at all.
+            "harness golden".to_string(),
+            &mut violations,
+        );
+
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("missing required field `limitations`")),
+            "expected a missing-limitations rejection, got {violations:#?}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn check_schema_rejects_negative_fractional_confidence() -> Result<(), String> {
         let root = repo_root()?;
@@ -1386,6 +1855,74 @@ mod tests {
     const ASSURANCE_CORPUS: &str = "fixtures/assurance_vocabulary/assurance/corpus.json";
     const AGENT_PACKET_GOLDEN: &str =
         "fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json";
+    const GATE_BASELINE_FALLBACK_GOLDEN: &str = concat!(
+        "fixtures/gate_baseline_fallback_disclosure/expected/gate-baseline/",
+        "mixed-canonical-and-legacy-entries/gate-decision.json"
+    );
+    /// Mirrors `BASELINE_MATCH_KIND_LEGACY_PATH_LINE_CLASS`, which is private
+    /// to the gate renderer. Stated here as the value the published schema is
+    /// expected to admit; the contract row is what binds it to real bytes.
+    const LEGACY_MATCH_KIND: &str = "legacy_path_line_class";
+
+    /// Negative control for the `baseline_match_kind` property added with
+    /// #3912. The producer emits exactly one value, from a constant
+    /// (`BASELINE_MATCH_KIND_LEGACY_PATH_LINE_CLASS`), and emits the key only
+    /// on fallback-only baseline matches. So the schema states the closed set
+    /// rather than `type: string`, and leaves the property optional. Both
+    /// halves are pinned here: an unrecognised match kind is rejected, and the
+    /// canonical-match decision beside it, which carries no such key, is not.
+    #[test]
+    fn gate_decision_schema_admits_only_the_disclosed_baseline_match_kind() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/gate-decision.schema.json"))?;
+        let golden = read_json(root.join(GATE_BASELINE_FALLBACK_GOLDEN))?;
+
+        // Assert the subject before claiming anything from it: this golden is
+        // useful only because it holds both shapes at once.
+        if golden["decisions"][0]["baseline_match_kind"] != Value::String(LEGACY_MATCH_KIND.into())
+        {
+            return Err(format!(
+                "the golden's first decision should disclose `{LEGACY_MATCH_KIND}`, got {}",
+                compact_json(&golden["decisions"][0]["baseline_match_kind"])
+            ));
+        }
+        if golden["decisions"][1].get("baseline_match_kind").is_some() {
+            return Err(
+                "the golden's second decision should be a canonical match carrying no \
+                 `baseline_match_kind`, so the optionality half of this control is real"
+                    .to_string(),
+            );
+        }
+
+        let mut drifted = golden;
+        drifted["decisions"][0]["baseline_match_kind"] =
+            Value::String("path_line_class".to_string());
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            &drifted,
+            &schema,
+            &schema,
+            "drifted gate decision".to_string(),
+            &mut violations,
+        );
+
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("value \"path_line_class\" is not in enum"))
+        {
+            return Err(format!(
+                "an unrecognised baseline match kind was not rejected: {violations:#?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Every violation one whole document raises against one whole schema.
+    fn document_violations(value: &Value, schema: &Value, location: &str) -> Vec<String> {
+        let mut violations = Vec::new();
+        validate_value_against_schema(value, schema, schema, location.to_string(), &mut violations);
+        violations
+    }
 
     fn violations_for(value: &Value, subschema: &Value, root_schema: &Value) -> Vec<String> {
         let mut violations = Vec::new();

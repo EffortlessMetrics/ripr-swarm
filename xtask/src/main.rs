@@ -4731,8 +4731,36 @@ fn check_allow_attributes_impl() -> Result<(), String> {
         }
     }
 
+    let violations = allow_attribute_budget_violations(&allowlist, &counts, &guarded);
+
+    finish_policy_report(
+        PolicyReportSpec {
+            report_file: "allow-attributes.md",
+            check: "check-allow-attributes",
+            why_it_matters: "Lint suppressions should not be used to hide repo guardrails. If a suppression is unavoidable, it needs a narrow reviewed exception with a reason. A count row higher than the current source count is the same unread budget.",
+            fix_kind: FixKind::PolicyExceptionRequired,
+            recommended_fixes: &[
+                "Remove the lint suppression and fix the underlying warning.",
+                "If the suppression is temporary and intentional, add a narrow allowlist entry with a reason.",
+                "Tighten or remove a `.ripr/allow-attributes.txt` row whose max_count is higher than the current source count.",
+                "Do not allowlist panic-family, unsafe, or broad warning suppressions unless the PR explicitly owns that exception.",
+            ],
+            rerun_command: "cargo xtask check-allow-attributes",
+            exception_template: Some(
+                ".ripr/allow-attributes.txt entry:\npath/to/file.rs|allow(clippy::unwrap_used)|1|reason",
+            ),
+        },
+        &violations,
+    )
+}
+
+fn allow_attribute_budget_violations(
+    allowlist: &BTreeMap<(String, String), usize>,
+    counts: &BTreeMap<(String, String), Vec<usize>>,
+    guarded: &BTreeSet<&'static str>,
+) -> Vec<String> {
     let mut violations = Vec::new();
-    for ((path, attribute), lines) in &counts {
+    for ((path, attribute), lines) in counts {
         let allowed = allowlist
             .get(&(path.clone(), attribute.clone()))
             .copied()
@@ -4746,7 +4774,7 @@ fn check_allow_attributes_impl() -> Result<(), String> {
         }
     }
 
-    for ((path, attribute), allowed) in &allowlist {
+    for ((path, attribute), allowed) in allowlist {
         if !guarded.contains(attribute_lint_name(attribute).unwrap_or(attribute)) {
             violations.push(format!(
                 ".ripr/allow-attributes.txt contains unsupported guarded attribute `{attribute}` for {path}; remove stale or out-of-scope exceptions"
@@ -4761,27 +4789,15 @@ fn check_allow_attributes_impl() -> Result<(), String> {
             violations.push(format!(
                 "{path} contains `{attribute}` {actual} time(s), allowed {allowed}"
             ));
+        } else if actual < *allowed {
+            // #3923: a row that outlives the suppressions it budgets is unread
+            // debt. Exact equality is the steady state, matching check-local-context.
+            violations.push(format!(
+                "{path} `{attribute}` allowlist count is stale: found {actual}, allowed {allowed}; tighten max_count to {actual} or remove the entry"
+            ));
         }
     }
-
-    finish_policy_report(
-        PolicyReportSpec {
-            report_file: "allow-attributes.md",
-            check: "check-allow-attributes",
-            why_it_matters: "Lint suppressions should not be used to hide repo guardrails. If a suppression is unavoidable, it needs a narrow reviewed exception with a reason.",
-            fix_kind: FixKind::PolicyExceptionRequired,
-            recommended_fixes: &[
-                "Remove the lint suppression and fix the underlying warning.",
-                "If the suppression is temporary and intentional, add a narrow allowlist entry with a reason.",
-                "Do not allowlist panic-family, unsafe, or broad warning suppressions unless the PR explicitly owns that exception.",
-            ],
-            rerun_command: "cargo xtask check-allow-attributes",
-            exception_template: Some(
-                ".ripr/allow-attributes.txt entry:\npath/to/file.rs|allow(clippy::unwrap_used)|1|reason",
-            ),
-        },
-        &violations,
-    )
+    violations
 }
 
 fn check_local_context_impl() -> Result<(), String> {
@@ -5209,9 +5225,11 @@ fn check_workflows_impl() -> Result<(), String> {
             }
         }
     }
+    violations.extend(composite_action_run_block_violations(&budgets)?);
     violations.extend(repository_owned_review_thread_mutation_violations()?);
     validate_assistant_loop_health_fixture_corpus(&mut violations)?;
     violations.extend(routed_rust_workflow_contract_violations_for_repo()?);
+    violations.extend(policy::ci_scratch::scratch_lease_contract_violations_for_repo()?);
 
     finish_policy_report(
         PolicyReportSpec {
@@ -5233,6 +5251,51 @@ fn check_workflows_impl() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// Budget composite-action run blocks like workflow run blocks.
+///
+/// A local composite action is executed by the workflows that call it, so
+/// shell moved into `.github/actions/*/action.yml` must not escape the
+/// visible run-block budget that `policy/workflow_allowlist.txt` keeps for
+/// workflow YAML (#3841 moved scratch reclamation into such an action).
+fn composite_action_run_block_violations(
+    budgets: &BTreeMap<String, WorkflowBudget>,
+) -> Result<Vec<String>, String> {
+    let root = Path::new(".github/actions");
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut violations = Vec::new();
+    for path in collect_files(root)? {
+        let normalized = normalize_path(&path);
+        if !(normalized.ends_with("/action.yml") || normalized.ends_with("/action.yaml")) {
+            continue;
+        }
+        let text = read_text_lossy(&path)?;
+        let blocks = extract_workflow_run_blocks(&text);
+        if blocks.is_empty() {
+            continue;
+        }
+        let Some(budget) = budgets.get(&normalized) else {
+            violations.push(format!(
+                "missing composite action run-block budget for {normalized} in policy/workflow_allowlist.txt"
+            ));
+            continue;
+        };
+        for block in blocks {
+            if block.non_empty_lines > budget.max_non_empty_lines {
+                violations.push(format!(
+                    "{normalized}:{} run block has {} non-empty line(s), allowed {} ({})",
+                    block.line_number,
+                    block.non_empty_lines,
+                    budget.max_non_empty_lines,
+                    budget.reason
+                ));
+            }
+        }
+    }
+    Ok(violations)
 }
 
 /// Keep the scratch-GC matrix isolated by pool.

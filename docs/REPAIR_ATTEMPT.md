@@ -154,6 +154,7 @@ The composed after command still writes the established projections:
 
 ```text
 target/ripr/workflow/after.repo-exposure.json
+target/ripr/workflow/analysis-outcome.json
 target/ripr/workflow/agent-verify.json
 target/ripr/reports/agent-receipt.json
 target/ripr/workflow/            # status input
@@ -165,6 +166,11 @@ Those paths keep existing review and cockpit integrations working. Their evidenc
 
 Repair attempts fail closed:
 
+- a packet whose selected edit target is not a test surface (a `tests` or
+  `test` path component, or a `*_test.rs`, `*_tests.rs`, `test_*.py`,
+  `*_test.py`, or `*_tests.py` file name) is refused before any attempt is
+  created; inline `#[cfg(test)]` modules in production files are not valid edit
+  targets;
 - malformed or unknown attempt IDs are rejected;
 - missing, moved, modified, or digest-mismatched retained artifacts are rejected;
 - a cross-attempt packet is rejected;

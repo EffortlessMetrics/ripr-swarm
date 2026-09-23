@@ -280,11 +280,16 @@ ripr agent receipt \
   --out target/ripr/agent/agent-receipt.json
 ```
 
-The generated CI workflow uses `target/ripr/pilot/repo-exposure.json`,
-`target/ripr/pilot/after.repo-exposure.json`, and `target/ripr/agent/` by
-default. The `target/ripr/workflow/` paths above are a local scratch variant
-for people who want to keep before/after snapshots separate from the pilot
-packet.
+The generated CI workflow seeds `target/ripr/workflow/before.repo-exposure.json`
+from the pilot snapshot, writes the after snapshot, analysis outcome, and verify
+JSON under `target/ripr/workflow/`, and writes the receipt to
+`target/ripr/reports/agent-receipt.json`. It keeps compatibility copies under
+`target/ripr/agent/` and `target/ripr/pilot/after.repo-exposure.json`.
+
+For one named gap, `ripr agent repair --seam-id <seam-id> --phase before` and
+`ripr agent repair --attempt <repair-attempt-id> --phase after` run this whole
+before/verify/receipt sequence as one transaction; see
+[Repair attempt identity](REPAIR_ATTEMPT.md).
 
 Interpretation:
 
