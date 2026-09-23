@@ -67,3 +67,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — perl_cpan_alpha (2)
+
+Reason:
+RIPR-SPEC-0082: an uncompiled Perl adapter names its real prerequisites (lang-perl build plus the unpublished perl-ripr-facts exporter) instead of a ripr.toml edit this build rejects
+
+Command:
+`cargo xtask goldens bless perl_cpan_alpha --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

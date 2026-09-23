@@ -35,6 +35,18 @@ impl LanguageId {
         }
     }
 
+    /// Inverse of [`LanguageId::as_str`] for the stable wire string.
+    pub(crate) fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "rust" => Some(LanguageId::Rust),
+            "typescript" => Some(LanguageId::TypeScript),
+            "javascript" => Some(LanguageId::JavaScript),
+            "python" => Some(LanguageId::Python),
+            "perl" => Some(LanguageId::Perl),
+            _ => None,
+        }
+    }
+
     pub(crate) fn is_available(self) -> bool {
         match self {
             LanguageId::Rust => cfg!(feature = "lang-rust"),
@@ -54,7 +66,51 @@ impl LanguageId {
             LanguageId::Perl => "lang-perl",
         }
     }
+
+    /// What a user needs before this language can be analyzed when its
+    /// adapter is not compiled into this ripr binary.
+    ///
+    /// Single text owner for every surface that reports an unavailable
+    /// adapter (the check note, JSON/diff-report `why`, the typed outcome
+    /// recovery, the pipeline run reason, the `languages.enabled` config
+    /// error, and doctor). Perl names both prerequisites because enabling
+    /// `perl` in `ripr.toml` is not enough on its own: the adapter only
+    /// consumes packets from an external fact exporter, and the canonical
+    /// exporter is not yet published. Bounded well under the 512-character
+    /// analysis-outcome detail limit.
+    pub(crate) fn unavailable_adapter_recovery(self) -> String {
+        match self {
+            LanguageId::Perl => format!(
+                "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`{PERL_FACT_EXPORTER}`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it"
+            ),
+            other => format!(
+                "rebuild ripr with Cargo feature `{}` to analyze {} files",
+                other.required_feature(),
+                other.as_str()
+            ),
+        }
+    }
+
+    /// Extra prerequisite that enabling this language in `ripr.toml` does not
+    /// satisfy on its own, for builds where the adapter IS compiled in.
+    ///
+    /// Perl consumes externally produced fact packets, so enabling it still
+    /// needs a packet (`--perl-facts`) or a compatible managed exporter.
+    /// Other preview languages have no such prerequisite.
+    pub(crate) fn enable_prerequisite(self) -> Option<String> {
+        match self {
+            LanguageId::Perl => Some(format!(
+                "Perl also needs a fact packet: pass --perl-facts <packet.json>, or configure [perl].producer with a compatible Perl fact exporter (`{PERL_FACT_EXPORTER}`, not yet published)"
+            )),
+            _ => None,
+        }
+    }
 }
+
+/// Canonical name of the external Perl fact exporter that managed producer
+/// mode invokes (`<exporter> ripr-facts --schema ...`). It is not yet
+/// published, so no surface may present Perl analysis as installable.
+pub(crate) const PERL_FACT_EXPORTER: &str = "perl-ripr-facts";
 
 /// Whether an adapter is the reference (`Stable`) implementation for a
 /// language or a `Preview` adapter.

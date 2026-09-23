@@ -250,6 +250,12 @@ disclosure — no renderer reconstructs Python semantics.
 Diff-scoped formats (`check --json`, `check --format human`, SARIF from a diff,
 review-comments) work normally on all four languages.
 
+The Perl column assumes a ripr built with Cargo feature `lang-perl` plus a
+compatible Perl fact packet or exporter. Default builds do not compile the Perl
+adapter, and the canonical exporter (`perl-ripr-facts`) is not yet published, so
+no released ripr build plus exporter combination analyzes Perl yet; a released
+install reports changed Perl files as not analyzed.
+
 **Until the TypeScript stub is implemented**, do not interpret a zero-seam
 repo-mode report for TypeScript as evidence of clean coverage. Run
 `ripr check --diff <diff>` against a representative PR diff to get real

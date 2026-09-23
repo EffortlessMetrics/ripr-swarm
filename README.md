@@ -205,7 +205,9 @@ ordinary-user success remain unestablished. Python repair-routing is `usable
 alpha` for selected pytest/unittest workflows (repair cards, verify commands,
 bounded agent packets, before/after receipts); TypeScript is an opt-in
 `preview`. `ripr` is advisory static analysis — not a merge gate and not a
-mutation runner. Perl repair routing is `preview`/advisory; its next
+mutation runner. Perl repair routing is `preview`/advisory and not yet usable
+from a released install: it needs a `lang-perl` ripr build plus the
+`perl-ripr-facts` fact exporter, which is not yet published. Its next
 checkpoint is `dogfood/perl-real-repo-evals-v2` before any usable-alpha
 claim. This README is
 a front door, not the metric source of truth: see

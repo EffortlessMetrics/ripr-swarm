@@ -552,6 +552,37 @@ impl PreviewLanguageAdvisory {
     pub(crate) fn analyzed(&self, language_runs: &[LanguageRun]) -> bool {
         self.enabled && self.file_count > 0 && self.non_success_run(language_runs).is_none()
     }
+
+    /// Recovery text for a not-enabled advisory whose adapter is not compiled
+    /// into this ripr binary, or `None` when the adapter is compiled in (the
+    /// `ripr.toml` enablement hint then applies). Text is owned by
+    /// [`crate::domain::LanguageId::unavailable_adapter_recovery`] so every
+    /// renderer tells the same story.
+    pub(crate) fn unavailable_adapter_recovery(&self) -> Option<String> {
+        let language = crate::domain::LanguageId::from_wire(&self.language)?;
+        (!self.enabled && !language.is_available()).then(|| language.unavailable_adapter_recovery())
+    }
+
+    /// Single-line `why` for a not-enabled advisory, shared by the JSON check
+    /// report and the diff report so the two machine surfaces cannot drift.
+    pub(crate) fn not_enabled_why(&self) -> String {
+        if let Some(recovery) = self.unavailable_adapter_recovery() {
+            return format!(
+                "preview adapter not compiled into this ripr binary; files detected but not analyzed; empty result is not Rust-grade clean; {recovery}"
+            );
+        }
+        let mut why = format!(
+            "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"{}\"]",
+            self.language
+        );
+        if let Some(prerequisite) = crate::domain::LanguageId::from_wire(&self.language)
+            .and_then(crate::domain::LanguageId::enable_prerequisite)
+        {
+            why.push_str("; ");
+            why.push_str(&prerequisite);
+        }
+        why
+    }
 }
 
 /// Per-language run status for one language adapter invocation.

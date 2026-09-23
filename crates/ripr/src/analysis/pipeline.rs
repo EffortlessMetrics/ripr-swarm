@@ -390,17 +390,20 @@ fn run_pipeline_for_diff_text(
     let preview_advisories = detect_preview_advisories(languages, preview_paths.into_iter());
     for advisory in &preview_advisories {
         if !advisory.enabled {
+            // An adapter that is not compiled in cannot be enabled through
+            // `ripr.toml`; the shared owner names the real prerequisites.
+            let recovery = match advisory.unavailable_adapter_recovery() {
+                Some(recovery) => recovery,
+                None => format!(
+                    "Enable the {} preview adapter and re-run the analysis.",
+                    advisory.language
+                ),
+            };
             limitations.push(
                 AnalysisLimitation::new(
                     AnalysisLimitationKind::LanguageAdapterUnavailable,
                     AnalysisStage::LanguageAdapter,
-                    AnalysisRecovery::new(
-                        AnalysisRecoveryKind::EnableLanguage,
-                        format!(
-                            "Enable the {} preview adapter and re-run the analysis.",
-                            advisory.language
-                        ),
-                    )?,
+                    AnalysisRecovery::new(AnalysisRecoveryKind::EnableLanguage, recovery)?,
                 )
                 .with_affected_items(advisory.file_count as u64)?
                 .with_detail(format!(
@@ -1000,9 +1003,9 @@ fn analyze_perl_repo(
 ))]
 fn unavailable_language<T>(language: LanguageId) -> Result<T, String> {
     Err(format!(
-        "language `{}` is not available in this ripr binary; rebuild with Cargo feature `{}` to enable it",
+        "language `{}` is not available in this ripr binary; {}",
         language.as_str(),
-        language.required_feature()
+        language.unavailable_adapter_recovery()
     ))
 }
 
@@ -2113,6 +2116,34 @@ index 0000000..1111111 100644
         assert_eq!(advisory.file_count, 1);
         assert!(!advisory.enabled);
         assert_eq!(advisory.sample_paths, vec!["lib/My/App.pm"]);
+
+        // The typed outcome recovery and the machine `why` must not point at
+        // a `ripr.toml` edit this binary rejects; both name the real
+        // prerequisites through the shared text owner.
+        let outcome = result
+            .analysis_outcome
+            .as_ref()
+            .ok_or_else(|| "expected a typed analysis outcome".to_string())?;
+        let outcome_json = serde_json::to_string(outcome)
+            .map_err(|error| format!("serialize outcome: {error}"))?;
+        let why = advisory.not_enabled_why();
+        for (surface, text) in [("outcome", outcome_json.as_str()), ("why", why.as_str())] {
+            assert!(
+                !text.contains("Enable the perl preview adapter")
+                    && !text.contains("to enable add to ripr.toml"),
+                "{surface} must not advise enabling an uncompiled adapter: {text}"
+            );
+            for required in [
+                "cargo install ripr --features lang-perl",
+                "`perl-ripr-facts`",
+                "not yet published",
+            ] {
+                assert!(
+                    text.contains(required),
+                    "{surface} must name `{required}`: {text}"
+                );
+            }
+        }
         Ok(())
     }
 

@@ -287,10 +287,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             let why: &str = if analyzed {
                 "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
             } else if !adv.enabled {
-                why_owned = format!(
-                    "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"{}\"]",
-                    adv.language
-                );
+                why_owned = adv.not_enabled_why();
                 &why_owned
             } else if let Some(run) = failed_run {
                 why_owned = format!(
