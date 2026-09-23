@@ -140,7 +140,10 @@ the explicit `--base` when one was given, the resolved default base
 (diff-file/stdin inputs and repo-scope runs). Base-matching consumers (for
 example `review-comments --check-output`, which requires the envelope `base`
 to equal its own `--base`) may rely on a present `base`; an absent `base`
-means the run cannot be attributed to a base.
+means the run cannot be attributed to a base. The typed
+`analysis_outcome.outcome.identity.base_revision` names the same value: a
+scope-less run records the resolved default there too, so the envelope and the
+identity agree and the analysis-outcome validator accepts the artifact.
 
 ```json
 {
@@ -2316,12 +2319,12 @@ additive top-level `artifact` envelope before it is suitable for
     "format": "repo-exposure-json",
     "mode": "draft",
     "base_revision": null,
-    "input_identity": "input:v3:fnv1a64:<16-hex-fingerprint>",
+    "input_identity": "input:v4:fnv1a64:<16-hex-fingerprint>",
     "command": "ripr check --format repo-exposure-json",
     "profile": "draft",
     "worktree": "clean"
   },
-  "snapshot_identity": "snapshot:input:v3:fnv1a64:<16-hex-fingerprint>;revision:<full-head-sha>",
+  "snapshot_identity": "snapshot:input:v4:fnv1a64:<16-hex-fingerprint>;revision:<full-head-sha>",
   "content_sha256": "sha256:<64-hex-digest>"
 }
 ```
@@ -2333,9 +2336,11 @@ commitment, not a signature or runtime proof. `repository.head` and
 such an artifact is disclosed but is not accepted by `agent verify`.
 `analysis.input_identity` is the portable semantic/configuration identity of
 the analysis input. It carries an explicit algorithm version and digest shape
-(`input:v3:fnv1a64:<16 lowercase hex>`) and covers the identity version,
+(`input:v4:fnv1a64:<16 lowercase hex>`) and covers the identity version,
 mode, profile (this producer binds profile to mode and states both), base
-semantics, analysis format, manifest and lockfile content identities, the
+semantics, analysis format, manifest content identities and the content
+identities of the Cargo lockfiles Git tracks (an untracked or ignored
+`Cargo.lock` is build state the seam inventory never reads), the
 repo-exposure producer-consumed configuration boundary (the three
 oracle-strength fields `oracles.snapshot_strength`,
 `oracles.mock_expectation_strength`, and `oracles.broad_error_strength` — the
@@ -2352,7 +2357,7 @@ rejected at another. The snapshot identity
 (`snapshot:<input_identity>;revision:<head>`) binds that portable input
 identity to the concrete repository head, so two clean artifacts from
 different commits have distinct snapshot identities even when their input
-identity is unchanged. Only the current `input:v3:` identity version with the
+identity is unchanged. Only the current `input:v4:` identity version with the
 exact `fnv1a64:<16 lowercase hex>` digest shape validates as current
 evidence; a wrong version is rejected as an unsupported input identity
 version and a wrong digest shape as a malformed input identity digest. `agent verify`

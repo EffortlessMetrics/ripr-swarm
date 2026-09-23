@@ -2684,15 +2684,20 @@ pub(crate) fn workspace_named_file_identities(root: &Path) -> (Option<String>, O
 /// whole identity to `None` when any collected path is still absolute after
 /// collection — a `None` renders into the caller's canonical string as a
 /// stable, root-independent placeholder, never as checkout-instance evidence.
+///
+/// `lockfile_scope` narrows the collected lockfiles before they are hashed
+/// (the artifact identity keeps only Git-tracked lockfiles); manifests are
+/// always hashed in full.
 pub(crate) fn workspace_named_file_identities_relative(
     root: &Path,
+    lockfile_scope: impl FnOnce(Vec<(PathBuf, Vec<u8>)>) -> Vec<(PathBuf, Vec<u8>)>,
 ) -> (Option<String>, Option<String>) {
     let mut files = [Vec::new(), Vec::new()];
     collect_named_workspace_files_by_name(root, root, &mut files);
     let [manifest_files, lockfile_files] = files;
     (
         workspace_file_identity_portable(manifest_files),
-        workspace_file_identity_portable(lockfile_files),
+        workspace_file_identity_portable(lockfile_scope(lockfile_files)),
     )
 }
 
