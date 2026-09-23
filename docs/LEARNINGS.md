@@ -2140,6 +2140,42 @@ Two durable lessons:
   presence of `failure`. This is the same false-confidence class as
   2026-07-25, arriving through scheduling rather than through assertions.
 
+## 2026-09-22: A test that pins a defect fails when the defect is repaired, and a platform gate hides that locally
+
+The non-unix corpus fingerprint (#3848) reproduced exactly across a same-length
+edit that restored the modification time, so the stored mapping served an
+aggregate content hash taken before the edit. The repair makes
+`corpus_fingerprint` produce no signature at all where no field of the stat
+tuple is a content-change witness, and every consumer degrades to the
+read-everything path it already handled.
+
+The candidate passed `cargo xtask precommit` and every required check while
+being broken on Windows. The test that failed there,
+`analysis::seam_inventory::tests::given_preserved_signature_when_content_is_swapped_then_stored_hash_is_reused`,
+had pinned the defect as the intended fast path: it swapped a file's bytes for
+different same-length content, restored the mtime, and required the doctored
+(empty) cache entry to be served. Its name reads as a feature, and it is gated
+`#[cfg(not(unix))]`, so it compiles nowhere on a Linux development host.
+
+Two durable lessons:
+
+- A repair's blast radius includes the tests that pinned the old behavior.
+  Those tests are found by searching the defect's vocabulary — here the
+  scenario, "preserved signature", "swapped content", "reused hash" — not by
+  searching the symbols the diff changed. An assertion of the defect is
+  indistinguishable from an assertion of a contract until it is read.
+- `#[cfg(not(<host>))]` code is invisible to every local gate, so its
+  correctness is not established by any number of green local runs. It can be
+  executed on the host by temporarily forcing the production branch it guards:
+  making the unix arm of `corpus_fingerprint` return `None` and running the
+  library suite runs the non-unix expectations on Linux in seconds. The
+  failures that arrive are either the unix-only tests, which is the expected
+  noise, or the other platform's real breakage. This is the cheapest available
+  discriminating experiment for a platform-gated change, and the advisory
+  Windows lane — whose job conclusion is green by design and therefore proves
+  nothing on its own — should be a confirmation of it rather than the first
+  place the breakage is seen.
+
 ## 2026-09-22: A directory's mtime is not a lease on the tree below it
 
 Both scratch cleaners ran `find /mnt/ci-scratch/{cargo-home,target,tmp}

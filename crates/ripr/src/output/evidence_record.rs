@@ -17,6 +17,7 @@ use crate::analysis::repair_route::{
 // The cross-language producer facts now live in `analysis::repair_route`
 // (the repair-packet eligibility authority). Re-exported here so existing
 // output/lsp callers keep compiling until their migration slice lands.
+use crate::analysis::is_test_surface_path;
 pub(crate) use crate::analysis::repair_route::{
     cross_language_oracle_visibility_unresolved, cross_language_test_target_unresolved,
 };
@@ -899,12 +900,35 @@ pub(crate) fn canonical_repair_command_for(
     entry: &ClassifiedSeam,
     gap_state: &str,
 ) -> Option<String> {
-    (gap_state == "actionable" && repair_packet_eligibility(entry).eligible()).then(|| {
-        format!(
-            "ripr agent repair --root . --seam-id {} --phase before",
-            shell_arg(entry.seam.id().as_str())
-        )
-    })
+    if gap_state != "actionable" {
+        return None;
+    }
+    repair_start_command_for(entry)
+}
+
+/// The `agent repair ... --phase before` command for a seam, or `None` when
+/// the repair transaction would refuse it. Every surface that offers the
+/// repair start builds it here.
+///
+/// Two conditions, both fail-closed:
+/// - the repair-packet flip (`repair_packet_eligibility(..).eligible()`);
+/// - the edit target the packet will name is a test surface. The
+///   transaction refuses any other target before it builds an edit cage
+///   (`app::repair_attempt`, "is not a test surface"), so a seam whose only
+///   test lives in an inline `#[cfg(test)]` module of a source file passes the
+///   flip but cannot start a repair. Offering it would print a command that
+///   fails (#3906).
+pub(crate) fn repair_start_command_for(entry: &ClassifiedSeam) -> Option<String> {
+    if !repair_packet_eligibility(entry).eligible() {
+        return None;
+    }
+    if !is_test_surface_path(&recommended_test_for(entry).file) {
+        return None;
+    }
+    Some(format!(
+        "ripr agent repair --root . --seam-id {} --phase before",
+        shell_arg(entry.seam.id().as_str())
+    ))
 }
 
 pub(crate) fn canonical_receipt_command_for(
@@ -2406,6 +2430,41 @@ mod tests {
             if canonical_repair_command_for(&entry, "actionable").is_some() != want {
                 return Err(format!(
                     "builder must follow the flip, not gap_state, for eligible={want}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A seam whose related test lives in an inline `#[cfg(test)]` module of
+    /// the source file passes the repair-packet flip, but `agent repair`
+    /// refuses a non-test-surface edit target before it builds a cage. The
+    /// repair start must not be offered for it; the same seam with its test
+    /// under `tests/` keeps it (#3906).
+    #[test]
+    fn repair_start_requires_a_test_surface_edit_target() -> Result<(), String> {
+        let under_tests = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        let mut inline = under_tests.clone();
+        for test in &mut inline.evidence.related_tests {
+            test.file = std::path::PathBuf::from("src/lib.rs");
+        }
+
+        for (entry, want) in [(under_tests, true), (inline, false)] {
+            if !repair_packet_eligibility(&entry).eligible() {
+                return Err(format!("fixture must pass the flip (want={want})"));
+            }
+            let target = recommended_test_for(&entry).file;
+            if is_test_surface_path(&target) != want {
+                return Err(format!("fixture edit target `{target}` for want={want}"));
+            }
+            if repair_start_command_for(&entry).is_some() != want {
+                return Err(format!("repair start for edit target `{target}`"));
+            }
+            let json = evidence_record_json_value(&evidence_record_for(&entry, None));
+            if json["canonical_item"]["repair_command"].is_null() == want {
+                return Err(format!(
+                    "canonical_item.repair_command for edit target `{target}`: {}",
+                    json["canonical_item"]["repair_command"]
                 ));
             }
         }

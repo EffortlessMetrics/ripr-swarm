@@ -1588,6 +1588,7 @@ jobs:
               stale_baseline_entry="$(jq -r '.delta.stale_baseline_entry // 0' "$delta_json" 2>/dev/null || echo 0)"
               invalid_baseline_entry="$(jq -r '.delta.invalid_baseline_entry // 0' "$delta_json" 2>/dev/null || echo 0)"
               missing_current_input="$(jq -r '.delta.missing_current_input // 0' "$delta_json" 2>/dev/null || echo 0)"
+              legacy_fallback_match="$(jq -r '.delta.legacy_fallback_match // 0' "$delta_json" 2>/dev/null || echo 0)"
               limits_note="$(jq -r '.limits_note // "Advisory baseline debt movement; gate decision owns pass or fail."' "$delta_json" 2>/dev/null || echo unknown)"
               baseline_path="$(markdown_inline "$baseline_path")"
               still_present="$(markdown_inline "$still_present")"
@@ -1598,10 +1599,11 @@ jobs:
               stale_baseline_entry="$(markdown_inline "$stale_baseline_entry")"
               invalid_baseline_entry="$(markdown_inline "$invalid_baseline_entry")"
               missing_current_input="$(markdown_inline "$missing_current_input")"
+              legacy_fallback_match="$(markdown_inline "$legacy_fallback_match")"
               limits_note="$(markdown_inline "$limits_note")"
               echo '#### Baseline debt movement'
               echo "- Baseline: \`$baseline_path\`"
-              echo "- Counts: still_present=\`$still_present\`, resolved=\`$resolved\`, new_policy_eligible=\`$new_policy_eligible\`, acknowledged=\`$acknowledged_delta\`, suppressed=\`$suppressed_delta\`, stale=\`$stale_baseline_entry\`, invalid=\`$invalid_baseline_entry\`, missing_current_input=\`$missing_current_input\`"
+              echo "- Counts: still_present=\`$still_present\`, resolved=\`$resolved\`, new_policy_eligible=\`$new_policy_eligible\`, acknowledged=\`$acknowledged_delta\`, suppressed=\`$suppressed_delta\`, stale=\`$stale_baseline_entry\`, invalid=\`$invalid_baseline_entry\`, missing_current_input=\`$missing_current_input\`, legacy_fallback=\`$legacy_fallback_match\`"
               echo "- Boundary: $limits_note"
               echo "- Baseline delta artifacts: \`target/ripr/reports/baseline-debt-delta.json\`, \`target/ripr/reports/baseline-debt-delta.md\`"
               echo

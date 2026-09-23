@@ -91,7 +91,8 @@ pub(super) const BASELINE_HELP: &str = r#"Create, diff, and shrink a reviewed ba
 Usage:
   ripr baseline create --from PATH [--out PATH] [--dry-run] [--force]
   ripr baseline diff --baseline PATH --current PATH [--out PATH] [--out-md PATH]
-  ripr baseline update --baseline PATH --current PATH --remove-resolved [--out PATH]
+  ripr baseline update --baseline PATH --current PATH --remove-resolved [--migrate-legacy-identities] [--out PATH]
+  ripr baseline update --baseline PATH --current PATH --migrate-legacy-identities [--out PATH]
 
 Create options:
   --from PATH    Gate-decision JSON from `ripr gate evaluate`.
@@ -106,10 +107,14 @@ Diff options:
   --out-md PATH      Markdown output path. Defaults to target/ripr/reports/baseline-debt-delta.md.
 
 Update options:
-  --baseline PATH       Reviewed baseline ledger to refresh.
-  --current PATH        Current gate-decision JSON from `ripr gate evaluate`.
-  --remove-resolved     Required shrink-only mode; remove identities absent from current evidence.
-  --out PATH            Updated baseline path. Defaults to --baseline.
+  --baseline PATH               Reviewed baseline ledger to refresh.
+  --current PATH                Current gate-decision JSON from `ripr gate evaluate`.
+  --remove-resolved             Shrink-only mode; remove identities absent from current evidence.
+  --migrate-legacy-identities   Replace reviewed legacy fallback identities with the
+                                unambiguously joined current canonical gap id. One of
+                                --remove-resolved or --migrate-legacy-identities is
+                                required; adopting new debt is never supported.
+  --out PATH                    Updated baseline path. Defaults to --baseline.
 
 The baseline create command writes a stable reviewed historical-debt ledger
 from existing gate-decision evidence. It includes advisory, acknowledged, and
@@ -125,10 +130,17 @@ stale, invalid, and missing-input identities. It does not update baselines,
 edit source, run analysis, run mutation testing, generate tests, change gate
 policy, or make CI blocking by default.
 
-The baseline update command refreshes a reviewed baseline ledger in shrink-only
-mode. `--remove-resolved` removes reviewed identities that are absent from the
-current gate-decision evidence, preserves malformed or ambiguous entries for
-manual review, and never adopts new current debt. Generated CI should not use
+The baseline update command refreshes a reviewed baseline ledger.
+`--remove-resolved` enables shrink-only removal of reviewed identities that
+are absent from the current gate-decision evidence; without it, unmatched
+entries are preserved with a warning, so a migration-only run never shrinks
+the reviewed baseline. Malformed, ambiguous, canonically diverged, and
+cross-root entries are always preserved for manual review, and new current
+debt is never adopted. `--migrate-legacy-identities` deterministically
+replaces a reviewed legacy `path:line:static_class` identity with the
+unambiguously joined current canonical gap id, records each replacement under
+the `update` section for independent review, and refuses cross-root or
+conflicting migrations. Generated CI should not use
 this command to rewrite checked-in baselines automatically.
 
 Output discipline: report-producing subcommands write their JSON or Markdown

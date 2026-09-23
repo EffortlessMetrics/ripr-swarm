@@ -49,10 +49,10 @@ Receipt command (PowerShell):
 The first form is written for Bash; cmd.exe is not supported.
 
 Agent packet command:
-`ripr agent packet --root fixtures/first_successful_pr/output-contract-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:output:device-label --json > target/ripr/workflow/agent-packet.json`
+`ripr agent packet --root fixtures/first_successful_pr/output-contract-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:output:device-label --json > <cwd>/fixtures/first_successful_pr/output-contract-gap/target/ripr/workflow/agent-packet.json`
 
 Agent packet command (PowerShell):
-`$ripr = ((ripr agent packet --root fixtures/first_successful_pr/output-contract-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:output:device-label --json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw "ripr exited with code $LASTEXITCODE" }`
+`$ripr = ((ripr agent packet --root fixtures/first_successful_pr/output-contract-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:output:device-label --json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('<cwd>/fixtures/first_successful_pr/output-contract-gap/target/ripr/workflow/agent-packet.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw "ripr exited with code $LASTEXITCODE" }`
 
 The first form is written for Bash; cmd.exe is not supported.
 
