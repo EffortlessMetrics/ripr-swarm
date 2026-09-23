@@ -464,6 +464,25 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Gate baselines now treat canonical gap identity as the normal authority and
+  disclose every legacy fallback match. `ripr baseline create` refuses
+  `path:line:static_class` fallback identity as primary authority for new
+  entries (refusals count under `summary.skipped.fallback_only`) and preserves
+  the source-report repository root on the report and each entry.
+  `ripr baseline diff` marks fallback-only joins with
+  `baseline_match_kind: legacy_path_line_class`, `stale_baseline_warning`,
+  the retained legacy identity, and the retained canonical replacement
+  candidate; a diverged canonical gap or a cross-root join goes stale instead
+  of looking historical, and all such joins count in
+  `delta.legacy_fallback_match`, which generated CI summarizes.
+  `ripr baseline update --migrate-legacy-identities` deterministically
+  replaces reviewed legacy identities with the joined canonical gap id
+  (recorded for review; conflicts and cross-root joins refused), while
+  removal of resolved debt now requires `--remove-resolved` explicitly, so a
+  migration-only run never shrinks the reviewed baseline. Schema stays `0.1`;
+  older ledgers remain parseable and comparable
+  ([#1964](https://github.com/EffortlessMetrics/ripr-swarm/issues/1964)).
+
 - The stat-only aggregate corpus shortcut no longer grants authoritative
   cache reuse on platforms without a content-change witness. Its signature
   is `(path, mtime, size)` plus the unix inode change time; on unix ctime
