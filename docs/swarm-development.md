@@ -272,9 +272,14 @@ MERGE_BASE     = exact merge base of SOURCE_PARENT and SWARM_PARENT
 JOIN_TREE      = reviewed resolved tree identity from source preflight
 ```
 
-The source promotion is a history-preserving join, not a tree copy. Create the
-promotion branch with the source parent first and the selected swarm parent
-second:
+The source promotion is a history-preserving join, not a tree copy. The
+commands below show the required graph: the source parent first and the
+selected swarm parent second.
+
+> **Do not run this block for 0.11.0.** ripr#1772 rejects a `J` built with raw
+> `git merge` and pushed as a branch. Build and publish `J` with the source
+> repository's guarded constructor instead; see
+> [Resolving the join](#resolving-the-join).
 
 ```bash
 git clone git@github.com:EffortlessMetrics/ripr.git ripr-promote
