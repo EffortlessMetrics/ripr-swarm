@@ -1073,6 +1073,63 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
 }
 
 #[test]
+fn pilot_terminal_route_label_has_one_shape_for_every_language() {
+    use crate::domain::LanguageId;
+
+    // Re-walk N10: Python printed `route:` while TypeScript printed
+    // `route (typescript_diff_first):`. The label must not depend on the
+    // language or on whether reused guidance applies.
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[
+        (LanguageId::TypeScript, "web/c.ts"),
+        (LanguageId::JavaScript, "web/d.js"),
+        (LanguageId::Python, "src/pricing.py"),
+    ]);
+    let enabled = [LanguageId::Rust, LanguageId::TypeScript, LanguageId::Python];
+    let routes = PilotLanguageRoutes::from_discovered(Path::new("."), false, &enabled, &files);
+    let runnable: Vec<_> = routes
+        .routes
+        .iter()
+        .filter(|route| route.command.is_some())
+        .collect();
+    // Subject check: the stimulus holds both a route with reused guidance
+    // (TypeScript) and one without (Python), or the comparison is vacuous.
+    assert!(
+        runnable
+            .iter()
+            .any(|route| route.language == LanguageId::TypeScript
+                && route.guidance_category.is_some()),
+        "{routes:?}"
+    );
+    assert!(
+        runnable
+            .iter()
+            .any(|route| route.language == LanguageId::Python && route.guidance_category.is_none()),
+        "{routes:?}"
+    );
+
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    for route in &runnable {
+        let header = format!("  {}: ", route.language.as_str());
+        let route_line = terminal
+            .lines()
+            .skip_while(|line| !line.starts_with(&header))
+            .nth(1)
+            .unwrap_or_default();
+        assert_eq!(
+            route_line,
+            "    route: ripr check --root .",
+            "{} route label differs:\n{terminal}",
+            route.language.as_str()
+        );
+    }
+}
+
+#[test]
 fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), String> {
     use crate::domain::LanguageId;
 
@@ -1125,7 +1182,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         "{terminal}"
     );
     assert!(
-        terminal.contains("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route (typescript_diff_first): ripr check --root .\n"),
+        terminal.contains("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route: ripr check --root .\n"),
         "{terminal}"
     );
     assert!(

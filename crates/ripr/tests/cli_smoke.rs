@@ -8531,7 +8531,9 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
         "{stdout}"
     );
     assert!(
-        stdout.contains(&format!("route (typescript_diff_first): {command}")),
+        stdout.contains(&format!(
+            "not enabled in ripr.toml [languages])\n    route: {command}\n"
+        )),
         "{stdout}"
     );
     assert!(

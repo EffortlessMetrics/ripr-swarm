@@ -487,13 +487,10 @@ fn push_language_routes_terminal(out: &mut String, routes: &[PilotLanguageRoute]
             file_count_label(route.file_count),
             route_status_label(route)
         ));
+        // One label for every language: the guidance category id stays in
+        // `pilot-summary.json` and the Markdown guidance line, not the label.
         if let Some(command) = route.command.as_deref() {
-            match route.guidance_category {
-                Some(category) => {
-                    out.push_str(&format!("    route ({category}): {command}\n"));
-                }
-                None => out.push_str(&format!("    route: {command}\n")),
-            }
+            out.push_str(&format!("    route: {command}\n"));
         } else if let Some(guidance) = route.guidance.as_deref() {
             out.push_str(&format!("    {guidance}\n"));
         }
