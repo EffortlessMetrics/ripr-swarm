@@ -228,9 +228,10 @@ ripr review-comments --base origin/main --head HEAD --check-output target/ripr/c
 ripr gate evaluate --pr-guidance target/ripr/review/comments.json --mode acknowledgeable
 ```
 
-Pass `--base` to `check` here, and pass the same ref to `review-comments`:
-`review-comments` reads the base out of the producer envelope and requires it to
-match its own, and a scope-less `check` writes `"base": null`.
+`review-comments` requires an explicit `--base` and matches it against the base
+recorded in `check`'s output, so pass the same ref to both commands. Substitute
+the ref your repository actually uses: `origin/main` is the common case, not a
+default that exists everywhere.
 
 `gate evaluate` exits non-zero when the decision is `blocked` or
 `config_error`. The full CI
