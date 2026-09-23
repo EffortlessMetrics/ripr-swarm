@@ -1119,9 +1119,14 @@ fn json_scalar_as_usize(value: &Value) -> Option<usize> {
 /// The repository head a snapshot reports, when it carries one.
 ///
 /// `repo_exposure_artifact_metadata` writes `artifact.repository.head` from
-/// `git rev-parse HEAD` and substitutes the literal `"unavailable"` when the
-/// probe fails, so that value is an absent head, not a head named
-/// "unavailable". Snapshots written without artifact identity (the plain
+/// `git rev-parse HEAD`, keeping it only when it is a full Git object name and
+/// substituting a placeholder otherwise. This asks the producer's own
+/// [`is_full_sha`](crate::agent::artifact::is_full_sha) rather than comparing
+/// against that placeholder's spelling, so today's `"unavailable"` and any
+/// later sentinel are both read as an absent head instead of being reported as
+/// a commit.
+///
+/// Snapshots written without artifact identity (the plain
 /// `write_repo_exposure_json` path, which is what `ripr pilot` emits) have no
 /// `artifact` key at all.
 fn snapshot_repository_head(snapshot: &str) -> Option<String> {
@@ -1147,7 +1152,7 @@ fn snapshot_repository_head(snapshot: &str) -> Option<String> {
         .repository?
         .head
         .map(|head| head.trim().to_string())
-        .filter(|head| !head.is_empty() && head != "unavailable")
+        .filter(|head| crate::agent::artifact::is_full_sha(head))
 }
 
 /// The stderr disclosure `ripr outcome` prints beside the comparison (#1942).
@@ -1255,19 +1260,35 @@ mod tests {
         }
     }
 
-    /// `repo_exposure_artifact_metadata` writes the literal "unavailable"
-    /// when `git rev-parse HEAD` fails. Treating that as a head would print
-    /// "both snapshots report repository head unavailable".
+    /// `repo_exposure_artifact_metadata` substitutes a placeholder when
+    /// `git rev-parse HEAD` fails. Treating one as a head would print "both
+    /// snapshots report repository head unavailable".
+    ///
+    /// The cases beyond today's `"unavailable"` are the point: the reader asks
+    /// the producer's `is_full_sha` rather than matching that one spelling, so
+    /// a renamed sentinel, a short SHA, or a non-hex value is still an absent
+    /// head. A reader coupled to the string would pass every line below the
+    /// first.
     #[test]
-    fn head_disclosure_treats_unavailable_as_no_head() {
-        let line = head_provenance_disclosure(
-            &snapshot_with_head(Some("unavailable")),
-            &snapshot_with_head(Some("unavailable")),
-        );
-        assert!(
-            line.contains("does not carry a head SHA") && !line.contains("head unavailable"),
-            "the unavailable placeholder is an absent head: {line}"
-        );
+    fn head_disclosure_treats_a_placeholder_as_no_head() {
+        for placeholder in [
+            "unavailable",
+            "not_available",
+            "none",
+            "2bd22c0b",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+            "2bd22c0b0718157870e2e78c9a70b9da1c9c1b2",
+        ] {
+            let line = head_provenance_disclosure(
+                &snapshot_with_head(Some(placeholder)),
+                &snapshot_with_head(Some(placeholder)),
+            );
+            assert!(
+                line.contains("does not carry a head SHA")
+                    && !line.contains(&format!("head {placeholder}")),
+                "{placeholder:?} is not a Git object name and must read as an absent head: {line}"
+            );
+        }
     }
 
     #[test]
