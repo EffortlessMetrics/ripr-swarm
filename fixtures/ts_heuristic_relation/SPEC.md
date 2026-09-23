@@ -14,7 +14,8 @@ names the owner in a title or calls an unrelated object's `formatCurrency`
 method would not be related at all (RIPR-SPEC-0027).
 
 This fixture models F3 (heuristic-only relation): G-D fails because the
-related-test link is name-proximity only, not import-aware or owner-call.
+related-test link is same-stem proximity over a value reference, not an
+owner call or import call.
 The finding stays preview with `ambiguous_related_test`.
 
 ## When

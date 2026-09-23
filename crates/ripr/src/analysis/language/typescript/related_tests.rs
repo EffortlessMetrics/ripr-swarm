@@ -633,7 +633,9 @@ fn test_references_owner(
 
 /// Bare identifier reference: identifier boundaries on both sides, not a
 /// member property (`x.name`), not an object-literal key (`{ name: 1 }`), and
-/// not inside a comment or string literal.
+/// not inside a comment or string literal. Boundaries use the ASCII
+/// identifier set of `is_javascript_identifier_char`, so a non-ASCII
+/// identifier character next to the name counts as a boundary.
 fn contains_identifier_reference(body_text: &str, identifier: &str) -> bool {
     if !is_safe_javascript_identifier(identifier) {
         return false;
