@@ -194,6 +194,12 @@ pub(crate) fn render_agent_receipt_value_json(
         } => "incomplete",
         AgentReceiptAnalysisOutcome::Unavailable { .. } => "invalid",
     };
+    let (next_recommendation, recommended_action) = receipt_next_step(
+        status,
+        analysis_projection.status,
+        analysis_projection.error.as_deref(),
+        &guidance,
+    );
 
     let value = serde_json::json!({
         "schema_version": AGENT_RECEIPT_SCHEMA_VERSION,
@@ -226,11 +232,11 @@ pub(crate) fn render_agent_receipt_value_json(
         "summary": {
             "receipt_state": receipt_state,
             "remaining_gap": guidance.remaining_gap,
-            "next_recommendation": guidance.next_recommendation,
+            "next_recommendation": next_recommendation,
             "next_action": {
                 "kind": guidance.kind,
                 "summary": guidance.summary,
-                "recommended_action": guidance.recommended_action
+                "recommended_action": recommended_action
             }
         }
     });
@@ -356,6 +362,44 @@ fn one_sided_receipt_seam(
         change: required_string(seam, "change", bucket)?,
         evidence_delta: Vec::new(),
     })
+}
+
+/// The receipt's next step, as `(next_recommendation, recommended_action)`.
+///
+/// This is the one owner of the rule that only an `advisory` receipt is review
+/// evidence: only it carries the movement guidance, which may recommend
+/// including the receipt in review. Any other status replaces both fields with
+/// a statement that the receipt is not review evidence and the recovery for
+/// its analysis outcome. The `agent repair` after phase prints this field
+/// rather than restating the rule.
+fn receipt_next_step(
+    status: &str,
+    analysis_outcome_status: &str,
+    analysis_outcome_error: Option<&str>,
+    guidance: &AgentReceiptGuidance,
+) -> (String, String) {
+    if status == "advisory" {
+        return (
+            guidance.next_recommendation.to_string(),
+            guidance.recommended_action.to_string(),
+        );
+    }
+    let reason = match analysis_outcome_error {
+        Some(error) => format!(" ({})", error.trim_end_matches('.')),
+        None if analysis_outcome_status == "incomplete" => {
+            " (the analysis outcome is not complete; see `analysis_outcome`)".to_string()
+        }
+        None => String::new(),
+    };
+    let recovery = if analysis_outcome_status == "incomplete" {
+        "Resolve what kept the analysis from completing"
+    } else {
+        "Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON"
+    };
+    let step = format!(
+        "This receipt is not review evidence because its status is `{status}`{reason}; do not include it in review. {recovery}, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --phase before` and rerun `--phase after`."
+    );
+    (step.clone(), step)
 }
 
 fn receipt_guidance(change: &str) -> AgentReceiptGuidance {
@@ -963,6 +1007,89 @@ mod tests {
             let neither = render(seam_id, complete()?)?;
             assert!(!neither.shows_gap_closed(), "{seam_id}");
             assert!(!neither.leaves_gap_open(), "{seam_id}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn agent_receipt_recommends_review_only_for_an_advisory_receipt() -> Result<(), String> {
+        let verify: Value =
+            serde_json::from_str(agent_verify_json()).map_err(|error| error.to_string())?;
+        let render = |outcome: AgentReceiptAnalysisOutcome| -> Result<Value, String> {
+            let rendered = render_agent_receipt_value_json(
+                &verify,
+                "target/ripr/workflow/agent-verify.json".to_string(),
+                "seam-a",
+                None,
+                &[],
+                fixed_provenance(),
+                outcome,
+            )?;
+            serde_json::from_str(&rendered).map_err(|error| error.to_string())
+        };
+
+        // The improved seam's movement guidance recommends review inclusion,
+        // and an advisory receipt keeps it.
+        let advisory = render(AgentReceiptAnalysisOutcome::Present(Box::new(
+            test_complete_analysis_outcome()?,
+        )))?;
+        assert_eq!(advisory["status"], "advisory");
+        assert_eq!(
+            advisory["summary"]["next_action"]["recommended_action"],
+            "Keep the focused test and include this receipt in review."
+        );
+        assert_eq!(
+            advisory["summary"]["next_recommendation"],
+            "Keep the focused test and attach this receipt with the agent verify JSON."
+        );
+
+        let invalid = render(AgentReceiptAnalysisOutcome::Unavailable {
+            status: AgentReceiptUnavailableStatus::Invalid,
+            reason: "Analysis outcome artifact base does not match its typed identity.".to_string(),
+        })?;
+        let invalid_step = "This receipt is not review evidence because its status is `invalid` (Analysis outcome artifact base does not match its typed identity); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --phase before` and rerun `--phase after`.";
+        assert_eq!(invalid["status"], "invalid");
+        assert_eq!(
+            invalid["summary"]["next_action"]["recommended_action"],
+            invalid_step
+        );
+        assert_eq!(invalid["summary"]["next_recommendation"], invalid_step);
+        // The movement itself is still described; only the next step changes.
+        assert_eq!(invalid["summary"]["next_action"]["kind"], "improved");
+        assert_eq!(
+            invalid["summary"]["next_action"]["summary"],
+            "Static grip improved."
+        );
+
+        let missing = render(AgentReceiptAnalysisOutcome::Unavailable {
+            status: AgentReceiptUnavailableStatus::Missing,
+            reason: "producer artifact is missing".to_string(),
+        })?;
+        let partial = render(AgentReceiptAnalysisOutcome::Present(Box::new(
+            test_incomplete_analysis_outcome(AnalysisOutcomeKind::PartialWithLimitations)?,
+        )))?;
+        assert_eq!(
+            partial["summary"]["next_action"]["recommended_action"],
+            "This receipt is not review evidence because its status is `incomplete` (the analysis outcome is not complete; see `analysis_outcome`); do not include it in review. Resolve what kept the analysis from completing, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --phase before` and rerun `--phase after`."
+        );
+        for receipt in [&invalid, &missing, &partial] {
+            assert_ne!(receipt["status"], "advisory", "{receipt}");
+            for pointer in [
+                "/summary/next_action/recommended_action",
+                "/summary/next_recommendation",
+            ] {
+                let text = receipt
+                    .pointer(pointer)
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| format!("{pointer} is not a string: {receipt}"))?;
+                assert!(
+                    text.contains("is not review evidence")
+                        && !text.contains("include this receipt in review")
+                        && !text.contains("attach this receipt"),
+                    "{pointer} of a `{}` receipt: {text}",
+                    receipt["status"]
+                );
+            }
         }
         Ok(())
     }

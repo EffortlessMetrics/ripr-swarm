@@ -8,7 +8,8 @@
 use crate::agent::loop_commands::{display_path, shell_arg};
 use crate::analysis::is_test_surface_path;
 use crate::edit_cage::{
-    AttemptBaseline, EditCagePolicy, EditCageVerdict, evaluate_repository_edit_cage_with_delta,
+    AttemptBaseline, EditCagePolicy, EditCageVerdict, HeadMovement,
+    evaluate_repository_edit_cage_with_head_movement,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,6 +28,11 @@ const REPAIR_ATTEMPT_COMMITMENT: &str = "before-commitment.sha256";
 const REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY: &str = "artifacts";
 const REPAIR_ATTEMPT_ID_PREFIX: &str = "repair-attempt-";
 const REPAIR_ATTEMPT_ID_HEX_LEN: usize = 24;
+/// Cargo's default build directory, relative to the workspace root.
+const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
+/// The lockfile Cargo writes at the workspace root when it resolves
+/// dependencies.
+const CARGO_WORKSPACE_LOCKFILE: &str = "Cargo.lock";
 
 static ATTEMPT_NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -157,7 +163,6 @@ pub(crate) fn receipt_binding(
             .map_err(|error| format!("repair packet is not UTF-8: {error}"))?,
         seam_id,
     )?;
-    validate_trusted_head_surface(&root, &policy)?;
     let (manifest_path, manifest) = if let Some(attempt_id) = attempt_id {
         let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
         let loaded = load_repair_attempt_by_id(&root, &attempt_id)?;
@@ -210,8 +215,18 @@ pub(crate) fn receipt_binding(
             after.verdict.status
         ));
     }
+    // The receipt names the after head the finish recorded. That head is the
+    // prepared head, or a descendant reached only by commits the edit cage
+    // evaluated (a committed focused test); anything else is stale.
     let current_head = crate::agent::artifact::current_git_head(&root)?;
-    if current_head != manifest.repository_head || current_head != after.repository_head {
+    if current_head != after.repository_head
+        || (current_head != manifest.repository_head
+            && !crate::agent::artifact::git_merge_base_is_ancestor(
+                &root,
+                &manifest.repository_head,
+                &current_head,
+            )?)
+    {
         return Err("repair attempt receipt is stale relative to repository HEAD".to_string());
     }
     let packet_artifact = find_manifest_artifact(&manifest, "agent_packet")?;
@@ -231,12 +246,34 @@ pub(crate) fn receipt_binding(
     }
     let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
         .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
-    let (delta, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+    // Recomputed under the admitting rule: for an attempt whose head did not
+    // move it is identical to the exact-head rule, and an attempt whose finish
+    // required the exact head and saw it move is already refused as stale.
+    let (delta, _) = evaluate_repository_edit_cage_with_head_movement(
+        &baseline,
+        HeadMovement::AdmitDescendantCommits,
+    )?;
+    // The after phase, a rerun of `ripr agent receipt`, and `ripr agent
+    // status` write command-owned files under `target/ripr` after the finish
+    // bound its verdict. Those later operational writes are not part of the
+    // attempt; any other movement still breaks the binding.
+    let delta = crate::edit_cage::without_later_operational_writes(
+        baseline.policy(),
+        &delta,
+        &after.verdict.changed_paths,
+    );
+    let verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let delta_bytes = serde_json::to_vec(&delta)
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
     if sha256_bytes(&delta_bytes) != after.delta_sha256 || verdict != after.verdict {
         return Err("repair attempt after verdict binding is tampered or stale".to_string());
     }
+    validate_trusted_head_surface(
+        &root,
+        &policy,
+        &verdict.changed_paths,
+        &manifest.repository_head,
+    )?;
     let manifest_path = display_path(&manifest_path);
     Ok(serde_json::json!({
         "attempt_id": after.attempt_id.as_str(),
@@ -316,6 +353,8 @@ pub(crate) struct BeginRepairAttemptResult {
 pub(crate) struct ResolvedRepairAttempt {
     pub(crate) attempt_id: RepairAttemptId,
     pub(crate) seam_id: String,
+    /// The repository HEAD the before phase prepared the attempt at.
+    pub(crate) repository_head: String,
     pub(crate) manifest_path: PathBuf,
     pub(crate) before_snapshot_path: PathBuf,
     pub(crate) packet_path: PathBuf,
@@ -790,6 +829,34 @@ pub(crate) fn edit_cage_policy_from_packet(
         .first()
         .cloned()
         .ok_or_else(|| "repair packet has no selected edit target".to_string())?;
+    // A Rust repair's focused test is built and run with Cargo, whose default
+    // build directory is `target/` at the workspace root this attempt is bound
+    // to. The documented loop runs the project tests between the phases, so
+    // the git-ignored contents of that directory are expected build output,
+    // not edits. The cage still observes tracked and untracked-not-ignored
+    // paths there, every rule path named here (including `target/ripr`), and
+    // every other ignored path. Other languages keep observing every ignored
+    // path: the trust-bound Python verify phase executes tests and retains
+    // its full ignored-path guard.
+    let ignored_build_output =
+        if Path::new(selected_target.path()).extension() == Some(std::ffi::OsStr::new("rs")) {
+            Some(crate::edit_cage::CagePathRule::subtree(
+                CARGO_DEFAULT_BUILD_OUTPUT_DIR,
+            )?)
+        } else {
+            None
+        };
+    // The same Rust repair runs Cargo, which writes the workspace-root
+    // `Cargo.lock` when the project does not commit one (the first
+    // `cargo test` of a library crate). While Git does not track it, it is
+    // build state, and the analysis input identity does not count it either.
+    let untracked_build_lockfile = if ignored_build_output.is_some() {
+        Some(crate::edit_cage::CagePathRule::exact(
+            CARGO_WORKSPACE_LOCKFILE,
+        )?)
+    } else {
+        None
+    };
     Ok(EditCagePolicy {
         selected_target,
         allowed_edit_surface: allowed,
@@ -799,6 +866,8 @@ pub(crate) fn edit_cage_policy_from_packet(
             .transpose()?
             .unwrap_or_default(),
         expected_operational_writes: vec![crate::edit_cage::CagePathRule::subtree("target/ripr")?],
+        ignored_build_output,
+        untracked_build_lockfile,
     })
 }
 
@@ -864,6 +933,7 @@ pub(crate) fn resolve_awaiting_repair_attempt(
     Ok(ResolvedRepairAttempt {
         attempt_id: manifest.repair_attempt_id,
         seam_id: manifest.seam_id,
+        repository_head: manifest.repository_head,
         manifest_path,
         before_snapshot_path,
         packet_path,
@@ -909,10 +979,16 @@ pub(crate) fn restore_repair_attempt_to_awaiting_edit(
     Ok(())
 }
 
+/// Records the after-phase verdict. `movement` states whether commits made
+/// on top of the prepared head belong to the attempt: the ordinary repair
+/// transaction admits them (the cage evaluates every committed path), while
+/// a trust-bound attempt, whose selection pins the head, requires the exact
+/// prepared head. Any other head movement records `stale`.
 pub(crate) fn finish_repair_attempt(
     root: &Path,
     attempt_id: &RepairAttemptId,
     packet_path: &Path,
+    movement: HeadMovement,
 ) -> Result<RepairAttemptAfter, String> {
     let root = root
         .canonicalize()
@@ -967,8 +1043,16 @@ pub(crate) fn finish_repair_attempt(
         return Err("edit-cage baseline root does not match selected repository".to_string());
     }
     let current_head = crate::agent::artifact::current_git_head(&root)?;
-    let current = current_head == manifest.repository_head;
-    let (delta, mut verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+    let (delta, mut verdict) =
+        evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    let current = current_head == crate::agent::artifact::current_git_head(&root)?
+        && (current_head == manifest.repository_head
+            || (movement == HeadMovement::AdmitDescendantCommits
+                && crate::agent::artifact::git_merge_base_is_ancestor(
+                    &root,
+                    &manifest.repository_head,
+                    &current_head,
+                )?));
     if !current {
         verdict.status = crate::edit_cage::EditCageVerdictStatus::Incomparable;
     }
@@ -1049,6 +1133,74 @@ fn bounded_refusal_reason(reason: &str) -> String {
         end -= 1;
     }
     format!("{} [truncated]", &reason[..end])
+}
+
+/// Where the repository HEAD stands relative to an attempt's prepared head.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AttemptHeadLineage {
+    /// HEAD is the prepared head.
+    Prepared,
+    /// HEAD moved only forward, by commits on top of the prepared head.
+    Descendant { current_head: String },
+    /// HEAD moved to a commit that does not descend from the prepared head
+    /// (an amend, rebase, reset, or checkout).
+    Diverged { current_head: String },
+}
+
+pub(crate) fn attempt_head_lineage(
+    root: &Path,
+    prepared_head: &str,
+) -> Result<AttemptHeadLineage, String> {
+    let current_head = crate::agent::artifact::current_git_head(root)?;
+    if current_head == prepared_head {
+        return Ok(AttemptHeadLineage::Prepared);
+    }
+    if crate::agent::artifact::git_merge_base_is_ancestor(root, prepared_head, &current_head)? {
+        Ok(AttemptHeadLineage::Descendant { current_head })
+    } else {
+        Ok(AttemptHeadLineage::Diverged { current_head })
+    }
+}
+
+/// Repository paths that feed the repo-exposure analysis input identity and
+/// changed since the attempt's before phase: Cargo manifests, Git-tracked
+/// Cargo lockfiles, and the root `ripr.toml`. Read-only: it evaluates the
+/// retained edit-cage baseline (committed changes included) without
+/// finishing the attempt, so an after phase refused for incomparable
+/// analysis inputs can name what moved.
+pub(crate) fn analysis_input_changes(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<Vec<String>, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let (_, manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    let baseline_artifact = find_manifest_artifact(&manifest, "edit_cage_baseline")?;
+    let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
+        .map_err(|error| format!("read staged edit-cage baseline failed: {error}"))?;
+    if sha256_bytes(&baseline_bytes) != baseline_artifact.sha256 {
+        return Err("repair attempt edit-cage baseline binding failed".to_string());
+    }
+    let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
+        .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
+    let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
+        &baseline,
+        HeadMovement::AdmitDescendantCommits,
+    )?;
+    Ok(verdict
+        .changed_paths
+        .into_iter()
+        .filter(|path| is_analysis_input_path(path))
+        .collect())
+}
+
+fn is_analysis_input_path(path: &str) -> bool {
+    path == crate::config::CONFIG_FILE_NAME
+        || matches!(
+            path.rsplit('/').next(),
+            Some("Cargo.toml" | CARGO_WORKSPACE_LOCKFILE)
+        )
 }
 
 fn select_awaiting_repair_attempt_by_seam(
@@ -1381,10 +1533,47 @@ fn validate_manifest_at(
     Ok(())
 }
 
-fn validate_trusted_head_surface(root: &Path, policy: &EditCagePolicy) -> Result<(), String> {
-    let tracked = git_paths(root, &["diff", "--name-only", "-z", "HEAD"])?;
+/// Refuses receipt admission when the repository differs from the trusted
+/// surface.
+///
+/// Tracked content is compared in full with the head the attempt was
+/// prepared at (`before_head`): that covers uncommitted edits and every commit
+/// made on top of it, so any tracked difference outside the trusted surface,
+/// pre-existing or not, committed or not, blocks admission. An untracked path belongs to no
+/// commit; it blocks admission only when the attempt observably wrote it,
+/// which is exactly the edit cage's baseline-relative delta
+/// (`observed_changes`, built from exact content digests of untracked files).
+/// A pre-existing untracked file whose bytes are unchanged since the before
+/// phase (for example a `Cargo.lock` an earlier build generated) is not an
+/// attempt write, and the cage's compliant verdict already reported it as
+/// unchanged, so refusing it here would contradict the cage's own delta.
+fn validate_trusted_head_surface(
+    root: &Path,
+    policy: &EditCagePolicy,
+    observed_changes: &[String],
+    before_head: &str,
+) -> Result<(), String> {
+    let tracked = git_paths(
+        root,
+        &[
+            "diff",
+            "--no-renames",
+            "--no-ext-diff",
+            "--name-only",
+            "-z",
+            before_head,
+            "--",
+        ],
+    )?;
     let untracked = git_paths(root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-    for path in tracked.into_iter().chain(untracked) {
+    let observed = observed_changes
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let written_untracked = untracked
+        .into_iter()
+        .filter(|path| observed.contains(path.as_str()));
+    for path in tracked.into_iter().chain(written_untracked) {
         if !policy.allows_path(&path) {
             return Err(format!(
                 "repair receipt observed repository path outside trusted edit surface: {path}"
@@ -1664,6 +1853,25 @@ mod tests {
                 return Err(format!(
                     "selected target `{}` does not match `{target}`",
                     policy.selected_target.path()
+                ));
+            }
+            // A Rust repair runs Cargo: its build directory and the
+            // workspace-root lockfile it may generate are declared build
+            // state. A Python repair declares neither.
+            let rust = target.ends_with(".rs");
+            let expected_lockfile = if rust {
+                Some(crate::edit_cage::CagePathRule::exact(
+                    CARGO_WORKSPACE_LOCKFILE,
+                )?)
+            } else {
+                None
+            };
+            if policy.untracked_build_lockfile != expected_lockfile
+                || policy.ignored_build_output.is_some() != rust
+            {
+                return Err(format!(
+                    "`{target}` declared build state {:?} / {:?}",
+                    policy.untracked_build_lockfile, policy.ignored_build_output
                 ));
             }
         }
@@ -2113,6 +2321,7 @@ mod tests {
             &root,
             &first.manifest.repair_attempt_id,
             &second_exact.packet_path,
+            HeadMovement::AdmitDescendantCommits,
         );
         match wrong_packet {
             Err(error) if error.contains("retained agent_packet") => {}
@@ -2132,8 +2341,12 @@ mod tests {
         std::fs::write(&test_path, "#[test]\nfn focused() {}\n")
             .map_err(|error| format!("write {} failed: {error}", test_path.display()))?;
 
-        let after =
-            finish_repair_attempt(&root, &first.manifest.repair_attempt_id, &exact.packet_path)?;
+        let after = finish_repair_attempt(
+            &root,
+            &first.manifest.repair_attempt_id,
+            &exact.packet_path,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
         if after.attempt_id != first.manifest.repair_attempt_id
             || !after.current
             || after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant
@@ -2239,6 +2452,51 @@ mod tests {
         Ok(())
     }
 
+    /// The receipt's tracked-surface check compares with the prepared head,
+    /// so a production change the attempt committed on top of it is refused
+    /// even though it is no longer a difference from the current HEAD.
+    #[test]
+    fn trusted_surface_includes_changes_committed_after_the_prepared_head() -> Result<(), String> {
+        let root = test_repo_root("trusted-surface-commits")?;
+        let result = (|| -> Result<(), String> {
+            let packet = serde_json::json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": ["tests/target.rs"],
+                "forbidden_files": []
+            });
+            let policy = edit_cage_policy_from_packet(
+                &serde_json::to_string(&packet).map_err(|error| error.to_string())?,
+                "seam:sample",
+            )?;
+            let prepared_head = crate::agent::artifact::current_git_head(&root)?;
+            std::fs::create_dir_all(root.join("tests"))
+                .map_err(|error| format!("create tests: {error}"))?;
+            std::fs::write(root.join("tests/target.rs"), "#[test]\nfn focused() {}\n")
+                .map_err(|error| format!("write test: {error}"))?;
+            run_git(&root, &["add", "tests/target.rs"])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-qm", "focused test"])?;
+            validate_trusted_head_surface(&root, &policy, &[], &prepared_head)?;
+
+            std::fs::write(root.join("src.rs"), "pub fn moved() {}\n")
+                .map_err(|error| format!("write production file: {error}"))?;
+            run_git(&root, &["add", "src.rs"])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-qm", "production"])?;
+            // Precondition: the production change is not a difference from
+            // the current HEAD, only from the prepared head.
+            if !git_paths(&root, &["diff", "--name-only", "-z", "HEAD"])?.is_empty() {
+                return Err("the production change must be committed".to_string());
+            }
+            match validate_trusted_head_surface(&root, &policy, &[], &prepared_head) {
+                Err(error) if error.contains("outside trusted edit surface: src.rs") => Ok(()),
+                other => Err(format!(
+                    "a committed production change must block the receipt: {other:?}"
+                )),
+            }
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
     #[test]
     fn restore_returns_a_finished_attempt_to_retryable_awaiting_edit() -> Result<(), String> {
         let root = test_repo_root("restore")?;
@@ -2248,7 +2506,12 @@ mod tests {
 
         // Finish without the focused edit: a terminal after state the apply
         // path can no longer retry through.
-        finish_repair_attempt(&root, &attempt_id, &resolved.packet_path)?;
+        finish_repair_attempt(
+            &root,
+            &attempt_id,
+            &resolved.packet_path,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
         let (_, finished) = load_repair_attempt_by_id(&root, &attempt_id)?;
         if finished.state == RepairAttemptState::AwaitingEdit || finished.after.is_none() {
             return Err(format!(
@@ -2342,7 +2605,14 @@ mod tests {
             return Err("an empty refusal reason must be refused".to_string());
         }
 
-        finish_repair_attempt(&root, &attempt_id, &resolved.packet_path)?;
+        // The sample attempt is an ordinary (not trust-bound) attempt, so its
+        // after phase admits commits on top of the prepared head.
+        finish_repair_attempt(
+            &root,
+            &attempt_id,
+            &resolved.packet_path,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
         let (_, finished) = load_repair_attempt_by_id(&root, &attempt_id)?;
         if finished.last_after_refusal.is_some() {
             return Err("finish must clear the earlier refusal".to_string());

@@ -98,6 +98,9 @@ impl AttemptPathChange {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct AttemptDelta {
     /// False when HEAD/worktree/baseline movement makes attribution unsafe.
+    /// Under [`HeadMovement::AdmitDescendantCommits`], a HEAD that moved only
+    /// by commits on top of the baseline head stays comparable: the commits'
+    /// changes are part of `changes`.
     pub(crate) comparable: bool,
     pub(crate) changes: Vec<AttemptPathChange>,
 }
@@ -202,10 +205,99 @@ pub(crate) fn evaluate_repository_edit_cage(
 pub(crate) fn evaluate_repository_edit_cage_with_delta(
     baseline: &AttemptBaseline,
 ) -> Result<(AttemptDelta, EditCageVerdict), String> {
+    evaluate_repository_edit_cage_with_head_movement(baseline, HeadMovement::RequireBaselineHead)
+}
+
+/// How an evaluation treats a repository HEAD that moved after the baseline.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HeadMovement {
+    /// Any HEAD movement makes the delta incomparable.
+    RequireBaselineHead,
+    /// Commits made on top of the baseline head belong to the attempt (a
+    /// developer who commits the focused test before the after phase). The
+    /// delta stays comparable only when the current HEAD descends from the
+    /// baseline head, and every path the commits changed (the tree diff from
+    /// the baseline head, renames split into a deletion and an addition) is
+    /// evaluated by the same rules as a worktree edit. A rebase, amend, reset,
+    /// or checkout to a non-descendant stays incomparable.
+    AdmitDescendantCommits,
+}
+
+pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
+    baseline: &AttemptBaseline,
+    movement: HeadMovement,
+) -> Result<(AttemptDelta, EditCageVerdict), String> {
     let after = capture_repository_state(baseline.root.clone(), baseline.policy.clone())?;
-    let delta = delta_from_repository_states(baseline, &after);
+    let committed = match movement {
+        HeadMovement::RequireBaselineHead => (baseline.head == after.head).then(Vec::new),
+        HeadMovement::AdmitDescendantCommits => {
+            committed_changes(&baseline.root, &baseline.head, &after.head)?
+        }
+    };
+    let delta = delta_from_repository_states(baseline, &after, committed.as_deref());
     let verdict = evaluate_edit_cage(&baseline.policy, &delta);
     Ok((delta, verdict))
+}
+
+/// The path changes committed between the baseline head and the current
+/// head, or `None` when the current head does not descend from the baseline
+/// head or HEAD moved while the range was read. Equal heads commit nothing.
+fn committed_changes(
+    root: &Path,
+    baseline_head: &str,
+    current_head: &str,
+) -> Result<Option<Vec<AttemptPathChange>>, String> {
+    if baseline_head == current_head {
+        return Ok(Some(Vec::new()));
+    }
+    let ancestry = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        &["merge-base", "--is-ancestor", baseline_head, current_head],
+        Duration::from_secs(10),
+        4 * 1024,
+    )?;
+    match ancestry.status.code() {
+        Some(0) => {}
+        Some(1) => return Ok(None),
+        _ => {
+            return Err(format!(
+                "git merge-base --is-ancestor {baseline_head} {current_head} failed in {}: {}",
+                root.display(),
+                String::from_utf8_lossy(&ancestry.stderr).trim()
+            ));
+        }
+    }
+    let listing = git_bytes(
+        root,
+        &[
+            "diff",
+            "--no-renames",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-status",
+            "-z",
+            baseline_head,
+            current_head,
+            "--",
+        ],
+    )?;
+    let mut changes = Vec::new();
+    let mut records = nul_records(&listing);
+    while let Some(status) = records.next() {
+        let status = status?;
+        let path = records.next().ok_or_else(|| {
+            format!("git diff --name-status emitted status `{status}` without a path")
+        })??;
+        changes.push(match status.chars().next() {
+            Some('A') => AttemptPathChange::added(path),
+            Some('D') => AttemptPathChange::deleted(path),
+            _ => AttemptPathChange::modified(path),
+        });
+    }
+    if git_text(root, &["rev-parse", "--verify", "HEAD"])? != current_head {
+        return Ok(None);
+    }
+    Ok(Some(changes))
 }
 
 fn capture_repository_state(
@@ -216,16 +308,7 @@ fn capture_repository_state(
     let index = git_bytes(&root, &["ls-files", "--stage", "-z"])?;
     let tracked = git_bytes(&root, &["ls-files", "-z"])?;
     let untracked = git_bytes(&root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-    let ignored = git_bytes(
-        &root,
-        &[
-            "ls-files",
-            "--others",
-            "--ignored",
-            "--exclude-standard",
-            "-z",
-        ],
-    )?;
+    let ignored = ignored_inventory(&root, &policy)?;
 
     let (inventory, mut ambiguous) =
         inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS)?;
@@ -325,16 +408,7 @@ fn capture_repository_state(
     let stable_index = git_bytes(&root, &["ls-files", "--stage", "-z"])?;
     let stable_tracked = git_bytes(&root, &["ls-files", "-z"])?;
     let stable_untracked = git_bytes(&root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-    let stable_ignored = git_bytes(
-        &root,
-        &[
-            "ls-files",
-            "--others",
-            "--ignored",
-            "--exclude-standard",
-            "-z",
-        ],
-    )?;
+    let stable_ignored = ignored_inventory(&root, &policy)?;
     let ignored_paths = nul_records(&stable_ignored).collect::<Result<BTreeSet<_>, _>>()?;
     let mut stable_file_bytes = MAX_CAPTURE_TOTAL_FILE_BYTES;
     let mut stable_worktree = true;
@@ -377,6 +451,102 @@ fn capture_repository_state(
         #[cfg(windows)]
         _expected_write_authorities: expected_write_authorities,
     })
+}
+
+const IGNORED_LISTING: [&str; 5] = [
+    "ls-files",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "-z",
+];
+
+/// Lists the git-ignored paths the cage observes.
+///
+/// Without a declared `ignored_build_output` this is every ignored path, the
+/// historical behavior. With one (Cargo's `target/` for a Rust repair), the
+/// ignored contents of that subtree are toolchain build output: running the
+/// project tests between the phases rewrites them (fingerprints, dep-info,
+/// incremental objects, test binaries), so observing them would turn the
+/// documented `cargo test` step into a violation, and a real project's build
+/// tree also exceeds the bounded inventory. The exclusion cannot hide a
+/// source, test, or configuration edit:
+///
+/// - it applies only to this ignored listing; tracked paths (`ls-files`) and
+///   untracked-not-ignored paths are inventoried separately and in full, even
+///   inside the build-output subtree;
+/// - every path the policy itself names under the subtree (for example the
+///   `target/ripr` operational writes, or a forbidden rule) is listed again,
+///   so its identity is still captured;
+/// - static analysis never reads the build-output subtree as source
+///   (workspace discovery skips `target`), so its bytes cannot move the
+///   static evidence a receipt records.
+///
+/// The positive `.` pathspec keeps the listing fail-closed: if pathspec magic
+/// is disabled (`GIT_LITERAL_PATHSPECS`), the exclusion becomes an unmatched
+/// literal and the listing degrades to every ignored path. A rule path that
+/// Git would read as a wildcard pattern disables the exclusion outright.
+fn ignored_inventory(root: &Path, policy: &EditCagePolicy) -> Result<Vec<u8>, String> {
+    let Some(build_output) = policy
+        .ignored_build_output
+        .as_ref()
+        .filter(|rule| rule.scope == CagePathScope::Subtree)
+    else {
+        return git_bytes(root, &IGNORED_LISTING);
+    };
+    let build_output = build_output.path.as_str();
+    let observed_rules = policy_rules(policy)
+        .map(|rule| rule.path.as_str())
+        .filter(|path| {
+            *path == build_output
+                || path
+                    .strip_prefix(build_output)
+                    .is_some_and(|tail| tail.starts_with('/'))
+        })
+        .collect::<BTreeSet<_>>();
+    if has_pathspec_wildcard(build_output)
+        || observed_rules
+            .iter()
+            .any(|path| has_pathspec_wildcard(path))
+    {
+        return git_bytes(root, &IGNORED_LISTING);
+    }
+    let exclude = format!(":(exclude){build_output}/");
+    let mut records = BTreeSet::new();
+    let mut listing = IGNORED_LISTING.to_vec();
+    listing.extend(["--", ".", exclude.as_str()]);
+    collect_nul_records(&git_bytes(root, &listing)?, &mut records);
+    for path in observed_rules {
+        let mut listing = IGNORED_LISTING.to_vec();
+        listing.extend(["--", path]);
+        collect_nul_records(&git_bytes(root, &listing)?, &mut records);
+    }
+    let mut bytes = Vec::new();
+    for record in records {
+        bytes.extend_from_slice(&record);
+        bytes.push(0);
+    }
+    Ok(bytes)
+}
+
+fn policy_rules(policy: &EditCagePolicy) -> impl Iterator<Item = &CagePathRule> {
+    std::iter::once(&policy.selected_target)
+        .chain(&policy.allowed_edit_surface)
+        .chain(&policy.forbidden_paths)
+        .chain(&policy.expected_operational_writes)
+}
+
+fn has_pathspec_wildcard(path: &str) -> bool {
+    path.contains(['*', '?', '[', '\\'])
+}
+
+fn collect_nul_records(bytes: &[u8], records: &mut BTreeSet<Vec<u8>>) {
+    records.extend(
+        bytes
+            .split(|byte| *byte == 0)
+            .filter(|record| !record.is_empty())
+            .map(<[u8]>::to_vec),
+    );
 }
 
 fn inventory_paths(
@@ -454,7 +624,14 @@ fn apply_index_records(
     Ok(())
 }
 
-fn delta_from_repository_states(before: &AttemptBaseline, after: &AttemptBaseline) -> AttemptDelta {
+/// `committed` is the tree diff from the baseline head to the after head
+/// when that movement is admitted (empty when HEAD did not move), and `None`
+/// when HEAD movement makes the delta incomparable.
+fn delta_from_repository_states(
+    before: &AttemptBaseline,
+    after: &AttemptBaseline,
+    committed: Option<&[AttemptPathChange]>,
+) -> AttemptDelta {
     let mut changes = Vec::new();
     let paths = before
         .paths
@@ -467,6 +644,19 @@ fn delta_from_repository_states(before: &AttemptBaseline, after: &AttemptBaselin
         let old = before.paths.get(&path);
         let new = after.paths.get(&path);
         if old == new {
+            continue;
+        }
+        let untracked = |state: Option<&RepositoryPathState>| {
+            state.is_none_or(|state| state.index_entry.is_none())
+        };
+        if untracked(old)
+            && untracked(new)
+            && before
+                .policy
+                .untracked_build_lockfile
+                .as_ref()
+                .is_some_and(|rule| rule.matches(&path))
+        {
             continue;
         }
         changed_symlink |= old
@@ -482,13 +672,67 @@ fn delta_from_repository_states(before: &AttemptBaseline, after: &AttemptBaselin
             (None, None) => continue,
         });
     }
+    let observed = changes
+        .iter()
+        .map(|change| change.path.clone())
+        .collect::<BTreeSet<_>>();
+    changes.extend(
+        committed
+            .unwrap_or_default()
+            .iter()
+            .filter(|change| !observed.contains(&change.path))
+            .cloned(),
+    );
     AttemptDelta {
         comparable: before.root == after.root
-            && before.head == after.head
+            && committed.is_some()
             && !before.ambiguous
             && !after.ambiguous
             && !changed_symlink,
         changes,
+    }
+}
+
+/// Removes from a recomputed `delta` the command-owned output that appeared
+/// only after a verdict was bound: a change whose path is an expected
+/// operational write (the `target/ripr` reports, workflow, and cache files a
+/// later `ripr` command writes) and nothing else, and that the bound verdict
+/// did not list. Such a path can never satisfy or violate the cage: it is not
+/// the selected target, not an authored edit surface, and not a forbidden
+/// path, so it only adds a `changed_paths` entry. Every other change is kept,
+/// so an edit to a source, test, forbidden, or authored path after the bind,
+/// or the disappearance of a bound change, still moves the recomputed delta.
+pub(crate) fn without_later_operational_writes(
+    policy: &EditCagePolicy,
+    delta: &AttemptDelta,
+    bound_changed_paths: &[String],
+) -> AttemptDelta {
+    let operational_only = |path: &str| {
+        policy
+            .expected_operational_writes
+            .iter()
+            .any(|rule| rule.matches(path))
+            && !policy.selected_target.matches(path)
+            && !policy
+                .allowed_edit_surface
+                .iter()
+                .any(|rule| rule.matches(path))
+            && !policy.forbidden_paths.iter().any(|rule| rule.matches(path))
+    };
+    AttemptDelta {
+        comparable: delta.comparable,
+        changes: delta
+            .changes
+            .iter()
+            .filter(|change| {
+                let later_output = change.kind != AttemptPathChangeKind::Renamed
+                    && normalize_repo_relative_path(&change.path).is_ok_and(|path| {
+                        operational_only(&path) && !bound_changed_paths.contains(&path)
+                    });
+                !later_output
+            })
+            .cloned()
+            .collect(),
     }
 }
 
@@ -990,6 +1234,21 @@ pub(crate) struct EditCagePolicy {
     /// Command-declared generated or receipt writes that may occur alongside
     /// the authored test edit. They never satisfy `selected_target` movement.
     pub(crate) expected_operational_writes: Vec<CagePathRule>,
+    /// Toolchain build-output subtree (Cargo's `target` for a Rust repair)
+    /// whose git-ignored contents are expected build output rather than
+    /// edits. Only the ignored listing is narrowed; see `ignored_inventory`.
+    /// Absent in baselines captured before this field existed, which keep
+    /// observing every ignored path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) ignored_build_output: Option<CagePathRule>,
+    /// Toolchain lockfile (Cargo's workspace-root `Cargo.lock` for a Rust
+    /// repair) that the build writes when it resolves dependencies. While Git
+    /// does not track it, before and after, creating or rewriting it is build
+    /// state rather than an edit and is left out of the delta; a tracked,
+    /// staged, or committed lockfile change stays observed in full. Absent in
+    /// baselines captured before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) untracked_build_lockfile: Option<CagePathRule>,
 }
 
 impl EditCagePolicy {
@@ -1270,6 +1529,34 @@ fn validate_policy(policy: &EditCagePolicy) -> Vec<EditCageViolation> {
             "the selected target overlaps an explicit forbidden path",
         ));
     }
+    if let Some(build_output) = &policy.ignored_build_output {
+        if build_output.scope != CagePathScope::Subtree {
+            violations.push(invalid_policy_violation(
+                &build_output.path,
+                "the ignored build output must be a subtree rule",
+            ));
+        }
+        if build_output.matches(&selected_path) {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "the selected target lies inside the ignored build output",
+            ));
+        }
+    }
+    if let Some(lockfile) = &policy.untracked_build_lockfile {
+        if lockfile.scope != CagePathScope::Exact {
+            violations.push(invalid_policy_violation(
+                &lockfile.path,
+                "the untracked build lockfile must be one exact repository-relative path",
+            ));
+        }
+        if lockfile.matches(&selected_path) {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "the selected target is the untracked build lockfile",
+            ));
+        }
+    }
     violations
 }
 
@@ -1438,6 +1725,8 @@ mod tests {
                 CagePathRule::exact("Cargo.toml")?,
             ],
             expected_operational_writes: vec![CagePathRule::subtree("target/ripr")?],
+            ignored_build_output: None,
+            untracked_build_lockfile: None,
         })
     }
 
@@ -1731,6 +2020,501 @@ mod tests {
             WorktreeIdentity::Other
         );
         assert_eq!(cumulative_budget, one_pass_work - 1);
+        Ok(())
+    }
+
+    fn build_output_policy() -> Result<EditCagePolicy, String> {
+        let mut policy = policy()?;
+        policy.ignored_build_output = Some(CagePathRule::subtree("target")?);
+        Ok(policy)
+    }
+
+    fn write_fixture_file(
+        fixture: &GitFixture,
+        relative: &str,
+        contents: &str,
+    ) -> Result<(), String> {
+        let path = fixture.root.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("create fixture parent {}: {err}", parent.display()))?;
+        }
+        fs::write(&path, contents).map_err(|err| format!("write fixture {}: {err}", path.display()))
+    }
+
+    const CARGO_BUILD_OUTPUT: [&str; 3] = [
+        "target/debug/.fingerprint/pricing-1/invoked.timestamp",
+        "target/debug/incremental/pricing-1/s-1/0.o",
+        "target/debug/deps/pricing-1.d",
+    ];
+
+    fn write_cargo_build_output(fixture: &GitFixture, generation: &str) -> Result<(), String> {
+        for relative in CARGO_BUILD_OUTPUT {
+            write_fixture_file(fixture, relative, generation)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn declared_cargo_build_output_rewrite_is_not_an_attempt_edit() -> Result<(), String> {
+        let fixture = git_fixture("build-output-rewrite")?;
+        commit_target_ignore(&fixture)?;
+        write_cargo_build_output(&fixture, "baseline build")?;
+
+        let declared = capture_attempt_baseline(&fixture.root, &build_output_policy()?)?;
+        let undeclared = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        write_cargo_build_output(&fixture, "rebuilt by cargo test")?;
+        write_fixture_file(&fixture, "target/debug/deps/pricing-2", "new test binary")?;
+        write_fixture_file(&fixture, "target/ripr/reports/agent-receipt.json", "{}")?;
+
+        let verdict = evaluate_repository_edit_cage(&declared)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+        // The command-owned `target/ripr` write is still observed inside the
+        // declared build-output subtree.
+        assert_eq!(
+            verdict.changed_paths,
+            vec![
+                "target/ripr/reports/agent-receipt.json".to_string(),
+                "tests/pricing.rs".to_string(),
+            ]
+        );
+
+        // Alternate proof: the same stimulus under a policy that declares no
+        // build output is caged, so the declaration is what admits it.
+        let caged = evaluate_repository_edit_cage(&undeclared)?;
+        assert_eq!(caged.status, EditCageVerdictStatus::Violated, "{caged:?}");
+        for relative in CARGO_BUILD_OUTPUT
+            .iter()
+            .copied()
+            .chain(["target/debug/deps/pricing-2"])
+        {
+            assert!(
+                caged.violations.iter().any(|violation| {
+                    violation.kind == EditCageViolationKind::OutsideAllowedSurface
+                        && violation.path == relative
+                }),
+                "undeclared build output {relative} must be a violation: {caged:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn declared_build_output_does_not_hide_other_writes() -> Result<(), String> {
+        let fixture = git_fixture("build-output-boundary")?;
+        // Only `target/debug/` and `notes.log` are ignored, so `target/notes.rs`
+        // is an untracked-not-ignored path inside the build-output subtree.
+        fs::write(
+            fixture.root.join(".gitignore"),
+            "target/debug/\nnotes.log\n",
+        )
+        .map_err(|err| format!("write ignore rules: {err}"))?;
+        git_ok(&fixture.root, &["add", ".gitignore"])?;
+        git_ok(&fixture.root, &["commit", "-qm", "ignore build output"])?;
+        write_cargo_build_output(&fixture, "baseline build")?;
+        write_fixture_file(&fixture, "target/debug/forbidden/state", "baseline")?;
+        let mut policy = build_output_policy()?;
+        policy
+            .forbidden_paths
+            .push(CagePathRule::subtree("target/debug/forbidden")?);
+
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        write_cargo_build_output(&fixture, "rebuilt by cargo test")?;
+        write_fixture_file(&fixture, "notes.log", "ignored but not build output")?;
+        write_fixture_file(&fixture, "target/notes.rs", "untracked, not ignored")?;
+        write_fixture_file(&fixture, "target/debug/forbidden/state", "rewritten")?;
+        fs::write(fixture.root.join("src/pricing.rs"), "pub fn changed() {}\n")
+            .map_err(|err| format!("write tracked source: {err}"))?;
+
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Violated,
+            "{verdict:?}"
+        );
+        assert_eq!(
+            verdict.changed_paths,
+            vec![
+                "notes.log".to_string(),
+                "src/pricing.rs".to_string(),
+                "target/debug/forbidden/state".to_string(),
+                "target/notes.rs".to_string(),
+                "tests/pricing.rs".to_string(),
+            ]
+        );
+        for (kind, path) in [
+            (EditCageViolationKind::OutsideAllowedSurface, "notes.log"),
+            (
+                EditCageViolationKind::OutsideAllowedSurface,
+                "target/notes.rs",
+            ),
+            (EditCageViolationKind::ForbiddenPath, "src/pricing.rs"),
+            (
+                EditCageViolationKind::ForbiddenPath,
+                "target/debug/forbidden/state",
+            ),
+        ] {
+            assert!(
+                verdict
+                    .violations
+                    .iter()
+                    .any(|violation| violation.kind == kind && violation.path == path),
+                "{path} must remain a {kind:?} violation: {verdict:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn wildcard_rule_inside_build_output_disables_the_exclusion() -> Result<(), String> {
+        let fixture = git_fixture("build-output-wildcard")?;
+        commit_target_ignore(&fixture)?;
+        write_cargo_build_output(&fixture, "baseline build")?;
+        let mut policy = build_output_policy()?;
+        let exclusive = String::from_utf8(ignored_inventory(&fixture.root, &policy)?)
+            .map_err(|err| format!("ignored listing is not UTF-8: {err}"))?;
+        assert!(!exclusive.contains("target/debug/"), "{exclusive:?}");
+
+        policy
+            .forbidden_paths
+            .push(CagePathRule::subtree("target/debug/[x]")?);
+        let listing = String::from_utf8(ignored_inventory(&fixture.root, &policy)?)
+            .map_err(|err| format!("ignored listing is not UTF-8: {err}"))?;
+        for relative in CARGO_BUILD_OUTPUT {
+            assert!(
+                listing.split('\0').any(|record| record == relative),
+                "{relative} must be listed when the exclusion is disabled: {listing:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ignored_build_output_policy_shape_is_validated_and_optional() -> Result<(), String> {
+        let mut inside = build_output_policy()?;
+        inside.ignored_build_output = Some(CagePathRule::subtree("tests")?);
+        let mut exact = build_output_policy()?;
+        exact.ignored_build_output = Some(CagePathRule::exact("target")?);
+        for invalid_policy in [inside, exact] {
+            let verdict = evaluate_edit_cage(
+                &invalid_policy,
+                &AttemptDelta {
+                    comparable: true,
+                    changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
+                },
+            );
+            assert_eq!(verdict.status, EditCageVerdictStatus::Incomparable);
+            assert!(
+                verdict
+                    .violations
+                    .iter()
+                    .any(|violation| violation.kind == EditCageViolationKind::InvalidPolicy),
+                "{verdict:?}"
+            );
+        }
+
+        // Baselines captured before the field existed keep observing every
+        // ignored path, and an undeclared policy serializes without it.
+        let mut legacy =
+            serde_json::to_value(policy()?).map_err(|err| format!("serialize policy: {err}"))?;
+        assert!(legacy.get("ignored_build_output").is_none(), "{legacy}");
+        if let Some(object) = legacy.as_object_mut() {
+            object.remove("ignored_build_output");
+        }
+        let decoded: EditCagePolicy =
+            serde_json::from_value(legacy).map_err(|err| format!("decode legacy policy: {err}"))?;
+        assert_eq!(decoded.ignored_build_output, None);
+        Ok(())
+    }
+
+    fn lockfile_policy() -> Result<EditCagePolicy, String> {
+        let mut policy = policy()?;
+        policy.forbidden_paths = vec![CagePathRule::subtree("src")?];
+        policy.untracked_build_lockfile = Some(CagePathRule::exact("Cargo.lock")?);
+        Ok(policy)
+    }
+
+    fn violation_paths(verdict: &EditCageVerdict) -> Vec<&str> {
+        verdict
+            .violations
+            .iter()
+            .map(|violation| violation.path.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn untracked_build_lockfile_is_build_state_only_while_untracked() -> Result<(), String> {
+        // Cargo creates the lockfile between the phases; Git never tracks it.
+        let fixture = git_fixture("untracked-lockfile-created")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(fixture.root.join("Cargo.lock"), "version = 4\n")
+            .map_err(|err| format!("write generated lockfile: {err}"))?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+        assert!(
+            !verdict
+                .changed_paths
+                .iter()
+                .any(|path| path == "Cargo.lock")
+        );
+
+        // Control: without the declaration the same lockfile is an edit.
+        let fixture = git_fixture("untracked-lockfile-undeclared")?;
+        let mut undeclared = lockfile_policy()?;
+        undeclared.untracked_build_lockfile = None;
+        let baseline = capture_attempt_baseline(&fixture.root, &undeclared)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(fixture.root.join("Cargo.lock"), "version = 4\n")
+            .map_err(|err| format!("write generated lockfile: {err}"))?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Violated,
+            "{verdict:?}"
+        );
+        assert_eq!(violation_paths(&verdict), vec!["Cargo.lock"]);
+
+        // Staging the generated lockfile makes it tracked: an edit again.
+        let fixture = git_fixture("untracked-lockfile-staged")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(fixture.root.join("Cargo.lock"), "version = 4\n")
+            .map_err(|err| format!("write generated lockfile: {err}"))?;
+        git_ok(&fixture.root, &["add", "Cargo.lock"])?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Violated,
+            "{verdict:?}"
+        );
+        assert_eq!(violation_paths(&verdict), vec!["Cargo.lock"]);
+
+        // A lockfile tracked at the baseline stays observed when it changes.
+        let fixture = git_fixture("tracked-lockfile-modified")?;
+        fs::write(fixture.root.join("Cargo.lock"), "version = 4\n")
+            .map_err(|err| format!("write tracked lockfile: {err}"))?;
+        git_ok(&fixture.root, &["add", "Cargo.lock"])?;
+        git_ok(&fixture.root, &["commit", "-qm", "track lockfile"])?;
+        let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(fixture.root.join("Cargo.lock"), "version = 4\n# updated\n")
+            .map_err(|err| format!("modify tracked lockfile: {err}"))?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Violated,
+            "{verdict:?}"
+        );
+        assert_eq!(violation_paths(&verdict), vec!["Cargo.lock"]);
+        Ok(())
+    }
+
+    #[test]
+    fn later_operational_writes_leave_only_the_bound_delta() -> Result<(), String> {
+        let mut policy = policy()?;
+        policy
+            .forbidden_paths
+            .push(CagePathRule::exact("target/ripr/forbidden.json")?);
+        policy
+            .allowed_edit_surface
+            .push(CagePathRule::exact("target/ripr/authored.json")?);
+        let bound = AttemptDelta {
+            comparable: true,
+            changes: vec![
+                AttemptPathChange::modified("tests/pricing.rs"),
+                AttemptPathChange::added("target/ripr/workflow/agent-verify.json"),
+            ],
+        };
+        let bound_verdict = evaluate_edit_cage(&policy, &bound);
+        assert_eq!(bound_verdict.status, EditCageVerdictStatus::Compliant);
+        assert_eq!(
+            bound_verdict.changed_paths,
+            ["target/ripr/workflow/agent-verify.json", "tests/pricing.rs"]
+        );
+        let project = |changes: Vec<AttemptPathChange>| {
+            without_later_operational_writes(
+                &policy,
+                &AttemptDelta {
+                    comparable: true,
+                    changes,
+                },
+                &bound_verdict.changed_paths,
+            )
+        };
+
+        // Output a later command wrote (a new receipt, a rewritten cache
+        // entry) drops out, and the bound delta and verdict are recovered.
+        let later = project(
+            bound
+                .changes
+                .iter()
+                .cloned()
+                .chain([
+                    AttemptPathChange::added("target/ripr/reports/agent-receipt.json"),
+                    AttemptPathChange::modified("target/ripr/workflow/agent-status.json"),
+                ])
+                .collect(),
+        );
+        assert_eq!(later, bound);
+        assert_eq!(evaluate_edit_cage(&policy, &later), bound_verdict);
+
+        // Anything else still moves the delta: an edit outside the cage, a
+        // forbidden or authored path under the operational subtree, a renamed
+        // operational path, a changed kind for a bound path, a vanished bound
+        // change, or an incomparable recomputation.
+        for extra in [
+            AttemptPathChange::added("notes.txt"),
+            AttemptPathChange::modified("src/lib.rs"),
+            AttemptPathChange::added("target/ripr/forbidden.json"),
+            AttemptPathChange::added("target/ripr/authored.json"),
+            AttemptPathChange::renamed("target/ripr/a.json", "target/ripr/b.json"),
+        ] {
+            let mut changes = bound.changes.clone();
+            changes.push(extra.clone());
+            assert_eq!(project(changes.clone()).changes, changes, "{extra:?}");
+        }
+        let changed_kind = vec![
+            AttemptPathChange::modified("tests/pricing.rs"),
+            AttemptPathChange::deleted("target/ripr/workflow/agent-verify.json"),
+        ];
+        assert_eq!(project(changed_kind.clone()).changes, changed_kind);
+        let vanished = vec![AttemptPathChange::modified("tests/pricing.rs")];
+        assert_ne!(project(vanished.clone()), bound);
+        let incomparable = without_later_operational_writes(
+            &policy,
+            &AttemptDelta {
+                comparable: false,
+                changes: bound.changes.clone(),
+            },
+            &bound_verdict.changed_paths,
+        );
+        assert!(!incomparable.comparable);
+        Ok(())
+    }
+
+    #[test]
+    fn untracked_build_lockfile_policy_shape_is_validated_and_optional() -> Result<(), String> {
+        let mut subtree = lockfile_policy()?;
+        subtree.untracked_build_lockfile = Some(CagePathRule::subtree("Cargo.lock")?);
+        let mut selected = lockfile_policy()?;
+        selected.untracked_build_lockfile = Some(CagePathRule::exact("tests/pricing.rs")?);
+        for invalid_policy in [subtree, selected] {
+            let verdict = evaluate_edit_cage(
+                &invalid_policy,
+                &AttemptDelta {
+                    comparable: true,
+                    changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
+                },
+            );
+            assert_eq!(verdict.status, EditCageVerdictStatus::Incomparable);
+            assert!(
+                verdict
+                    .violations
+                    .iter()
+                    .any(|violation| violation.kind == EditCageViolationKind::InvalidPolicy),
+                "{verdict:?}"
+            );
+        }
+        let legacy =
+            serde_json::to_value(policy()?).map_err(|err| format!("serialize policy: {err}"))?;
+        assert!(legacy.get("untracked_build_lockfile").is_none(), "{legacy}");
+        let decoded: EditCagePolicy =
+            serde_json::from_value(legacy).map_err(|err| format!("decode legacy policy: {err}"))?;
+        assert_eq!(decoded.untracked_build_lockfile, None);
+        Ok(())
+    }
+
+    #[test]
+    fn descendant_commits_are_evaluated_only_when_head_movement_is_admitted() -> Result<(), String>
+    {
+        // A committed focused test: incomparable under the exact-head rule,
+        // compliant (with the committed path observed) when admitted.
+        let fixture = git_fixture("committed-test")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected edit: {err}"))?;
+        git_ok(&fixture.root, &["commit", "-qam", "focused test"])?;
+        let (exact, _) = evaluate_repository_edit_cage_with_head_movement(
+            &baseline,
+            HeadMovement::RequireBaselineHead,
+        )?;
+        assert!(!exact.comparable);
+        let (delta, verdict) = evaluate_repository_edit_cage_with_head_movement(
+            &baseline,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        assert!(delta.comparable);
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+        assert_eq!(verdict.changed_paths, vec!["tests/pricing.rs".to_string()]);
+
+        // A production change hidden in a commit whose worktree and index
+        // were later restored to the baseline: only the commit range carries
+        // it, and the cage still refuses it.
+        let fixture = git_fixture("committed-production")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
+        let base_head = git_text(&fixture.root, &["rev-parse", "HEAD"])?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("src/pricing.rs"),
+            "pub fn price() { todo() }\n",
+        )
+        .map_err(|err| format!("write production edit: {err}"))?;
+        git_ok(&fixture.root, &["commit", "-qam", "test and production"])?;
+        git_ok(
+            &fixture.root,
+            &["checkout", &base_head, "--", "src/pricing.rs"],
+        )?;
+        let (delta, verdict) = evaluate_repository_edit_cage_with_head_movement(
+            &baseline,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        assert!(delta.comparable);
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Violated,
+            "{verdict:?}"
+        );
+        assert_eq!(violation_paths(&verdict), vec!["src/pricing.rs"]);
+
+        // Rewritten history (an amend of the baseline commit) never
+        // descends from the baseline head.
+        let fixture = git_fixture("amended-baseline")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected edit: {err}"))?;
+        git_ok(&fixture.root, &["commit", "-qa", "--amend", "--no-edit"])?;
+        let (delta, verdict) = evaluate_repository_edit_cage_with_head_movement(
+            &baseline,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        assert!(!delta.comparable);
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Incomparable,
+            "{verdict:?}"
+        );
         Ok(())
     }
 
@@ -2178,7 +2962,7 @@ mod tests {
         }
         let verdict = evaluate_edit_cage(
             &baseline.policy,
-            &delta_from_repository_states(&baseline, &after),
+            &delta_from_repository_states(&baseline, &after, Some(&[])),
         );
         if verdict.status != EditCageVerdictStatus::Incomparable {
             return Err(format!(
@@ -2364,6 +3148,8 @@ mod tests {
             allowed_edit_surface: vec![CagePathRule::subtree("tests/pricing")?],
             forbidden_paths: Vec::new(),
             expected_operational_writes: Vec::new(),
+            ignored_build_output: None,
+            untracked_build_lockfile: None,
         };
         let verdict = evaluate_edit_cage(
             &subtree_policy,

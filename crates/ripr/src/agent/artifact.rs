@@ -20,8 +20,14 @@ pub(crate) const ARTIFACT_IDENTITY_SCHEMA_VERSION: &str = "1";
 /// the concrete checkout root (and any host-specific path spelling) from the
 /// fingerprint: `analysis.input_identity` is portable semantic/configuration
 /// identity, while `repository.root` stays the concrete checkout-instance
-/// evidence validated separately.
-pub(crate) const INPUT_IDENTITY_VERSION: &str = "v3";
+/// evidence validated separately. v4 counts only the Cargo lockfiles Git
+/// tracks: an untracked or ignored `Cargo.lock` is build state that Cargo
+/// writes when it resolves dependencies (a library crate that does not commit
+/// its lockfile gets one from the first `cargo test`), and the static seam
+/// inventory never reads lockfile content, so it cannot move the evidence a
+/// before/after pair compares. A tracked lockfile, and every manifest, still
+/// moves the identity.
+pub(crate) const INPUT_IDENTITY_VERSION: &str = "v4";
 pub(crate) const CONTENT_COMMITMENT_CANONICALIZATION: &str = "raw_json_placeholder_v1";
 pub(crate) const CONTENT_SHA256_PLACEHOLDER: &str =
     "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -37,11 +43,12 @@ pub(crate) struct RepoExposureArtifactContext {
 impl RepoExposureArtifactContext {
     /// Build the portable semantic input identity for one repo-exposure run.
     ///
-    /// The v2 canonical string covers exactly the inputs that affect analysis
+    /// The canonical string covers exactly the inputs that affect analysis
     /// meaning: identity version, mode, profile (this producer binds profile
     /// to mode; both are stated explicitly), base semantics, analysis format,
-    /// manifest and lockfile content identities (root-relative, so equivalent
-    /// checkouts under different roots agree), the repo-exposure
+    /// manifest and tracked-lockfile content identities (root-relative, so
+    /// equivalent checkouts under different roots agree; see
+    /// `git_tracked_lockfiles`), the repo-exposure
     /// producer-consumed configuration boundary
     /// (`crate::config::repo_exposure_config_identity_hash` — the three
     /// oracle-strength fields only), and the analyzer version.
@@ -55,7 +62,10 @@ impl RepoExposureArtifactContext {
     ) -> Result<Self, String> {
         let canonical_root = canonical_root(&root)?;
         let (manifest_identity, lockfile_identity) =
-            crate::analysis::seam_cache::workspace_named_file_identities_relative(&canonical_root);
+            crate::analysis::seam_cache::workspace_named_file_identities_relative(
+                &canonical_root,
+                |lockfiles| git_tracked_lockfiles(&canonical_root, lockfiles),
+            );
         let input_canonical = format!(
             "identity_version={};mode={};profile={};base={:?};format=repo-exposure-json;manifest={:?};lockfile={:?};config={};analyzer={}",
             INPUT_IDENTITY_VERSION,
@@ -79,6 +89,40 @@ impl RepoExposureArtifactContext {
             input_identity,
         })
     }
+}
+
+/// Keeps the collected lockfiles that Git tracks (index entries), the
+/// lockfile scope of the v4 input identity. The collector's paths are
+/// root-relative and `git ls-files` answers relative to the same root, with
+/// pathspec magic disabled so a path is matched literally. When Git cannot
+/// answer, every collected lockfile is kept (the v3 scope): that can only make
+/// a pair less comparable, never hide a tracked lockfile change.
+fn git_tracked_lockfiles(
+    root: &Path,
+    lockfiles: Vec<(PathBuf, Vec<u8>)>,
+) -> Vec<(PathBuf, Vec<u8>)> {
+    if lockfiles.is_empty() {
+        return lockfiles;
+    }
+    let spellings = lockfiles
+        .iter()
+        .map(|(path, _)| path.to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>();
+    let mut args = vec!["--literal-pathspecs", "ls-files", "-z", "--cached", "--"];
+    args.extend(spellings.iter().map(String::as_str));
+    let Ok(listing) = git_output(root, &args) else {
+        return lockfiles;
+    };
+    let tracked = listing
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .collect::<std::collections::BTreeSet<_>>();
+    lockfiles
+        .into_iter()
+        .zip(spellings.iter())
+        .filter(|(_, spelling)| tracked.contains(spelling.as_str()))
+        .map(|(file, _)| file)
+        .collect()
 }
 
 pub(crate) struct Sha256Writer {
@@ -627,7 +671,7 @@ fn git_object_type(root: &Path, revision: &str) -> Result<Option<String>, String
 /// `git merge-base --is-ancestor` as a boolean: exit 0 is "is an ancestor",
 /// exit 1 is "is not", and anything else is an infrastructure error rather
 /// than an ancestry verdict.
-fn git_merge_base_is_ancestor(
+pub(crate) fn git_merge_base_is_ancestor(
     root: &Path,
     ancestor: &str,
     descendant: &str,
@@ -2238,6 +2282,61 @@ mod tests {
             )?;
             expect_drift("manifest content movement", &moved_manifest)?;
 
+            // v4 scope: an untracked lockfile (what the first `cargo test`
+            // writes in a crate that does not commit one) is build state, not
+            // an analysis input, so creating or rewriting it keeps the
+            // identity. Assert the precondition: Git does not track it.
+            std::fs::write(
+                root.join("Cargo.lock"),
+                "# generated lockfile\nversion = 4\n",
+            )
+            .map_err(|error| format!("write untracked lockfile: {error}"))?;
+            if !run_git(&root, &["ls-files", "--", "Cargo.lock"])?
+                .trim()
+                .is_empty()
+            {
+                return Err("the generated lockfile must start untracked".to_string());
+            }
+            let manifest_only = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+                &config,
+            )?;
+            let untracked_lockfile = |case: &str| -> Result<(), String> {
+                let context = RepoExposureArtifactContext::for_repo_exposure(
+                    root.clone(),
+                    "draft".to_string(),
+                    None,
+                    &config,
+                )?;
+                if context.input_identity != manifest_only.input_identity {
+                    return Err(format!("{case} must not change the input identity"));
+                }
+                Ok(())
+            };
+            std::fs::remove_file(root.join("Cargo.lock"))
+                .map_err(|error| format!("remove untracked lockfile: {error}"))?;
+            untracked_lockfile("removing an untracked lockfile")?;
+            std::fs::write(
+                root.join("Cargo.lock"),
+                "# regenerated lockfile\nversion = 4\n",
+            )
+            .map_err(|error| format!("rewrite untracked lockfile: {error}"))?;
+            untracked_lockfile("rewriting an untracked lockfile")?;
+
+            // Tracking the lockfile makes it an analysis input: staging it,
+            // and then changing its content, each move the identity.
+            run_git(&root, &["add", "Cargo.lock"])?;
+            let tracked_lockfile = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+                &config,
+            )?;
+            if tracked_lockfile.input_identity == manifest_only.input_identity {
+                return Err("tracking the lockfile must change the input identity".to_string());
+            }
             std::fs::write(root.join("Cargo.lock"), "# moved lockfile\nversion = 4\n")
                 .map_err(|error| format!("move lockfile: {error}"))?;
             let moved_lockfile = RepoExposureArtifactContext::for_repo_exposure(
@@ -2246,7 +2345,11 @@ mod tests {
                 None,
                 &config,
             )?;
-            expect_drift("lockfile content movement", &moved_lockfile)?;
+            if moved_lockfile.input_identity == tracked_lockfile.input_identity {
+                return Err(
+                    "tracked lockfile content movement must change the input identity".to_string(),
+                );
+            }
             Ok(())
         })();
         let cleanup =
@@ -2453,8 +2556,8 @@ mod tests {
         Ok(())
     }
 
-    /// (#2823 test 7) A previous-version input identity — the v1 and v2
-    /// `input:<digest>` shape, or any non-`input:v3:` value — never validates
+    /// (#2823 test 7) A previous-version input identity — the v1, v2, and v3
+    /// `input:<digest>` shape, or any non-`input:v4:` value — never validates
     /// as current evidence, even when the artifact is otherwise internally
     /// consistent; nor does a current-version identity whose digest is not
     /// exactly `fnv1a64:<16 lowercase hex>`.
@@ -2475,6 +2578,7 @@ mod tests {
                 "input:legacy-unversioned",
                 "input:v1:fnv1a64:0123456789abcdef",
                 "input:v2:fnv1a64:0123456789abcdef",
+                "input:v3:fnv1a64:0123456789abcdef",
             ];
             for legacy in legacy_identities {
                 let legacy_snapshot = repo_exposure_snapshot_identity(legacy, &head);
@@ -2501,11 +2605,11 @@ mod tests {
             // exactly `fnv1a64:<16 lowercase hex>` is malformed, not merely
             // an unknown version, and gets its own bounded reason.
             let malformed_identities = [
-                "input:v3:garbage",
-                "input:v3:fnv1a64:",
-                "input:v3:fnv1a64:0123456789abcde",
-                "input:v3:fnv1a64:0123456789abcdef0",
-                "input:v3:fnv1a64:0123456789ABCDEF",
+                "input:v4:garbage",
+                "input:v4:fnv1a64:",
+                "input:v4:fnv1a64:0123456789abcde",
+                "input:v4:fnv1a64:0123456789abcdef0",
+                "input:v4:fnv1a64:0123456789ABCDEF",
             ];
             for malformed in malformed_identities {
                 let malformed_snapshot = repo_exposure_snapshot_identity(malformed, &head);
@@ -2532,7 +2636,7 @@ mod tests {
             // well-formed foreign digest reaches the later checks (here: the
             // snapshot mismatch), proving the shape gate does not reject
             // well-formed identities.
-            let well_formed = "input:v3:fnv1a64:fedcba9876543210";
+            let well_formed = "input:v4:fnv1a64:fedcba9876543210";
             let mutated = validate_mutated_identity(&root, &document, |document| {
                 document["artifact"]["analysis"]["input_identity"] = json!(well_formed);
             })?;
