@@ -250,6 +250,33 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
     Ok(())
 }
 
+/// `check --help` must teach the loader's real default-base resolution order
+/// (#3885), not the old `origin/main` shorthand; `diff --help` keeps stating
+/// its literal default because `diff` passes the base to git unchanged.
+#[test]
+fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
+    let check = normalized(&rendered_help(&["check", "--help"])?);
+    for needle in [
+        "the remote's own HEAD, then origin/main, origin/master, main, and master in order",
+        "when none of those resolves the analysis does not run",
+    ] {
+        assert_contains("check help (`ripr check --help`)", &check, needle)?;
+    }
+    if check.contains("Defaults to origin/main") {
+        return Err(
+            "check help still teaches the origin/main default instead of the resolution order"
+                .to_string(),
+        );
+    }
+    let diff = normalized(&rendered_help(&["diff", "--help"])?);
+    assert_contains(
+        "diff help (`ripr diff --help`)",
+        &diff,
+        "Defaults to origin/main, used exactly as given",
+    )?;
+    Ok(())
+}
+
 /// The hierarchy page, the README, and the Quickstart must keep the same role
 /// vocabulary the rendered help prints. Whitespace is normalized so a reflow
 /// does not break the pin; rewording a role does.
