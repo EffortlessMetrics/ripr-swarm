@@ -130,18 +130,56 @@ fn resolve_effective_base(
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
     let Some(explicit) = base else {
-        return resolve_default_base(root, git_timeout);
+        return resolve_default_base(root, git_timeout)
+            .map_err(|err| not_a_work_tree(root, git_timeout).unwrap_or(err));
     };
 
     let commit = format!("{explicit}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
-        Some(output) if !output.status.success() => Err(format!(
-            "the base `{explicit}` does not resolve to a commit (the analysis did not run). \
-             Fetch the ref (for example `git fetch origin`) or pass `--base <ref>` for a ref \
-             this repository has."
-        )),
+        Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
+            .unwrap_or_else(|| {
+                format!(
+                    "the base `{explicit}` does not resolve to a commit (the analysis did not \
+                     run). Fetch the ref (for example `git fetch origin`) or pass `--base <ref>` \
+                     for a ref this repository has."
+                )
+            })),
         _ => Ok(explicit.to_string()),
     }
+}
+
+/// The accurate failure when no base could resolve because `root` is not a Git
+/// work tree, or `None` when it is one.
+///
+/// Every base failure above reads as a ref problem and sends the user to
+/// `git fetch` or to a different `--base`. Outside a repository neither repair
+/// applies: no ref can resolve there, so `git fetch origin` fails for the same
+/// reason the base did. Only this probe tells the two apart, and it runs on the
+/// failure path alone, so the ordinary run still costs one `rev-parse`.
+///
+/// It is evidence on the same terms as the base probe: `None` when the command
+/// could not run at all, because a probe that never ran may not assert that a
+/// directory is not a repository any more than it may assert a ref is absent.
+/// `--is-inside-work-tree` prints `true` only inside a work tree, so a run that
+/// printed anything else — or failed, which is what it does outside a
+/// repository — is the case this names.
+fn not_a_work_tree(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--is-inside-work-tree"],
+        git_timeout,
+    )
+    .ok()?;
+    if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true" {
+        return None;
+    }
+    Some(format!(
+        "`{}` is not inside a Git work tree (the analysis did not run). `ripr check` diffs \
+         committed history, so run it from inside your repository, or pass `--root <path>` \
+         pointing at one. For a repository-free scan of the current sources, use \
+         `ripr check --root . --format repo-exposure-md`.",
+        root.display()
+    ))
 }
 
 /// Resolve the best available base ref for `ripr check` when none was
@@ -1048,6 +1086,84 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn outside_a_work_tree_names_the_missing_repository_not_a_missing_ref() -> std::io::Result<()> {
+        // A root that is not a usable work tree fails every base, and the ref
+        // messages send the user to `git fetch origin` or to a different
+        // `--base`. Neither repair applies there: `git fetch` fails for the
+        // same reason the base did. Reported against a plain directory, where
+        // `--base origin/main` printed git's whole `--no-index` usage — 129
+        // lines of it — with `ripr:` in front.
+        //
+        // The two fixtures are the two ways the probe establishes it, and
+        // neither depends on where the temp directory happens to live: a bare
+        // repository makes `--is-inside-work-tree` print `false`, and an
+        // invalid gitfile makes it exit nonzero. A plain directory outside any
+        // checkout takes the second path, so it is the second fixture's case.
+        let bare = unique_fixture_root("no-work-tree-bare")?;
+        run_git_checked(&bare, &["init", "--bare", "--quiet", "."])?;
+        let gitfile = unique_fixture_root("no-work-tree-gitfile")?;
+        fs::write(gitfile.join(".git"), "not a gitfile\n")?;
+
+        for dir in [&bare, &gitfile] {
+            // Assert the fixture before reading anything into the message: a
+            // root that is a work tree would make this pass for another reason.
+            let probe = crate::git::run_git_output_with_deadline(
+                dir,
+                &["rev-parse", "--is-inside-work-tree"],
+                None,
+            )
+            .map_err(std::io::Error::other)?;
+            assert!(
+                !(probe.status.success()
+                    && String::from_utf8_lossy(&probe.stdout).trim() == "true"),
+                "fixture {} is a work tree, so this test proves nothing",
+                dir.display()
+            );
+
+            for base in [Some("origin/main"), None] {
+                let err = load_diff(dir, base, None, None)
+                    .expect_err("expected an error outside a work tree");
+                assert!(
+                    err.contains("not inside a Git work tree"),
+                    "expected the repository state to be named for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                assert!(
+                    err.contains("the analysis did not run"),
+                    "expected the did-not-run boundary for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                assert!(
+                    err.contains("--root <path>"),
+                    "expected the next action for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                // Discriminators. The ref advice is wrong here, and so is git's
+                // own text; neither may reach the user in this state.
+                assert!(
+                    !err.contains("does not resolve to a commit") && !err.contains("git fetch"),
+                    "ref-repair advice must not be given for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                assert!(
+                    !err.contains("could not resolve a default base"),
+                    "default-base search advice must not be given for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                assert!(
+                    !err.contains("--no-index") && !err.contains("invalid gitfile"),
+                    "raw git output must not reach the user for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+            }
+        }
+
+        let _ = fs::remove_dir_all(&bare);
+        let _ = fs::remove_dir_all(&gitfile);
         Ok(())
     }
 
