@@ -16,6 +16,18 @@ use serde::Serialize;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+/// The closing line of a failing `ripr doctor` run.
+///
+/// It used to end `run `ripr doctor --help` for usage`. Help is not the
+/// remedy for anything doctor reports: every failing check already prints its
+/// own fix on its own `!` line (`rustup update stable`, an install command, a
+/// config repair), so the closing line sent the reader away from the answer
+/// they had just been given. The CLI path prints the same line for the same
+/// state, so both read it from here rather than keeping two copies of the
+/// text.
+pub(crate) const DOCTOR_FAILED_LINE: &str =
+    "! doctor checks failed; each `!` line above names the check and its fix\n";
+
 /// The single source of truth for which tools doctor probes for availability.
 /// Both the evaluation (which actually spawns each tool to check it) and the
 /// human-readable projection (which reads the resulting checks back out of
@@ -254,9 +266,7 @@ impl DoctorReport {
         }
         match self.status {
             DoctorStatus::Pass => out.push_str("✓ doctor checks passed\n"),
-            DoctorStatus::Fail => {
-                out.push_str("! doctor checks failed; run `ripr doctor --help` for usage\n")
-            }
+            DoctorStatus::Fail => out.push_str(DOCTOR_FAILED_LINE),
         }
         out
     }
@@ -767,6 +777,12 @@ mod tests {
         assert!(text.contains("! no Cargo.toml"));
         assert!(text.contains("run ripr doctor --help"));
         assert!(text.contains("! doctor checks failed"));
+        // The remedy is on the failing check's own line, so the closing line
+        // must not send the reader to help text instead.
+        assert!(
+            !text.contains("for usage"),
+            "the closing line must not point at help text: {text}"
+        );
     }
 
     #[test]
