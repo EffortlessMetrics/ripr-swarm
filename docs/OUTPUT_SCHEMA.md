@@ -127,6 +127,14 @@ the optional `finding_alignment` block is the typed canonical seam projection.
 Unknown top-level fields are rejected by the verification contract. Nested
 finding and seam details may grow additively within the pinned version.
 
+Top-level `base` records the base ref the diff loader actually used (#3940):
+the explicit `--base` when one was given, the resolved default base
+(RIPR-SPEC-0084) for scope-less runs, and absent when no base was involved
+(diff-file/stdin inputs and repo-scope runs). Base-matching consumers (for
+example `review-comments --check-output`, which requires the envelope `base`
+to equal its own `--base`) may rely on a present `base`; an absent `base`
+means the run cannot be attributed to a base.
+
 ```json
 {
   "schema_version": "0.2",
