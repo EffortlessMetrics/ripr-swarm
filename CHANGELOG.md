@@ -295,6 +295,12 @@ are scoped or reviewed.
 
 ### Changed
 
+- `PanicAllowEntryVersioned::V2` is now `Box<PanicAllowEntryV2>`, so
+  `clippy::large_enum_variant` no longer needs an allow on that enum.
+  `policy/clippy-exceptions.toml` has no live rows;
+  `clippy-exception-0001` is retired
+  ([#3995](https://github.com/EffortlessMetrics/ripr-swarm/issues/3995)).
+
 - `cargo xtask check-lint-policy` now requires a non-MSRV `blocked_by` on
   every `[[planned]]` row whose `activate_when_msrv` is already met by
   workspace `rust-version`. Empty or MSRV-only `blocked_by` fails. A
