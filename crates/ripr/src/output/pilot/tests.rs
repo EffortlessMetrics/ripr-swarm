@@ -840,3 +840,74 @@ fn why_line_falls_back_to_class_label_when_no_summary_or_missing_discriminator()
         "ungripped static seam evidence"
     );
 }
+
+/// A repair-ready discriminator: this fact matches the seam's required
+/// discriminator, so the route reaches `Ready` and the focused-test line
+/// applies. `missing()` deliberately does not.
+fn matching_missing() -> MissingDiscriminatorFact {
+    MissingDiscriminatorFact {
+        value: "amount >= discount_threshold".to_string(),
+        reason: "observed values do not include the equality-boundary case".to_string(),
+        flow_sink: None,
+    }
+}
+
+/// A related test in an external language. Its presence leaves the safe repair
+/// target cross-language unresolved, which the repair-packet flip refuses even
+/// though the Rust test below still makes the route ready.
+fn typescript_related_test() -> RelatedTestGrip {
+    RelatedTestGrip {
+        file: PathBuf::from("tests/pricing.spec.ts"),
+        test_target: Some(
+            crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                "below_threshold_has_no_discount",
+                std::path::Path::new("tests/pricing.spec.ts"),
+                12,
+            ),
+        ),
+        ..related_test()
+    }
+}
+
+/// The printed repair command is a repair-packet surface, so it is gated on the
+/// producer-owned flip rather than on route readiness — the same authority
+/// `lsp::actions` uses for the editor's repair action. Route readiness alone
+/// would offer a transaction that `agent repair` then refuses.
+#[test]
+fn a_route_ready_seam_the_repair_flip_refuses_gets_no_repair_command() {
+    let artifacts = pilot_artifacts();
+
+    let eligible = classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![matching_missing()],
+        vec![related_test()],
+    );
+    let eligible_terminal = render_pilot_terminal(&[eligible], pilot_context(&artifacts));
+    assert!(
+        eligible_terminal.contains("focused test: add"),
+        "control seam should be route ready:\n{eligible_terminal}"
+    );
+    assert!(
+        eligible_terminal.contains("repair this seam:"),
+        "an eligible seam must still be offered its repair command:\n{eligible_terminal}"
+    );
+
+    let refused = classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![matching_missing()],
+        vec![related_test(), typescript_related_test()],
+    );
+    let refused_terminal = render_pilot_terminal(&[refused], pilot_context(&artifacts));
+    assert!(
+        refused_terminal.contains("focused test: add"),
+        "the refused seam must still be route ready, or this proves nothing:\n{refused_terminal}"
+    );
+    assert!(
+        !refused_terminal.contains("repair this seam:"),
+        "a seam the repair flip refuses must not be offered a repair command:\n{refused_terminal}"
+    );
+}
