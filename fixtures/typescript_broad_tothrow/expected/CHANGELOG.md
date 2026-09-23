@@ -405,3 +405,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_broad_tothrow (2)
+
+Reason:
+RIPR-SPEC-0104: oracle metadata evidence is only borrowed from assertions whose kind matches the probe family, so a toThrow assertion is no longer surfaced as the oracle for this predicate probe; class, category and readiness unchanged
+
+Command:
+`cargo xtask goldens bless typescript_broad_tothrow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

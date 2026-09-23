@@ -7616,3 +7616,103 @@ fn remove_field_from_missing_list_unit() {
         "missing_actionability_fields: verify_command, receipt_command"
     );
 }
+
+fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest) {
+    let owner = TypeScriptOwner {
+        name: "parseLimit".to_string(),
+        file: PathBuf::from("src/limiter.ts"),
+        start_line: 1,
+        end_line: 8,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "parseLimit parses".to_string(),
+        local_name: "parseLimit parses".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/limiter.test.ts"),
+        line: 3,
+        body_text: "expect(parseLimit('10')).toBe(10);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 4,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            observed_expression: Some("parseLimit('10')".to_string()),
+            expected_value_or_variant: Some("10".to_string()),
+            has_dynamic_matcher_arg: false,
+            oracle_confidence: OracleConfidence::High,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    };
+    (owner, test)
+}
+
+/// A newly added `throw` must not borrow a related test's exact-value
+/// assertion as its oracle target. The oracle metadata lines are what the
+/// repair-packet projection reads (RIPR-SPEC-0087 G-C); a wrong-family
+/// borrow produced a "complete" packet telling the user to strengthen
+/// `expect(parseLimit('10')).toBe(10)`, which cannot observe the throw.
+#[test]
+fn oracle_metadata_is_not_borrowed_from_a_wrong_family_assertion() -> Result<(), String> {
+    let (owner, test) = parse_limit_owner_and_exact_value_test();
+    let finding = classify_change(
+        Path::new("src/limiter.ts"),
+        4,
+        "    throw new TypeError('invalid limit');",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .all(|line| !line.starts_with("typescript_oracle_expected:")
+                && !line.starts_with("typescript_oracle_observed:")),
+        "an exact-value assertion must not be surfaced as the oracle for an error-path change; got {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// Control for the wrong-family guard: the same exact-value assertion is
+/// still surfaced for a value change it can observe, so the guard does not
+/// strip oracle metadata wholesale.
+#[test]
+fn oracle_metadata_is_kept_for_a_matching_family_assertion() -> Result<(), String> {
+    let (owner, test) = parse_limit_owner_and_exact_value_test();
+    let finding = classify_change(
+        Path::new("src/limiter.ts"),
+        6,
+        "    return n * 2;",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_eq!(finding.probe.family, ProbeFamily::ReturnValue);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line == "typescript_oracle_expected: 10"),
+        "a matching-family exact-value assertion keeps its oracle metadata; got {:?}",
+        finding.evidence
+    );
+    Ok(())
+}

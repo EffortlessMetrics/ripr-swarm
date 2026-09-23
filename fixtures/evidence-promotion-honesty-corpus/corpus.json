@@ -573,7 +573,7 @@
           "source_file": "src/discount.ts",
           "source_line": 2,
           "target_test": "tests/discount.test.ts::applyDiscount applies discount when amount meets threshold",
-          "assertion_shape": "expect(result).toBe(50)",
+          "assertion_shape": "expect(result).toBe(expected)",
           "authority_boundary": "preview_advisory_only",
           "repair_kind": "AddBoundaryAssertion",
           "verify_command": "jest tests/discount.test.ts",

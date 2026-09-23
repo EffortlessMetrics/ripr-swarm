@@ -399,12 +399,12 @@ pub(crate) fn classify_change(
     // ADDITIVE: does not change oracle_kind, oracle_strength, static_limit_kind,
     // or repair_packet_ready. At most one assertion's metadata is emitted
     // (the strongest, by oracle_strength rank) to avoid redundant evidence.
+    let probe_shape = classify_probe_shape_detail(line_text);
     let oracle_metadata_lines: Vec<String> =
-        collect_oracle_metadata_evidence_lines(&related_candidates);
+        collect_oracle_metadata_evidence_lines(&probe_shape.family, &related_candidates);
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
-    let probe_shape = classify_probe_shape_detail(line_text);
 
     // RIPR-SPEC-0104: compute strongest_strength/strongest_kind at the
     // ASSERTION level, filtered by probe_family↔oracle_kind match.
