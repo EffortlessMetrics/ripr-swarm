@@ -43,8 +43,8 @@ pub fn load_diff_with_effective_base(
             });
         }
         let text = std::fs::read_to_string(diff_file)
-            .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()));
-        return text.map(|text| LoadedDiff {
+            .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()))?;
+        return Ok(LoadedDiff {
             text,
             effective_base: None,
         });
