@@ -89,6 +89,93 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
     Ok(())
 }
 
+/// The help screens are the exhaustive reference, so a line on one is a claim
+/// about what the command accepts. Each needle below was wrong against source
+/// until this test existed: the repair rows printed `--phase verify` forms that
+/// always fail (the verify phase refuses without `--verify-authorized` and
+/// `--verify-authority`, and takes only `--attempt`), two report rows named
+/// default outputs the producers never write, and four rows omitted selectors
+/// the parsers accept. The negative asserts are the discriminators — they fail
+/// on the exact prior wording.
+#[test]
+fn help_screens_state_the_surfaces_the_parsers_accept() -> Result<(), String> {
+    // The default screen is a bounded first screen with a line budget
+    // (`help_leads_with_a_bounded_first_screen_that_routes_onward`), so the
+    // verify phase does not belong on it at all: it is reachable only for
+    // trust-bound Python attempts and needs an authorization pair that would
+    // not fit. Its repair teaser is before -> edit -> after, the ordinary Rust
+    // path, and the full invocation lives in `help --all` and
+    // `agent repair --help`.
+    let default_help = normalized(&rendered_help(&["--help"])?);
+    for needle in [
+        "ripr agent repair --seam-id ID --phase before",
+        "ripr agent repair --attempt ID --phase after",
+    ] {
+        assert_contains("default help (`ripr --help`)", &default_help, needle)?;
+    }
+    if default_help.contains("ripr agent repair --attempt ID --phase verify") {
+        return Err(
+            "the bounded first screen must not print a verify invocation it cannot make runnable"
+                .to_string(),
+        );
+    }
+
+    let all = normalized(&rendered_help(&["help", "--all"])?);
+    for needle in [
+        // The verify phase takes `--attempt`, never `--seam-id`, and refuses
+        // without both authorization signals.
+        "ripr agent repair --root . --attempt ID --phase verify --verify-authorized --verify-authority ID",
+        "ripr agent repair --root . (--attempt ID | --seam-id ID) --phase after",
+        // Producer defaults, from typescript_limitations.rs and
+        // typescript_false_actionable.rs.
+        "target/ripr/reports/typescript-limitations.json",
+        "target/ripr/reports/typescript-false-actionable-audit.json",
+        // `gate evaluate --help` lists four modes; this screen listed two.
+        "--mode visible-only|acknowledgeable|baseline-check|calibrated-gate",
+        // Selectors the parsers accept that this screen did not name.
+        "ripr reports gap-ledger (--records PATH | --repo-exposure PATH | --check-output PATH)",
+        "ripr agent packet --root . (--seam-id ID | --gap-ledger PATH --gap-id ID) --json",
+        "--gap CANONICAL_GAP_ID --gap-ledger PATH",
+        // `ripr mcp --help` states `--stdio` is optional and the default.
+        "ripr mcp [--stdio] [--root PATH]",
+    ] {
+        assert_contains("exhaustive help (`ripr help --all`)", &all, needle)?;
+    }
+
+    // Discriminators. The `Repair one named gap` role line keeps
+    // `--phase before|after|verify`: it names which phases exist rather than
+    // how to invoke one, and `default_help_keeps_the_task_roles_distinct`
+    // pins it as role vocabulary.
+    for (surface, text, stale) in [
+        (
+            "exhaustive help",
+            &all,
+            "ripr agent repair --root . --seam-id ID --phase before|after|verify",
+        ),
+        (
+            "exhaustive help",
+            &all,
+            "target/ripr/reports/ts-limitations.json",
+        ),
+        (
+            "exhaustive help",
+            &all,
+            "target/ripr/reports/ts-false-actionable.json",
+        ),
+        (
+            "exhaustive help",
+            &all,
+            "--mode visible-only|acknowledgeable]",
+        ),
+        ("exhaustive help", &all, "ripr mcp --stdio [--root PATH]"),
+    ] {
+        if text.contains(stale) {
+            return Err(format!("{surface} still prints the stale form `{stale}`"));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn agent_help_makes_repair_primary_without_removing_control_surfaces() -> Result<(), String> {
     for args in [["agent", "--help"].as_slice(), ["agent"].as_slice()] {

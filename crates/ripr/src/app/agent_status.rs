@@ -1043,21 +1043,30 @@ mod tests {
         let report = build_agent_status_report(&root, Path::new("repo root"));
         let rendered = render_agent_status_markdown(&report);
 
-        let bash_form = "```bash\nripr check --root 'repo root' --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json\n```\n";
+        // Issue #3872: the next-command redirect anchors at the resolved
+        // --root, so both presented forms build from the same builder output
+        // (the anchor math itself is pinned in loop_commands tests).
+        let next =
+            check_repo_exposure_command("repo root", "draft", WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT);
+        let bash_form = format!("```bash\n{next}\n```\n");
         assert!(
-            rendered.contains(bash_form),
+            rendered.contains(bash_form.as_str()),
             "bash next command drifted:\n{rendered}"
         );
-        let powershell_form = "```powershell\n$ripr = ((ripr check --root 'repo root' --mode draft --format repo-exposure-json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/before.repo-exposure.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }\n```\n";
+        let powershell_form = format!(
+            "```powershell\n{}\n```\n",
+            powershell_command(&next)
+                .ok_or_else(|| "redirect commands gain a powershell variant".to_string())?
+        );
         assert!(
-            rendered.contains(powershell_form),
+            rendered.contains(powershell_form.as_str()),
             "powershell next command missing or drifted:\n{rendered}"
         );
         let bash_fence = rendered
-            .find(bash_form)
+            .find(bash_form.as_str())
             .ok_or_else(|| format!("bash fence must exist: {rendered}"))?;
         let powershell_fence = rendered
-            .find(powershell_form)
+            .find(powershell_form.as_str())
             .ok_or_else(|| format!("powershell fence must exist: {rendered}"))?;
         assert!(
             bash_fence < powershell_fence,
@@ -1091,7 +1100,11 @@ mod tests {
         assert!(report.missing_commands.iter().any(|command| {
             command.step == "agent_packet"
                 && command.command
-                    == "ripr agent packet --root 'repo root' --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-packet.json"
+                    == agent_packet_command(
+                        "repo root",
+                        "67fc764ba37d77bd",
+                        WORKFLOW_AGENT_PACKET_ARTIFACT,
+                    )
         }));
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -1310,22 +1323,31 @@ mod tests {
         assert!(commands.iter().any(|command| {
             command.step == "after_snapshot"
                 && command.command
-                    == "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json"
+                    == check_repo_exposure_command(".", "draft", WORKFLOW_AFTER_SNAPSHOT_ARTIFACT)
         }));
         assert!(commands.iter().any(|command| {
             command.step == "analysis_outcome"
                 && command.command
-                    == "ripr check --root . --mode draft --format json > target/ripr/workflow/analysis-outcome.json"
+                    == check_analysis_outcome_command(
+                        ".",
+                        "draft",
+                        WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
+                    )
         }));
         assert!(commands.iter().any(|command| {
             command.step == "agent_brief"
                 && command.command
-                    == "ripr agent brief --root . --seam-id seam-a --json > target/ripr/workflow/agent-brief.json"
+                    == agent_brief_command(".", "seam-a", WORKFLOW_AGENT_BRIEF_ARTIFACT)
         }));
         assert!(commands.iter().any(|command| {
             command.step == "agent_verify"
                 && command.command
-                    == "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > target/ripr/workflow/agent-verify.json"
+                    == agent_verify_command(
+                        ".",
+                        WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+                        WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+                        Some(WORKFLOW_AGENT_VERIFY_ARTIFACT),
+                    )
         }));
         assert!(commands.iter().any(|command| {
             command.step == "agent_receipt"
@@ -1336,9 +1358,17 @@ mod tests {
 
     #[test]
     fn agent_status_quotes_paths_with_spaces() {
-        assert_eq!(
-            agent_packet_command("repo root", "seam-a", WORKFLOW_AGENT_PACKET_ARTIFACT),
-            "ripr agent packet --root 'repo root' --seam-id seam-a --json > target/ripr/workflow/agent-packet.json"
+        // Issue #3872: the redirect anchors at the resolved root, so the
+        // quoted expectation names the anchored absolute target: the quoting
+        // under test is the single-quote shell encoding around both values.
+        let command = agent_packet_command("repo root", "seam-a", WORKFLOW_AGENT_PACKET_ARTIFACT);
+        assert!(
+            command.starts_with("ripr agent packet --root 'repo root' --seam-id seam-a --json > '"),
+            "root and target must stay single-quoted: {command}"
+        );
+        assert!(
+            command.ends_with("/repo root/target/ripr/workflow/agent-packet.json'"),
+            "redirect must anchor under the resolved root: {command}"
         );
     }
 }

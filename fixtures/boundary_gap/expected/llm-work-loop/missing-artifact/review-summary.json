@@ -33,7 +33,7 @@
       "state": "computed",
       "status": "incomplete",
       "required": true,
-      "summary": "0 required artifacts present, 7 missing, 0 warnings. Command: ripr agent status --root . --json > target/ripr/workflow/agent-status.json"
+      "summary": "0 required artifacts present, 7 missing, 0 warnings. Command: ripr agent status --root . --json > <cwd>/target/ripr/workflow/agent-status.json"
     },
     {
       "name": "agent_workflow",

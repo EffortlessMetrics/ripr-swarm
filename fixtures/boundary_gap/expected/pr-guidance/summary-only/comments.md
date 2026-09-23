@@ -24,7 +24,7 @@ Advisory static evidence only. RIPR does not edit source, generate tests, run mu
 - `8f7fa8644fd12280` @ `src/pricing.rs:88`: Static evidence names missing discriminator `amount == discount_threshold` for this seam.
   - canonical_gap_id: `gap:dedf923a13a00573`
   - state: `actionable`
-  - command: `ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json`
+  - command: `ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > <cwd>/target/ripr/workflow/agent-brief.json`
 
 ## Suppressed
 

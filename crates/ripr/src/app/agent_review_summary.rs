@@ -20,8 +20,10 @@ mod tests {
         WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_BRIEF_ARTIFACT,
         WORKFLOW_AGENT_PACKET_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
         WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
-        WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, WORKFLOW_MANIFEST_ARTIFACT,
+        WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, WORKFLOW_MANIFEST_ARTIFACT, check_repo_exposure_command,
     };
+    use crate::output::markdown::powershell_command;
+    use crate::testing::cwd_placeholder::project_renderer_cwd;
     use serde_json::Value;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -245,8 +247,13 @@ mod tests {
     ) -> Result<(), String> {
         let report = build_agent_review_summary_report(root, root_argument);
         let rendered = render_agent_review_summary_json(&report)?;
-        let actual: Value = serde_json::from_str(&rendered)
+        let mut actual: Value = serde_json::from_str(&rendered)
             .map_err(|err| format!("parse rendered review summary: {err}"))?;
+        // Issue #3872: next-command redirects anchor at the resolved --root,
+        // so the machine prefix projects to `<cwd>/` before comparing
+        // against the checked-in expectation (placeholder rule:
+        // loop_commands).
+        project_renderer_cwd(&mut actual);
         let fixture_path =
             format!("fixtures/boundary_gap/expected/llm-work-loop/{case_name}/review-summary.json");
         assert_eq!(
@@ -761,21 +768,29 @@ mod tests {
         let report = build_agent_review_summary_report(&root, Path::new("."));
         let rendered = render_agent_review_summary_markdown(&report);
 
-        let bash_form = "```bash\nripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json\n```\n";
+        // Issue #3872: the next-command redirect anchors at the resolved
+        // --root, so both presented forms build from the same builder output
+        // (the anchor math itself is pinned in loop_commands tests).
+        let next = check_repo_exposure_command(".", "draft", WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT);
+        let bash_form = format!("```bash\n{next}\n```\n");
         assert!(
-            rendered.contains(bash_form),
+            rendered.contains(bash_form.as_str()),
             "bash next command drifted:\n{rendered}"
         );
-        let powershell_form = "```powershell\n$ripr = ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/before.repo-exposure.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }\n```\n";
+        let powershell_form = format!(
+            "```powershell\n{}\n```\n",
+            powershell_command(&next)
+                .ok_or_else(|| "redirect commands gain a powershell variant".to_string())?
+        );
         assert!(
-            rendered.contains(powershell_form),
+            rendered.contains(powershell_form.as_str()),
             "powershell next command missing or drifted:\n{rendered}"
         );
         let bash_fence = rendered
-            .find(bash_form)
+            .find(bash_form.as_str())
             .ok_or_else(|| format!("bash fence must exist: {rendered}"))?;
         let powershell_fence = rendered
-            .find(powershell_form)
+            .find(powershell_form.as_str())
             .ok_or_else(|| format!("powershell fence must exist: {rendered}"))?;
         assert!(
             bash_fence < powershell_fence,

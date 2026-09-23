@@ -387,6 +387,16 @@ The exact-J verifier is the separate source contract from
 [`9c53b12b`](https://github.com/EffortlessMetrics/ripr/commit/9c53b12b73aa5a11c198f8c5265902127a6d7dff).
 Use its verifier and receipt; this runbook does not duplicate its semantics.
 
+> **Do not run the construction and publication blocks below for 0.11.0.**
+> They state the required graph only. ripr#1772 rejects a `J` built with raw
+> `git merge` and pushed as a branch. For 0.11.0, ripr#1772 builds and
+> publishes `J` with the source repository's guarded constructor
+> (`source-promotion admit-resolved-tree`, `construct-exact-join`,
+> `publish-candidate-ref`; see ripr `docs/SOURCE_PROMOTION.md`), and ripr#1773
+> merges it with a guarded expected-head and expected-base merge commit.
+> Conflict dispositions, the trial join, and tree qualification are described
+> in [`swarm-development.md`](swarm-development.md#resolving-the-join).
+
 ```bash
 set -euo pipefail
 # [LOCAL-MUTATING] repo=source promotion checkout; construct reviewed J
@@ -467,6 +477,12 @@ test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $2}')" = 
 
 J carries the promoted graph. Version/changelog metadata is a separate source
 release-preparation change after J reaches source main; never bump J.
+
+> **0.11.0:** the version write already landed in ripr#1708, and
+> `bump-version` rejects a no-op bump, so skip the `bump-version` line below.
+> Per ripr#1466, do not open a replacement metadata PR. The release-copy PR
+> that ripr#1466 owns (folding `Unreleased` into the staged `0.11.0` section)
+> takes its place, and `SOURCE_RELEASE_HEAD` is source `main` after it merges.
 
 ```bash
 set -euo pipefail
