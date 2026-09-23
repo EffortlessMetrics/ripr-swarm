@@ -21,9 +21,9 @@ mod tests {
         WORKFLOW_AGENT_PACKET_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
         WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
         WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, WORKFLOW_MANIFEST_ARTIFACT, check_repo_exposure_command,
-        project_renderer_cwd,
     };
     use crate::output::markdown::powershell_command;
+    use crate::testing::cwd_placeholder::project_renderer_cwd;
     use serde_json::Value;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};

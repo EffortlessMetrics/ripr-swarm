@@ -63,57 +63,23 @@ pub(crate) fn anchored_redirect_target(root: &str, out_path: &str) -> String {
     display_path(&lexically_clean(&joined))
 }
 
-/// Test-only: project the renderer working directory out of rendered command
-/// strings (issue #3872). Anchored redirect targets embed the machine
-/// directory, so checked-in expectations pin the anchored shape with a
-/// `<cwd>/` placeholder for that prefix — never a real machine directory.
-/// The placeholder spelling is centralized here so every golden, corpus, and
-/// fixture projection agrees.
-#[cfg(test)]
-pub(crate) fn renderer_cwd_prefix() -> String {
-    // An unreadable working directory degrades to a prefix that matches
-    // nothing, so the projection becomes a no-op and the comparison fails
-    // loudly instead of passing on unprojected machine paths.
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    format!("{}/", display_path(&cwd))
-}
-
-/// Test-only: replace every renderer-working-directory prefix inside `value`
-/// with `<cwd>/`, recursively. The anchor sits mid-string inside rendered
-/// commands, so this projects occurrences, not just a leading prefix.
-#[cfg(test)]
-pub(crate) fn project_renderer_cwd(value: &mut serde_json::Value) {
-    let prefix = renderer_cwd_prefix();
-    project_cwd_prefix(value, &prefix);
-}
-
-#[cfg(test)]
-fn project_cwd_prefix(value: &mut serde_json::Value, prefix: &str) {
-    match value {
-        serde_json::Value::String(text) if text.contains(prefix) => {
-            *text = text.replace(prefix, "<cwd>/");
-        }
-        serde_json::Value::String(_) => {}
-        serde_json::Value::Array(items) => items
-            .iter_mut()
-            .for_each(|item| project_cwd_prefix(item, prefix)),
-        serde_json::Value::Object(map) => map
-            .values_mut()
-            .for_each(|item| project_cwd_prefix(item, prefix)),
-        _ => {}
-    }
-}
-
 /// Drop `.` segments and resolve `..` lexically (no filesystem I/O: the
 /// target usually does not exist yet when guidance is rendered). Keeps the
-/// anchored target free of `/./` noise when `--root` is `.`.
-fn lexically_clean(path: &Path) -> PathBuf {
+/// anchored target free of `/./` noise when `--root` is `.`. A leading
+/// `..` on a relative path is preserved (there is nothing to pop); an
+/// absolute path never carries one past the root.
+pub(crate) fn lexically_clean(path: &Path) -> PathBuf {
     let mut cleaned = PathBuf::new();
+    let is_absolute = path.is_absolute();
     for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                cleaned.pop();
+                if matches!(cleaned.components().next_back(), Some(Component::Normal(_))) {
+                    cleaned.pop();
+                } else if !is_absolute {
+                    cleaned.push(component.as_os_str());
+                }
             }
             Component::Normal(_) | Component::RootDir | Component::Prefix(_) => {
                 cleaned.push(component.as_os_str());
@@ -373,6 +339,16 @@ mod tests {
         assert!(
             !anchored_redirect_target(".", "target/out.json").contains("/./"),
             "anchored target must not carry a `/./` segment"
+        );
+        // Review #3938: a leading `..` on a relative path survives
+        // lexical cleaning (there is nothing to pop).
+        assert_eq!(
+            lexically_clean(Path::new("../ws/target/out.json")),
+            PathBuf::from("../ws/target/out.json")
+        );
+        assert_eq!(
+            lexically_clean(&cwd.join("a").join("..").join("b")),
+            cwd.join("b")
         );
         assert!(
             Path::new(&anchored_redirect_target(".", "target/out.json")).is_absolute(),

@@ -2,8 +2,6 @@ use crate::agent::command_specs::report_regeneration_command_spec_from_display;
 use crate::agent::loop_commands::{
     anchored_redirect_target, check_repo_exposure_command, display_path, shell_arg,
 };
-#[cfg(test)]
-use crate::agent::loop_commands::{project_renderer_cwd, renderer_cwd_prefix};
 use crate::config::detect_python_project;
 use crate::domain::CommandSpec;
 use crate::output::gap_decision_ledger::projection_eligible_from_value;
@@ -12,6 +10,8 @@ use crate::output::receipt_write::receipt_write_command;
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
 };
+#[cfg(test)]
+use crate::testing::cwd_placeholder::{project_renderer_cwd, renderer_cwd_prefix};
 use serde_json::{Map, Value, json};
 use std::env;
 use std::fs;

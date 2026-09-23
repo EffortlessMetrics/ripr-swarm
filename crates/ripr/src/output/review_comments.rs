@@ -1,6 +1,4 @@
 use crate::agent::command_specs::command_displays_are_complete;
-#[cfg(test)]
-use crate::agent::loop_commands::renderer_cwd_prefix;
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_BRIEF_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_brief_command, agent_verify_command, display_path,
@@ -22,6 +20,8 @@ use crate::output::evidence_record::{
     cross_language_test_target_unresolved, gap_state_for, static_limitations_for,
 };
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
+#[cfg(test)]
+use crate::testing::cwd_placeholder::renderer_cwd_prefix;
 use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;

@@ -445,10 +445,13 @@ fn relativize_write_against_root(root: &str, target: &str) -> Option<String> {
     if !std::path::Path::new(target).is_absolute() {
         return Some(target.to_string());
     }
+    // Review #3938: the rendered target is lexically cleaned, so the anchor
+    // is cleaned the same way — otherwise a `--root` carrying traversal
+    // segments can never prefix-match its own rendered target.
     let anchor = if std::path::Path::new(root).is_absolute() {
-        std::path::PathBuf::from(root)
+        super::loop_commands::lexically_clean(std::path::Path::new(root))
     } else {
-        std::env::current_dir().ok()?.join(root)
+        super::loop_commands::lexically_clean(&std::env::current_dir().ok()?.join(root))
     };
     let relative = std::path::Path::new(target).strip_prefix(&anchor).ok()?;
     if relative.as_os_str().is_empty()
@@ -548,11 +551,20 @@ pub(crate) fn agent_command_spec_from_display(command: &str) -> Option<CommandSp
                     // Issue #3872: the rendered redirect target is absolute;
                     // recovery keeps the root-relative write when it falls
                     // under the command's own --root value.
+                    // Review #3938: the value must sit strictly before the
+                    // redirect — a `--root` with no value falls back to `.`
+                    // instead of parsing `>` as the root.
                     let root = words
                         .get(1..redirect)?
                         .iter()
                         .position(|word| word == "--root")
-                        .and_then(|at| words.get(1 + at + 1))
+                        .and_then(|at| {
+                            if 1 + at + 1 < redirect {
+                                words.get(1 + at + 1)
+                            } else {
+                                None
+                            }
+                        })
                         .map(String::as_str)
                         .unwrap_or(".");
                     let expected_write = relativize_write_against_root(root, out_path)?;
@@ -613,11 +625,20 @@ pub(crate) fn agent_command_spec_from_display(command: &str) -> Option<CommandSp
                     // Issue #3872: the rendered redirect target is absolute;
                     // recovery keeps the root-relative write when it falls
                     // under the command's own --root value.
+                    // Review #3938: the value must sit strictly before the
+                    // redirect — a `--root` with no value falls back to `.`
+                    // instead of parsing `>` as the root.
                     let root = words
                         .get(1..redirect)?
                         .iter()
                         .position(|word| word == "--root")
-                        .and_then(|at| words.get(1 + at + 1))
+                        .and_then(|at| {
+                            if 1 + at + 1 < redirect {
+                                words.get(1 + at + 1)
+                            } else {
+                                None
+                            }
+                        })
                         .map(String::as_str)
                         .unwrap_or(".");
                     let expected_write = relativize_write_against_root(root, out_path)?;
@@ -881,6 +902,28 @@ mod tests {
             != Some("out.json")
         {
             return Err("absolute root must anchor directly".to_string());
+        }
+        // Review #3938: the anchor is cleaned like the rendered target, so
+        // a `--root` carrying traversal segments still prefix-matches.
+        let base = display(&cwd);
+        let traversing_root = format!("{base}/sub/../tail");
+        let traversing_target = format!("{base}/tail/out.json");
+        if super::relativize_write_against_root(&traversing_root, &traversing_target).as_deref()
+            != Some("out.json")
+        {
+            return Err("traversing root must still anchor its own target".to_string());
+        }
+        // Review #3938: a `--root` with no value (immediately before the
+        // redirect) falls back to `.` instead of parsing `>` as the root.
+        let dangling = super::agent_command_spec_from_display(
+            "ripr agent verify --before a.json --after b.json --root > out.json",
+        )
+        .ok_or_else(|| "dangling --root display must still recover".to_string())?;
+        if dangling.expected_writes != ["out.json".to_string()] {
+            return Err(format!(
+                "dangling --root must recover the redirect write: {:?}",
+                dangling.expected_writes
+            ));
         }
         Ok(())
     }

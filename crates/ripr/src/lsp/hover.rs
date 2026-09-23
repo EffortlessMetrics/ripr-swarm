@@ -1649,7 +1649,7 @@ mod seam_hover_tests {
         }
         // Issue #3872: handoff redirects anchor at the resolved --root, so
         // the anchored absolute targets build from the renderer prefix.
-        let anchor = crate::agent::loop_commands::renderer_cwd_prefix();
+        let anchor = crate::testing::cwd_placeholder::renderer_cwd_prefix();
         for needle in [
             format!("--json > {anchor}target/ripr/agent/agent-packet.json"),
             format!("--json > {anchor}target/ripr/agent/agent-brief.json"),

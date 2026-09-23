@@ -1,7 +1,7 @@
 use super::markdown::{push_wrapped_paragraph, str_or, with_period};
 use super::*;
-use crate::agent::loop_commands::renderer_cwd_prefix;
 use crate::output::test_support::{read_file, repo_root};
+use crate::testing::cwd_placeholder::renderer_cwd_prefix;
 use std::path::Path;
 
 #[test]

@@ -11252,7 +11252,7 @@ fn normalize_lsp_action_argument(
     // `<cwd>/` — the same placeholder rule as the corpus and fixture
     // projections (loop_commands) — keeping the golden machine-independent
     // while still pinning the anchored shape.
-    let cwd_prefix = crate::agent::loop_commands::renderer_cwd_prefix();
+    let cwd_prefix = crate::testing::cwd_placeholder::renderer_cwd_prefix();
     let mut normalized = serde_json::Map::new();
     for (key, value) in object {
         if key == "uri"
