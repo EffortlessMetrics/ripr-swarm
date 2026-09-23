@@ -50,19 +50,32 @@ fn project_cwd_prefix(value: &mut serde_json::Value, prefix: &str) {
 }
 
 /// Project one rendered string: the bare machine prefix maps to `<cwd>/`,
-/// and so does the `shell_arg`-quoted Bash redirect form. Redirect targets
-/// render through `shell_arg`, so a checkout path carrying a space (or `+`,
-/// `@`, …) reaches expectations quoted — `> '<prefix>tail'` — while the
-/// pinned goldens carry the unquoted `<cwd>/tail` shape. Only the `> ` redirect
-/// position unquotes: the PowerShell-safe form intentionally quotes its
-/// `WriteAllText('…')` path argument on every checkout, and its goldens pin
-/// that quoted shape. Artifact tails never contain a quote, so the first
-/// closing quote after the anchored prefix ends the token; a token with no
-/// closing quote keeps the bare-prefix projection only, matching previous
-/// behavior.
+/// and so does the `shell_arg`-quoted Bash redirect form — but only when the
+/// quote comes from the machine prefix. Redirect targets render through
+/// `shell_arg`, so a checkout path carrying a space (or `+`, `@`, …) reaches
+/// expectations quoted — `> '<prefix>tail'` — while the pinned goldens carry
+/// the unquoted `<cwd>/tail` shape. When the tail itself needs quoting (for
+/// example a root carrying a space, `> '<prefix>repo root/…'`), the quoted
+/// placeholder is the correct machine-independent shape and the token is
+/// left quoted. Only the `> ` redirect position unquotes: the PowerShell-safe
+/// form intentionally quotes its `WriteAllText('…')` path argument on every
+/// checkout, and its goldens pin that quoted shape. Artifact tails never
+/// contain a quote, so the first closing quote after the anchored prefix
+/// ends the token; a token with no closing quote keeps the bare-prefix
+/// projection only, matching previous behavior.
 #[cfg(test)]
 pub(crate) fn project_cwd_text(text: &str) -> String {
     project_text_with_prefix(text, &renderer_cwd_prefix())
+}
+
+/// Mirror of `shell_arg`'s bare-token rule: the placeholder tail renders
+/// unquoted exactly when the raw tail would.
+#[cfg(test)]
+fn tail_renders_bare(tail: &str) -> bool {
+    !tail.is_empty()
+        && tail
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':'))
 }
 
 #[cfg(test)]
@@ -77,9 +90,16 @@ fn project_text_with_prefix(text: &str, prefix: &str) -> String {
         let Some(end) = after.find('\'') else {
             break;
         };
+        let tail = &after[..end];
         out.push_str(&rest[..at]);
-        out.push_str("> <cwd>/");
-        out.push_str(&after[..end]);
+        if tail_renders_bare(tail) {
+            out.push_str("> <cwd>/");
+            out.push_str(tail);
+        } else {
+            out.push_str("> '<cwd>/");
+            out.push_str(tail);
+            out.push('\'');
+        }
         rest = &after[end + 1..];
     }
     out.push_str(rest);
@@ -120,6 +140,25 @@ mod tests {
         assert_eq!(
             project_text_with_prefix(&format!("> '{prefix}target/out.json"), prefix),
             "> '<cwd>/target/out.json"
+        );
+    }
+
+    #[test]
+    fn hostile_tail_keeps_its_quoted_shape() {
+        // The quote here comes from the tail (`repo root`), not the machine
+        // prefix: the quoted placeholder is the stable golden shape.
+        let prefix = "C:/work/repo/";
+        let rendered = format!(
+            "> {}",
+            shell_arg(&format!("{prefix}repo root/target/out.json"))
+        );
+        assert_eq!(
+            rendered, "> 'C:/work/repo/repo root/target/out.json'",
+            "the hostile tail must reach the test quoted"
+        );
+        assert_eq!(
+            project_text_with_prefix(&rendered, prefix),
+            "> '<cwd>/repo root/target/out.json'"
         );
     }
 
