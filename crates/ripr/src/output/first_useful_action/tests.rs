@@ -2025,3 +2025,173 @@ fn markdown_verify_section_present_for_actionable() -> Result<(), String> {
     );
     Ok(())
 }
+
+// ── #3906: carried repair start ──────────────────────────────────────────
+
+const EXACT_LINE_COMMENTS: &str =
+    "fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json";
+const EXACT_LINE_REPAIR: &str =
+    "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before";
+
+fn exact_line_comments() -> Result<Value, String> {
+    let path = repo_root()?.join(EXACT_LINE_COMMENTS);
+    serde_json::from_str(&read_file(&path)?).map_err(|err| format!("parse comments: {err}"))
+}
+
+fn guidance_only_input(pr_guidance: &Value) -> Result<FirstUsefulActionInput, String> {
+    let mut input = bare_input();
+    input.generated_at = "2026-05-09T12:00:00Z".to_string();
+    input.pr_guidance_path = Some(EXACT_LINE_COMMENTS.to_string());
+    input.pr_guidance_json =
+        Some(Ok(serde_json::to_string(pr_guidance)
+            .map_err(|err| format!("serialize comments: {err}"))?));
+    Ok(input)
+}
+
+fn report_json(input: FirstUsefulActionInput) -> Result<Value, String> {
+    let report = build_first_useful_action_report(input);
+    serde_json::from_str(&render_first_useful_action_json(&report)?)
+        .map_err(|err| format!("parse report: {err}"))
+}
+
+fn remove_repair_command(card: &mut Value) -> Result<(), String> {
+    card.get_mut("llm_guidance")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "card has no llm_guidance object".to_string())?
+        .remove("repair_command")
+        .map(|_| ())
+        .ok_or_else(|| "card carried no repair_command to remove".to_string())
+}
+
+fn assert_no_repair_loop_command(rendered: &str) {
+    assert!(
+        !rendered.contains("agent repair"),
+        "no carried repair start, so none may appear: {rendered}"
+    );
+    assert!(
+        !rendered.contains("agent start"),
+        "a bare seam id must not become an agent start: {rendered}"
+    );
+}
+
+#[test]
+fn first_useful_action_matches_repair_start_fixture() -> Result<(), String> {
+    let repo_root = repo_root()?;
+    let base = repo_root.join("fixtures/boundary_gap/expected/first-useful-action/repair-start");
+    let report = build_first_useful_action_report(guidance_only_input(&exact_line_comments()?)?);
+    assert_eq!(
+        render_first_useful_action_json(&report)?,
+        read_file(&base.join("first-useful-action.json"))?.trim_end()
+    );
+    assert_eq!(
+        render_first_useful_action_markdown(&report),
+        read_file(&base.join("first-useful-action.md"))?
+    );
+    Ok(())
+}
+
+#[test]
+fn carried_repair_start_leads_a_fresh_pr_and_its_absence_keeps_the_missing_proof_route()
+-> Result<(), String> {
+    let comments = exact_line_comments()?;
+    // Fixture construction: the canonical card really carries the command.
+    assert_eq!(
+        comments
+            .pointer("/comments/0/llm_guidance/repair_command")
+            .and_then(Value::as_str),
+        Some(EXACT_LINE_REPAIR)
+    );
+
+    let with = report_json(guidance_only_input(&comments)?)?;
+    assert_eq!(with["status"], "actionable");
+    assert_eq!(with["action_kind"], "write_focused_test");
+    assert_eq!(with["commands"]["repair"], EXACT_LINE_REPAIR);
+    assert_eq!(with["selected"]["source"], "pr_guidance");
+    assert_eq!(with["selected"]["seam_id"], "8f7fa8644fd12280");
+    assert_eq!(with["selected"]["path"], "src/pricing.rs");
+    assert_eq!(with["selected"]["line"], 88);
+    assert_eq!(
+        with["commands"]["receipt"], comments["comments"][0]["receipt_command"],
+        "the receipt command is carried from the card root"
+    );
+    assert!(with["commands"].get("assistant_proof").is_none());
+    assert!(with["fallback"].is_null());
+    let markdown = render_first_useful_action_markdown(&build_first_useful_action_report(
+        guidance_only_input(&comments)?,
+    ));
+    assert!(markdown.contains(&format!("## Start Repair\n\n`{EXACT_LINE_REPAIR}`")));
+    assert!(markdown.contains(&format!("- Repair start: `{EXACT_LINE_REPAIR}`")));
+
+    let mut without_card = comments.clone();
+    let card = without_card
+        .pointer_mut("/comments/0")
+        .ok_or_else(|| "comments[0] missing".to_string())?;
+    remove_repair_command(card)?;
+    let input = guidance_only_input(&without_card)?;
+    let without = build_first_useful_action_report(input);
+    let rendered = render_first_useful_action_json(&without)?;
+    let without: Value =
+        serde_json::from_str(&rendered).map_err(|err| format!("parse report: {err}"))?;
+    assert_eq!(without["status"], "missing_required_artifact");
+    assert_eq!(without["action_kind"], "generate_missing_artifact");
+    assert!(without["commands"].get("repair").is_none());
+    assert_no_repair_loop_command(&rendered);
+    Ok(())
+}
+
+#[test]
+fn carried_repair_start_selects_every_field_from_the_carrying_card() -> Result<(), String> {
+    let comments = exact_line_comments()?;
+    let card = comments
+        .pointer("/comments/0")
+        .cloned()
+        .ok_or_else(|| "comments[0] missing".to_string())?;
+    let mut uncarried = card.clone();
+    remove_repair_command(&mut uncarried)?;
+    uncarried["seam_id"] = Value::from("seam-without-flip");
+    uncarried["placement"]["path"] = Value::from("src/other.rs");
+    uncarried["placement"]["line"] = Value::from(7);
+    let guidance = serde_json::json!({
+        "comments": [uncarried],
+        "summary_only": [card],
+    });
+    let report = report_json(guidance_only_input(&guidance)?)?;
+    assert_eq!(report["commands"]["repair"], EXACT_LINE_REPAIR);
+    assert_eq!(report["selected"]["seam_id"], "8f7fa8644fd12280");
+    assert_eq!(report["selected"]["path"], "src/pricing.rs");
+    assert_eq!(report["selected"]["line"], 88);
+    assert!(
+        !serde_json::to_string(&report)
+            .map_err(|err| format!("serialize: {err}"))?
+            .contains("seam-without-flip"),
+        "the uncarried card must not lend its identity to the carried command"
+    );
+    Ok(())
+}
+
+#[test]
+fn carried_repair_start_does_not_preempt_post_repair_proof() -> Result<(), String> {
+    let mut input = guidance_only_input(&exact_line_comments()?)?;
+    input.assistant_proof_path = Some("proof.json".to_string());
+    input.assistant_proof_json = Some(Ok(r#"{
+        "seam": {"seam_id": "8f7fa8644fd12280", "seam_kind": "predicate_boundary", "grip_class": "weakly_gripped"},
+        "recommendation": {}
+    }"#
+    .to_string()));
+    let report = report_json(input)?;
+    assert_eq!(report["status"], "actionable");
+    assert_eq!(report["selected"]["source"], "assistant_proof");
+    assert!(report["commands"].get("repair").is_none());
+    Ok(())
+}
+
+#[test]
+fn blank_carried_repair_start_is_not_a_repair_start() -> Result<(), String> {
+    let mut comments = exact_line_comments()?;
+    comments["comments"][0]["llm_guidance"]["repair_command"] = Value::from("  ");
+    let input = guidance_only_input(&comments)?;
+    let rendered = render_first_useful_action_json(&build_first_useful_action_report(input))?;
+    assert!(rendered.contains(r#""status": "missing_required_artifact""#));
+    assert_no_repair_loop_command(&rendered);
+    Ok(())
+}

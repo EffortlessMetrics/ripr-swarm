@@ -7354,6 +7354,10 @@ language = "rust"
         );
         assert!(summary.contains(".action_kind // \"unknown\""));
         assert!(summary.contains(".commands.context_packet // \"not_available\""));
+        // #3906: the first-action summary surfaces the carried repair start.
+        assert!(summary.contains(".commands.repair // \"not_available\""));
+        assert!(summary.contains("Repair start: \\`$first_repair\\`"));
+        assert!(summary.contains("Repair start: \\`$action_repair\\`"));
         assert!(summary.contains("missing_start_here"));
         assert!(summary.contains("State: \\`missing_artifact\\`"));
         assert!(summary.contains(
