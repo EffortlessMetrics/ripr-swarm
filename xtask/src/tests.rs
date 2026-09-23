@@ -47121,6 +47121,7 @@ level = "deny"
 name = "clippy::same_length_and_capacity"
 level = "deny"
 activate_when_msrv = "1.94"
+blocked_by = "receipts"
 "#;
     let (entries, violations) = super::parse_clippy_lints_ledger(ledger);
     assert!(
@@ -47138,6 +47139,19 @@ activate_when_msrv = "1.94"
             ("clippy::map_err_ignore", false),
             ("clippy::same_length_and_capacity", true),
         ]
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .find(|entry| entry.is_planned)
+            .and_then(|entry| entry.blocked_by.as_deref()),
+        Some("receipts")
+    );
+    assert!(
+        entries
+            .iter()
+            .filter(|entry| !entry.is_planned)
+            .all(|entry| entry.blocked_by.is_none())
     );
 }
 
@@ -47643,7 +47657,7 @@ activate_when_msrv = "1.93"
 }
 
 #[test]
-fn check_lint_policy_requires_reason_when_activate_when_msrv_already_met() {
+fn check_lint_policy_requires_blocked_by_when_activate_when_msrv_already_met() {
     let cargo = r#"
 [workspace.package]
 rust-version = "1.95"
@@ -47653,14 +47667,16 @@ rust-version = "1.95"
 name = "clippy::indexing_slicing"
 level = "deny"
 activate_when_msrv = "1.93"
+reason = "per-call expect receipts, not MSRV"
 "#;
     let violations = super::collect_lint_policy_violations(cargo, overdue);
     assert!(
         violations.iter().any(|row| {
             row.contains("clippy::indexing_slicing")
                 && row.contains("already met by workspace rust-version `1.95`")
+                && row.contains("`blocked_by`")
         }),
-        "overdue activate_when_msrv without reason must fail: {violations:?}"
+        "overdue activate_when_msrv without blocked_by must fail even when reason names a blocker: {violations:?}"
     );
 
     let recorded = r#"
@@ -47668,12 +47684,12 @@ activate_when_msrv = "1.93"
 name = "clippy::indexing_slicing"
 level = "deny"
 activate_when_msrv = "1.93"
-reason = "per-call expect receipts, not MSRV"
+blocked_by = "per-call expect receipts, not MSRV"
 "#;
     let violations = super::collect_lint_policy_violations(cargo, recorded);
     assert!(
         violations.is_empty(),
-        "non-MSRV reason must keep an overdue planned lint: {violations:?}"
+        "non-MSRV blocked_by must keep an overdue planned lint when reason is empty: {violations:?}"
     );
 
     let msrv_only = r#"
@@ -47681,16 +47697,18 @@ reason = "per-call expect receipts, not MSRV"
 name = "clippy::indexing_slicing"
 level = "deny"
 activate_when_msrv = "1.93"
-reason = "waiting for Rust 1.97"
+reason = "per-call expect receipts, not MSRV"
+blocked_by = "waiting for Rust 1.97"
 "#;
     let violations = super::collect_lint_policy_violations(cargo, msrv_only);
     assert!(
         violations.iter().any(|row| {
             row.contains("clippy::indexing_slicing")
+                && row.contains("`blocked_by`")
                 && row.contains("is MSRV-only")
                 && row.contains("waiting for Rust 1.97")
         }),
-        "overdue activate_when_msrv with an MSRV-only reason must fail: {violations:?}"
+        "overdue activate_when_msrv with an MSRV-only blocked_by must fail even when reason names a blocker: {violations:?}"
     );
 
     let clippy_unrecognized = r#"
@@ -47698,12 +47716,12 @@ reason = "waiting for Rust 1.97"
 name = "clippy::manual_pop_if"
 level = "warn"
 activate_when_msrv = "1.95"
-reason = "Rust 1.95.0 Clippy does not recognize this lint; promote only after the pinned toolchain supports it."
+blocked_by = "Rust 1.95.0 Clippy does not recognize this lint; promote only after the pinned toolchain supports it."
 "#;
     let violations = super::collect_lint_policy_violations(cargo, clippy_unrecognized);
     assert!(
         violations.is_empty(),
-        "Clippy-recognition blocker must count as non-MSRV: {violations:?}"
+        "Clippy-recognition blocked_by must count as non-MSRV: {violations:?}"
     );
 
     let future = r#"
@@ -47715,7 +47733,7 @@ activate_when_msrv = "1.97"
     let violations = super::collect_lint_policy_violations(cargo, future);
     assert!(
         violations.is_empty(),
-        "future activate_when_msrv does not require a reason yet: {violations:?}"
+        "future activate_when_msrv does not require a blocked_by yet: {violations:?}"
     );
 
     let single_quoted = r#"
@@ -47723,7 +47741,7 @@ activate_when_msrv = "1.97"
 name = 'clippy::indexing_slicing'
 level = 'deny'
 activate_when_msrv = '1.93'
-reason = 'per-call expect receipts, not MSRV'
+blocked_by = 'per-call expect receipts, not MSRV'
 "#;
     let violations = super::collect_lint_policy_violations(cargo, single_quoted);
     assert!(
@@ -47736,32 +47754,40 @@ reason = 'per-call expect receipts, not MSRV'
 name = 'clippy::indexing_slicing'
 level = 'deny'
 activate_when_msrv = '1.93'
+reason = 'per-call expect receipts, not MSRV'
 "#;
     let violations = super::collect_lint_policy_violations(cargo, single_quoted_overdue);
     assert!(
         violations.iter().any(|row| {
             row.contains("clippy::indexing_slicing")
                 && row.contains("already met by workspace rust-version `1.95`")
+                && row.contains("`blocked_by`")
         }),
-        "single-quoted overdue activate_when_msrv without reason must fail: {violations:?}"
+        "single-quoted overdue activate_when_msrv without blocked_by must fail: {violations:?}"
     );
 }
 
 #[test]
-fn planned_reason_is_msrv_only_strips_version_delays_only() {
-    assert!(super::planned_reason_is_msrv_only(""));
-    assert!(super::planned_reason_is_msrv_only("   "));
-    assert!(super::planned_reason_is_msrv_only("waiting for Rust 1.97"));
-    assert!(super::planned_reason_is_msrv_only("requires Rust 1.97"));
-    assert!(super::planned_reason_is_msrv_only("MSRV"));
-    assert!(super::planned_reason_is_msrv_only("available since 1.93"));
-    assert!(!super::planned_reason_is_msrv_only(
+fn planned_blocker_text_is_msrv_only_strips_version_delays_only() {
+    assert!(super::planned_blocker_text_is_msrv_only(""));
+    assert!(super::planned_blocker_text_is_msrv_only("   "));
+    assert!(super::planned_blocker_text_is_msrv_only(
+        "waiting for Rust 1.97"
+    ));
+    assert!(super::planned_blocker_text_is_msrv_only(
+        "requires Rust 1.97"
+    ));
+    assert!(super::planned_blocker_text_is_msrv_only("MSRV"));
+    assert!(super::planned_blocker_text_is_msrv_only(
+        "available since 1.93"
+    ));
+    assert!(!super::planned_blocker_text_is_msrv_only(
         "per-call expect receipts, not MSRV"
     ));
-    assert!(!super::planned_reason_is_msrv_only(
+    assert!(!super::planned_blocker_text_is_msrv_only(
         "Rust 1.95.0 Clippy does not recognize this lint"
     ));
-    assert!(!super::planned_reason_is_msrv_only(
+    assert!(!super::planned_blocker_text_is_msrv_only(
         "needs a reviewed clippy.toml disallowed-fields list"
     ));
 }

@@ -295,6 +295,13 @@ are scoped or reviewed.
 
 ### Changed
 
+- `cargo xtask check-lint-policy` now requires a non-MSRV `blocked_by` on
+  every `[[planned]]` row whose `activate_when_msrv` is already met by
+  workspace `rust-version`. Empty or MSRV-only `blocked_by` fails. A
+  narrative `reason` does not satisfy the gate. The four current planned
+  lints copy their existing `reason` into `blocked_by` and are not promoted
+  ([#3990](https://github.com/EffortlessMetrics/ripr-swarm/issues/3990)).
+
 - `cargo xtask check-allow-attributes` now fails a
   `.ripr/allow-attributes.txt` row whose `max_count` is higher than the
   current source count, including a row whose suppression is gone. The
