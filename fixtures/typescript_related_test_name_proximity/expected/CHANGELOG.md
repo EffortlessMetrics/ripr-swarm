@@ -323,3 +323,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_related_test_name_proximity (2)
+
+Reason:
+RIPR-SPEC-0027: a TypeScript test is related to an owner only when it references the owner; same-stem, describe-name and test-name proximity no longer relate a test that never names the owner (F5-9)
+
+Command:
+`cargo xtask goldens bless typescript_related_test_name_proximity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -570,6 +570,15 @@ fn heuristic_relation(
     if !heuristic_relation_allowed(test, owner, alias_map, workspace_root) {
         return None;
     }
+    // A test is related to an owner only when it references the owner
+    // (RIPR-SPEC-0027). File-stem proximity and describe/test names are ranking
+    // labels for a test that already references the owner without a recognized
+    // call shape; they never relate a test that only exercises a sibling owner
+    // in the same module (F5-9: `loyaltyPrice` was linked to tests that only
+    // call `discountedTotal`).
+    if !test_references_owner(test, owner, alias_map, workspace_root) {
+        return None;
+    }
     if same_file_proximity_related(test, owner) {
         return Some(TypeScriptRelationKind::SameFileProximity);
     }
@@ -580,6 +589,97 @@ fn heuristic_relation(
         return Some(TypeScriptRelationKind::TestName);
     }
     None
+}
+
+/// Whether the test body references the changed owner by name, even when the
+/// reference is not a recognized direct call.
+///
+/// Counted references, each outside comments and string literals:
+///
+/// - the bare owner identifier (`expect(loyaltyPrice).toBeDefined()`,
+///   `const fn = loyaltyPrice`, `<Badge />`), unless the test body declares a
+///   local of the same name or the identifier is an object-literal key;
+/// - an import-renamed local (`import { loyaltyPrice as lp }`) or a namespace
+///   member (`pricing.loyaltyPrice`) whose import resolves to the owner module.
+///
+/// A test that names the owner only in its title, its `describe(...)` title, or
+/// its file stem does not reference the owner, and neither does an arbitrary
+/// object-member use such as `order.loyaltyPrice(...)`, which the direct-call
+/// rule already refuses to relate.
+fn test_references_owner(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let body = &test.body_text;
+    if !local_identifier_declared_in_test_body(body, &owner.name)
+        && contains_identifier_reference(body, &owner.name)
+    {
+        return true;
+    }
+    test.imports_in_file.iter().any(|import| {
+        if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
+            return false;
+        }
+        if import.namespace {
+            return contains_member_reference(body, &import.local, &owner.name);
+        }
+        import.imported.as_deref() == Some(owner.name.as_str())
+            && !local_identifier_declared_in_test_body(body, &import.local)
+            && contains_identifier_reference(body, &import.local)
+    })
+}
+
+/// Bare identifier reference: identifier boundaries on both sides, not a
+/// member property (`x.name`), not an object-literal key (`{ name: 1 }`), and
+/// not inside a comment or string literal.
+fn contains_identifier_reference(body_text: &str, identifier: &str) -> bool {
+    if !is_safe_javascript_identifier(identifier) {
+        return false;
+    }
+    body_text.match_indices(identifier).any(|(idx, _)| {
+        let end = idx + identifier.len();
+        has_member_call_boundary(body_text, idx)
+            && body_text[end..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch))
+            && !is_object_literal_key(body_text, idx, end)
+            && !line_prefix_looks_like_comment_or_string(body_text, idx)
+            && !inside_block_comment(body_text, idx)
+    })
+}
+
+/// `object.property` with identifier boundaries, outside comments and strings.
+fn contains_member_reference(body_text: &str, object_name: &str, property_name: &str) -> bool {
+    if !is_safe_javascript_identifier(object_name) || !is_safe_javascript_identifier(property_name)
+    {
+        return false;
+    }
+    let needle = format!("{object_name}.{property_name}");
+    body_text.match_indices(&needle).any(|(idx, _)| {
+        has_member_call_boundary(body_text, idx)
+            && body_text[idx + needle.len()..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch))
+            && !line_prefix_looks_like_comment_or_string(body_text, idx)
+            && !inside_block_comment(body_text, idx)
+    })
+}
+
+fn is_object_literal_key(body_text: &str, start: usize, end: usize) -> bool {
+    let next_is_colon = body_text[end..]
+        .trim_start()
+        .strip_prefix(':')
+        .is_some_and(|rest| !rest.starts_with(':'));
+    let previous_opens_entry = body_text[..start]
+        .trim_end()
+        .chars()
+        .next_back()
+        .is_some_and(|ch| ch == '{' || ch == ',');
+    next_is_colon && previous_opens_entry
 }
 
 fn heuristic_owner_supported(owner: &TypeScriptOwner) -> bool {
