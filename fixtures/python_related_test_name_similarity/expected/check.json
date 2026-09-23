@@ -43,7 +43,7 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
        },
-      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `apply_discount`; relation is uncertain", "infection yes: Changed Python return expression can alter the owner return value: `return amount - 10`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches returned value: return amount - 10 (line 2)", "related test tests/test_checkout.py:1 test_apply_discount_boundary_case uses unknown unknown oracle"],
+      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `apply_discount`; relation is uncertain", "infection yes: Changed Python return expression can alter the owner return value: `return amount - 10`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches returned value: return amount - 10 (line 2)", "related test tests/test_checkout.py:4 test_apply_discount_boundary_case uses unknown unknown oracle"],
       "flow_sinks": [
         {"kind":"return_value","text":"return amount - 10","line":2}
       ],
@@ -66,7 +66,7 @@
         {
           "name": "test_apply_discount_boundary_case",
           "file": "tests/test_checkout.py",
-          "line": 1,
+          "line": 4,
           "oracle_strength": "unknown",
           "oracle_kind": "unknown",
           "oracle": ""

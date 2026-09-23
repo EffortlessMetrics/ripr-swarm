@@ -324,3 +324,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_dynamic_route_registration_limit (2)
+
+Reason:
+RIPR-SPEC-0028: a same-stem Python test that never references the owner is not related; reach moves from weak to no and the class stays static_unknown
+
+Command:
+`cargo xtask goldens bless python_dynamic_route_registration_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

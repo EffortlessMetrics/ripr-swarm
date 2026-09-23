@@ -239,3 +239,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_changed_sink_non_delta_operand (2)
+
+Reason:
+RIPR-SPEC-0028: a same-stem Python test that never references the owner is not related; reach moves from weak to no and the class stays static_unknown
+
+Command:
+`cargo xtask goldens bless python_adversarial_changed_sink_non_delta_operand --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

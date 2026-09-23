@@ -299,3 +299,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_fixture_name_relation (2)
+
+Reason:
+RIPR-SPEC-0028: a heuristic Python relation requires the test to reference the owner; the fixture test now references the owner without a call, so the heuristic link is kept
+
+Command:
+`cargo xtask goldens bless python_fixture_name_relation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
