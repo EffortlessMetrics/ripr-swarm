@@ -1107,9 +1107,7 @@ mod tests {
             );
             Ok(())
         })();
-        if let Err(error) = remove_fixture_tree(&repo) {
-            return Err(error);
-        }
+        remove_fixture_tree(&repo)?;
         outcome
     }
 
