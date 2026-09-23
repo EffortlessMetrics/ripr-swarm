@@ -11699,8 +11699,9 @@ fn agent_status_resumes_the_current_awaiting_repair_attempt()
     Ok(())
 }
 
-/// Two attempts, one current: the attempt prepared before HEAD moved cannot
-/// be resumed, so status resumes the one prepared at the current HEAD. Two
+/// Two attempts, one current: the attempt prepared before history was
+/// rewritten (HEAD no longer descends from its prepared head) cannot be
+/// resumed, so status resumes the one prepared at the current HEAD. Two
 /// current attempts are ambiguous, and status then selects nothing and lists
 /// both commands rather than guessing the newest.
 #[test]
@@ -11708,7 +11709,25 @@ fn agent_status_resumes_only_the_current_attempt_and_refuses_to_guess()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = repair_route_workspace("status several")?;
     let earlier = repair_route_before(&root)?;
-    repair_route_commit(&root, "move HEAD")?;
+    // Rewrite the commit the earlier attempt was prepared at. A commit on top
+    // of it would not do: the after phase admits descendant commits, and so
+    // does status.
+    let amend = run_command(
+        "git",
+        Some(&root),
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "--amend",
+            "--allow-empty",
+            "-m",
+            "fixture source, rewritten",
+        ],
+    )?;
+    assert!(amend.status.success(), "{amend:?}");
     let current = repair_route_before(&root)?;
 
     let report = repair_route_status(&root)?;
@@ -12232,6 +12251,427 @@ fn agent_status_is_complete_only_for_an_advisory_improved_receipt_at_head()
     assert!(
         repair_route_warning_kinds(&report).contains(&"repair_receipt_unconfirmed".to_string()),
         "{report:#}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+fn repair_route_amend(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let amend = run_command(
+        "git",
+        Some(root),
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-a",
+            "--amend",
+            "--allow-empty",
+            "--no-edit",
+        ],
+    )?;
+    if !amend.status.success() {
+        return Err(format!("amend failed: {amend:?}").into());
+    }
+    Ok(())
+}
+
+fn repair_route_head(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    git_stdout(root, &["rev-parse", "HEAD"])
+}
+
+/// N1 (#3982 x #3986): the after phase admits a focused test committed on
+/// top of the prepared head, so status must too. Status resumes the attempt
+/// with its recorded after command (not a new attempt whose before phase
+/// cannot find the seam once the test closes the gap), and after the finish
+/// the attempt is current at the HEAD its after phase recorded, even though
+/// that is not the prepared head. Rerunning the finished after phase says it
+/// already finished and what to run next (N4). An advisory improved receipt
+/// reads "static grip improved (receipt advisory)", never "gap closed" (N9).
+#[test]
+fn agent_status_follows_a_focused_test_committed_between_the_phases()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status committed test")?;
+    let printed = repair_route_before(&root)?;
+    let attempt_id = repair_route_attempt_id(&printed)?;
+    let prepared_head = repair_route_head(&root)?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_BOUNDARY_TEST}"),
+    )?;
+    run_git(&root, &["add", "tests"])?;
+    repair_route_commit(&root, "test: pin the discount boundary")?;
+    let committed_head = repair_route_head(&root)?;
+    assert_ne!(committed_head, prepared_head, "precondition: HEAD moved");
+
+    // Before the after phase: the attempt is resumable at the descendant HEAD.
+    let report = repair_route_status(&root)?;
+    let (step, command) = repair_route_next(&report);
+    assert_eq!(step, "repair_attempt_after", "{report:#}");
+    assert_eq!(command, printed, "{report:#}");
+    let attempt = repair_route_attempt(&report, &attempt_id)?;
+    assert_eq!(attempt["disposition"], "resumable", "{report:#}");
+    assert_eq!(attempt["head_current"], true, "{report:#}");
+    assert!(
+        !report["next_command"]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("start a new attempt"),
+        "{report:#}"
+    );
+
+    // The recorded after command succeeds at that HEAD.
+    assert_success(&repair_route_after(&root, &attempt_id));
+    let manifest = repair_route_manifest(&root, &attempt_id)?;
+    assert_eq!(manifest["state"], "ready_to_finish", "{manifest:#}");
+    assert_eq!(
+        manifest["after"]["repository_head"],
+        committed_head.as_str(),
+        "precondition: the after verdict was recorded at the committed HEAD"
+    );
+    assert_eq!(manifest["repository_head"], prepared_head.as_str());
+    let receipt: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/reports/agent-receipt.json"),
+    )?)?;
+    assert_eq!(receipt["status"], "advisory", "{receipt:#}");
+    assert_eq!(receipt["provenance"]["movement"], "improved", "{receipt:#}");
+
+    // After the finish: current at its after head, so complete, not stale.
+    let report = repair_route_status(&root)?;
+    assert_eq!(report["status"], "complete", "{report:#}");
+    assert!(repair_route_warning_kinds(&report).is_empty(), "{report:#}");
+    let attempt = repair_route_attempt(&report, &attempt_id)?;
+    assert_eq!(attempt["disposition"], "finished", "{report:#}");
+    assert_eq!(attempt["head_current"], true, "{report:#}");
+    let markdown = repair_route_markdown(&root)?;
+    assert!(
+        markdown.contains("static grip improved (receipt advisory)"),
+        "{markdown}"
+    );
+    assert!(!markdown.contains("gap closed at"), "{markdown}");
+
+    // N4: the finished after phase is not rerun, and the refusal says so.
+    let rerun = repair_route_after(&root, &attempt_id);
+    assert_failure(&rerun);
+    let stderr = String::from_utf8_lossy(&rerun.stderr);
+    let root_arg = shell_single_quoted(&root.to_string_lossy().replace('\\', "/"));
+    for needle in [
+        "already finished".to_string(),
+        "state `ready_to_finish`".to_string(),
+        "target/ripr/reports/agent-receipt.json".to_string(),
+        format!("`ripr agent status --root {root_arg}`"),
+        format!(
+            "`ripr agent repair --root {root_arg} --seam-id {REPAIR_ROUTE_SEAM} --phase before`"
+        ),
+    ] {
+        assert!(stderr.contains(&needle), "lacks `{needle}`:\n{stderr}");
+    }
+    assert!(!stderr.contains("ReadyToFinish"), "{stderr}");
+    assert!(!stderr.contains("requires awaiting_edit"), "{stderr}");
+    assert_eq!(
+        repair_route_manifest(&root, &attempt_id)?["state"],
+        "ready_to_finish",
+        "the refused rerun must not move the attempt"
+    );
+
+    // A later commit makes the evidence stale; the warning names two heads.
+    repair_route_commit(&root, "move past the receipt")?;
+    let moved_head = repair_route_head(&root)?;
+    let report = repair_route_status(&root)?;
+    assert_eq!(report["status"], "warning", "{report:#}");
+    let stale = report["warnings"]
+        .as_array()
+        .and_then(|warnings| {
+            warnings
+                .iter()
+                .find(|warning| warning["kind"] == "repair_receipt_stale")
+        })
+        .and_then(|warning| warning["message"].as_str())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        stale.contains(&format!("at HEAD `{committed_head}`"))
+            && stale.contains(&format!("HEAD is now `{moved_head}`"))
+            && stale.contains("reports static grip improved (receipt advisory)"),
+        "{report:#}"
+    );
+    assert!(!stale.contains("gap closed"), "{stale}");
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// POSIX single quotes around a path, as the status command templates print.
+fn shell_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// N1, rewritten history: when HEAD no longer descends from the prepared
+/// head, the after phase refuses before finishing and names two recoveries.
+/// Status reports that same refusal and the reset recovery instead of only
+/// "prepared at a different HEAD", and following the reset makes the same
+/// attempt resumable again.
+#[test]
+fn agent_status_reports_the_after_phase_recovery_for_rewritten_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status rewritten history")?;
+    let printed = repair_route_before(&root)?;
+    let attempt_id = repair_route_attempt_id(&printed)?;
+    let prepared_head = repair_route_head(&root)?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_BOUNDARY_TEST}"),
+    )?;
+    repair_route_amend(&root)?;
+    let amended = repair_route_head(&root)?;
+    let ancestry = run_command(
+        "git",
+        Some(&root),
+        &["merge-base", "--is-ancestor", &prepared_head, &amended],
+    )?;
+    assert!(
+        !ancestry.status.success(),
+        "precondition: history rewritten"
+    );
+
+    let reset_sentence = format!(
+        "`git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged"
+    );
+    let report = repair_route_status(&root)?;
+    let attempt = repair_route_attempt(&report, &attempt_id)?;
+    assert_eq!(
+        attempt["disposition"], "prepared_at_other_head",
+        "{report:#}"
+    );
+    assert_eq!(attempt["head_current"], false, "{report:#}");
+    let (step, _) = repair_route_next(&report);
+    assert_eq!(step, "repair_attempt_before", "{report:#}");
+    let reason = report["next_command"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    for needle in [
+        "does not descend from",
+        reset_sentence.as_str(),
+        printed.trim_start_matches("ripr "),
+    ] {
+        assert!(reason.contains(needle), "lacks `{needle}`: {reason}");
+    }
+
+    // The after phase gives the same recovery.
+    let refused = repair_route_after(&root, &attempt_id);
+    assert_failure(&refused);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains(&reset_sentence), "{stderr}");
+    assert_eq!(
+        repair_route_manifest(&root, &attempt_id)?["state"],
+        "awaiting_edit"
+    );
+
+    // Following it resumes the same attempt.
+    run_git(&root, &["reset", "-q", "--soft", &prepared_head])?;
+    let report = repair_route_status(&root)?;
+    let (step, command) = repair_route_next(&report);
+    assert_eq!(step, "repair_attempt_after", "{report:#}");
+    assert_eq!(command, printed, "{report:#}");
+    assert_success(&repair_route_after(&root, &attempt_id));
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// N6: an after phase refused for changed analysis inputs prints the changed
+/// path and the recovery before its terse final error. The attempt records
+/// all of it, so status repeats the named cause and recovery, not only the
+/// final error line.
+#[test]
+fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status named refusal")?;
+    let printed = repair_route_before(&root)?;
+    let attempt_id = repair_route_attempt_id(&printed)?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_BOUNDARY_TEST}"),
+    )?;
+    let manifest_path = root.join("Cargo.toml");
+    let original_manifest = std::fs::read_to_string(&manifest_path)?;
+    std::fs::write(
+        &manifest_path,
+        format!("{original_manifest}\n[dependencies]\n"),
+    )?;
+
+    let refused = repair_route_after(&root, &attempt_id);
+    assert_failure(&refused);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("ripr: analysis inputs changed after the before phase: Cargo.toml."),
+        "precondition: the after phase names the changed input:\n{stderr}"
+    );
+
+    let manifest = repair_route_manifest(&root, &attempt_id)?;
+    let recorded = manifest["last_after_refusal"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    for needle in [
+        "analysis input identities differ",
+        "Analysis inputs changed after the before phase: Cargo.toml",
+        "To recover: restore those files to their before-phase state",
+    ] {
+        assert!(recorded.contains(needle), "lacks `{needle}`: {recorded}");
+    }
+    let report = repair_route_status(&root)?;
+    let (step, command) = repair_route_next(&report);
+    assert_eq!(step, "repair_attempt_after", "{report:#}");
+    assert_eq!(command, printed);
+    let reason = report["next_command"]["reason"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        reason.contains("was refused")
+            && reason.contains("Cargo.toml")
+            && reason.contains("git checkout"),
+        "{reason}"
+    );
+    assert!(
+        repair_route_markdown(&root)?
+            .contains("Analysis inputs changed after the before phase: Cargo.toml"),
+        "the Markdown view must carry the named cause"
+    );
+
+    std::fs::write(&manifest_path, original_manifest)?;
+    assert_success(&repair_route_after(&root, &attempt_id));
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+const REPAIR_ROUTE_SHIPPING_SEAM: &str = "59fe980b7be4bc3c";
+
+/// A second weakly gripped seam next to the boundary-gap one.
+fn repair_route_two_seam_workspace(label: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let root = repair_route_workspace(label)?;
+    let mut source = std::fs::read_to_string(root.join("src/lib.rs"))?;
+    source.push_str("\npub fn shipping_fee(weight: i32, heavy_limit: i32) -> i32 {\n    if weight >= heavy_limit {\n        weight + 15\n    } else {\n        weight\n    }\n}\n");
+    std::fs::write(root.join("src/lib.rs"), source)?;
+    std::fs::write(
+        root.join("tests/shipping.rs"),
+        "use boundary_gap_fixture::shipping_fee;\n\n#[test]\nfn light_parcels_cost_the_base() {\n    assert_eq!(shipping_fee(1, 10), 1);\n}\n\n#[test]\nfn heavy_parcels_cost_more() {\n    assert_eq!(shipping_fee(100, 10), 115);\n}\n",
+    )?;
+    run_git(&root, &["add", "src", "tests"])?;
+    repair_route_commit(&root, "second seam")?;
+    Ok(root)
+}
+
+/// N3: the workflow keeps one receipt. When a later attempt's after phase
+/// replaces it, the earlier attempt's receipt is reported as superseded by
+/// that attempt (not "no receipt issued"), and the warning names the restart
+/// for its seam in case its gap is still open.
+#[test]
+fn agent_status_reports_a_receipt_superseded_by_a_later_attempt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_two_seam_workspace("status superseded receipt")?;
+    let first = repair_route_attempt_id(&repair_route_before(&root)?)?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_NON_DISCRIMINATING_TEST}"),
+    )?;
+    assert_success(&repair_route_after(&root, &first));
+    let report = repair_route_status(&root)?;
+    assert_eq!(
+        repair_route_attempt(&report, &first)?["disposition"],
+        "gap_open",
+        "precondition: the first attempt's own receipt leaves its gap open"
+    );
+    run_git(&root, &["add", "tests"])?;
+    repair_route_commit(&root, "first attempt's test")?;
+
+    let root_arg = root.to_string_lossy().into_owned();
+    let second_before = run_ripr(&[
+        "agent",
+        "repair",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        REPAIR_ROUTE_SHIPPING_SEAM,
+        "--phase",
+        "before",
+    ]);
+    assert_success(&second_before);
+    let second = repair_route_attempt_id(
+        String::from_utf8_lossy(&second_before.stderr)
+            .lines()
+            .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
+            .ok_or("second before phase printed no attempt command")?,
+    )?;
+    let mut shipping = std::fs::read_to_string(root.join("tests/shipping.rs"))?;
+    shipping.push_str(
+        "\n#[test]\nfn at_limit_is_heavy() {\n    assert_eq!(shipping_fee(10, 10), 25);\n}\n",
+    );
+    std::fs::write(root.join("tests/shipping.rs"), shipping)?;
+    assert_success(&repair_route_after(&root, &second));
+    let receipt: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/reports/agent-receipt.json"),
+    )?)?;
+    assert_eq!(
+        receipt["repair_attempt"]["attempt_id"],
+        second.as_str(),
+        "precondition: the second attempt's receipt replaced the first one's"
+    );
+
+    let report = repair_route_status(&root)?;
+    let earlier = repair_route_attempt(&report, &first)?;
+    assert_eq!(earlier["disposition"], "unconfirmed", "{report:#}");
+    assert_eq!(
+        earlier["receipt"]["issued_for_attempt"], false,
+        "{report:#}"
+    );
+    assert_eq!(
+        earlier["receipt"]["superseded_by"],
+        second.as_str(),
+        "{report:#}"
+    );
+    assert_eq!(
+        repair_route_attempt(&report, &second)?["receipt"]["superseded_by"],
+        serde_json::Value::Null,
+        "{report:#}"
+    );
+    let warning = report["warnings"]
+        .as_array()
+        .and_then(|warnings| {
+            warnings.iter().find(|warning| {
+                warning["kind"] == "repair_receipt_unconfirmed"
+                    && warning["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains(&first))
+            })
+        })
+        .and_then(|warning| warning["message"].as_str())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        warning.contains(&format!(
+            "was superseded by the receipt for repair attempt `{second}`"
+        )),
+        "{report:#}"
+    );
+    assert!(
+        warning.contains(&format!("--seam-id {REPAIR_ROUTE_SEAM} --phase before")),
+        "{warning}"
+    );
+    assert!(!warning.contains("no receipt at"), "{warning}");
+    let markdown = repair_route_markdown(&root)?;
+    assert!(
+        markdown.contains(&format!("receipt superseded by attempt `{second}`")),
+        "{markdown}"
+    );
+    assert!(
+        !markdown.contains("no receipt issued for this attempt"),
+        "{markdown}"
     );
 
     let _ = std::fs::remove_dir_all(&root);

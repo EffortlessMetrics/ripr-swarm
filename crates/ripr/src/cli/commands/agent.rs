@@ -457,11 +457,14 @@ fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), St
 /// recorded on that attempt through the attempt authority, so `ripr agent
 /// status` reports it instead of repeating the refused command unannotated.
 fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
-    let mut selected_after_attempt = None;
-    let result = run_agent_repair_phase(options, &mut selected_after_attempt);
-    if let (Err(error), Some((root, attempt_id))) = (&result, &selected_after_attempt)
-        && let Err(record_error) =
-            crate::app::repair_attempt::record_repair_attempt_after_refusal(root, attempt_id, error)
+    let mut refusal = AfterPhaseRefusalContext::default();
+    let result = run_agent_repair_phase(options, &mut refusal);
+    if let (Err(error), Some((root, attempt_id))) = (&result, &refusal.selected_attempt)
+        && let Err(record_error) = crate::app::repair_attempt::record_repair_attempt_after_refusal(
+            root,
+            attempt_id,
+            &after_refusal_reason(error, &refusal.narration),
+        )
     {
         eprintln!(
             "ripr: could not record the after-phase refusal on attempt `{}`: {record_error}",
@@ -471,11 +474,49 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
     result
 }
 
-/// Runs one repair phase. `selected_after_attempt` receives the attempt the
-/// after phase selected, so a refusal past that point can be recorded on it.
+/// What an after phase that refuses leaves for the attempt record: the
+/// attempt it selected, and the narration it printed before the final error
+/// (the named cause and the recovery), so `ripr agent status` can repeat the
+/// same explanation instead of only the terse final error.
+#[derive(Default)]
+struct AfterPhaseRefusalContext {
+    selected_attempt: Option<(PathBuf, crate::app::repair_attempt::RepairAttemptId)>,
+    narration: Vec<String>,
+}
+
+impl AfterPhaseRefusalContext {
+    /// Prints one narration line and keeps it for the refusal record.
+    fn narrate(&mut self, line: String) {
+        eprintln!("ripr: {line}");
+        self.narration.push(line);
+    }
+}
+
+/// The recorded refusal: the final error, then the narration that named its
+/// cause and recovery, as sentences. The attempt authority bounds its length.
+fn after_refusal_reason(error: &str, narration: &[String]) -> String {
+    let mut reason = error.trim().trim_end_matches('.').to_string();
+    for line in narration {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        reason.push_str(". ");
+        let mut chars = line.chars();
+        if let Some(first) = chars.next() {
+            reason.extend(first.to_uppercase());
+            reason.push_str(chars.as_str().trim_end_matches('.'));
+        }
+    }
+    reason
+}
+
+/// Runs one repair phase. `refusal` receives the attempt the after phase
+/// selected and the narration it printed, so a refusal past that point can
+/// be recorded on the attempt with its named cause and recovery.
 fn run_agent_repair_phase(
     options: AgentRepairOptions,
-    selected_after_attempt: &mut Option<(PathBuf, crate::app::repair_attempt::RepairAttemptId)>,
+    refusal: &mut AfterPhaseRefusalContext,
 ) -> Result<(), String> {
     let AgentRepairOptions {
         root,
@@ -542,7 +583,7 @@ fn run_agent_repair_phase(
                 attempt_id.as_deref(),
                 seam_id.as_deref(),
             )?;
-            *selected_after_attempt = Some((root.clone(), attempt.attempt_id.clone()));
+            refusal.selected_attempt = Some((root.clone(), attempt.attempt_id.clone()));
             eprintln!(
                 "ripr: agent repair --phase after for attempt `{}` (seam `{}`) at {}",
                 attempt.attempt_id.as_str(),
@@ -607,18 +648,31 @@ fn run_agent_repair_phase(
             // prepared head is refused here, before anything is finished, so
             // the attempt stays awaiting the edit and the recovery below can
             // restore the prepared head. A trust-bound attempt keeps its
-            // exact-head rule and its typed `stale` record.
-            let head_movement = if retained_binding.is_some() {
-                crate::edit_cage::HeadMovement::RequireBaselineHead
-            } else {
-                if let crate::app::repair_attempt::AttemptHeadLineage::Diverged { current_head } =
-                    crate::app::repair_attempt::attempt_head_lineage(
-                        &root,
+            // exact-head rule and its typed `stale` record. The rule is the
+            // attempt authority's, which `ripr agent status` reads too.
+            let head_movement = match crate::app::repair_attempt::after_phase_head_admission_by_id(
+                &root,
+                &attempt.attempt_id,
+            )? {
+                crate::app::repair_attempt::AfterPhaseHeadAdmission::Current { movement } => {
+                    movement
+                }
+                crate::app::repair_attempt::AfterPhaseHeadAdmission::FinishesStale { .. } => {
+                    crate::edit_cage::HeadMovement::RequireBaselineHead
+                }
+                crate::app::repair_attempt::AfterPhaseHeadAdmission::RefusedDiverged {
+                    current_head,
+                } => {
+                    for line in crate::app::repair_attempt::diverged_head_recovery(
+                        &crate::agent::loop_commands::display_path(&root),
+                        attempt.attempt_id.as_str(),
+                        &attempt.seam_id,
                         &attempt.repository_head,
-                    )?
-                {
-                    for line in repair_after_diverged_head_lines(&root, &attempt, &current_head) {
-                        eprintln!("ripr: {line}");
+                        &current_head,
+                    )
+                    .lines()
+                    {
+                        refusal.narrate(line);
                     }
                     return Err(format!(
                         "repair attempt `{}` cannot finish: HEAD {current_head} does not descend from its before-phase head {}",
@@ -626,7 +680,6 @@ fn run_agent_repair_phase(
                         attempt.repository_head
                     ));
                 }
-                crate::edit_cage::HeadMovement::AdmitDescendantCommits
             };
 
             // Review summaries consume the canonical diff-scoped producer
@@ -650,7 +703,7 @@ fn run_agent_repair_phase(
                     // the edit; name what moved and how to rerun.
                     if error.contains("analysis input identities differ") {
                         for line in repair_after_input_drift_lines(&root, &attempt) {
-                            eprintln!("ripr: {line}");
+                            refusal.narrate(line);
                         }
                     }
                     return Err(error);
@@ -969,37 +1022,6 @@ fn repair_after_cage_recovery_lines(
         "to recover: {uncommit}undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
     ));
     lines
-}
-
-/// Recovery narration for an ordinary after phase refused before finishing
-/// because HEAD no longer descends from the prepared head. The attempt is
-/// still awaiting the edit, so restoring the prepared head keeps it usable.
-fn repair_after_diverged_head_lines(
-    root: &Path,
-    attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
-    current_head: &str,
-) -> Vec<String> {
-    use crate::agent::loop_commands::{display_path, shell_arg};
-
-    let root_arg = shell_arg(&display_path(root));
-    let attempt_arg = shell_arg(attempt.attempt_id.as_str());
-    let seam_arg = shell_arg(&attempt.seam_id);
-    vec![
-        format!(
-            "HEAD {} does not descend from {}, the head attempt `{}` was prepared at (for example after `git commit --amend`, a rebase, a reset, or a checkout); commits made on top of that head are accepted, other history changes are not.",
-            short_head(current_head),
-            short_head(&attempt.repository_head),
-            attempt.attempt_id.as_str()
-        ),
-        "the attempt was not finished and is still awaiting the focused test edit.".to_string(),
-        format!(
-            "to recover when only your own test commit was rewritten: `git reset --soft {}` restores the prepared head and keeps your edit staged; then rerun `ripr agent repair --root {root_arg} --attempt {attempt_arg} --phase after`.",
-            attempt.repository_head
-        ),
-        format!(
-            "otherwise, prepare a new attempt at the current HEAD: set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the edit, then run the new --attempt command it prints."
-        ),
-    ]
 }
 
 /// Recovery narration for an after phase refused because the analysis input
