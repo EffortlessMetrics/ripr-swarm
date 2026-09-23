@@ -6905,7 +6905,9 @@ Field contract:
   receipt records them; it does not run them.
 - `summary.remaining_gap` / `summary.next_recommendation` - static advisory
   guidance derived from the verify bucket. It does not claim runtime
-  confirmation.
+  confirmation. When `status` is not `advisory`, `next_recommendation` instead
+  states that the receipt is not review evidence, with the status, the
+  analysis-outcome reason, and the recovery.
 - `summary.receipt_state` - canonical receipt lifecycle state for the selected
   receipt. It is one of `receipt_missing`, `receipt_found`, `receipt_stale`,
   `receipt_gap_mismatch`, `receipt_movement_improved`,
@@ -6915,6 +6917,10 @@ Field contract:
   `resolved`, or `unknown`; `summary` is a short static movement statement;
   `recommended_action` is the bounded next step; and `safe_to_merge` is always
   `false` because the static receipt is review evidence, not a merge policy.
+  Only an `advisory` receipt is review evidence: for an `incomplete` or
+  `invalid` receipt, `recommended_action` carries the same not-review-evidence
+  statement as `next_recommendation` and never recommends including the
+  receipt in review, while `kind` and `summary` still describe the movement.
 
 ## Assurance axes (design contract)
 

@@ -1060,24 +1060,14 @@ fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
             "result for seam `{seam_id}`: {before} -> {after} ({movement}).{summary}"
         ));
     }
-    // Only an `advisory` receipt is review evidence. Any other status names
-    // why instead of forwarding a recommendation to include it in review; a
-    // receipt without a status forwards nothing.
-    match text("/status") {
-        Some("advisory") => {
-            if let Some(action) = text("/summary/next_action/recommended_action") {
-                lines.push(format!("next: {action}"));
-            }
-        }
-        None => {}
-        Some(status) => {
-            let reason = text("/analysis_outcome_error")
-                .map(|reason| format!(" ({})", reason.trim_end_matches('.')))
-                .unwrap_or_default();
-            lines.push(format!(
-                "receipt status is `{status}`{reason}; this receipt is not review evidence, so do not include it in review."
-            ));
-        }
+    // The receipt producer owns which next step fits its status: only an
+    // `advisory` receipt recommends including it in review, and any other
+    // status states that it is not review evidence and how to recover. A
+    // receipt without a status is not vouched for, so nothing is forwarded.
+    if text("/status").is_some()
+        && let Some(action) = text("/summary/next_action/recommended_action")
+    {
+        lines.push(format!("next: {action}"));
     }
     lines
 }
@@ -1533,35 +1523,25 @@ mod repair_summary_tests {
     }
 
     #[test]
-    fn repair_summary_withholds_the_review_recommendation_from_a_non_advisory_receipt() {
+    fn repair_summary_forwards_the_receipt_owned_next_step_for_a_non_advisory_receipt() {
         let movement = r#""seam": {"seam_id": "s"},
-            "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"},
-            "summary": {"next_action": {"summary": "Static grip improved.", "recommended_action": "Keep the focused test and include this receipt in review."}}"#;
+            "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"}"#;
         let result =
             "result for seam `s`: weakly_gripped -> strongly_gripped (improved). Static grip improved."
                 .to_string();
+        let step = "This receipt is not review evidence because its status is `invalid` (Analysis outcome artifact base does not match its typed identity); do not include it in review.";
         let invalid = format!(
-            r#"{{"status": "invalid", "analysis_outcome_error": "Analysis outcome artifact base does not match its typed identity.", {movement}}}"#
+            r#"{{"status": "invalid", {movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "{step}"}}}}}}"#
         );
         assert_eq!(
             repair_receipt_summary_lines(&invalid),
-            vec![
-                result.clone(),
-                "receipt status is `invalid` (Analysis outcome artifact base does not match its typed identity); this receipt is not review evidence, so do not include it in review.".to_string(),
-            ]
-        );
-        let incomplete =
-            format!(r#"{{"status": "incomplete", "analysis_outcome_error": null, {movement}}}"#);
-        assert_eq!(
-            repair_receipt_summary_lines(&incomplete),
-            vec![
-                result.clone(),
-                "receipt status is `incomplete`; this receipt is not review evidence, so do not include it in review.".to_string(),
-            ]
+            vec![result.clone(), format!("next: {step}")]
         );
         // Without a status nothing vouches for the receipt, so its
-        // recommendation is not forwarded either.
-        let unstated = format!("{{{movement}}}");
+        // recommendation is not forwarded.
+        let unstated = format!(
+            r#"{{{movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "Keep the focused test and include this receipt in review."}}}}}}"#
+        );
         assert_eq!(repair_receipt_summary_lines(&unstated), vec![result]);
     }
 
