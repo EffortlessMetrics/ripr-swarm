@@ -21,7 +21,7 @@ use crate::output::evidence_record::{
 };
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
 #[cfg(test)]
-use crate::testing::cwd_placeholder::renderer_cwd_prefix;
+use crate::testing::cwd_placeholder::project_cwd_text;
 use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -1883,7 +1883,7 @@ mod tests {
         // the machine prefix projects to `<cwd>/` before comparing AND
         // before re-blessing — a blessed fixture must never carry a real
         // machine directory (placeholder rule: loop_commands).
-        let normalized = rendered.replace(&renderer_cwd_prefix(), "<cwd>/");
+        let normalized = project_cwd_text(rendered);
         // #3742 class (e): only the explicit RIPR_UPDATE_FIXTURES=1 opt-in
         // rewrites; a leaked bare variable must assert, never re-bless.
         if crate::testing::rebless::fixture_rebless_enabled() {

@@ -11,7 +11,7 @@ use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
 };
 #[cfg(test)]
-use crate::testing::cwd_placeholder::{project_renderer_cwd, renderer_cwd_prefix};
+use crate::testing::cwd_placeholder::{project_cwd_text, project_renderer_cwd};
 use serde_json::{Map, Value, json};
 use std::env;
 use std::fs;
@@ -3557,10 +3557,9 @@ mod tests {
         // Issue #3872: funnel redirect targets anchor at the resolved --root,
         // so the machine prefix projects to `<cwd>/` before comparing against
         // the checked-in expectation (placeholder rule: loop_commands).
-        let prefix = renderer_cwd_prefix();
         let mut normalized_json = actual_json;
         project_renderer_cwd(&mut normalized_json);
-        let normalized_md = actual_md.replace(&prefix, "<cwd>/");
+        let normalized_md = project_cwd_text(&actual_md);
         let expected_json = read_packet(&case.join("expected/start-here.json"))?;
         assert_eq!(
             normalized_json, expected_json,

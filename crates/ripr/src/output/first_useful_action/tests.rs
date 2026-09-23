@@ -1,7 +1,7 @@
 use super::markdown::{push_wrapped_paragraph, str_or, with_period};
 use super::*;
 use crate::output::test_support::{read_file, repo_root};
-use crate::testing::cwd_placeholder::renderer_cwd_prefix;
+use crate::testing::cwd_placeholder::project_cwd_text;
 use std::path::Path;
 
 #[test]
@@ -43,7 +43,7 @@ fn first_useful_action_matches_actionable_fixture() -> Result<(), String> {
     // machine prefix projects to `<cwd>/` before comparing against the
     // checked-in expectation (placeholder rule: loop_commands).
     assert_eq!(
-        render_first_useful_action_json(&report)?.replace(&renderer_cwd_prefix(), "<cwd>/"),
+        project_cwd_text(&render_first_useful_action_json(&report)?),
         read_file(&base.join("first-useful-action.json"))?.trim_end()
     );
     assert_eq!(

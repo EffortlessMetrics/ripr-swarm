@@ -1647,18 +1647,17 @@ mod seam_hover_tests {
                 return Err(format!("missing {needle:?} in:\n{md}"));
             }
         }
-        // Issue #3872: handoff redirects anchor at the resolved --root, so
-        // the anchored absolute targets build from the renderer prefix.
-        let anchor = crate::testing::cwd_placeholder::renderer_cwd_prefix();
+        // Issue #3872: handoff redirects anchor at the resolved --root. The
+        // markup projects to `<cwd>/` first, so the needles hold on
+        // checkouts whose machine prefix needs shell quoting.
+        let md = crate::testing::cwd_placeholder::project_cwd_text(&md);
         for needle in [
-            format!("--json > {anchor}target/ripr/agent/agent-packet.json"),
-            format!("--json > {anchor}target/ripr/agent/agent-brief.json"),
-            format!(
-                "--format repo-exposure-json > {anchor}target/ripr/pilot/after.repo-exposure.json"
-            ),
-            format!("--json > {anchor}target/ripr/agent/agent-verify.json"),
+            "--json > <cwd>/target/ripr/agent/agent-packet.json",
+            "--json > <cwd>/target/ripr/agent/agent-brief.json",
+            "--format repo-exposure-json > <cwd>/target/ripr/pilot/after.repo-exposure.json",
+            "--json > <cwd>/target/ripr/agent/agent-verify.json",
         ] {
-            if !md.contains(needle.as_str()) {
+            if !md.contains(needle) {
                 return Err(format!("missing anchored {needle:?} in:\n{md}"));
             }
         }
