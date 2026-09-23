@@ -1,6 +1,7 @@
 use crate::agent::loop_commands::{self, display_path};
-use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::repair_packet_eligibility;
+use crate::analysis::{ClassifiedSeam, is_test_surface_path};
+use crate::output::agent_seam_packets::recommended_test_for;
 use crate::output::pilot::PilotSummaryContext;
 use std::path::{Path, PathBuf};
 
@@ -9,16 +10,25 @@ use std::path::{Path, PathBuf};
 /// route readiness alone, is the authority here: a wrong actionable repair
 /// signal is worse than falling back to the snapshot comparison.
 ///
+/// `agent repair` also refuses an edit target outside a test surface, so a
+/// seam whose recommended test lives in an inline `#[cfg(test)]` module of a
+/// production file gets no repair line: offering one would send the user into
+/// a refusal.
+///
 /// Built here rather than in `agent::loop_commands`, whose file xtask includes
 /// into its own tree: a template only pilot calls reads as dead code there.
 pub(super) fn repair_start_command(root: &Path, entry: &ClassifiedSeam) -> Option<String> {
-    repair_packet_eligibility(entry).eligible().then(|| {
-        format!(
-            "ripr agent repair --root {} --seam-id {} --phase before",
-            loop_commands::shell_path(root),
-            loop_commands::shell_arg(entry.seam.id().as_str()),
-        )
-    })
+    if !repair_packet_eligibility(entry).eligible() {
+        return None;
+    }
+    if !is_test_surface_path(&recommended_test_for(entry).file) {
+        return None;
+    }
+    Some(format!(
+        "ripr agent repair --root {} --seam-id {} --phase before",
+        loop_commands::shell_path(root),
+        loop_commands::shell_arg(entry.seam.id().as_str()),
+    ))
 }
 
 pub(super) struct PilotCommands {

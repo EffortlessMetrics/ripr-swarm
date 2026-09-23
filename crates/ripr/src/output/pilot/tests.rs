@@ -877,16 +877,24 @@ fn route_ready_entry(test_files: &[&str]) -> ClassifiedSeam {
 /// test still resolves a target, so the route stays ready and the focused-test
 /// outline stays applicable, but the oracle path is unresolved from Rust
 /// evidence. A renderer gated on readiness or on the outline passes the first
-/// half and fails the second.
+/// half and fails the second. The third is eligible but its recommended test
+/// sits in the production file, which `agent repair` refuses to edit.
 #[test]
 fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), String> {
     use crate::analysis::repair_route::repair_packet_eligibility;
     use crate::output::agent_seam_packets::targeted_test_brief_outline_for_classified_seam;
 
     let artifacts = pilot_artifacts();
-    for (test_files, eligible) in [
-        (&["tests/pricing.rs"][..], true),
-        (&["tests/pricing.rs", "tests/pricing.test.ts"][..], false),
+    for (test_files, eligible, offered_expected) in [
+        (&["tests/pricing.rs"][..], true, true),
+        (
+            &["tests/pricing.rs", "tests/pricing.test.ts"][..],
+            false,
+            false,
+        ),
+        // Eligible, but the recommended test is an inline module in a
+        // production file, which `agent repair` refuses as an edit target.
+        (&["src/pricing.rs"][..], true, false),
     ] {
         let test_file = test_files.join(" + ");
         let entry = route_ready_entry(test_files);
@@ -902,6 +910,14 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
         if targeted_test_brief_outline_for_classified_seam(&entry).is_not_applicable() {
             return Err(format!(
                 "{test_file}: the focused-test outline must stay applicable"
+            ));
+        }
+        // The inline-test case must reach the test-surface check with its
+        // production file as the recommended target, or its row is vacuous.
+        let recommended = crate::output::agent_seam_packets::recommended_test_for(&entry).file;
+        if eligible && crate::analysis::is_test_surface_path(&recommended) != offered_expected {
+            return Err(format!(
+                "{test_file}: recommended test `{recommended}` test-surface must be {offered_expected}"
             ));
         }
         let command = format!(
@@ -932,12 +948,12 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
                 == Some(command.as_str()),
             md.contains(&command),
         ];
-        if offered != [eligible; 4] {
+        if offered != [offered_expected; 4] {
             return Err(format!(
-                "{test_file}: terminal line, closing step, JSON, Markdown = {offered:?}, want all {eligible}\n{terminal}\n{json}\n{md}"
+                "{test_file}: terminal line, closing step, JSON, Markdown = {offered:?}, want all {offered_expected}\n{terminal}\n{json}\n{md}"
             ));
         }
-        if !eligible {
+        if !offered_expected {
             if !summary
                 .pointer("/next/repair_command")
                 .is_some_and(serde_json::Value::is_null)
