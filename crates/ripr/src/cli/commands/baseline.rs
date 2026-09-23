@@ -100,9 +100,9 @@ fn baseline_diff(args: &[String]) -> Result<(), String> {
 
 fn baseline_update(args: &[String]) -> Result<(), String> {
     let options = parse_baseline_update_options(args)?;
-    if !options.remove_resolved {
+    if !options.remove_resolved && !options.migrate_legacy_identities {
         return Err(
-            "baseline update requires --remove-resolved; adopting new debt is not supported"
+            "baseline update requires --remove-resolved or --migrate-legacy-identities; adopting new debt is not supported"
                 .to_string(),
         );
     }
@@ -126,6 +126,8 @@ fn baseline_update(args: &[String]) -> Result<(), String> {
             current_gate_decision_path: current_path,
             baseline_json,
             current_gate_decision_json: current_json,
+            remove_resolved: options.remove_resolved,
+            migrate_legacy_identities: options.migrate_legacy_identities,
         },
     )?;
     let rendered = output::baseline_update::render_baseline_update_json(&report)?;
@@ -145,6 +147,12 @@ fn baseline_update(args: &[String]) -> Result<(), String> {
         "Ignored new current: {}",
         output::baseline_update::baseline_update_ignored_new_current_count(&report)
     );
+    if options.migrate_legacy_identities {
+        println!(
+            "Migrated legacy identities: {}",
+            output::baseline_update::baseline_update_migrated_count(&report)
+        );
+    }
     if output::baseline_update::baseline_update_warning_count(&report) > 0 {
         println!(
             "Warnings: {}",
@@ -269,6 +277,7 @@ fn parse_baseline_update_options(args: &[String]) -> Result<BaselineUpdateOption
     let mut current = None;
     let mut out = None;
     let mut remove_resolved = false;
+    let mut migrate_legacy_identities = false;
 
     let mut i = 0usize;
     while i < args.len() {
@@ -291,6 +300,7 @@ fn parse_baseline_update_options(args: &[String]) -> Result<BaselineUpdateOption
                 out = Some(non_empty_path_arg(args, i, "--out", "baseline update")?);
             }
             "--remove-resolved" => remove_resolved = true,
+            "--migrate-legacy-identities" => migrate_legacy_identities = true,
             other => return Err(unknown_argument("baseline update", other)),
         }
         i += 1;
@@ -302,6 +312,7 @@ fn parse_baseline_update_options(args: &[String]) -> Result<BaselineUpdateOption
         current: current.ok_or_else(|| "baseline update requires --current <path>".to_string())?,
         out,
         remove_resolved,
+        migrate_legacy_identities,
     })
 }
 
@@ -433,6 +444,23 @@ mod tests {
                 current: PathBuf::from("target/ripr/reports/gate-decision.json"),
                 out: Some(PathBuf::from(".ripr/gate-baseline.updated.json")),
                 remove_resolved: true,
+                migrate_legacy_identities: false,
+            })
+        );
+        assert_eq!(
+            parse_baseline_update_options(&args(&[
+                "--baseline",
+                ".ripr/gate-baseline.json",
+                "--current",
+                "target/ripr/reports/gate-decision.json",
+                "--migrate-legacy-identities",
+            ])),
+            Ok(BaselineUpdateOptions {
+                baseline: PathBuf::from(".ripr/gate-baseline.json"),
+                current: PathBuf::from("target/ripr/reports/gate-decision.json"),
+                out: None,
+                remove_resolved: false,
+                migrate_legacy_identities: true,
             })
         );
         assert_eq!(
@@ -447,6 +475,7 @@ mod tests {
                 current: PathBuf::from("target/ripr/reports/gate-decision.json"),
                 out: None,
                 remove_resolved: false,
+                migrate_legacy_identities: false,
             })
         );
     }
@@ -485,7 +514,7 @@ mod tests {
                 "target/ripr/reports/gate-decision.json",
             ])),
             Err(
-                "baseline update requires --remove-resolved; adopting new debt is not supported"
+                "baseline update requires --remove-resolved or --migrate-legacy-identities; adopting new debt is not supported"
                     .to_string()
             )
         );
