@@ -44,8 +44,13 @@ pub fn build_pr_evidence_summary(
         repair_route: entry.repair_route.clone(),
         why_not_actionable: why_not_actionable_for_category(&entry.category),
     });
-    let local_reproduction_commands =
-        derive_local_reproduction_commands(start_here_value, diff_report_value);
+    let local_reproduction_commands = derive_local_reproduction_commands(
+        start_here_value,
+        diff_report_value,
+        top_repair
+            .as_ref()
+            .and_then(|repair| repair.repair_command.as_deref()),
+    );
 
     PrEvidenceSummaryJson {
         run_status,
@@ -374,12 +379,20 @@ fn derive_top_repair(start_here_value: Option<&Value>) -> (Option<TopRepair>, Op
         .unwrap_or("receipt_missing")
         .to_string();
 
+    // Carried from start-here, never read from review comments here: a card
+    // read directly could pair with a different top gap than start-here's.
+    let repair_command = value_path(sel, &["repair_command"])
+        .and_then(Value::as_str)
+        .filter(|command| !command.trim().is_empty())
+        .map(ToString::to_string);
+
     (
         Some(TopRepair {
             canonical_gap_id,
             language,
             repair_kind,
             target,
+            repair_command,
             verify_command,
             receipt_command,
             receipt_state,
@@ -391,8 +404,15 @@ fn derive_top_repair(start_here_value: Option<&Value>) -> (Option<TopRepair>, Op
 fn derive_local_reproduction_commands(
     start_here_value: Option<&Value>,
     diff_report_value: Option<&Value>,
+    repair_command: Option<&str>,
 ) -> Vec<String> {
     let mut commands = Vec::new();
+
+    // The carried repair start leads: it is the one command that begins the
+    // repair transaction for the selected seam.
+    if let Some(command) = repair_command {
+        commands.push(command.to_string());
+    }
 
     let base = value_path(diff_report_value, &["base"])
         .and_then(Value::as_str)
@@ -460,15 +480,22 @@ fn nullable_u64(v: &NullableU64) -> Value {
 /// Render the in-memory summary as a versioned JSON string.
 pub fn render_pr_evidence_summary_json(s: &PrEvidenceSummaryJson) -> String {
     let top_repair = match &s.top_repair {
-        Some(r) => json!({
-            "canonical_gap_id": r.canonical_gap_id,
-            "language": r.language,
-            "repair_kind": r.repair_kind,
-            "target": r.target,
-            "verify_command": r.verify_command,
-            "receipt_command": r.receipt_command,
-            "receipt_state": r.receipt_state
-        }),
+        Some(r) => {
+            let mut value = json!({
+                "canonical_gap_id": r.canonical_gap_id,
+                "language": r.language,
+                "repair_kind": r.repair_kind,
+                "target": r.target,
+                "verify_command": r.verify_command,
+                "receipt_command": r.receipt_command,
+                "receipt_state": r.receipt_state
+            });
+            // Present only when start-here carried it, like its source field.
+            if let Some(command) = &r.repair_command {
+                value["repair_command"] = json!(command);
+            }
+            value
+        }
         None => Value::Null,
     };
 
@@ -663,6 +690,84 @@ mod tests {
         );
         assert_eq!(repair.receipt_state, "receipt_missing");
         assert!(s.top_repair_state.is_none());
+        Ok(())
+    }
+
+    /// #3906: pr-summary carries start-here's `selected.repair_command`
+    /// unchanged into `top_repair` and leads the local reproduction commands
+    /// with it; a top gap without one keeps today's shape and order.
+    #[test]
+    fn start_here_repair_command_is_carried_into_top_repair() -> Result<(), String> {
+        let command = "ripr agent repair --root crates/pricing --seam-id seam-b --phase before";
+        let start_here = |repair_command: Option<&str>| {
+            let mut value = serde_json::json!({
+                "status": "actionable",
+                "selected": {
+                    "state": "top_gap",
+                    "canonical_gap_id": "gap:seam-b",
+                    "seam_id": "seam-b",
+                    "language": "rust",
+                    "repair": {"route": "AgentRepairTransaction", "target_file": "tests/pricing.rs"},
+                    "verify_command": "ripr agent verify --root . --json",
+                    "receipt_command": "ripr agent receipt --root . --seam-id seam-b --json"
+                }
+            });
+            if let Some(command) = repair_command {
+                value["selected"]["repair_command"] = serde_json::json!(command);
+            }
+            value
+        };
+
+        let with = build_pr_evidence_summary(
+            Some(&start_here(Some(command))),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let repair = with
+            .top_repair
+            .as_ref()
+            .ok_or_else(|| "top_repair must be present".to_string())?;
+        assert_eq!(repair.repair_command.as_deref(), Some(command));
+        assert_eq!(
+            with.local_reproduction_commands.first().map(String::as_str),
+            Some(command)
+        );
+        let json: Value = serde_json::from_str(&render_pr_evidence_summary_json(&with))
+            .map_err(|err| format!("parse summary json: {err}"))?;
+        assert_eq!(json["top_repair"]["repair_command"], command);
+        let md = crate::app::pr_summary::render_evidence_summary_md(&with);
+        let start = md
+            .find(&format!("- start repair: `{command}`\n"))
+            .ok_or_else(|| format!("missing start repair line:\n{md}"))?;
+        let verify = md
+            .find("- verify: `")
+            .ok_or_else(|| format!("missing verify line:\n{md}"))?;
+        assert!(start < verify, "{md}");
+
+        // Negative: a top gap without a carried start renders none, and
+        // pr-summary does not rebuild one from `seam_id`.
+        let without =
+            build_pr_evidence_summary(Some(&start_here(None)), None, None, None, None, None);
+        let repair = without
+            .top_repair
+            .as_ref()
+            .ok_or_else(|| "top_repair must be present".to_string())?;
+        assert_eq!(repair.repair_command, None);
+        assert_eq!(
+            without
+                .local_reproduction_commands
+                .first()
+                .map(String::as_str),
+            Some("ripr check --base origin/main")
+        );
+        let json = render_pr_evidence_summary_json(&without);
+        assert!(!json.contains("repair_command"), "{json}");
+        assert!(!json.contains("agent repair"), "{json}");
+        let md = crate::app::pr_summary::render_evidence_summary_md(&without);
+        assert!(!md.contains("start repair"), "{md}");
         Ok(())
     }
 
