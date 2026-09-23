@@ -115,7 +115,11 @@ Generate the GitHub workflow:
 ripr init --ci github
 ```
 
-Or copy the workflow from [CI strategy](CI.md) when adopting from the GitHub UI.
+Or copy the workflow from
+[CI strategy](CI.md#copyable-ripr-advisory-workflow) when adopting from the
+GitHub UI. Most of that document is this repository's own CI policy; the
+copyable recipe and the artifact packet it produces are in the section that
+link opens.
 
 The generated workflow is advisory by default. On a PR, read the job summary
 first. It should show the first-run status, top repairable gap or no-action
@@ -330,7 +334,8 @@ RIPR findings.
   before/after evidence and optional calibration loop.
 - [Editor extension](EDITOR_EXTENSION.md) for VS Code install, commands, and
   saved-workspace refresh behavior.
-- [CI strategy](CI.md) for the generated advisory workflow and artifact packet.
+- [CI strategy](CI.md#copyable-ripr-advisory-workflow) for the generated
+  advisory workflow and artifact packet.
 - [LLM operator guide](LLM_OPERATOR_GUIDE.md) for the source-edit-free agent
   loop.
 - [Configuration](CONFIGURATION.md) for `ripr.toml`, modes, severities, and
