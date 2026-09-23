@@ -2139,3 +2139,41 @@ Two durable lessons:
   reclamation or recovery, absence of `success` is the signal to watch — not
   presence of `failure`. This is the same false-confidence class as
   2026-07-25, arriving through scheduling rather than through assertions.
+
+## 2026-09-22: A directory's mtime is not a lease on the tree below it
+
+Both scratch cleaners ran `find /mnt/ci-scratch/{cargo-home,target,tmp}
+-mindepth 1 -maxdepth 1 -mmin +30 -exec rm -rf {} +` (#3841). A per-run
+directory's mtime changes only when an entry directly inside it is created,
+renamed, or removed. Cargo writing deep inside `target/<run>/debug/...` never
+refreshes it, so a 120-minute job with a 3,600-second evidence step becomes
+"stale" to every other job and to the scheduled sweep after 30 minutes. A
+reproduction with `touch -d '40 minutes ago'` and a fresh nested write deletes
+the live tree without any real wait. No age threshold fixes this; a larger one
+only delays it.
+
+Durable rules:
+
+- Liveness comes from something the kernel ties to the owner's lifetime. The
+  lease is an exclusive `flock` held by a background process for the whole
+  job, which the runner kills with the job's other orphan processes, so
+  completion, cancellation, timeout, and crash all release it. Reclaim takes
+  `flock -n` on the lease and deletes while still holding it, so no job can be
+  observed dead and then come back before the delete.
+- Unknown is not permission. A tree with no lease, a lease from another
+  repository, a malformed lease, a symlink, or a root that is itself a symlink
+  is skipped and counted. The cost is that trees left by the old selector, and
+  crashed jobs that never took a lease, stay until an operator removes them
+  on an idle host; `ci-disk-guard` and the exit-75 hosted fallback bound that
+  leak. A cleaner that deletes what it cannot attribute will eventually delete
+  a sibling consumer's live state.
+- Every cleaner sharing the roots must use the same authority. A second
+  cleaner that ignores the lease re-opens the defect however correct the
+  first one is, so inventory the cleaners (other repositories and host
+  services included) before calling it fixed.
+- Test the lock, not the story. The harness in
+  `xtask/src/policy/ci_scratch/tests.rs` runs the action's own script, and two
+  negative controls (lock check removed; lock check replaced by an mtime test)
+  must make the same harness fail. Also wait on the lock, not the PID, when
+  simulating job death: in containers without a reaping init, `kill -0` keeps
+  succeeding on a zombie long after its descriptors, and its lock, are gone.

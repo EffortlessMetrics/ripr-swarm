@@ -98,8 +98,8 @@ the exposure classes.
 
 | Mode | Scope in the current alpha | Intended use |
 | --- | --- | --- |
-| `instant` | Changed Rust files only. | Editor-safe, cheapest feedback. |
-| `draft` | Rust files in packages touched by the diff. | Default local scan. |
+| `instant` | Changed Rust files plus their module-parent context files. | Editor-safe, cheapest feedback. |
+| `draft` | Rust files in packages touched by the diff, plus packages that depend on them through path dependencies. | Default local scan. |
 | `fast` | Same package-local scope as `draft` for now. | Draft PR scan; future bounded graph work lands here. |
 | `deep` | All Rust files in the workspace. | Manual or CI scan when wider static evidence is acceptable. |
 | `ready` | All Rust files in the workspace. | Static preflight before real mutation confirmation. |

@@ -151,7 +151,11 @@ Inspect the current change:
 ripr check --base origin/main
 ```
 
-The bounded human output begins with one `Start here:` state. It either names
+`check` diffs committed history. To include uncommitted edits, add
+`--worktree`.
+
+After a short summary header, the bounded human output shows one `Start here:`
+state. It either names
 the top repair-ready gap, reports an honest no-action state, or names the
 limitation that prevents current guidance. Use `--format human-full` for the
 complete evidence and `--format json` for machine data.
@@ -175,7 +179,9 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 
 The before phase writes the pre-edit snapshot and repair packet. The after phase
 writes the post-edit snapshot, persists static verification JSON, and emits a
-receipt. RIPR does not author or apply the test edit.
+receipt. RIPR does not author or apply the test edit. For a trust-bound Python
+attempt, a third, separately authorized `--phase verify` runs the verify route;
+see [Command hierarchy](COMMAND_HIERARCHY.md#repair-transaction).
 
 For guided repository adoption and materialized pilot reports, use:
 
@@ -191,7 +197,7 @@ For explicit low-level before/after comparison, the underlying commands remain
 available:
 
 ```bash
-ripr check --root . --mode ready --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json
+ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json
 ripr outcome \
   --before target/ripr/pilot/repo-exposure.json \
   --after target/ripr/pilot/after.repo-exposure.json
@@ -209,6 +215,20 @@ ripr first-pr --root . --base origin/main --head HEAD
 It writes `target/ripr/reports/start-here.{json,md}` and does not add analyzer
 truth or repair a gap. Inside this repo, `cargo xtask first-pr` is a
 compatibility wrapper over the same public command.
+
+`check` itself never blocks. To try a local blocking decision on the current
+change before adopting one in CI:
+
+```bash
+mkdir -p target/ripr
+ripr check --base origin/main --format json > target/ripr/check.json
+ripr review-comments --base origin/main --head HEAD --check-output target/ripr/check.json
+ripr gate evaluate --pr-guidance target/ripr/review/comments.json --mode acknowledgeable
+```
+
+`gate evaluate` exits non-zero when the decision is `blocked` or
+`config_error`. The full CI
+input set and modes are in [Calibrated gate policy](CALIBRATED_GATE_POLICY.md).
 
 Read the front door with the same vocabulary across CLI, editor, and PR
 surfaces:
@@ -272,7 +292,8 @@ See [LLM operator guide](LLM_OPERATOR_GUIDE.md).
 | Diagnostics look stale. | Save the workspace file or run `Refresh Analysis - Saved Workspace Check`. |
 | CI has no top recommendation. | Open the advisory job summary, then inspect the uploaded report packet. |
 | Agent status says artifacts are missing. | Run the `next_command` printed by `ripr agent status`. |
-| Local CLI behavior is surprising. | Run `ripr doctor` and inspect config precedence in [Configuration](CONFIGURATION.md). |
+| Local CLI behavior is surprising. | Run `ripr doctor` (or `ripr doctor --json`), then `ripr config validate` to check `ripr.toml`. Inspect the analysis cache with `ripr cache status`; preview a reset with `ripr cache clear --dry-run`, then reset with `ripr cache clear --force`. See [Configuration](CONFIGURATION.md). |
+| `check` reports no changed scope after an edit. | The edit is not committed. Commit it or rerun with `--worktree`. |
 
 ## Known Limits
 

@@ -77,14 +77,16 @@ separate supply-chain boundary.
 The editor path should not require report-format knowledge:
 
 1. Install `EffortlessMetrics.ripr` from VS Code Marketplace or Open VSX.
-2. Open a Rust/Cargo workspace, or a workspace with explicitly enabled
-   TypeScript, JavaScript, or Python preview languages.
+2. Open a Rust/Cargo workspace, a Python-shaped workspace (Python preview is
+   detected automatically when no `ripr.toml` exists), or a workspace with
+   TypeScript or JavaScript preview enabled in `ripr.toml`.
 3. Check the `ripr` status bar item for server state, workspace state,
    analysis progress, stale analysis, analysis failure, recommended next
    action, or "no focused test gap found." (Internal status IDs such as
-   `no-actionable-seam` and `first-useful-action` remain stable in the JSON
+   `no_actionable_seam` and `first_useful_action` remain stable in the JSON
    contract.)
-4. Let the saved-workspace analysis refresh or run `ripr: Restart Server`.
+4. Let the saved-workspace analysis refresh, or run `ripr: Refresh Diagnostics`
+   (use `ripr: Restart Server` after server or setting changes).
 5. Open the Problems panel and hover a ripr-flagged change to inspect evidence.
 6. Use `Copy Current Repair Packet`, `Copy Repo Gap Map`,
    `Copy Targeted Test Brief`, the agent copy commands, or
@@ -131,12 +133,27 @@ see [Static limits](STATIC_LIMITS.md).
   context commands. Defaults to `draft`.
 - `ripr.baseRef`: Git base ref used by LSP diagnostics and context commands.
   Defaults to `origin/main`.
+- `ripr.includeUnchangedTests`: include unchanged tests as static evidence.
+  Defaults to `true`.
+- `ripr.seamDiagnostics`: publish repository seam diagnostics in addition to
+  diff-derived findings. Defaults to `true`.
+- `ripr.diagnosticProfile`: `actionable` (default) publishes only
+  producer-backed bounded routes; `full` keeps audit and debug visibility.
+- `ripr.gitTimeoutMs`: deadline for each git invocation in the server's refresh
+  path. Defaults to `30000`.
+- `ripr.refreshDeadlineMs`: deadline for one whole refresh attempt; an attempt
+  that exceeds it is dropped fail-closed. Defaults to `600000`.
 - `ripr.trace.server`: language-server trace setting.
 
-The extension passes `ripr.check.mode` and `ripr.baseRef` to the language server
-as initialization options. Changing enabled, server, check, base-ref, or trace
-settings restarts the client so the next diagnostic refresh uses the new
-configuration.
+The extension passes `ripr.baseRef`, `ripr.check.mode`,
+`ripr.includeUnchangedTests`, `ripr.seamDiagnostics`, and
+`ripr.diagnosticProfile` to the language server as initialization options, and
+serves those five plus `ripr.gitTimeoutMs` and `ripr.refreshDeadlineMs` through
+`workspace/configuration`. Changing
+`ripr.enabled`, `ripr.server.*`, `ripr.check.mode`, or `ripr.baseRef` restarts
+the client so the next diagnostic refresh uses the new configuration.
+`ripr.trace.server` applies live. The server re-reads the other keys without a
+restart.
 
 ## Status and Staleness
 
@@ -241,14 +258,18 @@ quieter.
 ## Commands
 
 - `ripr: Restart Server`
-- `ripr: Show Status`
+- `ripr: Refresh Diagnostics`
+- `ripr: Select Workspace Root`
 - `ripr: Show Output`
+- `ripr: Show Status`
+- `ripr: Diagnose Setup`
 - `ripr: Start Current Repair`
 - `ripr: Copy Current Repair Packet`
 - `ripr: Copy Repo Gap Map`
 - `ripr: First PR - Open Packet`
 - `ripr: First PR - Copy Summary`
 - `ripr: First PR - Copy Repair Packet`
+- `ripr: Copy Repair Packet at Cursor`
 - `ripr: First PR - Copy Verify Command`
 - `ripr: First PR - Copy Receipt Command`
 - `ripr: First PR - Copy Regeneration Guidance`
@@ -262,6 +283,15 @@ quieter.
 - `ripr: Review Result - Copy Receipt Command`
 - `ripr: Write Targeted Test - Open Best Related Test`
 - `ripr: Open Settings`
+- `ripr: Copy Top Repair Packet`
+- `ripr: Copy Verify Command`
+- `ripr: Copy Receipt Command (Top Repair Packet)`
+- `ripr: Open Report`
+- `ripr: Show Top Limitation`
+- `ripr: Show Receipt Status`
+- `ripr: Copy Receipt Command`
+- `ripr: Open Attempt Ledger`
+- `ripr: Show Route Quality`
 
 ### Inspect Test Gap - Copy Context
 
@@ -420,12 +450,13 @@ static-limit bounded, and not Rust-level confidence.
 If no usable server can be resolved, the extension shows:
 
 ```text
-ripr server is not available. Enable automatic download, install with `cargo install ripr`, or set `ripr.server.path`.
+ripr server is not available: <cause>. Enable automatic download, install with `cargo install ripr`, or set `ripr.server.path` (`ripr.server.downloadBaseUrl` for a mirror).
 ```
 
 Actions:
 
 - Open Settings
+- Copy Diagnostic
 - Copy Install Command
 - Retry
 
