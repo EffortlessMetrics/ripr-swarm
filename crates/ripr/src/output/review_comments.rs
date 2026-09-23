@@ -20,6 +20,8 @@ use crate::output::evidence_record::{
     cross_language_test_target_unresolved, gap_state_for, static_limitations_for,
 };
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
+#[cfg(test)]
+use crate::testing::cwd_placeholder::project_cwd_text;
 use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -1877,17 +1879,22 @@ mod tests {
 
     fn assert_text_fixture(case: &str, file: &str, rendered: &str) -> Result<(), String> {
         let path = pr_guidance_fixture(case, file);
+        // Issue #3872: command redirects anchor at the resolved --root, so
+        // the machine prefix projects to `<cwd>/` before comparing AND
+        // before re-blessing — a blessed fixture must never carry a real
+        // machine directory (placeholder rule: loop_commands).
+        let normalized = project_cwd_text(rendered);
         // #3742 class (e): only the explicit RIPR_UPDATE_FIXTURES=1 opt-in
         // rewrites; a leaked bare variable must assert, never re-bless.
         if crate::testing::rebless::fixture_rebless_enabled() {
-            fs::write(&path, rendered)
+            fs::write(&path, &normalized)
                 .map_err(|err| format!("write fixture {}: {err}", path.display()))?;
             return Ok(());
         }
         let expected = fs::read_to_string(&path)
             .map_err(|err| format!("read fixture {}: {err}", path.display()))?;
         assert_eq!(
-            expected, rendered,
+            expected, normalized,
             "PR guidance fixture drift for {case}/{file}"
         );
         Ok(())

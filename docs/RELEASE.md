@@ -134,8 +134,10 @@ gh api repos/EffortlessMetrics/ripr-swarm/tags --paginate -q '.[].name'
   state, not a defect.
 - A swarm rehearsal without a public release is rehearsal, not a release.
 - A changelog version without a source release is an unpublished draft, and
-  is named that way (the 0.8.0/0.9.0/0.10.0 swarm drafts are working drafts,
-  not published releases).
+  is named that way. 0.8.0, 0.9.0 and 0.10.0 were published from
+  `EffortlessMetrics/ripr` (GitHub Releases on 2026-06-02, 2026-06-11 and
+  2026-06-15, with matching crates.io versions). The staged 0.10.1 was never
+  published.
 - The VS Code downloader and default install documentation resolve release
   assets from `EffortlessMetrics/ripr` only
   (`editors/vscode/src/downloader.ts` builds URLs against that repository).

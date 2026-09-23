@@ -7313,6 +7313,8 @@ language = "rust"
         assert!(workflow.contains(".delta.stale_baseline_entry // 0"));
         assert!(workflow.contains(".delta.invalid_baseline_entry // 0"));
         assert!(workflow.contains(".delta.missing_current_input // 0"));
+        assert!(workflow.contains(".delta.legacy_fallback_match // 0"));
+        assert!(workflow.contains("legacy_fallback=\\`$legacy_fallback_match\\`"));
         assert!(workflow.contains("Counts: still_present=\\`$still_present\\`"));
         assert!(workflow.contains(".movement.new_policy_eligible // 0"));
         assert!(workflow.contains(".movement.baseline_still_present // 0"));
