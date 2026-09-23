@@ -320,10 +320,11 @@ fn write_diff(repo: &Path, options: &PrEvidenceOptions) -> Result<(), String> {
     let out = repo.join(PR_DIFF);
     // Route the packet diff through the shared pinned Git assembly (issue
     // #3930) rather than restating flags: ambient presentation helpers
-    // (external diff, textconv, color, context) must not change what the
-    // packet records. `--binary` stays the caller extra; the assembly pins
-    // `-c core.quotePath=true`, `--no-ext-diff`, `--no-textconv`,
-    // `--no-color`, `--unified=0`, and `--inter-hunk-context=0`.
+    // (external diff, textconv, color) must not change what the packet
+    // records. `--binary` stays the caller extra and the evidence path
+    // selects three context lines (the pre-#3930 presentation); the
+    // assembly pins `-c core.quotePath=true`, `--no-ext-diff`,
+    // `--no-textconv`, `--no-color`, and `--inter-hunk-context=0`.
     let diff = crate::analysis::load_pr_evidence_diff_range(repo, &options.base, &options.head)?;
     write_parented_file(&out, PR_DIFF, diff)
 }
@@ -1020,15 +1021,29 @@ mod tests {
     }
 
     /// Issue #3930: the PR-evidence diff rides the same pinned Git
-    /// presentation as the analysis loaders. A textconv driver that hides
-    /// source must not reach the packet artifact: the pre-repair argv is
-    /// the control (an empty patch proves the fixture hides the edit),
-    /// and `write_diff` must retain the source edit.
+    /// presentation as the analysis loaders. On an ordinary repository the
+    /// packet diff must be byte-identical to the pre-repair argv output;
+    /// and a textconv driver that hides source must not reach the packet
+    /// artifact: the pre-repair argv is the control (an empty patch proves
+    /// the fixture hides the edit), and `write_diff` must retain the
+    /// source edit.
     #[test]
     fn write_diff_ignores_textconv_like_analysis_loaders() -> Result<(), String> {
         use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
         use std::sync::atomic::{AtomicU64, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
+
+        /// Scoped cleanup: the unique temporary repository is removed on
+        /// every exit, including early `?` returns and panics (Windows
+        /// readonly Git objects included).
+        struct FixtureGuard<'a> {
+            repo: &'a Path,
+        }
+        impl Drop for FixtureGuard<'_> {
+            fn drop(&mut self) {
+                let _ = remove_fixture_tree(self.repo);
+            }
+        }
 
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let stamp = SystemTime::now()
@@ -1040,75 +1055,75 @@ mod tests {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        let setup = (|| -> Result<(), String> {
-            fs::create_dir_all(repo.join("src"))
-                .map_err(|error| format!("create fixture src failed: {error}"))?;
-            fixture_git_ok(&repo, &["init", "--initial-branch=main"])?;
-            for (key, value) in [
-                ("user.name", "PR Evidence"),
-                ("user.email", "pr-evidence@example.com"),
-                ("commit.gpgsign", "false"),
-                ("core.autocrlf", "false"),
-            ] {
-                fixture_git_ok(&repo, &["config", "--local", key, value])?;
-            }
-            fs::write(repo.join(".gitattributes"), "src/lib.rs diff=audit\n")
-                .map_err(|error| format!("write gitattributes failed: {error}"))?;
-            fs::write(repo.join("src/lib.rs"), "pub const VALUE: u32 = 1;\n")
-                .map_err(|error| format!("write base source failed: {error}"))?;
-            fixture_git_ok(&repo, &["add", "."])?;
-            fixture_git_ok(&repo, &["commit", "--quiet", "-m", "base"])?;
-            fixture_git_ok(&repo, &["tag", "evidence-base"])?;
-            fs::write(repo.join("src/lib.rs"), "pub const VALUE: u32 = 2;\n")
-                .map_err(|error| format!("write edited source failed: {error}"))?;
-            fixture_git_ok(&repo, &["add", "src/lib.rs"])?;
-            fixture_git_ok(&repo, &["commit", "--quiet", "-m", "edit"])?;
-            // Git itself is the constant-output helper on Unix and
-            // Windows; no shell script, executable permission, or global
-            // environment mutation.
-            fixture_git_ok(
-                &repo,
-                &["config", "--local", "diff.audit.textconv", "git --version"],
-            )?;
-            Ok(())
-        })();
-        if let Err(error) = setup {
-            let _ = remove_fixture_tree(&repo);
-            return Err(error);
+        let _guard = FixtureGuard { repo: &repo };
+        fs::create_dir_all(repo.join("src"))
+            .map_err(|error| format!("create fixture src failed: {error}"))?;
+        fixture_git_ok(&repo, &["init", "--initial-branch=main"])?;
+        for (key, value) in [
+            ("user.name", "PR Evidence"),
+            ("user.email", "pr-evidence@example.com"),
+            ("commit.gpgsign", "false"),
+            ("core.autocrlf", "false"),
+        ] {
+            fixture_git_ok(&repo, &["config", "--local", key, value])?;
         }
+        fs::write(repo.join(".gitattributes"), "src/lib.rs diff=audit\n")
+            .map_err(|error| format!("write gitattributes failed: {error}"))?;
+        fs::write(repo.join("src/lib.rs"), "pub const VALUE: u32 = 1;\n")
+            .map_err(|error| format!("write base source failed: {error}"))?;
+        fixture_git_ok(&repo, &["add", "."])?;
+        fixture_git_ok(&repo, &["commit", "--quiet", "-m", "base"])?;
+        fixture_git_ok(&repo, &["tag", "evidence-base"])?;
+        fs::write(repo.join("src/lib.rs"), "pub const VALUE: u32 = 2;\n")
+            .map_err(|error| format!("write edited source failed: {error}"))?;
+        fixture_git_ok(&repo, &["add", "src/lib.rs"])?;
+        fixture_git_ok(&repo, &["commit", "--quiet", "-m", "edit"])?;
         let range = "evidence-base...HEAD";
+        let options = PrEvidenceOptions {
+            root: ".".to_string(),
+            base: "evidence-base".to_string(),
+            head: "HEAD".to_string(),
+            check: false,
+        };
+        // Byte-compatibility: with no ambient diff configuration yet, the
+        // routed packet diff must be byte-identical to the pre-repair argv
+        // output (three context lines, the pre-#3930 presentation).
+        let raw = run_git_output(&repo, &["diff", "--binary", "--no-ext-diff", range])?;
+        write_diff(&repo, &options)?;
+        let pinned = fs::read(repo.join(PR_DIFF))
+            .map_err(|error| format!("read packet diff failed: {error}"))?;
+        assert_eq!(
+            pinned,
+            raw.as_bytes(),
+            "packet diff must stay byte-identical to the pre-repair argv on ordinary repositories"
+        );
+        // Git itself is the constant-output helper on Unix and
+        // Windows; no shell script, executable permission, or global
+        // environment mutation.
+        fixture_git_ok(
+            &repo,
+            &["config", "--local", "diff.audit.textconv", "git --version"],
+        )?;
         // Control: the pre-repair argv lets the textconv hide the source
         // edit. Without this control a broken fixture could let the
         // regression pass.
         let raw = run_git_output(&repo, &["diff", "--binary", "--no-ext-diff", range])?;
-        if !raw.trim().is_empty() {
-            let _ = remove_fixture_tree(&repo);
-            return Err("the constant textconv must hide the source edit".to_string());
-        }
-        let outcome = (|| -> Result<(), String> {
-            write_diff(
-                &repo,
-                &PrEvidenceOptions {
-                    root: ".".to_string(),
-                    base: "evidence-base".to_string(),
-                    head: "HEAD".to_string(),
-                    check: false,
-                },
-            )?;
-            let diff = fs::read_to_string(repo.join(PR_DIFF))
-                .map_err(|error| format!("read packet diff failed: {error}"))?;
-            assert!(
-                diff.contains("pub const VALUE"),
-                "packet diff must retain the source edit despite textconv"
-            );
-            assert!(
-                !diff.contains('\u{1b}'),
-                "packet diff must not contain color"
-            );
-            Ok(())
-        })();
-        remove_fixture_tree(&repo)?;
-        outcome
+        assert!(
+            raw.trim().is_empty(),
+            "the constant textconv must hide the source edit"
+        );
+        write_diff(&repo, &options)?;
+        let diff = fs::read_to_string(repo.join(PR_DIFF))
+            .map_err(|error| format!("read packet diff failed: {error}"))?;
+        assert!(
+            diff.contains("pub const VALUE"),
+            "packet diff must retain the source edit despite textconv"
+        );
+        assert!(
+            !diff.contains('\u{1b}'),
+            "packet diff must not contain color"
+        );
+        Ok(())
     }
 
     #[test]
