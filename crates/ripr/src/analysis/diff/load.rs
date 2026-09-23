@@ -50,6 +50,17 @@ pub fn load_diff_with_effective_base(
         });
     }
 
+    // #3952: a missing root must fail as a missing root, not as an
+    // unresolvable base. Default-base resolution would otherwise turn a
+    // typo'd --root into "could not resolve a default base", misdirecting
+    // the caller toward --base.
+    if !root.is_dir() {
+        return Err(format!(
+            "repository root {} does not exist or is not a directory",
+            root.display()
+        ));
+    }
+
     warn_if_git_operation_in_progress(root, git_timeout);
 
     // RIPR-SPEC-0084: when the caller passes an explicit base, use it as-is
@@ -465,10 +476,11 @@ fn run_git_diff_bytes(
     git_timeout: Option<Duration>,
 ) -> Result<Vec<u8>, String> {
     // Delegate the spawn to the shared git authority (#1921, #2303), which
-    // spawns with `current_dir(root)`: a missing/unusable root fails the
-    // SPAWN, so the wrap arm below reproduces the established
-    // `failed to run git diff: ...` text the context/explain invalid-root
-    // contract pins. The named timeout and cancellation errors pass through
+    // spawns with `current_dir(root)`. A missing root never reaches the
+    // spawn: `load_diff_with_effective_base` rejects non-directories up
+    // front (#3952), so the wrap arm below only reproduces the
+    // `failed to run git diff: ...` text for other invocation failures.
+    // The named timeout and cancellation errors pass through
     // unwrapped so the LSP refresh path can match them; the non-zero-exit
     // text below stays byte-identical.
     // `core.quotePath=true` pins the diff input contract (#3601): with the

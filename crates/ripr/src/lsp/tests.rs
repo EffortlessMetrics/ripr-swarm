@@ -7192,7 +7192,9 @@ fn default_lsp_analysis_config_matches_check_input_defaults() {
     let input = config.check_input(Path::new("/workspace"));
 
     assert_eq!(input.root, PathBuf::from("/workspace"));
-    assert_eq!(input.base.as_deref(), Some("origin/main"));
+    // #3952: the library default carries no base; parity with
+    // `CheckInput::default()` is what this test pins.
+    assert_eq!(input.base.as_deref(), None);
     assert_eq!(input.mode, Mode::Draft);
     assert!(input.include_unchanged_tests);
     assert!(config.enable_seam_diagnostics);
@@ -9813,7 +9815,9 @@ fn backend_starts_with_default_lsp_analysis_config() -> Result<(), String> {
         return Err("expected backend analysis config".to_string());
     };
 
-    assert_eq!(config.base_ref.as_deref(), Some("origin/main"));
+    // #3952: the LSP default inherits the baseless library default so
+    // refreshes resolve the workspace default branch.
+    assert_eq!(config.base_ref.as_deref(), None);
     assert_eq!(config.mode, Mode::Draft);
     assert!(config.include_unchanged_tests);
     assert!(config.enable_seam_diagnostics);
@@ -13132,7 +13136,9 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
             current_input["session_options_identity"],
             serde_json::Value::Null
         );
-        assert_eq!(current_input["requested_base"], "origin/main");
+        // #3952: no base is requested by default; resolution happens
+        // downstream of the status projection.
+        assert_eq!(current_input["requested_base"], serde_json::Value::Null);
         assert_eq!(current_input["resolved_base"], serde_json::Value::Null);
         assert_eq!(current_input["mode"], "draft");
         assert_eq!(current_input["profile"], "actionable");

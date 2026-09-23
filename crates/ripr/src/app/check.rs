@@ -784,8 +784,8 @@ mod tests {
 
     #[test]
     fn check_output_keeps_input_base_when_no_loader_base_applies() {
-        // Diff-file/stdin runs involve no base; the caller's own value
-        // (including a stale default) passes through unchanged.
+        // Diff-file/stdin runs involve no base; an explicitly provided
+        // value passes through unchanged.
         let mut input = sample_diff_input();
         input.base = Some("origin/main".to_string());
         let output = output_builder::check_output_from_analysis(
