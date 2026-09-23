@@ -143,7 +143,8 @@ comments, strings, and docstrings:
 
 - function or class owner: the bare owner name (`handler = loyalty_price`),
   unless the test binds a local of that name (a parameter or fixture, an
-  assignment, a nested `def` or `class`) or the name is a keyword-argument or
+  assignment, a walrus `:=`, a `for` loop target, an `as` target, a nested
+  `def` or `class`) or the name is a keyword-argument or
   assignment target; a renamed import local
   (`from pricing import loyalty_price as lp`, then `lp`) whose source module is
   the owner module; or a module-qualified member through an import of the

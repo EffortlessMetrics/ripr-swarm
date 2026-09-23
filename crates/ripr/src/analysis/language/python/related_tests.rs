@@ -859,19 +859,38 @@ fn test_references_owner_module(test: &PythonTest, owner: &PythonOwner) -> bool 
 }
 
 /// Whether the test binds its own local named `name`: a parameter (pytest
-/// fixture), a direct assignment, or a nested `def`/`class`. Such a local
-/// shadows the imported owner, so bare uses of `name` are not owner references.
+/// fixture), a direct assignment, a walrus (`name :=`), a `for name in` loop
+/// target, an `as name` target (`with`, `except`, in-body `import`), or a
+/// nested `def`/`class`. Such a local shadows the imported owner, so bare uses
+/// of `name` are not owner references.
 fn test_binds_local(test: &PythonTest, name: &str) -> bool {
     test.fixtures.iter().any(|fixture| fixture == name)
         || assignment_count(&test.body_text, name) > 0
-        || ["def ", "class "].into_iter().any(|keyword| {
-            let needle = format!("{keyword}{name}");
-            test.body_text.match_indices(&needle).any(|(idx, _)| {
-                let end = idx + needle.len();
-                python_callee_start_has_boundary(&test.body_text, idx)
-                    && !next_char_is_identifier(&test.body_text, end)
+        || walrus_binds(&test.body_text, name)
+        || ["def ", "class ", "for ", "as "]
+            .into_iter()
+            .any(|keyword| {
+                let needle = format!("{keyword}{name}");
+                test.body_text.match_indices(&needle).any(|(idx, _)| {
+                    let end = idx + needle.len();
+                    python_callee_start_has_boundary(&test.body_text, idx)
+                        && !next_char_is_identifier(&test.body_text, end)
+                        && !python_text_hides_code(&test.body_text, idx)
+                })
             })
-        })
+}
+
+/// `name :=` with identifier boundaries, outside comments and strings.
+fn walrus_binds(body_text: &str, name: &str) -> bool {
+    body_text.match_indices(name).any(|(idx, _)| {
+        let end = idx + name.len();
+        python_callee_start_has_boundary(body_text, idx)
+            && !next_char_is_identifier(body_text, end)
+            && body_text[end..]
+                .trim_start_matches([' ', '\t'])
+                .starts_with(":=")
+            && !python_text_hides_code(body_text, idx)
+    })
 }
 
 /// Bare (possibly dotted, for a module alias) name reference: identifier

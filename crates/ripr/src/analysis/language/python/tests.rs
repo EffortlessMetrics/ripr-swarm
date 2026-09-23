@@ -4472,6 +4472,54 @@ def test_loyalty_price_shadowed_by_fixture(loyalty_price):
 }
 
 #[test]
+fn walrus_loop_and_as_targets_shadow_the_owner_name() -> Result<(), String> {
+    // A local bound by `:=`, `for ... in` or `as` shadows the owner, so a bare
+    // use of that name is not an owner reference (RIPR-SPEC-0028).
+    let owners = flat_pricing_owners();
+    let loyalty = flat_owner(&owners, "loyalty_price")?;
+    let source = r#"from pricing import discounted_total
+
+
+def test_loyalty_price_walrus():
+    if (loyalty_price := discounted_total(5000)) > 0:
+        assert loyalty_price == 5000
+
+
+def test_loyalty_price_loop():
+    for loyalty_price in [5000, 20000]:
+        assert discounted_total(loyalty_price) > 0
+
+
+def test_loyalty_price_context(tmp_path):
+    with open(tmp_path / "x", "w") as loyalty_price:
+        assert loyalty_price is not None
+"#;
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), source);
+    assert_eq!(tests.len(), 3, "fixture must parse all three tests");
+    assert!(
+        tests.iter().all(|test| same_stem_related(test, loyalty)),
+        "every parsed test must satisfy the stem heuristic"
+    );
+    assert_eq!(
+        candidate_relations(loyalty, &tests),
+        Vec::<(String, &'static str)>::new(),
+        "walrus, loop and `as` targets shadow the owner name"
+    );
+
+    // Control: the same bare use without a shadowing binding is a reference.
+    let control = extract_tests(
+        Path::new("tests/test_pricing.py"),
+        "from pricing import loyalty_price\n\n\ndef test_handler():\n    handler = loyalty_price\n    assert callable(handler)\n",
+    );
+    assert_eq!(control.len(), 1);
+    assert_eq!(
+        candidate_relations(loyalty, &control),
+        vec![("test_handler".to_string(), "same_stem")]
+    );
+    Ok(())
+}
+
+#[test]
 fn method_owners_need_an_attribute_reference_and_dunders_a_class_reference() -> Result<(), String> {
     let owners = extract_owners(
         Path::new("src/account.py"),
