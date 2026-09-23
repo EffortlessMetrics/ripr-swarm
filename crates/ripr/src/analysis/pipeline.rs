@@ -122,7 +122,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
         generated_file_patterns,
         &loaded.text,
     )?;
-    result.effective_base = loaded.effective_base;
+    bind_effective_base(&mut result, loaded.effective_base)?;
     Ok(result)
 }
 
@@ -160,8 +160,35 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_generated_file_patter
         generated_file_patterns,
         &loaded.text,
     )?;
-    result.effective_base = loaded.effective_base;
+    bind_effective_base(&mut result, loaded.effective_base)?;
     Ok(result)
+}
+
+/// Records the base the diff loader used (#3940) in the envelope field and
+/// in the typed outcome identity, so both name one resolved value. A
+/// scope-less run's outcome identity is built before the loader's default is
+/// known; without this it would keep no base while the envelope names the
+/// resolved one, and `read_analysis_outcome_artifact_at` rejects that pair.
+/// An explicit base is already the identity's base; diff-file and stdin
+/// inputs involve no loader base and are left as they are.
+fn bind_effective_base(
+    result: &mut AnalysisResult,
+    effective_base: Option<String>,
+) -> Result<(), String> {
+    if let (Some(outcome), Some(base)) = (result.analysis_outcome.as_mut(), &effective_base)
+        && outcome.identity.base_revision.is_none()
+    {
+        let mut identity = outcome.identity.clone();
+        identity.base_revision = Some(base.clone());
+        *outcome = AnalysisOutcome::new(
+            outcome.kind,
+            identity,
+            outcome.counts,
+            outcome.limitations.clone(),
+        )?;
+    }
+    result.effective_base = effective_base;
+    Ok(())
 }
 
 /// The docs-only disclosure message (#2304): `Some(message)` when the diff
@@ -1552,6 +1579,76 @@ mod tests {
         assert!(outcome.limitations.is_empty());
         assert!(complete_zero.findings.is_empty());
 
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// #3940 follow-up: the envelope base and the typed outcome identity name
+    /// one resolved value. A scope-less run (no explicit base) takes the
+    /// loader's resolved default into the identity; an explicit base and a
+    /// base-less (diff-file) run keep the identity they were built with.
+    #[test]
+    fn effective_base_binds_the_outcome_identity_to_the_loader_base() -> Result<(), String> {
+        let root = temp_root("effective-base-identity")?;
+        let options = |base: Option<&str>| AnalysisOptions {
+            root: root.clone(),
+            base: base.map(str::to_string),
+            diff_file: None,
+            mode: AnalysisMode::Draft,
+            resolved_subject_identity: None,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+        };
+        let diff = "diff --git a/docs/readme.md b/docs/readme.md\n\
+             --- a/docs/readme.md\n\
+             +++ b/docs/readme.md\n\
+             @@ -1,1 +1,1 @@\n\
+             -old\n\
+             +new\n";
+        let identity_base = |result: &AnalysisResult| {
+            result
+                .analysis_outcome
+                .as_ref()
+                .map(|outcome| outcome.identity.base_revision.clone())
+        };
+        for (case, explicit, loader, expected) in [
+            ("scope-less", None, Some("main"), Some("main")),
+            (
+                "explicit",
+                Some("origin/main"),
+                Some("origin/main"),
+                Some("origin/main"),
+            ),
+            ("diff file", None, None, None),
+        ] {
+            let mut result = run_pipeline_for_diff_text(
+                &options(explicit),
+                &OraclePolicy::default(),
+                &[LanguageId::Rust],
+                &[],
+                diff,
+            )?;
+            // Precondition: the identity is built from the caller's base alone.
+            if identity_base(&result) != Some(explicit.map(str::to_string)) {
+                return Err(format!("{case}: unexpected pre-binding identity base"));
+            }
+            bind_effective_base(&mut result, loader.map(str::to_string))?;
+            assert_eq!(
+                identity_base(&result),
+                Some(expected.map(str::to_string)),
+                "{case}: identity base"
+            );
+            assert_eq!(
+                result.effective_base.as_deref(),
+                loader,
+                "{case}: effective base"
+            );
+        }
         let _ = fs::remove_dir_all(root);
         Ok(())
     }
