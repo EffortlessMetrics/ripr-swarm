@@ -259,6 +259,21 @@ pub fn load_diff_range(root: &Path, base: &str, head: &str) -> Result<String, St
     )
 }
 
+/// PR-evidence range path (issue #3930): the same pinned presentation as
+/// the analysis loaders, with `--binary` as the caller extra (the packet
+/// artifact keeps binary hunks) and three context lines (the pre-#3930
+/// `PR_DIFF` presentation was Git's three-line default). No
+/// `--submodule=short`: submodule rendering stays exactly as the
+/// PR-evidence path produced it, so ordinary repositories see
+/// byte-identical `PR_DIFF`. The packet artifact records evidence, so the
+/// decode stays strict like the pre-#3930 helper: non-UTF-8 stdout is a
+/// named error, never silently recorded with replacement characters. Like
+/// [`load_diff_range`], no deadline is threaded.
+pub fn load_pr_evidence_diff_range(root: &Path, base: &str, head: &str) -> Result<String, String> {
+    let bytes = run_git_diff_bytes(root, &format!("{base}...{head}"), &["--binary"], "3", None)?;
+    String::from_utf8(bytes).map_err(|err| format!("packet diff is not valid UTF-8: {err}"))
+}
+
 /// Return `true` when the working tree at `root` has uncommitted changes to
 /// tracked source files (staged or unstaged).
 ///
@@ -417,6 +432,38 @@ fn run_git_diff(
     extra_args: &[&str],
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
+    // Analysis loaders consume source-coordinate patches: zero context
+    // lines stay the assembly default.
+    run_git_diff_with_unified(root, range, extra_args, "0", git_timeout)
+}
+
+fn run_git_diff_with_unified(
+    root: &Path,
+    range: &str,
+    extra_args: &[&str],
+    unified: &str,
+    git_timeout: Option<Duration>,
+) -> Result<String, String> {
+    // Analysis decodes lossy (unchanged): coordinates come from the
+    // C-quoted path contract above, and hunk bodies are parsed, not
+    // recorded as evidence.
+    Ok(String::from_utf8_lossy(&run_git_diff_bytes(
+        root,
+        range,
+        extra_args,
+        unified,
+        git_timeout,
+    )?)
+    .into_owned())
+}
+
+fn run_git_diff_bytes(
+    root: &Path,
+    range: &str,
+    extra_args: &[&str],
+    unified: &str,
+    git_timeout: Option<Duration>,
+) -> Result<Vec<u8>, String> {
     // Delegate the spawn to the shared git authority (#1921, #2303), which
     // spawns with `current_dir(root)`: a missing/unusable root fails the
     // SPAWN, so the wrap arm below reproduces the established
@@ -437,12 +484,16 @@ fn run_git_diff(
     // Analysis consumes source-coordinate patches, not human diff views.
     // Pin every caller, including worktree mode: helpers can suppress real
     // changes, textconv can invent source coordinates, and ambient context
-    // can expand a one-line edit into a full-file payload (#3850).
+    // can expand a one-line edit into a full-file payload (#3850). The
+    // context-line count is the one caller-selected presentation knob (the
+    // appended pin wins over any same-named extra): analysis takes zero,
+    // the PR-evidence packet takes three.
+    let unified_arg = format!("--unified={unified}");
     args.extend_from_slice(&[
         "--no-ext-diff",
         "--no-textconv",
         "--no-color",
-        "--unified=0",
+        unified_arg.as_str(),
         "--inter-hunk-context=0",
     ]);
     args.push(range);
@@ -463,7 +514,7 @@ fn run_git_diff(
         ));
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(output.stdout)
 }
 
 #[cfg(test)]
