@@ -68,7 +68,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         println!("✓ doctor checks passed");
         Ok(())
     } else {
-        println!("! doctor checks failed; run `ripr doctor --help` for usage");
+        print!("{}", output::doctor::DOCTOR_FAILED_LINE);
         Err("doctor found issues".to_string())
     }
 }

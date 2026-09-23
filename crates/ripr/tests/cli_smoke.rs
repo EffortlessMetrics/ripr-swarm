@@ -3710,6 +3710,30 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         "before",
     ]);
     assert_success(&before);
+    // The before phase's stdout is the packet JSON alone, and its narration
+    // names a test-only edit without re-sending the user to take the before
+    // snapshot this phase already wrote.
+    let before_stdout: serde_json::Value = serde_json::from_slice(&before.stdout)?;
+    assert_eq!(before_stdout["packets"][0]["seam_id"], "67fc764ba37d77bd");
+    let before_stdout_text = String::from_utf8_lossy(&before.stdout);
+    assert!(
+        !before_stdout_text.contains("ripr: ") && !before_stdout_text.contains("Next:"),
+        "before phase narration belongs on stderr, not in the packet JSON:\n{before_stdout_text}"
+    );
+    let before_stderr = String::from_utf8_lossy(&before.stderr);
+    assert!(
+        before_stderr
+            .contains("add or strengthen one focused test (leave production code unchanged)"),
+        "before phase must name a test-only edit:\n{before_stderr}"
+    );
+    assert!(
+        !before_stderr.contains("Edit the source code"),
+        "before phase must not ask for a source edit:\n{before_stderr}"
+    );
+    assert!(
+        !before_stderr.contains("Next: ripr check"),
+        "before phase must not re-issue the snapshot it already took:\n{before_stderr}"
+    );
 
     let before_snapshot = root.join("target/ripr/workflow/before.repo-exposure.json");
     assert!(before_snapshot.is_file());
@@ -3744,6 +3768,19 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         "after",
     ]);
     assert_success(&after);
+    let after_stderr = String::from_utf8_lossy(&after.stderr);
+    assert!(
+        after_stderr.contains("ripr: result for seam `67fc764ba37d77bd`: weakly_gripped -> "),
+        "after phase must name the seam's movement:\n{after_stderr}"
+    );
+    assert!(
+        !after_stderr.contains("could not read"),
+        "after phase must read the receipt it just wrote:\n{after_stderr}"
+    );
+    assert!(
+        after_stderr.contains("ripr: after phase complete. Receipt: "),
+        "after phase must name the receipt path:\n{after_stderr}"
+    );
     let after_snapshot_text = std::fs::read_to_string(&after_snapshot)?;
     assert!(!after_snapshot_text.contains("previous repair run"));
 
@@ -6895,6 +6932,68 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
         .map_err(|e| format!("read agent seam packets: {e}"))?;
     assert!(packets.contains(r#""packets_total""#));
     assert!(packets.contains(r#""task": "write_targeted_test""#));
+
+    // The terminal is the only pilot surface a user sees without opening a
+    // file, and the next documented step is `ripr agent repair --seam-id <id>`,
+    // which accepts a seam id and nothing else. So the screen must carry the
+    // id, and it must be the same id the written packet carries — the packet
+    // is produced from the inventory `agent repair` resolves against, so a
+    // mismatch would mean the printed command names a seam the repair
+    // transaction cannot find.
+    let seam_line = stdout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("inspected seam: "))
+        .ok_or_else(|| format!("pilot terminal printed no inspected-seam line:\n{stdout}"))?;
+    let printed_id = seam_line
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| format!("inspected-seam line carried no id: {seam_line}"))?;
+    assert!(
+        printed_id.len() == 16 && printed_id.chars().all(|ch| ch.is_ascii_hexdigit()),
+        "expected a 16-hex seam id to lead the inspected-seam line, got: {seam_line}"
+    );
+    assert!(
+        packets.contains(&format!(r#""seam_id": "{printed_id}""#)),
+        "the printed seam id {printed_id} is absent from agent-seam-packets.json"
+    );
+    // This fixture's route is actionable, so the paste-ready repair command is
+    // present and names the same id. The root is compared through the same
+    // normalization the renderer applies (`loop_commands::shell_path` →
+    // `display_path`, which rewrites `\` as `/`, then `shell_arg`, which may
+    // quote), because `Path::display` keeps native separators and would make
+    // this assertion fail on Windows for a command that is in fact correct.
+    let repair_line = stdout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("repair this seam: "))
+        .ok_or_else(|| format!("pilot did not print a repair command:\n{stdout}"))?;
+    let tokens: Vec<&str> = repair_line.split_whitespace().collect();
+    let flag_value = |flag: &str| -> Option<&str> {
+        tokens
+            .iter()
+            .position(|token| *token == flag)
+            .and_then(|at| tokens.get(at + 1))
+            .map(|value| value.trim_matches('\''))
+    };
+    assert_eq!(
+        tokens.first().copied(),
+        Some("ripr"),
+        "expected a paste-ready ripr command, got: {repair_line}"
+    );
+    assert_eq!(
+        flag_value("--seam-id"),
+        Some(printed_id),
+        "the repair command must name the seam printed above it: {repair_line}"
+    );
+    assert_eq!(
+        flag_value("--phase"),
+        Some("before"),
+        "expected the opening phase of the repair transaction: {repair_line}"
+    );
+    assert_eq!(
+        flag_value("--root").map(|value| value.replace('\\', "/")),
+        Some(root.display().to_string().replace('\\', "/")),
+        "the repair command must name the analyzed root: {repair_line}"
+    );
 
     let _ = std::fs::remove_dir_all(&out_dir);
     Ok(())
@@ -10649,6 +10748,117 @@ fn check_worktree_base_head_clean_worktree_has_no_scope_or_unanalyzed_disclosure
             "clean HEAD-vs-worktree diff should not produce findings:\n{stdout}"
         ));
     }
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #3893: `agent status` builds its printed next commands from the `--root`
+/// the user gave. It previously rendered `--root <root>/target/ripr/workflow`,
+/// so the command it told a first-time user to run could not succeed.
+#[test]
+fn agent_status_next_command_uses_the_workspace_root() -> Result<(), String> {
+    let root = unique_temp_workspace("agent-status-root");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"agent-status-root\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let json = run_ripr(&["agent", "status", "--root", &root_str, "--json"]);
+    assert_success(&json);
+    let stdout = String::from_utf8_lossy(&json.stdout);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("parse agent status JSON: {err}\n{stdout}"))?;
+    // Fixture precondition: a fresh workspace has no loop artifacts, so the
+    // first next command is the before snapshot.
+    let next = report
+        .pointer("/next_command/command")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("expected next_command.command:\n{stdout}"))?;
+    if !next.starts_with("ripr check --root ") || !next.contains("before.repo-exposure.json") {
+        return Err(format!(
+            "expected the before-snapshot command first; got `{next}`"
+        ));
+    }
+    if next.contains("target/ripr/workflow --mode") || next.contains("workflow' --mode") {
+        return Err(format!(
+            "next command must not use the workflow directory as --root; got `{next}`"
+        ));
+    }
+    // Positive grip: the command and the report carry exactly the root the
+    // user passed (display paths use `/` on every platform).
+    let expected_root = root_str.replace('\\', "/");
+    let expected_prefix = format!("ripr check --root {expected_root} --mode");
+    let quoted_prefix = format!("ripr check --root '{expected_root}' --mode");
+    if !next.starts_with(&expected_prefix) && !next.starts_with(&quoted_prefix) {
+        return Err(format!(
+            "next command must target the given root `{expected_root}`; got `{next}`"
+        ));
+    }
+    let reported_root = report
+        .pointer("/root")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("expected root string:\n{stdout}"))?;
+    if reported_root != expected_root {
+        return Err(format!(
+            "reported root must be the given workspace `{expected_root}`; got `{reported_root}`"
+        ));
+    }
+
+    let markdown = run_ripr(&["agent", "status", "--root", &root_str]);
+    assert_success(&markdown);
+    let rendered = String::from_utf8_lossy(&markdown.stdout);
+    if rendered.contains("Root: ") && rendered.contains("target/ripr/workflow\n") {
+        return Err(format!("Markdown root must be the workspace:\n{rendered}"));
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #3893: `agent status` always inspects `target/ripr/workflow`, so a
+/// non-default `--out` fails closed instead of being accepted and ignored.
+#[test]
+fn agent_status_refuses_non_default_out_dir() -> Result<(), String> {
+    let root = unique_temp_workspace("agent-status-out");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"agent-status-out\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let custom = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_str,
+        "--out",
+        "elsewhere",
+        "--json",
+    ]);
+    if custom.status.success() {
+        return Err("agent status --out elsewhere must fail closed".to_string());
+    }
+    let stderr = String::from_utf8_lossy(&custom.stderr);
+    if !stderr.contains("agent status --out elsewhere is not supported") {
+        return Err(format!("expected a named --out refusal; got:\n{stderr}"));
+    }
+
+    let default = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_str,
+        "--out",
+        "target/ripr/workflow",
+        "--json",
+    ]);
+    assert_success(&default);
 
     let _ = std::fs::remove_dir_all(&root);
     Ok(())

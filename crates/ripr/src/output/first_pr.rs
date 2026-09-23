@@ -1698,13 +1698,32 @@ fn with_extension(path: &str, extension: &str) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
+/// Join a possibly relative path onto the command root, without carrying the
+/// root's own `.` into every path this command prints.
+///
+/// `ripr first-pr --root .` makes `root` end in a `CurDir` component, so a
+/// plain `root.join(...)` renders as `/repo/./target/ripr/reports/start-here.md`
+/// in the `Start here:`, `Artifacts:` and `Wrote` lines — a path nobody would
+/// type, on the command whose whole job is handing a reader a file to open.
+/// Collecting the components drops the interior `CurDir` while keeping both a
+/// leading `./`, which other surfaces already render, and every `ParentDir`:
+/// dropping a `..` would name a different directory. The filesystem target is
+/// unchanged either way.
 fn resolve_path(root: &Path, path: &str) -> PathBuf {
     let candidate = Path::new(path);
-    if candidate.is_absolute() {
+    let joined = if candidate.is_absolute() {
         candidate.to_path_buf()
     } else {
         root.join(candidate)
+    };
+    let resolved: PathBuf = joined.components().collect();
+    // A path made only of `.` components keeps one `CurDir` and collects back
+    // to `.`, so the fallback is for the empty-path case alone, which would
+    // name nothing at all.
+    if resolved.as_os_str().is_empty() {
+        return PathBuf::from(".");
     }
+    resolved
 }
 
 fn normalized_path(path: &Path) -> String {
@@ -1721,6 +1740,35 @@ fn repo_root() -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resolve_path_drops_the_roots_own_cur_dir() {
+        // `--root .` used to render every emitted artifact as
+        // `/repo/./target/...`. The rendered path is now the one a reader
+        // would type, and names the same file.
+        assert_eq!(
+            resolve_path(Path::new("/repo/."), "target/ripr/reports/start-here.md"),
+            PathBuf::from("/repo/target/ripr/reports/start-here.md")
+        );
+        // A leading `./` is kept: `Components` only drops interior `CurDir`,
+        // so the existing relative rendering that other surfaces already emit
+        // is untouched and this change stays confined to the joined case.
+        assert_eq!(
+            resolve_path(Path::new("."), "target/ripr/reports"),
+            PathBuf::from("./target/ripr/reports")
+        );
+        // An absolute argument still wins over the root, unchanged.
+        assert_eq!(
+            resolve_path(Path::new("/repo/."), "/elsewhere/out"),
+            PathBuf::from("/elsewhere/out")
+        );
+        // Discriminator: `..` is not a `.`. Dropping it would name a different
+        // directory, so it survives.
+        assert_eq!(
+            resolve_path(Path::new("/repo/."), "../shared/out"),
+            PathBuf::from("/repo/../shared/out")
+        );
+    }
+
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 

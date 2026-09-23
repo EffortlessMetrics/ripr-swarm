@@ -50,6 +50,7 @@ without chat history:
 | --- | --- |
 | Before snapshot | `target/ripr/workflow/before.repo-exposure.json` |
 | After snapshot | `target/ripr/workflow/after.repo-exposure.json` |
+| Analysis outcome | `target/ripr/workflow/analysis-outcome.json` |
 | Workflow manifest | `target/ripr/workflow/workflow.json` |
 | Workflow commands | `target/ripr/workflow/commands.md` |
 | Agent brief | `target/ripr/workflow/agent-brief.json` |
@@ -62,6 +63,24 @@ without chat history:
 Generated GitHub CI also uploads these paths under the `ripr-reports` artifact.
 It keeps compatibility copies of packet, brief, verify, and receipt JSON under
 `target/ripr/agent/`.
+
+## Ordinary path: `ripr agent repair`
+
+For one named gap, the repair transaction writes the snapshot, packet, verify,
+and receipt artifacts above for you:
+
+```bash
+ripr agent repair --root . --seam-id <seam-id> --phase before
+# edit one focused test outside RIPR
+ripr agent repair --root . --attempt <repair-attempt-id> --phase after
+```
+
+The before phase writes the before snapshot, brief, packet, and workflow files
+and prints the exact `--attempt` command for the after phase. The after phase
+writes the after snapshot, analysis outcome, verify JSON, and receipt. For the
+separately authorized `verify` phase of a trust-bound Python attempt, see
+[Repair attempt identity](REPAIR_ATTEMPT.md). The numbered steps below are the
+lower-level manual equivalent, kept for explicit control and debugging.
 
 ## 1. Check Status
 
@@ -178,6 +197,13 @@ or a ready-mode before snapshot, keep the after snapshot in ready mode too:
 
 ```bash
 ripr check --root . --mode ready --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json
+```
+
+`ripr agent status` also expects the analysis outcome for the same run before
+it reports the loop complete:
+
+```bash
+ripr check --root . --mode draft --format json > target/ripr/workflow/analysis-outcome.json
 ```
 
 ## 5. Verify Static Movement
