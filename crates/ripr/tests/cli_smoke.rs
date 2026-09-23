@@ -7905,6 +7905,83 @@ fn pilot_uses_repo_config_mode_without_explicit_flag() -> Result<(), String> {
     Ok(())
 }
 
+/// `first-action` and `pr-review front-panel` refuse to run without at least
+/// one artifact input, so their usage lines must not render those inputs the
+/// way an optional flag with a default is rendered.
+///
+/// This binds the claim to the refusal in one test: the same command that the
+/// help describes is executed with no artifact input and must exit 2. A help
+/// line that goes back to bracketing every input, or a command that starts
+/// guessing paths, fails here.
+#[test]
+fn artifact_input_commands_do_not_advertise_defaults_they_refuse_to_use() -> Result<(), String> {
+    let workspace = unique_temp_workspace("artifact-input-required");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let root = workspace.display().to_string();
+
+    let overview = run_ripr(&["help", "--all"]);
+    assert_success(&overview);
+    let overview_stdout = String::from_utf8_lossy(&overview.stdout).to_string();
+
+    let cases: [(&[&str], &str, &str); 2] = [
+        (
+            &["first-action"],
+            "  ripr first-action [--root .] (--pr-guidance",
+            "ripr first-action [--root .] [--pr-guidance",
+        ),
+        (
+            &["pr-review", "front-panel"],
+            "  ripr pr-review front-panel (--pr-guidance",
+            "ripr pr-review front-panel [--pr-guidance",
+        ),
+    ];
+
+    let mut failures: Vec<String> = Vec::new();
+    for (command, required_form, optional_form) in cases {
+        let name = command.join(" ");
+        if !overview_stdout.contains(required_form) {
+            failures.push(format!(
+                "`help --all` does not mark {name}'s inputs required"
+            ));
+        }
+        if overview_stdout.contains(optional_form) {
+            failures.push(format!(
+                "`help --all` still renders {name}'s required inputs as optional defaults"
+            ));
+        }
+
+        let mut args: Vec<&str> = command.to_vec();
+        args.extend_from_slice(&["--root", root.as_str()]);
+        let refused = run_ripr(&args);
+        let stderr = String::from_utf8_lossy(&refused.stderr).to_string();
+        if refused.status.success()
+            || !stderr.contains("requires at least one explicit artifact input")
+        {
+            failures.push(format!(
+                "`ripr {name}` no longer refuses a run with no artifact input: {stderr}"
+            ));
+        }
+
+        let mut help_args: Vec<&str> = command.to_vec();
+        help_args.push("--help");
+        let help = run_ripr(&help_args);
+        assert_success(&help);
+        let help_stdout = String::from_utf8_lossy(&help.stdout).to_string();
+        if !help_stdout.contains("At least one artifact input is required") {
+            failures.push(format!(
+                "`ripr {name} --help` does not state the constraint"
+            ));
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
 #[test]
 fn outcome_prints_markdown_receipt_by_default() -> Result<(), String> {
     let workspace = unique_temp_workspace("outcome-stdout");
