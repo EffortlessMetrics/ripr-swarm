@@ -3436,6 +3436,8 @@ mod tests {
         incomplete["status"] = json!("incomplete");
         let mut other_root = review_comments_report(vec![eligible()]);
         other_root["root"] = json!("crates/other");
+        let mut other_head = review_comments_report(vec![eligible()]);
+        other_head["head"] = json!("feature-tip");
         let mut gap_ledger_scoped = review_comments_report(vec![review_card("seam-a", None)]);
         gap_ledger_scoped["analysis_scope"] = json!({"scope": "gap_ledger_artifact"});
         let seam_route = "run `ripr review-comments --root . --base origin/main --head HEAD --out target/ripr/review/comments.json`";
@@ -3454,6 +3456,11 @@ mod tests {
                 "root",
                 Some(other_root),
                 "generated for root `crates/other`, not `.`",
+            ),
+            (
+                "head",
+                Some(other_head),
+                "generated for head `feature-tip`, not `HEAD`",
             ),
             (
                 "scope",
