@@ -1549,6 +1549,17 @@ mod tests {
                 && !first.starts_with("exporter: found at"),
             "incompatible exporter must not read as found/working: {incompatible:?}"
         );
+        // The second line is the prerequisite pointer: the argv ripr sends and
+        // the exporter that would accept it.
+        assert_eq!(incompatible.len(), 2, "{incompatible:?}");
+        let note = incompatible.get(1).map(String::as_str).unwrap_or("");
+        assert!(
+            note.starts_with("note: ")
+                && note.contains(crate::app::PERL_FACT_PACKET_SCHEMA)
+                && note.contains(crate::domain::PERL_FACT_EXPORTER)
+                && note.contains("not yet published"),
+            "incompatible exporter must name the argv and the compatible exporter: {note:?}"
+        );
         let compatible = perl_exporter_lines(&PerlExporterProbe::Compatible {
             bin: "/opt/bin/perl-ripr-facts".to_string(),
             version: "perl-ripr-facts 0.1.0".to_string(),

@@ -380,6 +380,31 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_adapter_recovery_names_the_feature_for_non_perl_languages() {
+        for language in [
+            LanguageId::TypeScript,
+            LanguageId::JavaScript,
+            LanguageId::Python,
+        ] {
+            let recovery = language.unavailable_adapter_recovery();
+            assert_eq!(
+                recovery,
+                format!(
+                    "rebuild ripr with Cargo feature `{}` to analyze {} files",
+                    language.required_feature(),
+                    language.as_str()
+                )
+            );
+            assert!(
+                !recovery.contains("perl-ripr-facts"),
+                "only Perl names the external exporter: {recovery}"
+            );
+        }
+        let perl = LanguageId::Perl.unavailable_adapter_recovery();
+        assert!(perl.contains("lang-perl") && perl.contains(PERL_FACT_EXPORTER));
+    }
+
+    #[test]
     fn language_feature_availability_matches_build() {
         assert!(LanguageId::Rust.is_available());
         assert_eq!(
