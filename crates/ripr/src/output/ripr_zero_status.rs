@@ -1,6 +1,4 @@
-use super::first_pr::{
-    MANUAL_VERIFY_LABEL, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
-};
+use super::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
 use super::gap_decision_ledger::{self, GapRecord};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -440,17 +438,15 @@ pub(crate) fn render_ripr_zero_status_markdown(report: &RiprZeroStatusReport) ->
         // #3906: a carried repair start leads; its after phase runs verify,
         // so the verify command is the manual alternative. Without one it
         // runs after the test edit.
-        let verify_label = if let Some(repair) = route.repair_command.as_deref() {
+        if let Some(repair) = route.repair_command.as_deref() {
             out.push_str(&format!("  Repair start: {repair}\n"));
             out.push_str(&format!(
                 "  {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
             ));
-            MANUAL_VERIFY_LABEL
-        } else {
-            VERIFY_AFTER_EDIT_LABEL
-        };
+        }
         if let Some(verify) = route.verify_command.as_deref() {
-            out.push_str(&format!("  {verify_label}: {verify}\n"));
+            let labels = ProofPathLabels::for_repair_start(route.repair_command.is_some());
+            out.push_str(&format!("  {}: {verify}\n", labels.verify));
         }
         if let Some(limit) = route.static_limitations.first() {
             out.push_str(&format!("  Static limit: {limit}\n"));

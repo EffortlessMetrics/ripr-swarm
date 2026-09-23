@@ -51,8 +51,41 @@ pub(crate) const VERIFY_AFTER_EDIT_LABEL: &str = "Verify after the test edit";
 pub(crate) const RECEIPT_AFTER_VERIFY_LABEL: &str = "Receipt after verify";
 pub(crate) const REPAIR_AFTER_PHASE_LABEL: &str = "After the test edit";
 pub(crate) const REPAIR_AFTER_PHASE_STEP: &str = "run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.";
-pub(crate) const MANUAL_VERIFY_LABEL: &str = "Manual verify without a repair attempt";
-pub(crate) const MANUAL_RECEIPT_LABEL: &str = "Manual receipt without a repair attempt";
+// The manual pair names its prerequisites (F60-2(c)): the low-level verify
+// reads a before snapshot taken before the test edit and an after snapshot
+// taken after it, so on a checkout without them it fails as printed. The
+// repair's before and after phases write both snapshots themselves.
+pub(crate) const MANUAL_VERIFY_LABEL: &str = "Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)";
+pub(crate) const MANUAL_RECEIPT_LABEL: &str =
+    "Manual receipt without a repair attempt (after the manual verify)";
+
+/// The one selector for the low-level verify and receipt labels (#3906).
+///
+/// With a carried repair start, its after phase runs verify and writes the
+/// receipt, so the pair is the manual alternative; without one, both are
+/// steps that run after the focused test edit. Every human surface takes
+/// its labels from here, so the transaction reads the same everywhere.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProofPathLabels {
+    pub(crate) verify: &'static str,
+    pub(crate) receipt: &'static str,
+}
+
+impl ProofPathLabels {
+    pub(crate) fn for_repair_start(has_repair_start: bool) -> Self {
+        if has_repair_start {
+            Self {
+                verify: MANUAL_VERIFY_LABEL,
+                receipt: MANUAL_RECEIPT_LABEL,
+            }
+        } else {
+            Self {
+                verify: VERIFY_AFTER_EDIT_LABEL,
+                receipt: RECEIPT_AFTER_VERIFY_LABEL,
+            }
+        }
+    }
+}
 
 mod options;
 mod preflight;
@@ -3313,27 +3346,23 @@ mod tests {
             &summary,
             &format!("Start repair: `{CARD_REPAIR_COMMAND}`\n{after_phase}"),
         )?;
-        assert!(start < position(&summary, "Manual verify without a repair attempt: `")?);
-        assert!(start < position(&summary, "Manual receipt without a repair attempt: `")?);
+        assert!(start < position(&summary, &format!("{MANUAL_VERIFY_LABEL}: `"))?);
+        assert!(start < position(&summary, &format!("{MANUAL_RECEIPT_LABEL}: `"))?);
         assert!(!summary.contains("Verify command:"), "{summary}");
         assert!(!summary.contains("Receipt command:"), "{summary}");
         let bullet = position(
             &markdown,
             &format!("- Start repair: `{CARD_REPAIR_COMMAND}`\n- {after_phase}"),
         )?;
-        assert!(bullet < position(&markdown, "- Manual verify without a repair attempt: `")?);
+        assert!(bullet < position(&markdown, &format!("- {MANUAL_VERIFY_LABEL}: `"))?);
         let block = position(
             &markdown,
             &format!("Start repair:\n`{CARD_REPAIR_COMMAND}`\n"),
         )?;
         let block_after_phase = position(&markdown, &format!("\n{after_phase}\n"))?;
         assert!(block < block_after_phase);
-        assert!(
-            block_after_phase < position(&markdown, "Manual verify without a repair attempt:\n`")?
-        );
-        assert!(
-            block_after_phase < position(&markdown, "Manual receipt without a repair attempt:\n`")?
-        );
+        assert!(block_after_phase < position(&markdown, &format!("{MANUAL_VERIFY_LABEL}:\n`"))?);
+        assert!(block_after_phase < position(&markdown, &format!("{MANUAL_RECEIPT_LABEL}:\n`"))?);
         assert!(!markdown.contains("Verify command"), "{markdown}");
         assert!(!markdown.contains("Receipt command"), "{markdown}");
 
@@ -3364,7 +3393,13 @@ mod tests {
             &summary_md,
             &format!("- start repair: `{CARD_REPAIR_COMMAND}`\n"),
         )?;
-        assert!(line < position(&summary_md, "- verify: `")?);
+        assert!(
+            line < position(
+                &summary_md,
+                &format!("- {}: `", MANUAL_VERIFY_LABEL.to_lowercase())
+            )?
+        );
+        assert!(!summary_md.contains("- verify: `"), "{summary_md}");
         Ok(())
     }
 

@@ -1,10 +1,7 @@
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-use super::first_pr::{
-    MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
-    REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
-};
+use super::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
 use super::receipt_lifecycle::{
     RECEIPT_MISSING, receipt_lifecycle_state, receipt_lifecycle_state_from_movement,
     receipt_lifecycle_state_from_receipt_value,
@@ -381,20 +378,18 @@ pub(crate) fn render_pr_evidence_ledger_markdown(report: &PrEvidenceLedgerReport
         // #3906: a carried repair start leads; its after phase runs verify
         // and writes the receipt, so verify and receipt are the manual
         // alternative. Without one they run after the test edit.
-        let (verify_label, receipt_label) = if let Some(repair) = route.repair_command.as_deref() {
+        if let Some(repair) = route.repair_command.as_deref() {
             out.push_str(&format!("- Repair start: `{repair}`\n"));
             out.push_str(&format!(
                 "- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
             ));
-            (MANUAL_VERIFY_LABEL, MANUAL_RECEIPT_LABEL)
-        } else {
-            (VERIFY_AFTER_EDIT_LABEL, RECEIPT_AFTER_VERIFY_LABEL)
-        };
+        }
+        let labels = ProofPathLabels::for_repair_start(route.repair_command.is_some());
         if let Some(verify) = route.verify_command.as_deref() {
-            out.push_str(&format!("- {verify_label}: `{verify}`\n"));
+            out.push_str(&format!("- {}: `{verify}`\n", labels.verify));
         }
         if let Some(receipt) = route.receipt_command.as_deref() {
-            out.push_str(&format!("- {receipt_label}: `{receipt}`\n"));
+            out.push_str(&format!("- {}: `{receipt}`\n", labels.receipt));
         }
         out.push_str(&format!(
             "- Receipt state: {}\n",

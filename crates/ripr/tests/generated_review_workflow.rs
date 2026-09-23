@@ -220,6 +220,33 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         );
     }
 
+    // Before any test edit the agent review packet names the missing
+    // receipt as expected and leads with the same repair start and its
+    // after phase (#3906, N5), instead of the review summary's post-edit
+    // snapshot loop with checkout-absolute redirect paths.
+    let packet = summary
+        .split("### Agent review packet\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n### ").next())
+        .ok_or("summary has no Agent review packet block")?;
+    assert!(
+        packet.starts_with(&format!(
+            "- Receipt: No agent receipt yet. None is expected before a repair: the `--attempt ... --phase after` command writes it after the focused test edit.\n- Start repair: `{repair_command}`\n- After the test edit: run the `--attempt ... --phase after` command"
+        )),
+        "the review packet must lead with the repair start:\n{packet}"
+    );
+    let root_text = root.to_str().ok_or("non-utf8 path")?;
+    for stale in [
+        "Movement: missing_artifact",
+        "Run the next command listed by agent status",
+        root_text,
+    ] {
+        assert!(
+            !packet.contains(stale),
+            "the review packet must not print `{stale}` before a repair:\n{packet}"
+        );
+    }
+
     let commands = replay::printed_commands(&summary);
     let runnable = commands
         .iter()

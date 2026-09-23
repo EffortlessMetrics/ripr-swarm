@@ -1,38 +1,31 @@
 use super::FirstUsefulActionReport;
-use crate::output::first_pr::{
-    MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
-    REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
-};
+use crate::output::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
 
 /// Verify and receipt labels for a first-useful-action report (#3906).
 ///
-/// A carried repair start makes verify and receipt the manual alternative to
-/// the repair's after phase; without one they are steps that run after the
-/// focused test edit.
-struct ProofPathLabels {
-    verify: &'static str,
-    receipt: &'static str,
+/// The bullet labels come from the shared selector, so the manual pair names
+/// its prerequisites wherever it is listed. The section headings keep their
+/// title-case form.
+struct ProofPathSections {
+    labels: ProofPathLabels,
     verify_heading: &'static str,
     receipt_heading: &'static str,
 }
 
-impl ProofPathLabels {
-    fn for_report(report: &FirstUsefulActionReport) -> Self {
-        if report.commands.repair.is_some() {
-            Self {
-                verify: MANUAL_VERIFY_LABEL,
-                receipt: MANUAL_RECEIPT_LABEL,
-                verify_heading: "Manual Verify Without A Repair Attempt",
-                receipt_heading: "Manual Receipt Without A Repair Attempt",
-            }
-        } else {
-            Self {
-                verify: VERIFY_AFTER_EDIT_LABEL,
-                receipt: RECEIPT_AFTER_VERIFY_LABEL,
-                verify_heading: "Verify After The Test Edit",
-                receipt_heading: "Receipt After Verify",
-            }
-        }
+fn proof_path_sections(report: &FirstUsefulActionReport) -> ProofPathSections {
+    let repair_start = report.commands.repair.is_some();
+    let (verify_heading, receipt_heading) = if repair_start {
+        (
+            "Manual Verify Without A Repair Attempt",
+            "Manual Receipt Without A Repair Attempt",
+        )
+    } else {
+        ("Verify After The Test Edit", "Receipt After Verify")
+    };
+    ProofPathSections {
+        labels: ProofPathLabels::for_repair_start(repair_start),
+        verify_heading,
+        receipt_heading,
     }
 }
 
@@ -77,7 +70,7 @@ pub(crate) fn render_first_useful_action_markdown(report: &FirstUsefulActionRepo
         ));
     }
 
-    let labels = ProofPathLabels::for_report(report);
+    let sections = proof_path_sections(report);
     if let Some(repair) = &report.commands.repair {
         out.push_str("## Start Repair\n\n");
         out.push_str(&format!("`{repair}`\n\n"));
@@ -87,12 +80,12 @@ pub(crate) fn render_first_useful_action_markdown(report: &FirstUsefulActionRepo
     }
 
     if let Some(verify) = &report.commands.verify {
-        out.push_str(&format!("## {}\n\n", labels.verify_heading));
+        out.push_str(&format!("## {}\n\n", sections.verify_heading));
         out.push_str(&format!("`{verify}`\n\n"));
     }
 
     if let Some(receipt) = &report.commands.receipt {
-        out.push_str(&format!("## {}\n\n", labels.receipt_heading));
+        out.push_str(&format!("## {}\n\n", sections.receipt_heading));
         out.push_str(&format!("`{receipt}`\n\n"));
     }
 
@@ -180,15 +173,21 @@ fn render_one_screen_recommendation_markdown(report: &FirstUsefulActionReport, o
     // #3906: a carried repair start leads the command lines; its after phase
     // runs verify and writes the receipt, so the low-level verify and
     // receipt commands become the manual alternative.
-    let labels = ProofPathLabels::for_report(report);
+    let sections = proof_path_sections(report);
     if let Some(repair) = &report.commands.repair {
         out.push_str(&format!("- Repair start: `{repair}`\n"));
         out.push_str(&format!(
             "- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
         ));
     }
-    out.push_str(&format!("- {}: `{verify_command}`\n", labels.verify));
-    out.push_str(&format!("- {}: `{receipt_command}`\n", labels.receipt));
+    out.push_str(&format!(
+        "- {}: `{verify_command}`\n",
+        sections.labels.verify
+    ));
+    out.push_str(&format!(
+        "- {}: `{receipt_command}`\n",
+        sections.labels.receipt
+    ));
     if !artifacts.is_empty() {
         let joined = artifacts
             .into_iter()

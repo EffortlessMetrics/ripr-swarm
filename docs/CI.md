@@ -1380,8 +1380,8 @@ jobs:
                 if [ "$action_repair" != not_available ] && [ "$action_repair" != unknown ]; then
                   echo "- Repair start: \`$action_repair\`"
                   echo '- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.'
-                  action_verify_label='Manual verify without a repair attempt'
-                  action_receipt_label='Manual receipt without a repair attempt'
+                  action_verify_label='Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)'
+                  action_receipt_label='Manual receipt without a repair attempt (after the manual verify)'
                 else
                   action_verify_label='Verify after the test edit'
                   action_receipt_label='Receipt after verify'
@@ -1415,7 +1415,29 @@ jobs:
             fi
             echo
             echo '### Agent review packet'
-            if [ -f target/ripr/workflow/agent-review-summary.md ]; then
+            # CI runs before any test edit, so no receipt exists yet (#3906,
+            # N5). The packet then leads with the carried repair start and
+            # its after phase, like every other block, instead of the
+            # low-level post-edit loop; the full summary stays an artifact.
+            review_movement=''
+            if [ -f target/ripr/workflow/agent-review-summary.json ]; then
+              review_movement="$(jq -r '.static_movement.state // empty' target/ripr/workflow/agent-review-summary.json 2>/dev/null || true)"
+            fi
+            if [ "$review_movement" = missing_artifact ]; then
+              echo '- Receipt: No agent receipt yet. None is expected before a repair: the `--attempt ... --phase after` command writes it after the focused test edit.'
+              review_repair_command=''
+              if [ -f target/ripr/reports/start-here.json ]; then
+                review_repair_command="$(jq -r '.selected.repair_command // empty' target/ripr/reports/start-here.json 2>/dev/null || true)"
+              fi
+              if [ -n "$review_repair_command" ]; then
+                review_repair_command="$(markdown_inline "$review_repair_command")"
+                echo "- Start repair: \`$review_repair_command\`"
+                echo '- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.'
+              else
+                echo '- No repair start is available; `ripr agent status --root .` names the next step on a local checkout.'
+              fi
+              echo '- Full packet: `target/ripr/workflow/agent-review-summary.md` (workflow artifact).'
+            elif [ -f target/ripr/workflow/agent-review-summary.md ]; then
               cat target/ripr/workflow/agent-review-summary.md
             else
               echo 'Agent review summary was not generated. Run `ripr agent status --root .` locally or inspect uploaded workflow artifacts.'

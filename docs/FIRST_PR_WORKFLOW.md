@@ -149,12 +149,16 @@ the first card that carries `llm_guidance.repair_command`. `start-here.md`
 then shows a `Start repair` line followed by the after-phase step (run the
 `--attempt ... --phase after` command the before phase prints; it verifies
 movement and writes the receipt). The lower-level verify and receipt commands
-follow as `Manual verify without a repair attempt` and `Manual receipt without
-a repair attempt`, not as peer steps. Without a repair start, they read
+follow as `Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)` and `Manual receipt without a repair attempt (after the manual verify)`, not as peer steps: the manual verify
+compares a before snapshot taken before the test edit with an after snapshot
+taken after it, so it fails as printed on a checkout without them. Without a repair start, they read
 `Verify after the test edit` and `Receipt after verify`, because neither can
 run before the test edit. `ripr pr-summary` carries the same start command as
-its first local reproduction command, and the generated CI job summary leads
-its `First-run status` block with it. Only cards past the fail-closed repair-packet flip carry the command;
+its first local reproduction command, and its Markdown, like
+`gate-decision.md`, follows the start with the after-phase step and the same
+manual labels. The generated CI job summary leads its `First-run status` block
+with it, and its `Agent review packet` block says no receipt is expected before
+a repair and leads with the same start. Only cards past the fail-closed repair-packet flip carry the command;
 first-pr copies it and never builds one from a seam id. If no card carries one,
 the no-action reason says why and, when the cards are missing or were rendered
 from the gap ledger, names the seam-level

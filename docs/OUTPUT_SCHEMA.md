@@ -10609,8 +10609,7 @@ Field contract:
   assistant proof keeps the `missing_required_artifact` route. Markdown shows
   the command under `Start Repair` and as `Repair start` in the one-screen
   recommendation. The after-phase step follows it, and verify and receipt are
-  labelled as the manual alternative (`Manual verify without a repair
-  attempt`); without a repair start they read `Verify after the test edit`
+  labelled as the manual alternative (`Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)`); without a repair start they read `Verify after the test edit`
   and `Receipt after verify` (#3906). JSON fields are unchanged.
 - `evidence.*` records supporting artifact paths and static movement when
   supplied. Static movement is not runtime mutation confirmation.

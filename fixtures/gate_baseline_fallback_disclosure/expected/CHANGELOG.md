@@ -3,6 +3,17 @@
 ## Pending
 
 Reason:
+#3906 (F60-14, F60-2(c)): gate-decision Markdown leads a carried repair start with the after-phase step and labels verify and receipt as the manual alternative that names its prerequisites. JSON is unchanged.
+
+Command:
+`RIPR_UPDATE_FIXTURES=1 cargo test -p ripr --lib -- baseline_fallback_disclosure_fixture_matrix_matches_checked_outputs`
+
+Updated:
+- `expected/gate-baseline/*/gate-decision.md`
+
+## Pending
+
+Reason:
 new fixture for issue #1934 baseline fallback disclosure corpus; comment-only diff keeps the check golden minimal
 
 Command:

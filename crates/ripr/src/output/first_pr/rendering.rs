@@ -1,7 +1,6 @@
 use super::{
-    MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
-    REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, STATIC_EVIDENCE_BOUNDARY,
-    VERIFY_AFTER_EDIT_LABEL, string_path,
+    ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, STATIC_EVIDENCE_BOUNDARY,
+    string_path,
 };
 use crate::agent::loop_commands::display_path;
 use crate::output::markdown::powershell_command;
@@ -108,7 +107,7 @@ pub(super) fn start_here_cli_summary(
             // The carried review-card repair start (#3906) leads the proof
             // path; its before phase prints the after-phase command, which
             // runs verify and writes the receipt.
-            let labels = ProofPathLabels::for_selected(selected);
+            let labels = proof_path_labels(selected);
             if let Some(command) = string_path(selected, &["repair_command"]) {
                 out.push_str(&format!("Start repair: `{command}`\n"));
                 out.push_str(&format!(
@@ -334,7 +333,7 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     if let Some(intent) = selected.get("focused_proof_intent").and_then(Value::as_str) {
         out.push_str(&format!("- Focused proof intent: {intent}\n"));
     }
-    let labels = ProofPathLabels::for_selected(selected);
+    let labels = proof_path_labels(selected);
     if let Some(command) = string_path(selected, &["repair_command"]) {
         out.push_str(&format!("- Start repair: `{command}`\n"));
         out.push_str(&format!(
@@ -415,30 +414,10 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     }
 }
 
-/// Labels for the selected gap's low-level verify and receipt commands.
-///
-/// Both run only after the test edit. With a carried repair start (#3906)
-/// the after phase runs them, so they render as the manual alternative
-/// rather than as peer steps of the transaction.
-struct ProofPathLabels {
-    verify: &'static str,
-    receipt: &'static str,
-}
-
-impl ProofPathLabels {
-    fn for_selected(selected: &Value) -> Self {
-        if string_path(selected, &["repair_command"]).is_some() {
-            Self {
-                verify: MANUAL_VERIFY_LABEL,
-                receipt: MANUAL_RECEIPT_LABEL,
-            }
-        } else {
-            Self {
-                verify: VERIFY_AFTER_EDIT_LABEL,
-                receipt: RECEIPT_AFTER_VERIFY_LABEL,
-            }
-        }
-    }
+/// Labels for the selected gap's low-level verify and receipt commands,
+/// through the shared selector (#3906).
+fn proof_path_labels(selected: &Value) -> ProofPathLabels {
+    ProofPathLabels::for_repair_start(string_path(selected, &["repair_command"]).is_some())
 }
 
 /// Present one generated start-here command for both shells (#2628).

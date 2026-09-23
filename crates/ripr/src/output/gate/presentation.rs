@@ -5,6 +5,8 @@ use super::model::{
 };
 use super::{LIMITS_NOTE, SCHEMA_VERSION};
 use crate::app::causal_projection::insert_canonical_delta_fields;
+use crate::output::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
+use crate::output::review_comments::LLM_PROMPT_VERIFY_SENTENCE;
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -493,10 +495,21 @@ fn push_repair_route(out: &mut String, route: &GateRepairRoute) {
         route.missing_discriminator.as_deref(),
     );
     push_repair_target(out, route.repair_target.as_ref());
+    // #3906 (F60-14): a carried repair start leads the route as one
+    // transaction: start, the test to add, then the after phase, which runs
+    // verify and writes the receipt. The low-level pair follows as the
+    // manual alternative, labelled by the shared selector; without a start
+    // it is labelled as running after the test edit. JSON is unchanged.
+    let labels = ProofPathLabels::for_repair_start(route.repair_command.is_some());
     push_optional_code(out, "Start repair", route.repair_command.as_deref());
-    push_optional_text(out, "Add", route.test_intent.as_deref());
-    push_optional_code(out, "Verify", route.verify_command.as_deref());
-    push_optional_code(out, "Receipt", route.receipt_command.as_deref());
+    push_optional_text(out, "Add", route_test_intent(route).as_deref());
+    if route.repair_command.is_some() {
+        out.push_str(&format!(
+            "  - {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+        ));
+    }
+    push_optional_code(out, labels.verify, route.verify_command.as_deref());
+    push_optional_code(out, labels.receipt, route.receipt_command.as_deref());
     push_optional_code(out, "Inspect", route.inspection_command.as_deref());
     out.push_str(&format!(
         "  - Boundary: `{}`\n",
@@ -548,6 +561,20 @@ fn push_repair_target(out: &mut String, target: Option<&GateRepairTarget>) {
     }
 }
 
+/// The route's test intent for the Markdown `Add` line. With a carried
+/// repair start the after phase runs verify, so the review card prompt's
+/// closing low-level verify sentence would be a peer step; it is dropped
+/// there. Any other intent renders unchanged.
+fn route_test_intent(route: &GateRepairRoute) -> Option<String> {
+    let intent = route.test_intent.as_deref()?;
+    if route.repair_command.is_some()
+        && let Some(stripped) = intent.strip_suffix(LLM_PROMPT_VERIFY_SENTENCE)
+    {
+        return Some(stripped.trim_end().to_string());
+    }
+    Some(intent.to_string())
+}
+
 fn push_optional_code(out: &mut String, label: &str, value: Option<&str>) {
     if let Some(value) = value {
         out.push_str(&format!("  - {label}: `{}`\n", md_inline_code(value)));
@@ -592,6 +619,10 @@ fn md_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::first_pr::{
+        MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
+        VERIFY_AFTER_EDIT_LABEL,
+    };
 
     fn route_with_repair(repair_command: Option<&str>) -> GateRepairRoute {
         GateRepairRoute {
@@ -616,28 +647,74 @@ mod tests {
 
     /// #3906: the gate Markdown leads a route that carries the repair start
     /// with it, and JSON keeps the field (null when absent).
+    ///
+    /// F60-14: the start, the test to add and the after phase read as one
+    /// transaction, and verify and receipt follow as the manual alternative
+    /// under the shared labels. Without a start, both are labelled as steps
+    /// after the test edit and the prompt's verify sentence stays.
     #[test]
     fn repair_route_leads_with_the_repair_start_when_carried() -> Result<(), String> {
         let command = "ripr agent repair --root . --seam-id seam-a --phase before";
+        let prompt = format!("Write one focused Rust test. {LLM_PROMPT_VERIFY_SENTENCE}");
+        let mut carried = route_with_repair(Some(command));
+        carried.test_intent = Some(prompt.clone());
+        carried.receipt_command = Some("ripr agent receipt --root . --json".to_string());
         let mut with = String::new();
-        push_repair_route(&mut with, &route_with_repair(Some(command)));
-        let start = with
-            .find(&format!("  - Start repair: `{command}`\n"))
-            .ok_or_else(|| format!("missing start line:\n{with}"))?;
-        let verify = with
-            .find("  - Verify:")
-            .ok_or_else(|| format!("missing verify line:\n{with}"))?;
-        if start > verify {
-            return Err(format!("the repair start must come first:\n{with}"));
+        push_repair_route(&mut with, &carried);
+        let at = |needle: &str| {
+            with.find(needle)
+                .ok_or_else(|| format!("missing `{needle}`:\n{with}"))
+        };
+        let start = at(&format!("  - Start repair: `{command}`\n"))?;
+        let add = at("  - Add: Write one focused Rust test.\n")?;
+        let after = at(&format!(
+            "  - {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+        ))?;
+        let verify = at(&format!("  - {MANUAL_VERIFY_LABEL}: `"))?;
+        let receipt = at(&format!("  - {MANUAL_RECEIPT_LABEL}: `"))?;
+        if !(start < add && add < after && after < verify && verify < receipt) {
+            return Err(format!("the transaction must read in order:\n{with}"));
+        }
+        for peer in [
+            "  - Verify:",
+            "  - Receipt:",
+            LLM_PROMPT_VERIFY_SENTENCE,
+            VERIFY_AFTER_EDIT_LABEL,
+        ] {
+            if with.contains(peer) {
+                return Err(format!(
+                    "`{peer}` must not render beside the start:\n{with}"
+                ));
+            }
         }
 
+        let mut bare = route_with_repair(None);
+        bare.test_intent = Some(prompt.clone());
+        bare.receipt_command = carried.receipt_command.clone();
         let mut without = String::new();
-        push_repair_route(&mut without, &route_with_repair(None));
-        if without.contains("Start repair") {
+        push_repair_route(&mut without, &bare);
+        if without.contains("Start repair")
+            || without.contains(&format!("  - {REPAIR_AFTER_PHASE_LABEL}: "))
+        {
             return Err(format!("no repair start without the field:\n{without}"));
+        }
+        for expected in [
+            format!("  - Add: {prompt}\n"),
+            format!("  - {VERIFY_AFTER_EDIT_LABEL}: `"),
+            format!("  - {RECEIPT_AFTER_VERIFY_LABEL}: `"),
+        ] {
+            if !without.contains(&expected) {
+                return Err(format!("missing `{expected}`:\n{without}"));
+            }
+        }
+        if without.contains("without a repair attempt") {
+            return Err(format!("no manual label without a start:\n{without}"));
         }
         if repair_route_json(&route_with_repair(None)).get("repair_command") != Some(&Value::Null) {
             return Err("JSON must carry repair_command as null when absent".to_string());
+        }
+        if repair_route_json(&carried).get("test_intent") != Some(&Value::String(prompt)) {
+            return Err("JSON must keep the prompt's verify sentence".to_string());
         }
         Ok(())
     }

@@ -16,8 +16,8 @@ Start the focused-test repair for this seam.
 - Focused proof intent: assert_eq!(discounted_total(/* boundary input where amount == discount_threshold */), /* expected */)
 - Repair start: `ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before`
 - After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.
-- Manual verify without a repair attempt: `ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
-- Manual receipt without a repair attempt: `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 8f7fa8644fd12280 --json --out target/ripr/reports/agent-receipt.json`
+- Manual verify without a repair attempt (needs before and after snapshots taken around the test edit): `ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
+- Manual receipt without a repair attempt (after the manual verify): `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 8f7fa8644fd12280 --json --out target/ripr/reports/agent-receipt.json`
 - Artifacts: `fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json`
 - Boundary: static advisory evidence only; not runtime, coverage, mutation, or gate proof.
 

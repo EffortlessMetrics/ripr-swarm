@@ -3615,6 +3615,11 @@ pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::agent_review_summary::NO_RECEIPT_BEFORE_REPAIR;
+    use crate::output::first_pr::{
+        MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
+        REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
+    };
     use sha2::{Digest, Sha256};
 
     pub(super) fn args(values: &[&str]) -> Vec<String> {
@@ -7466,12 +7471,20 @@ language = "rust"
         // the low-level pair becomes the manual alternative.
         assert!(summary.contains(".selected.repair_command // empty"));
         assert!(summary.contains("echo \"- Start repair: \\`$start_repair_command\\`\""));
-        assert!(summary.contains(
-            "echo '- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.'"
-        ));
-        assert!(summary.contains("start_verify_label='Manual verify without a repair attempt'"));
-        assert!(summary.contains("start_verify_label='Verify after the test edit'"));
-        assert!(summary.contains("start_receipt_label='Receipt after verify'"));
+        // The labels are the shared first-pr constants, substituted into
+        // the workflow so one owner holds the text.
+        assert!(summary.contains(&format!(
+            "echo '- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}'"
+        )));
+        assert!(summary.contains(&format!("start_verify_label='{MANUAL_VERIFY_LABEL}'")));
+        assert!(summary.contains(&format!("start_verify_label='{VERIFY_AFTER_EDIT_LABEL}'")));
+        assert!(summary.contains(&format!(
+            "start_receipt_label='{RECEIPT_AFTER_VERIFY_LABEL}'"
+        )));
+        assert!(
+            !summary.contains("@RIPR_"),
+            "unsubstituted workflow placeholder"
+        );
         assert!(summary.contains("- $start_verify_label: \\`$start_verify\\`"));
         assert!(summary.contains("- $start_receipt_label: \\`$start_receipt\\`"));
         let lead = summary
@@ -7512,16 +7525,14 @@ language = "rust"
             let lead_at = summary.find(&lead).unwrap_or(usize::MAX);
             let status_at = summary.find(status_line).unwrap_or(0);
             assert!(lead_at < status_at, "{prefix} repair start must lead");
+            assert!(summary.contains(&format!("{prefix}_verify_label='{MANUAL_VERIFY_LABEL}'")));
+            assert!(summary.contains(&format!("{prefix}_receipt_label='{MANUAL_RECEIPT_LABEL}'")));
             assert!(summary.contains(&format!(
-                "{prefix}_verify_label='Manual verify without a repair attempt'"
+                "{prefix}_verify_label='{VERIFY_AFTER_EDIT_LABEL}'"
             )));
             assert!(summary.contains(&format!(
-                "{prefix}_receipt_label='Manual receipt without a repair attempt'"
+                "{prefix}_receipt_label='{RECEIPT_AFTER_VERIFY_LABEL}'"
             )));
-            assert!(summary.contains(&format!(
-                "{prefix}_verify_label='Verify after the test edit'"
-            )));
-            assert!(summary.contains(&format!("{prefix}_receipt_label='Receipt after verify'")));
             assert!(summary.contains(&format!(
                 "echo \"- ${prefix}_verify_label: \\`${prefix}_verify\\`\""
             )));
@@ -7531,9 +7542,7 @@ language = "rust"
                 "if [ \"${prefix}_repair\" != not_available ] && [ \"${prefix}_repair\" != unknown ]; then\n"
             )));
             assert!(summary.contains(&format!("echo \"- Repair start: \\`${prefix}_repair\\`\"")));
-            assert!(summary.contains(&format!(
-                "{prefix}_verify_label='Manual verify without a repair attempt'"
-            )));
+            assert!(summary.contains(&format!("{prefix}_verify_label='{MANUAL_VERIFY_LABEL}'")));
             assert!(summary.contains(&format!(
                 "echo \"- ${prefix}_verify_label: \\`${prefix}_verify\\`\""
             )));
@@ -8318,6 +8327,38 @@ language = "rust"
         assert!(summary.contains("Recommended next test was not generated"));
         assert!(summary.contains("cat target/ripr/pilot/pilot-summary.md"));
         assert!(summary.contains("cat target/ripr/workflow/agent-review-summary.md"));
+        // #3906 (N5): before any test edit the review packet names the
+        // missing receipt as expected and leads with the carried repair
+        // start and its after phase, not the post-edit snapshot loop.
+        let packet = summary
+            .find("echo '### Agent review packet'")
+            .unwrap_or(usize::MAX);
+        let packet_block = summary.get(packet..).unwrap_or_default();
+        let packet_end = packet_block
+            .find("echo '### Artifact packet'")
+            .unwrap_or(packet_block.len());
+        let packet_block = packet_block.get(..packet_end).unwrap_or_default();
+        let receipt = packet_block
+            .find(&format!("echo '- Receipt: {NO_RECEIPT_BEFORE_REPAIR}'"))
+            .unwrap_or(usize::MAX);
+        let start = packet_block
+            .find("echo \"- Start repair: \\`$review_repair_command\\`\"")
+            .unwrap_or(usize::MAX);
+        let after = packet_block
+            .find(&format!(
+                "echo '- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}'"
+            ))
+            .unwrap_or(usize::MAX);
+        let full = packet_block
+            .find("cat target/ripr/workflow/agent-review-summary.md")
+            .unwrap_or(0);
+        assert!(
+            receipt < start && start < after && after < full,
+            "{packet_block}"
+        );
+        assert!(packet_block.contains(".static_movement.state // empty"));
+        assert!(packet_block.contains("[ \"$review_movement\" = missing_artifact ]"));
+        assert!(packet_block.contains(".selected.repair_command // empty"));
         assert!(summary.contains("### Uploaded review artifacts"));
         assert!(summary.contains("#### Uploaded artifacts at a glance"));
         assert!(summary.contains("target/ripr/reports/index.json"));

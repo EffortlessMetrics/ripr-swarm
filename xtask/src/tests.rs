@@ -19414,11 +19414,34 @@ fn dogfood_blocking_gate_report_is_self_contained() -> Result<(), String> {
             "  - Why it remains open:",
             "  - Near test:",
             "  - Add:",
-            "  - Verify:",
-            "  - Receipt:",
             "  - Inspect: `ripr agent brief --root . --seam-id",
             "  - Boundary: `static_ripr_evidence_only`",
         ] {
+            if !markdown.contains(required) {
+                return Err(format!(
+                    "blocking gate Markdown is not self-contained; missing {required:?}"
+                ));
+            }
+        }
+        // #3906 (F60-14): verify and receipt are labelled as the manual
+        // alternative beside a carried repair start (which its after phase
+        // follows), or as steps after the test edit without one.
+        let (verify, receipt) = if markdown.contains("  - Start repair: `ripr agent repair ") {
+            if !markdown.contains("  - After the test edit: run the `--attempt ... --phase after`")
+            {
+                return Err("blocking gate Markdown lacks the repair after phase".to_string());
+            }
+            (
+                "  - Manual verify without a repair attempt (",
+                "  - Manual receipt without a repair attempt (",
+            )
+        } else {
+            (
+                "  - Verify after the test edit: `",
+                "  - Receipt after verify: `",
+            )
+        };
+        for required in [verify, receipt] {
             if !markdown.contains(required) {
                 return Err(format!(
                     "blocking gate Markdown is not self-contained; missing {required:?}"

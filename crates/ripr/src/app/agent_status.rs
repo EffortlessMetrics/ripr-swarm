@@ -714,33 +714,62 @@ mod tests {
         Ok(())
     }
 
-    /// #3906 (F60-2): the before side a CI run writes leaves the after
-    /// snapshot as the next missing step. It must render as a post-edit step:
-    /// run before the test edit, verify would have nothing to compare.
+    /// #3906 (F60-2): a next command that needs a snapshot taken after the
+    /// focused test edit carries the post-edit note; any other command does
+    /// not. The labeller is checked over every loop step on constructed
+    /// commands, so the contract does not depend on which step status routes
+    /// a given artifact set to.
+    #[test]
+    fn agent_status_command_labels_only_post_edit_steps() {
+        let command = |step: &str| AgentStatusCommand {
+            step: step.to_string(),
+            artifact: "target/ripr/workflow/x.json".to_string(),
+            reason: format!("{step} is missing"),
+            command: format!("ripr {step}"),
+        };
+        for step in AFTER_TEST_EDIT_STEPS {
+            assert!(command(step).runs_after_test_edit(), "{step}");
+        }
+        // Pre-edit loop steps, and the routes a status that reads repair
+        // attempts or pilot may select instead (#3931): none is post-edit.
+        for step in [
+            "before_snapshot",
+            "agent_start",
+            "agent_brief",
+            "agent_packet",
+            "select_seam",
+            "repair_attempt_before",
+            "repair_attempt_after",
+        ] {
+            assert!(!command(step).runs_after_test_edit(), "{step}");
+        }
+    }
+
+    /// #3906 (F60-2): the rendered Next Command places the post-edit note
+    /// between the reason and the command when, and only when, that command
+    /// runs after the test edit. The before-side fixture names its seam in
+    /// the packet and keeps the workflow directory, so the after snapshot is
+    /// the next step whether status reads only the artifact loop or also
+    /// repair attempts and pilot (#3931); an empty root's next command is a
+    /// pre-edit step in both.
     #[test]
     fn agent_status_markdown_labels_post_edit_next_commands() -> Result<(), String> {
         let empty = unique_agent_status_test_dir("markdown-before-side-missing");
         std::fs::create_dir_all(&empty).map_err(|err| format!("create root: {err}"))?;
         let report = build_agent_status_report(&empty, Path::new("."));
-        let next = report
-            .missing_commands
-            .first()
-            .ok_or("an empty root has a next command")?;
-        assert_eq!(next.step, "before_snapshot");
-        assert!(!next.runs_after_test_edit());
-        assert!(!render_agent_status_markdown(&report).contains(AFTER_TEST_EDIT_NOTE));
+        let rendered = render_agent_status_markdown(&report);
+        assert!(rendered.contains("## Next Command"), "{rendered}");
+        assert!(!rendered.contains(AFTER_TEST_EDIT_NOTE), "{rendered}");
         std::fs::remove_dir_all(&empty).map_err(|err| format!("remove root: {err}"))?;
 
         let root = unique_agent_status_test_dir("markdown-before-side-present");
         write_file(&root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT), "{}")?;
-        write_file(&root.join(WORKFLOW_AGENT_PACKET_ARTIFACT), "{}")?;
+        write_file(
+            &root.join(WORKFLOW_AGENT_PACKET_ARTIFACT),
+            r#"{"packets":[{"seam_id":"seam-a"}]}"#,
+        )?;
         write_file(&root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT), "{}")?;
         let report = build_agent_status_report(&root, Path::new("."));
-        let next = report
-            .missing_commands
-            .first()
-            .ok_or("a before-side root has a next command")?;
-        assert_eq!(next.step, "after_snapshot");
         let steps = report
             .missing_commands
             .iter()
@@ -758,11 +787,16 @@ mod tests {
         let rendered = render_agent_status_markdown(&report);
         let reason = rendered
             .find("after snapshot artifact is missing")
-            .ok_or("next-command reason missing")?;
+            .ok_or_else(|| format!("next-command reason missing:\n{rendered}"))?;
         let note = rendered
             .find(AFTER_TEST_EDIT_NOTE)
-            .ok_or("post-edit note missing")?;
-        let fence = rendered.find("```bash").ok_or("bash fence missing")?;
+            .ok_or_else(|| format!("post-edit note missing:\n{rendered}"))?;
+        let fence = rendered
+            .find(&format!(
+                "```bash\n{}\n```",
+                check_repo_exposure_command(".", "draft", WORKFLOW_AFTER_SNAPSHOT_ARTIFACT)
+            ))
+            .ok_or_else(|| format!("after-snapshot command missing:\n{rendered}"))?;
         assert!(reason < note && note < fence, "{rendered}");
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;

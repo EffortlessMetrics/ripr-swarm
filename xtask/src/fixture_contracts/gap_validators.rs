@@ -1485,15 +1485,17 @@ pub(crate) fn validate_first_successful_pr_actionable_markdown(
     }
     // #3906: verify and receipt are labelled as steps that run after the test
     // edit, or as the manual alternative when a repair start leads the packet.
+    // The manual labels name their prerequisites in a parenthetical, so the
+    // contract pins the label up to it.
     if !(markdown.contains("- Verify after the test edit:")
-        || markdown.contains("- Manual verify without a repair attempt:"))
+        || markdown.contains("- Manual verify without a repair attempt ("))
     {
         violations.push(format!(
-            "first successful PR case {case_id} actionable Markdown must include `- Verify after the test edit:` or `- Manual verify without a repair attempt:`"
+            "first successful PR case {case_id} actionable Markdown must include `- Verify after the test edit:` or `- Manual verify without a repair attempt (...)`"
         ));
     }
     if !(markdown.contains("- Receipt after verify:")
-        || markdown.contains("- Manual receipt without a repair attempt:")
+        || markdown.contains("- Manual receipt without a repair attempt (")
         || markdown.contains("- Receipt path:"))
     {
         violations.push(format!(

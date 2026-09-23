@@ -2,9 +2,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::first_pr::{
-    MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
-    REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, STATIC_EVIDENCE_BOUNDARY,
-    VERIFY_AFTER_EDIT_LABEL,
+    ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, STATIC_EVIDENCE_BOUNDARY,
 };
 use super::receipt_lifecycle::{
     RECEIPT_MISSING, RECEIPT_NOT_APPLICABLE, receipt_lifecycle_state,
@@ -18,11 +16,8 @@ const SCHEMA_VERSION: &str = "0.1";
 /// A carried repair start makes verify and receipt the manual alternative to
 /// the repair's after phase; without one they run after the test edit.
 fn proof_path_labels(issue: &PanelTopIssue) -> (&'static str, &'static str) {
-    if issue.repair_command.is_some() {
-        (MANUAL_VERIFY_LABEL, MANUAL_RECEIPT_LABEL)
-    } else {
-        (VERIFY_AFTER_EDIT_LABEL, RECEIPT_AFTER_VERIFY_LABEL)
-    }
+    let labels = ProofPathLabels::for_repair_start(issue.repair_command.is_some());
+    (labels.verify, labels.receipt)
 }
 
 fn push_repair_start(out: &mut String, command: &str) {
@@ -2447,6 +2442,9 @@ fn str_or<'a>(value: Option<&'a str>, fallback: &'a str) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::first_pr::{
+        MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL, VERIFY_AFTER_EDIT_LABEL,
+    };
     use crate::output::test_support::{read_file, repo_root};
     use std::path::Path;
 
@@ -2511,8 +2509,16 @@ mod tests {
                 read_file(&expected_json_path)?.trim_end(),
                 "{case_id} JSON fixture drifted"
             );
+            let markdown = render_pr_review_front_panel_markdown(&report);
+            // #3742 class (e): only the explicit RIPR_UPDATE_FIXTURES=1
+            // opt-in rewrites the Markdown pin; JSON stays asserted.
+            if crate::testing::rebless::fixture_rebless_enabled() {
+                std::fs::write(&expected_md_path, &markdown)
+                    .map_err(|err| format!("write {case_id} Markdown: {err}"))?;
+                continue;
+            }
             assert_eq!(
-                render_pr_review_front_panel_markdown(&report),
+                markdown,
                 read_file(&expected_md_path)?,
                 "{case_id} Markdown fixture drifted"
             );
