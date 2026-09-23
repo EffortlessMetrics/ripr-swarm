@@ -233,12 +233,11 @@ Usage: ripr diff [--root PATH] [--base REV] [--head REV] [--mode MODE] [--format
 
 Options:
   --root PATH              Workspace root. Defaults to current directory.
-  --base REV               Base revision for git diff. Defaults to this
-                           repository's own default branch, resolved in
-                           order: the remote's HEAD, origin/main,
-                           origin/master, main, master. When none of those
-                           resolves, the analysis does not run and the
-                           error says so.
+  --base REV               Base revision for git diff. Defaults to
+                           origin/main, which diff uses as given: unlike
+                           check it does not resolve this repository's own
+                           default branch. Outside a repository that has
+                           origin/main, pass --base explicitly.
   --head REV               Head revision for git diff. Defaults to HEAD.
   --mode MODE              instant, draft, fast, deep, or ready. Defaults to draft.
   --format FORMAT          human, text, md, markdown, or json. Defaults to human.

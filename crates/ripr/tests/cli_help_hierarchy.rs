@@ -89,37 +89,59 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
     Ok(())
 }
 
-/// `--base`'s help must describe the base the binary will actually pick.
-/// `analysis::diff::load::resolve_default_base` asks the remote for its own
-/// HEAD first and then walks `origin/main`, `origin/master`, `main`, `master`,
-/// so a flat "Defaults to origin/main" is wrong in every repository whose
-/// default branch is not `main` and in every clone with no `origin`. The
-/// negative assert is the discriminator: it fails on the old sentence while
-/// leaving the example commands, which legitimately use `origin/main` as an
-/// argument, untouched.
+/// `ripr check --base`'s help must describe the base the binary will actually
+/// pick. `check` clears its input base when no `--base` was given
+/// (`cli/commands/check.rs`, RIPR-SPEC-0084), so the loader runs
+/// `analysis::diff::load::resolve_default_base`: the remote's own HEAD first,
+/// then `origin/main`, `origin/master`, `main`, `master`. A flat "Defaults to
+/// origin/main" is wrong for `check` in every repository whose default branch
+/// is not `main` and in every clone with no `origin`. The negative assert is
+/// the discriminator: it fails on the old sentence while leaving the example
+/// commands, which legitimately use `origin/main` as an argument, untouched.
 #[test]
-fn base_help_states_the_real_default_resolution() -> Result<(), String> {
-    for args in [
-        ["check", "--help"].as_slice(),
-        ["diff", "--help"].as_slice(),
-    ] {
-        let stdout = normalized(&rendered_help(args)?);
-        assert_contains(
-            "`--base` help",
-            &stdout,
-            "resolved in order: the remote's HEAD, origin/main, origin/master, main, master",
-        )?;
-        assert_contains(
-            "`--base` help",
-            &stdout,
-            "the analysis does not run and the error says so",
-        )?;
-        if stdout.contains("Base revision for git diff. Defaults to origin/main.") {
-            return Err(format!(
-                "`ripr {}` still claims origin/main is the default base",
-                args.join(" ")
-            ));
-        }
+fn check_base_help_states_the_real_default_resolution() -> Result<(), String> {
+    let stdout = normalized(&rendered_help(&["check", "--help"])?);
+    assert_contains(
+        "`--base` help",
+        &stdout,
+        "resolved in order: the remote's HEAD, origin/main, origin/master, main, master",
+    )?;
+    assert_contains(
+        "`--base` help",
+        &stdout,
+        "the analysis does not run and the error says so",
+    )?;
+    if stdout.contains("Base revision for git diff. Defaults to origin/main.") {
+        return Err("`ripr check --help` still claims origin/main is the default base".to_string());
+    }
+    Ok(())
+}
+
+/// `ripr diff` does not share `check`'s resolution and its help must not
+/// borrow `check`'s sentence. `parse_diff_options` seeds its own
+/// `base: "origin/main"` and passes it to `analysis::load_diff_range`, which
+/// never consults `resolve_default_base`. Measured in a repository with a
+/// local `main` and no `origin`: `ripr diff` exits 2 with git's raw
+/// `ambiguous argument 'origin/main...HEAD'` text while `ripr check` in the
+/// same repository analyzes against `main`.
+///
+/// So the two screens must disagree, and this test is the discriminator for
+/// that: the second assert fails the moment `diff` claims resolution it does
+/// not perform. When the hardcoded default is repaired, this test is what
+/// should fail first, and both it and the help text move together.
+#[test]
+fn diff_base_help_does_not_claim_resolution_diff_never_performs() -> Result<(), String> {
+    let stdout = normalized(&rendered_help(&["diff", "--help"])?);
+    assert_contains(
+        "`--base` help",
+        &stdout,
+        "unlike check it does not resolve this repository's own default branch",
+    )?;
+    if stdout.contains("resolved in order: the remote's HEAD") {
+        return Err(
+            "`ripr diff --help` claims check's base resolution, which diff does not perform"
+                .to_string(),
+        );
     }
     Ok(())
 }
