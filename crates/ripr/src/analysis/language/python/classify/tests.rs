@@ -171,22 +171,23 @@ fn predicate_boundary_off_boundary_exact_oracle_is_weakly_exposed() -> Result<()
     assert_eq!(finding.ripr.infect.state, StageState::Weak);
     assert_eq!(finding.ripr.reveal.observe.state, StageState::Yes);
     assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Weak);
-    let reason = missing_boundary(&finding, "qty == item.on_hand")
-        .ok_or_else(|| format!("boundary discriminator must be named: {finding:?}"))?;
-    assert_eq!(
-        reason,
-        "No strong related test call places qty equal to item.on_hand; observed qty values: 3; observed item.on_hand values: unresolved"
+    // `item.on_hand` is unresolved, so the boundary is not established either
+    // way: the finding is weak, the reason names the unresolved operand, and
+    // no typed repair target (and so no repair card) is produced.
+    assert!(
+        finding.activation.missing_discriminators.is_empty(),
+        "an unresolved operand must not become a typed repair target: {:?}",
+        finding.activation.missing_discriminators
+    );
+    assert!(
+        finding.missing.iter().any(|line| line.contains(
+            "No strong related test call places qty equal to item.on_hand; observed qty values: 3; observed item.on_hand values: unresolved"
+        )),
+        "{:?}",
+        finding.missing
     );
     assert!(observed(&finding, "qty = 3"), "{finding:?}");
     assert!(!observed(&finding, "qty == item.on_hand"));
-    assert!(
-        finding
-            .recommended_next_step
-            .as_deref()
-            .is_some_and(|step| step.contains("`qty == item.on_hand`")),
-        "{:?}",
-        finding.recommended_next_step
-    );
     Ok(())
 }
 
@@ -204,7 +205,15 @@ fn predicate_boundary_unresolved_attribute_operand_fails_closed() -> Result<(), 
     )?;
     assert_owner(&finding, "reserve");
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert!(missing_boundary(&finding, "qty == item.on_hand").is_some());
+    // This test is on the boundary at runtime; naming the equality as missing
+    // would hand out a repair card for a test that already exists.
+    // The Python repair card requires a first missing discriminator, so an
+    // empty list is what keeps the card off this finding.
+    assert!(
+        finding.activation.missing_discriminators.is_empty(),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
     Ok(())
 }
 

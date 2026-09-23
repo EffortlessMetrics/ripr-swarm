@@ -162,6 +162,19 @@ pub(super) fn python_boundary_evidence(
     });
     observed_values.dedup();
 
+    // An operand that no strong call resolves (`item.on_hand`, a test local)
+    // leaves the boundary unknown rather than missed: the test input may sit
+    // on it at runtime (`reserve(Item("a", 3), 3)`). The finding still fails
+    // closed to weak, but the equality is not handed out as a repair target,
+    // so no repair card asks for a test that may already exist.
+    let unresolved_operand = [(&left, &left_values), (&right, &right_values)]
+        .into_iter()
+        .any(|(operand, values)| literal_value(operand).is_none() && values.is_empty());
+    let discriminator = if observed || !unresolved_operand {
+        discriminator
+    } else {
+        None
+    };
     let reason = if observed {
         format!("A strong related test call places {left} equal to {right}")
     } else {

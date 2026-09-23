@@ -232,12 +232,15 @@ at least one literal argument, `exposed` requires one of those calls to bind
 both comparison operands to equal values: each operand is a literal or an owner
 parameter bound to a literal argument or literal default (positional, keyword,
 import-alias, and method calls after `self`). Otherwise the finding fails
-closed to `weakly_exposed`, the infection stage reads `weak`, and a simple-
-operand boundary is named as the missing discriminator (`qty == item.on_hand`,
-with the observed operand values in its reason). An operand ripr cannot bind
-(an attribute such as `item.on_hand`, a computed `len(name)`, a comprehension
-local, or a line with several comparisons) never counts as observed; computed
-and multi-comparison boundaries are not named as typed repair targets. The
+closed to `weakly_exposed` and the infection stage reads `weak`. When every
+non-literal operand is bound by some call, the boundary is named as the missing
+discriminator (`amount == threshold`, with the observed operand values in its
+reason). An operand ripr cannot bind (an attribute such as `item.on_hand`, a
+computed `len(name)`, a comprehension local, or a line with several
+comparisons) never counts as observed, and such a boundary is not named as a
+typed repair target: the test input may already sit on it at runtime
+(`reserve(Item("a", 3), 3)`), so the finding states the unresolved operand
+instead of producing a repair card. The
 literal owner arguments, and the boundary equality when observed, are recorded
 in `observed_values`. When no strong related call binds a literal argument
 (test locals, `*args`, a construct-call passing a dict), static evidence cannot
