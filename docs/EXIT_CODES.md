@@ -37,9 +37,7 @@ scope for the root: Rust is enabled and either Rust markers (`Cargo.toml` or
 Python-only or TypeScript-only root reports those checks as `skipped` with the
 reason and does not fail on them. A Rust root, a root with Rust sources but no
 `Cargo.toml`, and an empty root under the Rust-only default still fail on a
-missing manifest or toolchain. A `rustc` older than ripr's own declared
-`rust-version` is advisory, because that minimum governs building ripr from
-source and analysis never invokes `rustc`.
+missing manifest or toolchain.
 
 ## CI integration
 

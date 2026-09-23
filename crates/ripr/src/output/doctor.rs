@@ -90,18 +90,7 @@ fn minimum_rustc_version() -> Option<RustcVersion> {
     })
 }
 
-/// Validate `rustc --version` output.
-///
-/// Output that does not parse as a rustc version still fails closed: the
-/// probed binary is not demonstrably rustc. A parsed version below ripr's own
-/// declared `rust-version` is advisory, not a failure: that minimum governs
-/// building ripr from source. ripr never invokes `rustc` on the analyzed
-/// code, and its only analysis-time Cargo call (`cargo metadata --no-deps
-/// --offline` for the test-target inventory) runs under the repository's own
-/// toolchain and fails closed. A Rust project that pins an older toolchain
-/// is therefore a supported setup, so the evidence carries a note instead of
-/// failing doctor. `Ok(Some(note))` is that advisory.
-fn validate_rustc_version(output: &str) -> Result<Option<String>, String> {
+fn validate_rustc_version(output: &str) -> Result<(), String> {
     let minimum = minimum_rustc_version().ok_or_else(|| {
         format!(
             "declared package rust-version `{MINIMUM_RUSTC_VERSION}` could not be parsed; update Cargo.toml"
@@ -114,11 +103,11 @@ fn validate_rustc_version(output: &str) -> Result<Option<String>, String> {
         )
     })?;
     if version < minimum {
-        return Ok(Some(format!(
-            "note: rustc {version} is below Rust {minimum}, the minimum for building ripr from source; ripr analysis never invokes rustc, so this is advisory"
-        )));
+        return Err(format!(
+            "rustc {version} is below the minimum supported Rust version {minimum}; run `rustup update stable` or install Rust {minimum}+"
+        ));
     }
-    Ok(None)
+    Ok(())
 }
 
 /// How long a tool probe may run before it is terminated (#2183 review): a
@@ -589,8 +578,7 @@ fn doctor_tool_check_success(tool: &str, stdout: &[u8]) -> DoctorToolCheckResult
         return DoctorToolCheckResult::pass(evidence);
     }
     match validate_rustc_version(&evidence) {
-        Ok(None) => DoctorToolCheckResult::pass(evidence),
-        Ok(Some(note)) => DoctorToolCheckResult::pass(format!("{evidence} ({note})")),
+        Ok(()) => DoctorToolCheckResult::pass(evidence),
         Err(error) => DoctorToolCheckResult::failure(error),
     }
 }
@@ -751,28 +739,17 @@ mod tests {
         assert_eq!(report.status, DoctorStatus::Fail);
     }
 
-    /// ripr's own `rust-version` governs building ripr, not analyzing a
-    /// repository: an older rustc passes with an advisory note that names
-    /// the version and the source-build minimum, while supported versions
-    /// pass without the note.
     #[test]
-    fn rustc_version_below_ripr_msrv_is_advisory_and_supported_versions_pass() -> Result<(), String>
-    {
-        let minimum = minimum_rustc_version()
-            .ok_or_else(|| "declared rust-version must parse".to_string())?;
-        let below = format!(
-            "rustc 1.80.0 is below Rust {minimum}, the minimum for building ripr from source"
-        );
-        let at_minimum = format!("rustc {minimum} (abc 2026-04-14)");
+    fn rustc_version_check_fails_below_msrv_and_passes_supported_versions() -> Result<(), String> {
         let cases = [
             (
                 "rustc 1.80.0 (abc 2024-01-01)",
-                DoctorStatus::Pass,
-                below.as_str(),
+                DoctorStatus::Fail,
+                "below the minimum supported Rust version",
             ),
-            (at_minimum.as_str(), DoctorStatus::Pass, ""),
+            ("rustc 1.95.0 (abc 2026-04-14)", DoctorStatus::Pass, ""),
             (
-                "rustc 99.0.1-nightly (abc 2026-05-01)",
+                "rustc 1.96.1-nightly (abc 2026-05-01)",
                 DoctorStatus::Pass,
                 "",
             ),
@@ -788,12 +765,6 @@ mod tests {
             if !result.evidence.contains(expected_fragment) {
                 return Err(format!(
                     "missing expected evidence for {evidence:?}: {:?}",
-                    result.evidence
-                ));
-            }
-            if expected_fragment.is_empty() && result.evidence.contains("note:") {
-                return Err(format!(
-                    "supported rustc must not carry the advisory note: {:?}",
                     result.evidence
                 ));
             }
@@ -897,19 +868,16 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
 
-        // The target-root shim answers 1.94.0 and the caller-root branch
-        // answers 1.96.0, so the advisory note naming 1.94.0 proves the probe
-        // ran from the selected root. Below ripr's own MSRV is advisory, so
-        // the status stays pass.
         assert_eq!(
             result.status,
-            DoctorStatus::Pass,
+            DoctorStatus::Fail,
             "evidence: {}",
             result.evidence
         );
         assert!(
-            result.evidence.starts_with("rustc 1.94.0 (target-root)")
-                && result.evidence.contains("rustc 1.94.0 is below Rust"),
+            result
+                .evidence
+                .contains("below the minimum supported Rust version"),
             "evidence: {}",
             result.evidence
         );
