@@ -1054,19 +1054,13 @@ mod tests {
             }
             fs::write(repo.join(".gitattributes"), "src/lib.rs diff=audit\n")
                 .map_err(|error| format!("write gitattributes failed: {error}"))?;
-            fs::write(
-                repo.join("src/lib.rs"),
-                "pub const VALUE: u32 = 1;\n",
-            )
-            .map_err(|error| format!("write base source failed: {error}"))?;
+            fs::write(repo.join("src/lib.rs"), "pub const VALUE: u32 = 1;\n")
+                .map_err(|error| format!("write base source failed: {error}"))?;
             fixture_git_ok(&repo, &["add", "."])?;
             fixture_git_ok(&repo, &["commit", "--quiet", "-m", "base"])?;
             fixture_git_ok(&repo, &["tag", "evidence-base"])?;
-            fs::write(
-                repo.join("src/lib.rs"),
-                "pub const VALUE: u32 = 2;\n",
-            )
-            .map_err(|error| format!("write edited source failed: {error}"))?;
+            fs::write(repo.join("src/lib.rs"), "pub const VALUE: u32 = 2;\n")
+                .map_err(|error| format!("write edited source failed: {error}"))?;
             fixture_git_ok(&repo, &["add", "src/lib.rs"])?;
             fixture_git_ok(&repo, &["commit", "--quiet", "-m", "edit"])?;
             // Git itself is the constant-output helper on Unix and

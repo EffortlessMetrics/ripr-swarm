@@ -248,8 +248,7 @@ fn clear_fixture_readonly(root: &Path) -> Result<(), String> {
     let entries = std::fs::read_dir(root)
         .map_err(|error| format!("read {} failed: {error}", root.display()))?;
     for entry in entries {
-        let entry =
-            entry.map_err(|error| format!("read fixture entry failed: {error}"))?;
+        let entry = entry.map_err(|error| format!("read fixture entry failed: {error}"))?;
         let path = entry.path();
         let file_type = entry
             .file_type()
@@ -274,9 +273,8 @@ fn clear_fixture_readonly(root: &Path) -> Result<(), String> {
         )]
         {
             permissions.set_readonly(false);
-            std::fs::set_permissions(&path, permissions).map_err(|error| {
-                format!("clear readonly on {} failed: {error}", path.display())
-            })?;
+            std::fs::set_permissions(&path, permissions)
+                .map_err(|error| format!("clear readonly on {} failed: {error}", path.display()))?;
         }
     }
     Ok(())
