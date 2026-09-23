@@ -395,6 +395,23 @@ fn select_next_command(
     legacy_next_command(root, root_display, seam, missing_commands)
 }
 
+/// Where `ripr pilot` writes its summary by default, relative to the root.
+const PILOT_SUMMARY_ARTIFACT: &str = "target/ripr/pilot/pilot-summary.json";
+
+/// The repair start `ripr pilot` recorded for its top seam (#3906), carried
+/// verbatim. Pilot fills `next.repair_command` only past the repair-packet
+/// flip, so status repeats that decision instead of re-deriving it. A missing,
+/// unreadable, `null`, or non-repair value leaves status on `select_seam`.
+fn pilot_repair_command(root: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    summary
+        .pointer("/next/repair_command")
+        .and_then(Value::as_str)
+        .filter(|command| command.starts_with("ripr agent repair "))
+        .map(str::to_string)
+}
+
 /// The legacy seven-artifact loop, kept for `agent start` and manual users,
 /// with two refusals: it never recommends a command that needs a seam status
 /// does not know, and never a redirect into a directory that does not exist.
@@ -406,6 +423,14 @@ fn legacy_next_command(
 ) -> Option<AgentStatusCommand> {
     let first = missing_commands.first()?;
     let Some(seam) = seam else {
+        if let Some(command) = pilot_repair_command(root) {
+            return Some(AgentStatusCommand {
+                step: "repair_attempt_before".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                reason: "`ripr pilot` selected a seam the repair transaction can target; start its repair attempt".to_string(),
+                command,
+            });
+        }
         return Some(AgentStatusCommand {
             step: "select_seam".to_string(),
             artifact: "target/ripr/pilot".to_string(),
@@ -1268,6 +1293,42 @@ mod tests {
             "ripr agent repair --root . --seam-id seam-b --phase before"
         );
         assert!(warnings.is_empty(), "{warnings:?}");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// After `ripr pilot`, status continues with the repair start pilot
+    /// recorded rather than sending the user back to pilot. A summary whose
+    /// top seam did not pass the flip (`null`) leaves status on `select_seam`.
+    #[test]
+    fn agent_status_continues_from_the_pilot_repair_start() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("after-pilot");
+        let command = "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before";
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &serde_json::json!({"next": {"repair_command": command}}).to_string(),
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        let next = report
+            .next_command
+            .as_ref()
+            .ok_or_else(|| "expected a next command".to_string())?;
+        assert_eq!(next.step, "repair_attempt_before");
+        assert_eq!(next.command, command);
+        assert_eq!(next.artifact, PILOT_SUMMARY_ARTIFACT);
+
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            r#"{"next": {"repair_command": null}}"#,
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        let next = report
+            .next_command
+            .as_ref()
+            .ok_or_else(|| "expected a next command".to_string())?;
+        assert_eq!(next.step, "select_seam");
+        assert_eq!(next.command, "ripr pilot --root .");
+
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
