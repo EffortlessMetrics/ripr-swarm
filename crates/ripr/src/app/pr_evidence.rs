@@ -1023,7 +1023,9 @@ mod tests {
     /// Issue #3930: the PR-evidence diff rides the same pinned Git
     /// presentation as the analysis loaders. On an ordinary repository the
     /// packet diff must be byte-identical to the pre-repair argv output;
-    /// and a textconv driver that hides source must not reach the packet
+    /// non-UTF-8 git output must fail with a named error rather than
+    /// record replacement characters (the pre-#3930 contract); and a
+    /// textconv driver that hides source must not reach the packet
     /// artifact: the pre-repair argv is the control (an empty patch proves
     /// the fixture hides the edit), and `write_diff` must retain the
     /// source edit.
@@ -1109,8 +1111,20 @@ mod tests {
         };
         // Byte-compatibility: with no ambient diff configuration yet, the
         // routed packet diff must be byte-identical to the pre-repair argv
-        // output (three context lines, the pre-#3930 presentation).
-        let raw = run_git_output(&repo, &["diff", "--binary", "--no-ext-diff", range])?;
+        // output (three context lines, the pre-#3930 presentation). The
+        // baseline states context and color explicitly so ambient
+        // `diff.context` / color configuration cannot move it while the
+        // packet command stays pinned; on ordinary repositories this is
+        // exactly what the pre-repair argv emitted.
+        let baseline = &[
+            "diff",
+            "--binary",
+            "--no-ext-diff",
+            "--unified=3",
+            "--no-color",
+            range,
+        ];
+        let raw = run_git_output(&repo, baseline)?;
         write_diff(&repo, &options)?;
         let pinned = fs::read(repo.join(PR_DIFF))
             .map_err(|error| format!("read packet diff failed: {error}"))?;
@@ -1119,6 +1133,40 @@ mod tests {
             raw.as_bytes(),
             "packet diff must stay byte-identical to the pre-repair argv on ordinary repositories"
         );
+        // Strictness: a tracked text file with non-UTF-8 bytes must fail
+        // the packet diff with a named error (the pre-#3930 contract),
+        // never record replacement characters. No textconv driver is
+        // configured yet, so the raw bytes reach the decode. The edit is
+        // restored afterwards for the textconv phases below.
+        fs::write(
+            repo.join("src/lib.rs"),
+            b"pub const VALUE: u32 = 1;\nlatin1: \xe9\n",
+        )
+        .map_err(|error| format!("write non-UTF-8 source failed: {error}"))?;
+        fixture_git_ok(&repo, &["add", "src/lib.rs"])?;
+        fixture_git_ok(&repo, &["commit", "--quiet", "-m", "non-utf8"])?;
+        match write_diff(&repo, &options) {
+            Ok(()) => {
+                return Err("packet diff must reject non-UTF-8 git output".to_string());
+            }
+            Err(err) => assert!(
+                err.contains("UTF-8"),
+                "unexpected strict-decode error: {err}"
+            ),
+        }
+        fs::write(
+            repo.join("src/lib.rs"),
+            "pub const A: u32 = 1;\n\
+             pub const B: u32 = 2;\n\
+             pub const C: u32 = 3;\n\
+             pub const VALUE: u32 = 2;\n\
+             pub const D: u32 = 4;\n\
+             pub const E: u32 = 5;\n\
+             pub const F: u32 = 6;\n",
+        )
+        .map_err(|error| format!("restore edited source failed: {error}"))?;
+        fixture_git_ok(&repo, &["add", "src/lib.rs"])?;
+        fixture_git_ok(&repo, &["commit", "--quiet", "-m", "restore"])?;
         // Git itself is the constant-output helper on Unix and
         // Windows; no shell script, executable permission, or global
         // environment mutation.
@@ -1128,8 +1176,10 @@ mod tests {
         )?;
         // Control: the pre-repair argv lets the textconv hide the source
         // edit. Without this control a broken fixture could let the
-        // regression pass.
-        let raw = run_git_output(&repo, &["diff", "--binary", "--no-ext-diff", range])?;
+        // regression pass. Same isolated baseline as above; the textconv
+        // driver still comes from the fixture-local configuration, so the
+        // control keeps its meaning under ambient git configuration.
+        let raw = run_git_output(&repo, baseline)?;
         assert!(
             raw.trim().is_empty(),
             "the constant textconv must hide the source edit"
