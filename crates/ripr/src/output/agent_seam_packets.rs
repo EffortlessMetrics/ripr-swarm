@@ -18,6 +18,8 @@
 //! contract aimed at coding agents rather than reviewers.
 
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
+#[cfg(test)]
+use crate::agent::loop_commands::anchored_redirect_target;
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
     WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_receipt_command,
@@ -5958,15 +5960,22 @@ mod tests {
             ))
         );
         // The verify step must write the artifact the receipt step reads, or
-        // the loop does not compose.
+        // the loop does not compose. Issue #3872: the redirect anchors at
+        // the resolved --root, so the composition check names the anchored
+        // absolute write (which still lands on the artifact the receipt
+        // reads, by the anchor rule pinned in loop_commands tests).
         let verify = next["verify_after_edit"]
             .as_str()
             .ok_or_else(|| format!("verify command missing: {json}"))?;
         let receipt = next["receipt_after_verify"]
             .as_str()
             .ok_or_else(|| format!("receipt command missing: {json}"))?;
+        let anchored_verify = shell_arg(&anchored_redirect_target(
+            ".",
+            WORKFLOW_AGENT_VERIFY_ARTIFACT,
+        ));
         assert!(
-            verify.ends_with(&format!("> {WORKFLOW_AGENT_VERIFY_ARTIFACT}")),
+            verify.ends_with(&format!("> {anchored_verify}")),
             "verify command does not write the verify artifact: {verify}"
         );
         assert!(

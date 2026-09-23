@@ -271,23 +271,29 @@ fn assert_failure(output: &Output) {
     );
 }
 
-fn assert_stdout_matches_fixture(
+fn normalize_newlines(value: &str) -> String {
+    value.replace("\r\n", "\n")
+}
+
+/// Issue #3872: CLI-rendered command redirects anchor at the resolved --root
+/// — the child process working directory, which is the workspace root for
+/// `run_ripr_in_workspace`. Project that machine prefix to `<cwd>/` before
+/// comparing so the fixture pins the anchored shape, never a machine
+/// directory (same placeholder rule as the lib-test projections).
+fn assert_anchored_stdout_matches_fixture(
     output: &Output,
     fixture_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     assert_success(output);
     let expected = std::fs::read_to_string(workspace_root().join(fixture_path))?;
     let actual = String::from_utf8(output.stdout.clone())?;
+    let prefix = format!("{}/", workspace_root().to_string_lossy().replace('\\', "/"));
     assert_eq!(
-        normalize_newlines(&actual),
+        normalize_newlines(&actual).replace(&prefix, "<cwd>/"),
         normalize_newlines(&expected),
         "stdout drifted from {fixture_path}"
     );
     Ok(())
-}
-
-fn normalize_newlines(value: &str) -> String {
-    value.replace("\r\n", "\n")
 }
 
 fn write_bound_repo_exposure_fixture(
@@ -2485,7 +2491,7 @@ fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std:
         seam_id,
         "--json",
     ])?;
-    assert_stdout_matches_fixture(&packet, &format!("{base}/agent-packet.json"))?;
+    assert_anchored_stdout_matches_fixture(&packet, &format!("{base}/agent-packet.json"))?;
 
     let brief = run_ripr_in_workspace(&[
         "agent",
@@ -2496,7 +2502,7 @@ fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std:
         seam_id,
         "--json",
     ])?;
-    assert_stdout_matches_fixture(&brief, &format!("{base}/agent-brief.json"))?;
+    assert_anchored_stdout_matches_fixture(&brief, &format!("{base}/agent-brief.json"))?;
 
     let artifact_dir = workspace_root().join("target/ripr/test-agent-verify");
     std::fs::create_dir_all(&artifact_dir)?;
