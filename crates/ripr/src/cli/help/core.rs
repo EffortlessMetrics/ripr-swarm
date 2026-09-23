@@ -326,13 +326,19 @@ First-run diagnosis (printed automatically):
   - Known limitations: static notes on preview coverage, cross-language
     oracle visibility (fail-closed), large-repo scan bounds, and advisory
     nature of preview-language evidence.
-  - Recommended first command: ripr check --base origin/main
+  - Recommended first command: ripr check (no base: the loader resolves this
+    repository's own default branch)
 
 Start-here next step:
-  - after setup is valid, run `ripr first-pr --root . --base origin/main --head HEAD`
-    or `ripr start-here --root . --base origin/main --head HEAD`
-    or this repo's `cargo xtask first-pr` wrapper
   - open `target/ripr/reports/start-here.md` first when it exists
+  - when it does not, run the recommended first command: `ripr first-pr` and
+    `ripr start-here` compose that packet from analysis evidence and run no
+    analysis of their own, so on a fresh workspace they report
+    `missing_artifacts`
+  - to compose or refresh the packet, run
+    `ripr first-pr --root . --base <ref> --head HEAD`
+    or `ripr start-here --root . --base <ref> --head HEAD`
+    or this repo's `cargo xtask first-pr` wrapper
   - safe next action means repair one named gap, regenerate missing or malformed
     evidence, refresh stale evidence, fix wrong-root setup, or stop on no-action
   - treat missing artifact, stale evidence, wrong root, malformed artifact,

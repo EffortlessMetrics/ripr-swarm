@@ -116,17 +116,28 @@ fn print_doctor_start_here_guidance(root: &Path) {
     // workspace where `ripr first-pr` has never run (RIPR-SPEC-0051 names
     // the path, not its existence). `is_file` (not `exists`) so a directory
     // squatting the packet path cannot read as openable evidence.
+    // The safe next action follows the packet's existence, because `first-pr`
+    // composes the packet out of artifacts `ripr check` produces -- it runs no
+    // analysis of its own (the boundary `help --all` states). Recommending it
+    // on a fresh workspace dead-ends: measured, it returns `missing_artifacts`
+    // and answers with `Regeneration command: ripr check ...`, which is the
+    // command this same screen already prints three lines below. Two different
+    // first commands on one screen, one of which bounces straight back to the
+    // other, is not a route.
     if root.join("target/ripr/reports/start-here.md").is_file() {
         println!("- Start-here packet: target/ripr/reports/start-here.md (present; open it first)");
+        println!(
+            "- Safe next action: open that packet; `ripr first-pr --root {} --base <ref> --head HEAD` refreshes it",
+            root.display()
+        );
     } else {
         println!(
-            "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; run the safe next action below)"
+            "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; `ripr first-pr` composes it once analysis evidence exists)"
+        );
+        println!(
+            "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
         );
     }
-    println!(
-        "- Safe next action: run `ripr first-pr --root {} --base origin/main --head HEAD` after setup passes",
-        root.display()
-    );
     println!(
         "- Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, preview-limited evidence"
     );
@@ -134,7 +145,7 @@ fn print_doctor_start_here_guidance(root: &Path) {
         "- Proof rail: verify command, receipt command, and receipt path are advisory static movement evidence"
     );
     // First-run honesty: when the working tree has uncommitted changes,
-    // `ripr check --base origin/main` analyzes committed history only and would
+    // a committed-history `ripr check` analyzes committed history only and would
     // silently exclude the user's draft (the RIPR-SPEC-0112 dirty-worktree case).
     // Route them to the command that actually covers their edits instead of the
     // one that looks clean while ignoring them. Reuses the same helper as the
@@ -145,7 +156,11 @@ fn print_doctor_start_here_guidance(root: &Path) {
             "- Scope note: `--worktree` analyzes staged and unstaged tracked edits; untracked files remain out of scope until staged or supplied through `--diff`."
         );
     } else {
-        println!("- Recommended first command: ripr check --base origin/main");
+        // No `--base origin/main`: this screen is read in whatever repository
+        // the user has, and that ref does not exist in one whose default
+        // branch is not `main`. Without a base, the loader resolves the
+        // repository's own default (`analysis::diff::load::resolve_default_base`).
+        println!("- Recommended first command: ripr check");
     }
 }
 
