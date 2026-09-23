@@ -15504,6 +15504,7 @@ struct LedgerLintEntry {
     level: String,
     activate_when_msrv: Option<String>,
     reason: Option<String>,
+    blocked_by: Option<String>,
     block_line: usize,
     is_planned: bool,
 }
@@ -15560,6 +15561,7 @@ fn parse_clippy_lints_ledger(text: &str) -> (Vec<LedgerLintEntry>, Vec<String>) 
                     level: String::new(),
                     activate_when_msrv: None,
                     reason: None,
+                    blocked_by: None,
                     block_line: line_number,
                     is_planned,
                 });
@@ -15599,6 +15601,11 @@ fn parse_clippy_lints_ledger(text: &str) -> (Vec<LedgerLintEntry>, Vec<String>) 
             "reason" => {
                 if let Some(reason) = unquoted {
                     entry.reason = Some(reason);
+                }
+            }
+            "blocked_by" => {
+                if let Some(blocked_by) = unquoted {
+                    entry.blocked_by = Some(blocked_by);
                 }
             }
             _ => {}
@@ -15852,15 +15859,77 @@ fn collect_clippy_debt_violations(
 
 /// First basic TOML string on a value (`"..."` or `'...'`). Table-form and
 /// multiline strings are intentionally out of scope for these ledgers.
+/// Double-quoted strings decode basic escapes so `\n` is whitespace, not the
+/// token `n`. Single-quoted strings stay literal, matching TOML.
 fn unquote_toml_basic_string(value: &str) -> Option<String> {
     let value = value.trim();
     if let Some(rest) = value.strip_prefix('"') {
-        return rest.split_once('"').map(|(token, _)| token.to_string());
+        return rest
+            .split_once('"')
+            .map(|(token, _)| decode_toml_basic_escapes(token));
     }
     if let Some(rest) = value.strip_prefix('\'') {
         return rest.split_once('\'').map(|(token, _)| token.to_string());
     }
     None
+}
+
+/// Decode TOML basic-string escapes. Invalid sequences are left intact so
+/// they still count as leftover tokens in the MSRV filter.
+fn decode_toml_basic_escapes(token: &str) -> String {
+    let mut out = String::with_capacity(token.len());
+    let bytes = token.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'\\' {
+            let Some(ch) = token[index..].chars().next() else {
+                break;
+            };
+            out.push(ch);
+            index += ch.len_utf8();
+            continue;
+        }
+        let Some(esc) = bytes.get(index + 1).copied() else {
+            out.push('\\');
+            break;
+        };
+        let simple = match esc {
+            b'b' => Some('\u{0008}'),
+            b't' => Some('\t'),
+            b'n' => Some('\n'),
+            b'f' => Some('\u{000c}'),
+            b'r' => Some('\r'),
+            b'"' => Some('"'),
+            b'\\' => Some('\\'),
+            _ => None,
+        };
+        if let Some(ch) = simple {
+            out.push(ch);
+            index += 2;
+            continue;
+        }
+        let width = match esc {
+            b'u' => Some(4),
+            b'U' => Some(8),
+            _ => None,
+        };
+        if let Some(width) = width {
+            let start = index + 2;
+            let end = start + width;
+            if end <= bytes.len()
+                && let Ok(hex) = std::str::from_utf8(&bytes[start..end])
+                && let Ok(code) = u32::from_str_radix(hex, 16)
+                && let Some(ch) = char::from_u32(code)
+            {
+                out.push(ch);
+                index = end;
+                continue;
+            }
+        }
+        out.push('\\');
+        index += 1;
+    }
+    out
 }
 
 /// Parse `1.95` / `1.95.0` into a comparable triple. Rejects empty or extra parts.
@@ -15878,12 +15947,14 @@ fn parse_msrv_triple(value: &str) -> Option<(u32, u32, u32)> {
     Some((major, minor, patch))
 }
 
-/// True when `reason` is empty or only restates an MSRV/Rust-version delay.
+/// True when `text` is empty or only restates an MSRV/Rust-version delay.
 ///
 /// This is a closed token filter, not NLP: version triples and a small
 /// MSRV-vocabulary list are stripped, then any leftover token counts as a
-/// remaining (non-MSRV) blocker. Typed `blocked_by` metadata is a later slice.
-fn planned_reason_is_msrv_only(reason: &str) -> bool {
+/// remaining (non-MSRV) blocker. `check-lint-policy` applies it to
+/// `[[planned]]` `blocked_by` once `activate_when_msrv` is already met.
+/// `reason` is narrative and is not this gate.
+fn planned_blocker_text_is_msrv_only(text: &str) -> bool {
     const MSRV_VOCABULARY: &[&str] = &[
         "a",
         "activate",
@@ -15935,7 +16006,7 @@ fn planned_reason_is_msrv_only(reason: &str) -> bool {
         "waiting",
         "when",
     ];
-    let leftover = reason
+    let leftover = text
         .to_ascii_lowercase()
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '.')
         .filter_map(|raw| {
@@ -15984,15 +16055,17 @@ fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<St
                         entry.block_line, entry.name
                     )),
                     (Some(activate), Some(workspace), Some(ws)) if activate <= workspace => {
-                        let reason = entry.reason.as_deref().map(str::trim).unwrap_or("");
-                        if reason.is_empty() {
+                        // #3990: blocked_by is the remaining-blocker field.
+                        // reason stays narrative and does not satisfy the gate.
+                        let blocked_by = entry.blocked_by.as_deref().map(str::trim).unwrap_or("");
+                        if blocked_by.is_empty() {
                             violations.push(format!(
-                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. Record a non-MSRV `reason` why it is still `[[planned]]`, or promote it.",
+                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. Record a non-MSRV `blocked_by` explaining why it is still `[[planned]]`, or promote it.",
                                 entry.block_line, entry.name
                             ));
-                        } else if planned_reason_is_msrv_only(reason) {
+                        } else if planned_blocker_text_is_msrv_only(blocked_by) {
                             violations.push(format!(
-                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. `reason` {reason:?} is MSRV-only. Record a remaining non-MSRV blocker, or promote it.",
+                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. `blocked_by` {blocked_by:?} is MSRV-only. Record a remaining non-MSRV blocker, or promote it.",
                                 entry.block_line, entry.name
                             ));
                         }
@@ -16059,11 +16132,11 @@ fn check_lint_policy() -> Result<(), String> {
         PolicyReportSpec {
             report_file: "lint-policy.md",
             check: "check-lint-policy",
-            why_it_matters: "`policy/clippy-lints.toml` is the reviewable ledger of the workspace lint stance, including planned 1.94 / 1.95 flips. If Cargo.toml drifts from the ledger, reviewers lose the trajectory and the dual-rail design (clippy + semantic checker) loses its receipt. `activate_when_msrv` is compared to `[workspace.package] rust-version`; an already-met MSRV without a remaining non-MSRV `reason` is overdue. `policy/clippy-debt.toml` is parsed as TOML: required nonblank fields, unknown fields, duplicate keys, trailing garbage, `target` dates, and dual-rail collisions fail here rather than being trusted as comments.",
+            why_it_matters: "`policy/clippy-lints.toml` is the reviewable ledger of the workspace lint stance, including planned 1.94 / 1.95 flips. If Cargo.toml drifts from the ledger, reviewers lose the trajectory and the dual-rail design (clippy + semantic checker) loses its receipt. `activate_when_msrv` is compared to `[workspace.package] rust-version`; an already-met MSRV without a remaining non-MSRV `blocked_by` is overdue. `reason` is narrative and does not satisfy that gate. `policy/clippy-debt.toml` is parsed as TOML: required nonblank fields, unknown fields, duplicate keys, trailing garbage, `target` dates, and dual-rail collisions fail here rather than being trusted as comments.",
             fix_kind: FixKind::PolicyExceptionRequired,
             recommended_fixes: &[
                 "Make `Cargo.toml` and `policy/clippy-lints.toml` agree: every `[[active.<group>]]` entry must appear in `[workspace.lints.*]` at the same level, and `[[planned]]` entries must not yet appear there.",
-                "When a planned lint's `activate_when_msrv` is already met by workspace `rust-version`, record a remaining non-MSRV `reason` (not an MSRV-only delay) or promote the entry.",
+                "When a planned lint's `activate_when_msrv` is already met by workspace `rust-version`, record a remaining non-MSRV `blocked_by` (not an MSRV-only delay) or promote the entry. `reason` does not satisfy that gate.",
                 "When promoting a planned lint, move the ledger entry from `[[planned]]` to `[[active.<group>]]` and add the matching `Cargo.toml` line in the same PR.",
                 "Keep `policy/clippy-debt.toml` rows unique, complete, and not already active, planned, or present in Cargo.toml. A past `target` must be renewed or the debt paid.",
                 "Document `[[active.<group>]]` family blocks in `docs/CLIPPY_POLICY.md` so the public surface stays in sync.",
