@@ -371,3 +371,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_owner_file_match (2)
+
+Reason:
+RIPR-SPEC-0027: predicate boundary witness; no strong assertion observes an owner call at the changed comparison boundary, so the predicate downgrades from exposed to weakly_exposed
+
+Command:
+`cargo xtask goldens bless typescript_owner_file_match --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

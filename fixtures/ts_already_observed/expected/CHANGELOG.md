@@ -203,3 +203,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_already_observed (2)
+
+Reason:
+RIPR-SPEC-0027: fixture test now observes the changed boundary so the strong-oracle premise holds under the predicate boundary witness
+
+Command:
+`cargo xtask goldens bless ts_already_observed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -255,3 +255,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_dynamic_assertion_unresolved (2)
+
+Reason:
+RIPR-SPEC-0027: predicate boundary witness; no strong assertion observes an owner call at the changed comparison boundary, so the predicate downgrades from exposed to weakly_exposed
+
+Command:
+`cargo xtask goldens bless typescript_dynamic_assertion_unresolved --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

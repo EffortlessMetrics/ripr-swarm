@@ -188,6 +188,20 @@ Probes the adapter must generate (syntax-first):
 - mock-interaction probes for changed call surfaces against identifiers
   resolved through a syntactic `vi.fn()` / `jest.fn()` initializer
 
+Added lines that are blank, comment-only, or punctuation-only (`}`, `});`,
+`)`) produce no probe. An unrecognised line keeps the non-specific predicate
+fallback and is never classified `exposed`.
+
+A changed predicate is `exposed` only when a strong, family-matching
+assertion's observed expression (`expect(<expr>)`) calls the owner at the
+changed boundary: an argument carries the literal operand (`total >= 50` needs
+a call such as `shippingFee(50)`), or, when neither operand is a literal, the
+call passes two identical arguments or an object-literal argument binds both
+operands to the same value. Predicates without a comparable boundary (such as
+`Number.isNaN(n)`) and boundaries reached only through locals or computed
+values stay `weakly_exposed`; the literal or operand-pair boundary becomes the
+missing discriminator when one is known.
+
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:
 

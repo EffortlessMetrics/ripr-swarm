@@ -227,3 +227,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_cross_language_bridge_limit (2)
+
+Reason:
+RIPR-SPEC-0027: predicate boundary witness; no strong assertion observes an owner call at the changed comparison boundary, so the predicate downgrades from exposed to weakly_exposed
+
+Command:
+`cargo xtask goldens bless ts_cross_language_bridge_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
