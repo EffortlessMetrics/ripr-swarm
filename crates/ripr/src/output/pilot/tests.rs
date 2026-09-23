@@ -83,6 +83,7 @@ fn pilot_context(artifacts: &PilotArtifacts) -> PilotSummaryContext<'_> {
         timeout_ms: 30_000,
         artifacts,
         python_first_use: None,
+        language_routes: None,
     }
 }
 
@@ -159,6 +160,7 @@ fn pilot_context_with_python<'a>(
         timeout_ms: 30_000,
         artifacts,
         python_first_use: Some(python_first_use),
+        language_routes: None,
     }
 }
 
@@ -310,6 +312,7 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         timeout_ms: 30_000,
         artifacts: &artifacts,
         python_first_use: None,
+        language_routes: None,
     };
 
     let json = render_pilot_summary_json(&[entry], context);
@@ -495,6 +498,7 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
         timeout_ms: 1,
         artifacts: &artifacts,
         python_first_use: None,
+        language_routes: None,
     };
 
     let json = render_pilot_timeout_summary_json(context);
@@ -525,6 +529,7 @@ fn pilot_context_without_config<'a>(artifacts: &'a PilotArtifacts) -> PilotSumma
         timeout_ms: 30_000,
         artifacts,
         python_first_use: None,
+        language_routes: None,
     }
 }
 
@@ -984,6 +989,191 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+fn discovered_files(
+    entries: &[(crate::domain::LanguageId, &str)],
+) -> Vec<(crate::domain::LanguageId, PathBuf)> {
+    entries
+        .iter()
+        .map(|(language, path)| (*language, PathBuf::from(path)))
+        .collect()
+}
+
+#[test]
+fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
+    use super::language_routes::PilotLanguageRoutesState;
+    use crate::domain::LanguageId;
+    use crate::output::repo_exposure::TsFullRepoGuidance;
+
+    let root = Path::new(".");
+    let rust_only = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[]);
+    assert_eq!(rust_only.state, PilotLanguageRoutesState::NotDetected);
+    assert!(rust_only.routes.is_empty());
+    assert!(rust_only.required().is_none());
+
+    let files = discovered_files(&[
+        (LanguageId::Perl, "lib/App.pm"),
+        (LanguageId::Python, "src/app.py"),
+        (LanguageId::JavaScript, "web/b.js"),
+        (LanguageId::TypeScript, "web/c.ts"),
+        (LanguageId::TypeScript, "web/d.ts"),
+    ]);
+    let enabled = [LanguageId::Rust, LanguageId::TypeScript];
+    let required = PilotLanguageRoutes::from_discovered(root, false, &enabled, &files);
+    assert_eq!(required.state, PilotLanguageRoutesState::Required);
+    assert_eq!(required.state.as_str(), "required");
+    let summary = required
+        .routes
+        .iter()
+        .map(|route| (route.language, route.file_count, route.enabled))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        summary,
+        vec![
+            (LanguageId::TypeScript, 2, true),
+            // JavaScript runs through the TypeScript-family adapter.
+            (LanguageId::JavaScript, 1, true),
+            (LanguageId::Python, 1, false),
+            (LanguageId::Perl, 1, false),
+        ]
+    );
+    for route in &required.routes[..2] {
+        assert_eq!(route.command.as_deref(), Some("ripr check --root ."));
+        assert_eq!(route.guidance_category, Some(TsFullRepoGuidance::CATEGORY));
+        assert_eq!(
+            route.guidance.as_deref(),
+            Some(TsFullRepoGuidance::REPAIR_ROUTE)
+        );
+    }
+    let python = &required.routes[2];
+    assert_eq!(python.command.as_deref(), Some("ripr check --root ."));
+    assert_eq!(python.guidance, None);
+    let perl = &required.routes[3];
+    if LanguageId::Perl.is_available() {
+        assert_eq!(perl.language_status(), "preview");
+        assert_eq!(perl.command.as_deref(), Some("ripr check --root ."));
+    } else {
+        assert_eq!(perl.language_status(), "unavailable");
+        assert_eq!(perl.route(), "unavailable_in_this_binary");
+        assert_eq!(perl.command, None);
+        assert_eq!(perl.guidance, LanguageId::Perl.unavailable_adapter_notice());
+    }
+    assert_eq!(
+        PilotLanguageRoutes::commands(&required.routes),
+        vec!["ripr check --root ."]
+    );
+
+    let supplementary = PilotLanguageRoutes::from_discovered(root, true, &enabled, &files);
+    assert_eq!(supplementary.state, PilotLanguageRoutesState::Supplementary);
+    assert_eq!(supplementary.routes, required.routes);
+    assert!(supplementary.required().is_none());
+}
+
+#[test]
+fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[
+        (LanguageId::TypeScript, "web/c.ts"),
+        (LanguageId::Perl, "lib/App.pm"),
+    ]);
+    let root = Path::new(".");
+
+    // Rust seams exist: terminal and Markdown are byte-identical to a run
+    // without language routes, and JSON lists the routes as supplementary.
+    let entries = [classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![missing()],
+        vec![related_test()],
+    )];
+    let supplementary =
+        PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &files);
+    let with_routes = PilotSummaryContext {
+        language_routes: Some(&supplementary),
+        ..pilot_context(&artifacts)
+    };
+    assert_eq!(
+        render_pilot_terminal(&entries, with_routes),
+        render_pilot_terminal(&entries, pilot_context(&artifacts))
+    );
+    assert_eq!(
+        render_pilot_summary_md(&entries, with_routes),
+        render_pilot_summary_md(&entries, pilot_context(&artifacts))
+    );
+    let json = render_pilot_summary_json(&entries, with_routes);
+    assert!(json.contains("\"state\": \"supplementary\""), "{json}");
+    assert!(json.contains("\"language\": \"typescript\""), "{json}");
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(parsed["language_routes"]["routes"][1]["language"], "perl");
+
+    // No Rust seams: every surface names the routes and none reads as clean.
+    let required = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &files);
+    let context = PilotSummaryContext {
+        language_routes: Some(&required),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        !terminal.contains("none ranked by the default pilot policy"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route (typescript_diff_first): ripr check --root .\n"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.ends_with(
+            "Next, analyze the changed code in these languages:\n  ripr check --root .\n"
+        ),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains("## Languages Outside The Rust Seam Scan"),
+        "{md}"
+    );
+    assert!(md.contains("```bash\nripr check --root .\n```"), "{md}");
+    assert!(!md.contains("ripr outcome --before"), "{md}");
+    let json = render_pilot_summary_json(&[], context);
+    assert!(json.contains("\"state\": \"required\""), "{json}");
+    if let Some(notice) = LanguageId::Perl.unavailable_adapter_notice() {
+        assert!(
+            terminal.contains(&format!(
+                "perl: 1 file (not available in this build)\n    {notice}\n"
+            )),
+            "{terminal}"
+        );
+        assert!(md.contains(&notice), "{md}");
+    }
+
+    // Only unavailable languages: no runnable command is invented.
+    if !LanguageId::Perl.is_available() {
+        let perl_only = PilotLanguageRoutes::from_discovered(
+            root,
+            false,
+            &[LanguageId::Rust],
+            &discovered_files(&[(LanguageId::Perl, "lib/App.pm")]),
+        );
+        let context = PilotSummaryContext {
+            language_routes: Some(&perl_only),
+            ..pilot_context(&artifacts)
+        };
+        let terminal = render_pilot_terminal(&[], context);
+        assert!(
+            terminal.ends_with("No follow-up command applies: this ripr binary cannot analyze the languages listed above.\n"),
+            "{terminal}"
+        );
+        let md = render_pilot_summary_md(&[], context);
+        assert!(md.ends_with("No follow-up command applies: this ripr binary cannot analyze the languages listed above.\n"), "{md}");
+        assert!(!md.contains("```bash"), "{md}");
     }
     Ok(())
 }

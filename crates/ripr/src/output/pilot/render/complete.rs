@@ -12,7 +12,8 @@ use crate::output::path::{display_path, display_path_text};
 use crate::output::pilot::commands::{PilotCommands, repair_start_command};
 use crate::output::pilot::ranking::{actionable_total, top_actionable_seams};
 use crate::output::pilot::{
-    PILOT_SUMMARY_SCHEMA_VERSION, PilotPythonFirstUse, PilotSummaryContext,
+    PILOT_SUMMARY_SCHEMA_VERSION, PilotLanguageRoute, PilotLanguageRoutes, PilotPythonFirstUse,
+    PilotSummaryContext,
 };
 use crate::output::python_repair_card::PythonRepairCard;
 
@@ -126,6 +127,7 @@ pub(crate) fn render_pilot_summary_json(
     }
     out.push_str("],\n");
     push_python_first_use_json(&mut out, context.python_first_use);
+    push_language_routes_json(&mut out, context.language_routes);
     out.push_str("  \"next\": {\n");
     out.push_str(&format!(
         "    \"inspect_packet\": \"{}\",\n",
@@ -183,6 +185,10 @@ pub(crate) fn render_pilot_summary_md(
         out.push_str("## Top Recommendation\n\n");
         if let Some(card) = python_top {
             push_python_repair_card_md(&mut out, card);
+        } else if required_routes(context).is_some() {
+            out.push_str(
+                "Pilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan.\n\n",
+            );
         } else {
             out.push_str("No actionable seam was ranked by the default pilot policy.\n\n");
         }
@@ -219,6 +225,9 @@ pub(crate) fn render_pilot_summary_md(
     if let Some(first_use) = context.python_first_use {
         push_python_first_use_md(&mut out, first_use);
     }
+    if let Some(routes) = required_routes(context) {
+        push_language_routes_md(&mut out, routes);
+    }
 
     out.push_str("## Outputs\n\n");
     out.push_str(&format!(
@@ -244,14 +253,30 @@ pub(crate) fn render_pilot_summary_md(
         .and_then(|entry| repair_start_command(context.root, entry));
     // One ordinary route (#3906): when the top seam can be repaired, the
     // repair transaction replaces the manual before/after snapshot pair.
-    let next_commands: Vec<&String> = match repair.as_ref() {
-        Some(command) => {
+    let routes = required_routes(context);
+    let next_commands: Vec<&String> = match (repair.as_ref(), routes) {
+        (Some(command), _) => {
             out.push_str(
                 "Start the repair transaction for the top seam, add one focused test (test files only), then run the `--attempt ... --phase after` command it prints:\n\n",
             );
             vec![command]
         }
-        None => {
+        // #3906: with no Rust seams, the repo-exposure snapshot pair would
+        // only report that no seams moved. Route to the diff-first check that
+        // analyzes the languages pilot did not rank.
+        (None, Some(routes)) => {
+            let commands = PilotLanguageRoutes::commands(routes);
+            if commands.is_empty() {
+                out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
+                out.push('\n');
+                return out;
+            }
+            out.push_str(
+                "Analyze the changed code in the languages outside the Rust seam scan with the diff-first check:\n\n",
+            );
+            commands
+        }
+        (None, None) => {
             out.push_str(
                 "After adding one focused test, rerun repo exposure and compare the snapshots:\n\n",
             );
@@ -361,6 +386,12 @@ pub(crate) fn render_pilot_terminal(
         push_python_repair_card_terminal(&mut out, card);
         out.push('\n');
         false
+    } else if required_routes(context).is_some() {
+        out.push_str("Top recommendation:\n");
+        out.push_str(
+            "  none: pilot ranks Rust seams and found none here; see the languages below\n\n",
+        );
+        false
     } else {
         out.push_str("Top recommendation:\n");
         out.push_str("  none ranked by the default pilot policy\n\n");
@@ -369,6 +400,10 @@ pub(crate) fn render_pilot_terminal(
 
     if let Some(first_use) = context.python_first_use {
         push_python_first_use_terminal(&mut out, first_use);
+    }
+    let routes = required_routes(context);
+    if let Some(routes) = routes {
+        push_language_routes_terminal(&mut out, routes);
     }
 
     out.push_str("Detailed brief:\n");
@@ -391,6 +426,19 @@ pub(crate) fn render_pilot_terminal(
         out.push_str("  3. run the `--attempt ... --phase after` command that step 1 prints\n");
         return out;
     }
+    if let Some(routes) = routes {
+        let commands = PilotLanguageRoutes::commands(routes);
+        if commands.is_empty() {
+            out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
+            out.push('\n');
+        } else {
+            out.push_str("Next, analyze the changed code in these languages:\n");
+            for command in commands {
+                out.push_str(&format!("  {command}\n"));
+            }
+        }
+        return out;
+    }
     if route_not_applicable {
         out.push_str("Run after producer evidence makes a repair route actionable:\n");
     } else {
@@ -399,6 +447,110 @@ pub(crate) fn render_pilot_terminal(
     out.push_str(&format!("  {}\n", commands.after_snapshot));
     out.push_str(&format!("  {}\n", commands.outcome));
     out
+}
+
+/// Closing line when every language pilot did not rank is unavailable in
+/// this binary, so no runnable command exists.
+const NO_LANGUAGE_ROUTE_COMMAND: &str =
+    "No follow-up command applies: this ripr binary cannot analyze the languages listed above.";
+
+/// Routes the human output must show: present only when pilot's Rust seam
+/// scan produced no seams, so output for Rust seams stays unchanged.
+fn required_routes<'a>(context: PilotSummaryContext<'a>) -> Option<&'a [PilotLanguageRoute]> {
+    context
+        .language_routes
+        .and_then(PilotLanguageRoutes::required)
+}
+
+fn route_status_label(route: &PilotLanguageRoute) -> &'static str {
+    match (route.available, route.enabled) {
+        (false, _) => "not available in this build",
+        (true, true) => "preview, diff-first",
+        (true, false) => "preview, diff-first; not enabled in ripr.toml [languages]",
+    }
+}
+
+fn file_count_label(count: usize) -> String {
+    if count == 1 {
+        "1 file".to_string()
+    } else {
+        format!("{count} files")
+    }
+}
+
+fn push_language_routes_terminal(out: &mut String, routes: &[PilotLanguageRoute]) {
+    out.push_str("Languages outside pilot's Rust seam scan:\n");
+    for route in routes {
+        out.push_str(&format!(
+            "  {}: {} ({})\n",
+            route.language.as_str(),
+            file_count_label(route.file_count),
+            route_status_label(route)
+        ));
+        if let Some(command) = route.command.as_deref() {
+            match route.guidance_category {
+                Some(category) => {
+                    out.push_str(&format!("    route ({category}): {command}\n"));
+                }
+                None => out.push_str(&format!("    route: {command}\n")),
+            }
+        } else if let Some(guidance) = route.guidance.as_deref() {
+            out.push_str(&format!("    {guidance}\n"));
+        }
+    }
+    out.push('\n');
+}
+
+fn push_language_routes_md(out: &mut String, routes: &[PilotLanguageRoute]) {
+    out.push_str("## Languages Outside The Rust Seam Scan\n\n");
+    for route in routes {
+        out.push_str(&format!(
+            "- `{}`: {} ({})\n",
+            route.language.as_str(),
+            file_count_label(route.file_count),
+            route_status_label(route)
+        ));
+        if let Some(command) = route.command.as_deref() {
+            out.push_str(&format!("  - Route: `{command}`\n"));
+        }
+        match (route.guidance_category, route.guidance.as_deref()) {
+            (Some(category), Some(guidance)) => {
+                out.push_str(&format!("  - `{category}`: {guidance}\n"));
+            }
+            (None, Some(guidance)) => out.push_str(&format!("  - {guidance}\n")),
+            _ => {}
+        }
+    }
+    out.push('\n');
+}
+
+fn push_language_routes_json(out: &mut String, routes: Option<&PilotLanguageRoutes>) {
+    out.push_str("  \"language_routes\": ");
+    let Some(routes) = routes else {
+        out.push_str("null,\n");
+        return;
+    };
+    out.push_str("{\n");
+    json_string_field(out, 4, "state", routes.state.as_str(), true);
+    out.push_str("    \"routes\": [");
+    for (idx, route) in routes.routes.iter().enumerate() {
+        out.push_str(if idx == 0 { "\n" } else { ",\n" });
+        out.push_str("      {\n");
+        json_string_field(out, 8, "language", route.language.as_str(), true);
+        out.push_str(&format!("        \"file_count\": {},\n", route.file_count));
+        json_string_field(out, 8, "language_status", route.language_status(), true);
+        out.push_str(&format!("        \"enabled\": {},\n", route.enabled));
+        json_string_field(out, 8, "route", route.route(), true);
+        json_optional_string_field(out, 8, "command", route.command.as_deref(), true);
+        json_optional_string_field(out, 8, "guidance_category", route.guidance_category, true);
+        json_optional_string_field(out, 8, "guidance", route.guidance.as_deref(), false);
+        out.push_str("      }");
+    }
+    if !routes.routes.is_empty() {
+        out.push_str("\n    ");
+    }
+    out.push_str("]\n");
+    out.push_str("  },\n");
 }
 
 fn python_top_repair_card(first_use: Option<&PilotPythonFirstUse>) -> Option<&PythonRepairCard> {
