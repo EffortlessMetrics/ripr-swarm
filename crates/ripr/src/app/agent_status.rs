@@ -13,6 +13,7 @@ use crate::app::repair_attempt::{
     REPAIR_ATTEMPT_DIRECTORY, RepairAttemptInventoryEntry, RepairAttemptManifest,
     RepairAttemptState, inventory_repair_attempts,
 };
+use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, powershell_command};
 use serde_json::Value;
 use std::path::Path;
@@ -93,7 +94,8 @@ pub(crate) struct AgentStatusReport {
 }
 
 /// One repair attempt as status sees it. `disposition` is status's reading of
-/// the manifest against the current `HEAD`; `command` is what would move that
+/// the manifest against the current `HEAD` and, for a finished attempt,
+/// against the receipt issued for it; `command` is what would move that
 /// attempt forward, if anything.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentStatusRepairAttempt {
@@ -104,6 +106,32 @@ pub(crate) struct AgentStatusRepairAttempt {
     pub(crate) disposition: &'static str,
     pub(crate) manifest: String,
     pub(crate) command: Option<String>,
+    /// The HEAD the attempt's evidence describes (its after phase's HEAD when
+    /// it has one, otherwise its before phase's).
+    pub(crate) evidence_head: String,
+    pub(crate) receipt: AgentStatusAttemptReceipt,
+    /// The refusal the attempt's most recent after phase recorded, if any.
+    pub(crate) last_after_refusal: Option<AgentStatusAfterRefusal>,
+}
+
+/// The workflow receipt read against one attempt. Only a `ready_to_finish`
+/// attempt can have a receipt issued for it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AgentStatusAttemptReceipt {
+    /// The attempt has no compliant, current after verdict to issue against.
+    NotApplicable,
+    /// No receipt at the workflow receipt path is bound to this attempt's
+    /// after verdict (it is missing, unreadable, or belongs to other work).
+    NotIssued,
+    /// The receipt bound to this attempt's after verdict, read through the
+    /// receipt owner.
+    Issued(AgentReceiptReading),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AgentStatusAfterRefusal {
+    pub(crate) reason: String,
+    pub(crate) recorded_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -160,7 +188,9 @@ pub(crate) fn build_agent_status_report(root: &Path, root_argument: &Path) -> Ag
     let seam = recover_seam_id(root, &artifacts, &mut warnings);
     warnings.extend(stale_warnings(&artifacts));
     let missing_commands = missing_commands(root_argument, seam.as_ref(), &artifacts);
-    let repair_attempts = inspect_repair_attempts(root, &root_display, &mut warnings);
+    let receipt = read_workflow_receipt(root);
+    let repair_attempts =
+        inspect_repair_attempts(root, &root_display, receipt.as_ref(), &mut warnings);
     let next_command = select_next_command(
         root,
         &root_display,
@@ -187,6 +217,7 @@ pub(crate) fn build_agent_status_report(root: &Path, root_argument: &Path) -> Ag
 fn inspect_repair_attempts(
     root: &Path,
     root_display: &str,
+    receipt: Option<&Value>,
     warnings: &mut Vec<AgentStatusWarning>,
 ) -> Option<Vec<AgentStatusRepairAttempt>> {
     let entries = match inventory_repair_attempts(root) {
@@ -212,6 +243,7 @@ fn inspect_repair_attempts(
                 root_display,
                 &manifest,
                 current_head.as_deref(),
+                receipt,
             )),
             RepairAttemptInventoryEntry::Invalid { directory, error } => {
                 trusted = false;
@@ -225,16 +257,65 @@ fn inspect_repair_attempts(
             }
         }
     }
+    if trusted {
+        warnings.extend(finished_attempt_warnings(
+            root_display,
+            &attempts,
+            current_head.as_deref(),
+        ));
+    }
     trusted.then_some(attempts)
+}
+
+/// The workflow receipt, when it exists and parses. Status reads it only to
+/// match it against a finished attempt's after verdict.
+fn read_workflow_receipt(root: &Path) -> Option<Value> {
+    let text = std::fs::read_to_string(root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Whether the workflow receipt was issued for exactly this attempt's after
+/// verdict: the attempt-bound receipt records the attempt, its after HEAD, and
+/// the delta and packet digests the finish measured. A receipt from another
+/// attempt, a legacy unbound receipt, or one issued before a later finish of
+/// the same attempt does not match.
+fn attempt_receipt(
+    manifest: &RepairAttemptManifest,
+    receipt: Option<&Value>,
+) -> AgentStatusAttemptReceipt {
+    let Some(after) = manifest
+        .after
+        .as_ref()
+        .filter(|_| manifest.state == RepairAttemptState::ReadyToFinish)
+    else {
+        return AgentStatusAttemptReceipt::NotApplicable;
+    };
+    let Some(receipt) = receipt else {
+        return AgentStatusAttemptReceipt::NotIssued;
+    };
+    let bound = |pointer: &str, expected: &str| {
+        receipt.pointer(pointer).and_then(Value::as_str) == Some(expected)
+    };
+    if bound("/repair_attempt/attempt_id", after.attempt_id.as_str())
+        && bound("/repair_attempt/after_head", &after.repository_head)
+        && bound("/repair_attempt/delta_sha256", &after.delta_sha256)
+        && bound("/repair_attempt/packet_sha256", &after.packet_sha256)
+    {
+        AgentStatusAttemptReceipt::Issued(AgentReceiptReading::from_value(receipt))
+    } else {
+        AgentStatusAttemptReceipt::NotIssued
+    }
 }
 
 fn status_repair_attempt(
     root_display: &str,
     manifest: &RepairAttemptManifest,
     current_head: Option<&str>,
+    receipt: Option<&Value>,
 ) -> AgentStatusRepairAttempt {
     let head_current = current_head.map(|head| head == manifest.repository_head);
     let restart = Some(new_repair_attempt_command(root_display, &manifest.seam_id));
+    let receipt = attempt_receipt(manifest, receipt);
     let (state, disposition, command) = match manifest.state {
         RepairAttemptState::AwaitingEdit => match head_current {
             Some(true) => (
@@ -246,7 +327,20 @@ fn status_repair_attempt(
             None => ("awaiting_edit", "head_unknown", None),
         },
         RepairAttemptState::Prepared => ("prepared", "not_published", restart),
-        RepairAttemptState::ReadyToFinish => ("ready_to_finish", "finished", None),
+        // `ready_to_finish` only says the edit cage admitted the edit. The
+        // loop is finished only when the receipt issued for this attempt
+        // shows the gap closed (receipt owner: advisory and improved). A
+        // receipt whose grip did not rise leaves the gap open, so the seam is
+        // restarted; any other reading is reported, never called finished.
+        RepairAttemptState::ReadyToFinish => match &receipt {
+            AgentStatusAttemptReceipt::Issued(reading) if reading.shows_gap_closed() => {
+                ("ready_to_finish", "finished", None)
+            }
+            AgentStatusAttemptReceipt::Issued(reading) if reading.leaves_gap_open() => {
+                ("ready_to_finish", "gap_open", restart)
+            }
+            _ => ("ready_to_finish", "unconfirmed", None),
+        },
         RepairAttemptState::Stale => ("stale", "ended", restart),
         RepairAttemptState::Incomparable => ("incomparable", "ended", restart),
         RepairAttemptState::Failed => ("failed", "ended", restart),
@@ -262,6 +356,110 @@ fn status_repair_attempt(
             manifest.repair_attempt_id.as_str()
         ),
         command,
+        evidence_head: manifest.after.as_ref().map_or_else(
+            || manifest.repository_head.clone(),
+            |after| after.repository_head.clone(),
+        ),
+        receipt,
+        last_after_refusal: manifest.last_after_refusal.as_ref().map(|refusal| {
+            AgentStatusAfterRefusal {
+                reason: refusal.reason.clone(),
+                recorded_unix_ms: refusal.recorded_unix_ms,
+            }
+        }),
+    }
+}
+
+/// Warnings for finished attempts whose receipt does not let status call the
+/// loop complete. A seam with a new attempt awaiting its edit, or with a
+/// finished attempt whose receipt shows the gap closed at the current HEAD,
+/// needs no warning. Otherwise each finished attempt whose evidence describes
+/// another HEAD is stale, and each attempt whose receipt does not confirm the
+/// gap closed says why.
+fn finished_attempt_warnings(
+    root_display: &str,
+    attempts: &[AgentStatusRepairAttempt],
+    current_head: Option<&str>,
+) -> Vec<AgentStatusWarning> {
+    let settled_seams = attempts
+        .iter()
+        .filter(|attempt| {
+            attempt.disposition == "resumable"
+                || (attempt.disposition == "finished" && attempt.head_current == Some(true))
+        })
+        .map(|attempt| attempt.seam_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut warnings = Vec::new();
+    for attempt in attempts {
+        if settled_seams.contains(attempt.seam_id.as_str()) {
+            continue;
+        }
+        match attempt.disposition {
+            "finished" => warnings.push(AgentStatusWarning {
+                kind: "repair_receipt_stale".to_string(),
+                artifact: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
+                message: format!(
+                    "the receipt for repair attempt `{}` (seam `{}`) shows the gap closed at HEAD `{}`, but {}; its static evidence is stale against HEAD, so status does not report the loop complete. Re-read the current HEAD with `ripr check --root {}` before relying on it",
+                    attempt.attempt_id,
+                    attempt.seam_id,
+                    attempt.evidence_head,
+                    match current_head {
+                        Some(head) => format!("the repository HEAD is now `{head}`"),
+                        None => "the current Git HEAD could not be read".to_string(),
+                    },
+                    shell_arg(root_display)
+                ),
+            }),
+            "unconfirmed" => warnings.push(AgentStatusWarning {
+                kind: "repair_receipt_unconfirmed".to_string(),
+                artifact: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
+                message: format!(
+                    "repair attempt `{}` (seam `{}`) passed the edit cage, but {}; status does not report the loop complete{}",
+                    attempt.attempt_id,
+                    attempt.seam_id,
+                    unconfirmed_receipt_reason(attempt),
+                    match &attempt.last_after_refusal {
+                        Some(refusal) => format!(
+                            ". Its last after phase was refused: {}",
+                            refusal.reason
+                        ),
+                        None => String::new(),
+                    }
+                ),
+            }),
+            _ => {}
+        }
+    }
+    warnings
+}
+
+fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
+    match &attempt.receipt {
+        AgentStatusAttemptReceipt::Issued(reading) if !reading.is_advisory() => format!(
+            "its receipt is `{}`{} and an invalid or incomplete receipt does not show the gap closed (movement `{}`)",
+            reading.status.as_deref().unwrap_or("unknown"),
+            reading
+                .analysis_outcome_error
+                .as_deref()
+                .map(|error| format!(" ({})", error.trim_end_matches('.')))
+                .unwrap_or_default(),
+            reading.movement.as_deref().unwrap_or("unknown")
+        ),
+        AgentStatusAttemptReceipt::Issued(reading) => format!(
+            "its receipt reports movement `{}`, which does not show the gap closed{}",
+            reading.movement.as_deref().unwrap_or("unknown"),
+            reading
+                .recommended_action
+                .as_deref()
+                .map(|action| format!(
+                    "; the receipt's next action: {}",
+                    action.trim_end_matches('.')
+                ))
+                .unwrap_or_default()
+        ),
+        _ => format!(
+            "no receipt at `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` was issued for its after verdict"
+        ),
     }
 }
 
@@ -293,13 +491,25 @@ fn select_next_command(
         .collect::<Vec<_>>();
     match resumable.as_slice() {
         [attempt] => {
-            return Some(AgentStatusCommand {
-                step: "repair_attempt_after".to_string(),
-                artifact: attempt.manifest.clone(),
-                reason: format!(
+            let reason = match &attempt.last_after_refusal {
+                // The same command is still the only way forward for this
+                // attempt, but status must not present it as if it had never
+                // run: it names the refusal the attempt recorded.
+                Some(refusal) => format!(
+                    "the last after phase of repair attempt `{}` for seam `{}` was refused: {}. The attempt still awaits the focused test edit; the command below repeats that after phase and refuses again until the cause the refusal names is resolved",
+                    attempt.attempt_id,
+                    attempt.seam_id,
+                    refusal.reason.trim_end_matches('.')
+                ),
+                None => format!(
                     "repair attempt `{}` for seam `{}` is awaiting the focused test edit; once the test is in place, run the after phase its before phase recorded",
                     attempt.attempt_id, attempt.seam_id
                 ),
+            };
+            return Some(AgentStatusCommand {
+                step: "repair_attempt_after".to_string(),
+                artifact: attempt.manifest.clone(),
+                reason,
                 command: attempt.command.clone().unwrap_or_default(),
             });
         }
@@ -334,12 +544,15 @@ fn select_next_command(
         return None;
     }
 
-    // A seam is open when none of its attempts finished and at least one ended
-    // or went stale. Grouping by seam rather than picking "the latest" attempt
-    // keeps status from reading creation order into the inventory.
+    // A seam is open when none of its attempts finished and at least one ended,
+    // went stale, or finished with a receipt that leaves the gap open.
+    // Grouping by seam rather than picking "the latest" attempt keeps status
+    // from reading creation order into the inventory. A finished attempt whose
+    // receipt status cannot read as closed or open is not restarted: the
+    // warnings say why instead.
     let finished_seams = attempts
         .iter()
-        .filter(|attempt| attempt.disposition == "finished")
+        .filter(|attempt| matches!(attempt.disposition, "finished" | "unconfirmed"))
         .map(|attempt| attempt.seam_id.as_str())
         .collect::<std::collections::BTreeSet<_>>();
     let mut open = std::collections::BTreeMap::<&str, Vec<&AgentStatusRepairAttempt>>::new();
@@ -353,11 +566,19 @@ fn select_next_command(
     let mut open_seams = open.into_iter();
     match (open_seams.next(), open_seams.next()) {
         (Some((seam_id, ended)), None) => {
+            let restart = if ended
+                .iter()
+                .any(|attempt| attempt.disposition == "gap_open")
+            {
+                "the gap is still open, so start a new attempt and strengthen the focused test before its after phase"
+            } else {
+                "start a new attempt"
+            };
             return Some(AgentStatusCommand {
                 step: "repair_attempt_before".to_string(),
                 artifact: REPAIR_ATTEMPT_DIRECTORY.to_string(),
                 reason: format!(
-                    "no repair attempt for seam `{seam_id}` can continue ({}); start a new attempt",
+                    "no repair attempt for seam `{seam_id}` can continue ({}); {restart}",
                     ended
                         .iter()
                         .map(|attempt| format!(
@@ -461,7 +682,67 @@ fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
             "awaiting an edit but was prepared at a different HEAD".to_string()
         }
         "not_published" => "prepared but never published".to_string(),
+        "gap_open" => {
+            let AgentStatusAttemptReceipt::Issued(reading) = &attempt.receipt else {
+                return attempt.state.to_string();
+            };
+            let mut condition = format!(
+                "finished, but its receipt (status `{}`, movement `{}`) does not show the gap closed",
+                reading.status.as_deref().unwrap_or("unknown"),
+                reading.movement.as_deref().unwrap_or("unknown")
+            );
+            if attempt.head_current != Some(true) {
+                condition.push_str(&format!(
+                    ", and its evidence is stale against HEAD (recorded at `{}`)",
+                    attempt.evidence_head
+                ));
+            }
+            if let Some(action) = &reading.recommended_action {
+                condition.push_str(&format!(
+                    "; the receipt's next action: {}",
+                    action.trim_end_matches('.')
+                ));
+            }
+            condition
+        }
         _ => attempt.state.to_string(),
+    }
+}
+
+/// One-cell summary of what an attempt produced, for the Markdown table.
+fn attempt_outcome(attempt: &AgentStatusRepairAttempt) -> String {
+    let mut parts = Vec::new();
+    match &attempt.receipt {
+        AgentStatusAttemptReceipt::Issued(reading) => parts.push(format!(
+            "receipt `{}`, movement `{}`",
+            reading.status.as_deref().unwrap_or("unknown"),
+            reading.movement.as_deref().unwrap_or("unknown")
+        )),
+        AgentStatusAttemptReceipt::NotIssued => {
+            parts.push("no receipt issued for this attempt".to_string());
+        }
+        AgentStatusAttemptReceipt::NotApplicable => {}
+    }
+    match attempt.disposition {
+        "finished" => parts.push("static grip improved".to_string()),
+        "gap_open" => parts.push("gap still open".to_string()),
+        "unconfirmed" => parts.push("gap closure not confirmed".to_string()),
+        _ => {}
+    }
+    if attempt.receipt != AgentStatusAttemptReceipt::NotApplicable {
+        match attempt.head_current {
+            Some(true) => {}
+            Some(false) => parts.push("evidence stale against HEAD".to_string()),
+            None => parts.push("HEAD unknown".to_string()),
+        }
+    }
+    if attempt.last_after_refusal.is_some() {
+        parts.push("last after phase refused".to_string());
+    }
+    if parts.is_empty() {
+        "-".to_string()
+    } else {
+        parts.join("; ")
     }
 }
 
@@ -541,12 +822,16 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
 
     if !report.repair_attempts.is_empty() {
         rendered.push_str("\n## Repair Attempts\n\n");
-        rendered.push_str("| Attempt | Seam | State | Status reading |\n");
-        rendered.push_str("| --- | --- | --- | --- |\n");
+        rendered.push_str("| Attempt | Seam | State | Status reading | Outcome |\n");
+        rendered.push_str("| --- | --- | --- | --- | --- |\n");
         for attempt in &report.repair_attempts {
             rendered.push_str(&format!(
-                "| `{}` | `{}` | {} | {} |\n",
-                attempt.attempt_id, attempt.seam_id, attempt.state, attempt.disposition
+                "| `{}` | `{}` | {} | {} | {} |\n",
+                attempt.attempt_id,
+                attempt.seam_id,
+                attempt.state,
+                attempt.disposition,
+                attempt_outcome(attempt)
             ));
         }
     }
@@ -570,8 +855,10 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
                 next.command
             )),
         }
-    } else if report.missing_commands.is_empty() {
+    } else if report.missing_commands.is_empty() && report.warnings.is_empty() {
         rendered.push_str("\nNo missing agent-loop artifacts were detected.\n");
+    } else if report.missing_commands.is_empty() {
+        rendered.push_str("\nNo missing agent-loop artifacts were detected, but status does not report the loop complete; the warnings below say why.\n");
     } else {
         rendered.push_str("\n## Next Command\n\nStatus selects no next command; the warnings below say why and list the choices.\n");
     }
@@ -622,7 +909,30 @@ fn agent_status_repair_attempt_json(attempt: &AgentStatusRepairAttempt) -> Value
         "head_current": attempt.head_current,
         "disposition": attempt.disposition,
         "manifest": attempt.manifest,
-        "command": attempt.command
+        "command": attempt.command,
+        "receipt": attempt_receipt_json(&attempt.receipt),
+        "last_after_refusal": attempt.last_after_refusal.as_ref().map(|refusal| serde_json::json!({
+            "reason": refusal.reason,
+            "recorded_unix_ms": refusal.recorded_unix_ms
+        }))
+    })
+}
+
+fn attempt_receipt_json(receipt: &AgentStatusAttemptReceipt) -> Value {
+    let reading = match receipt {
+        AgentStatusAttemptReceipt::NotApplicable => return Value::Null,
+        AgentStatusAttemptReceipt::NotIssued => None,
+        AgentStatusAttemptReceipt::Issued(reading) => Some(reading),
+    };
+    serde_json::json!({
+        "path": WORKFLOW_AGENT_RECEIPT_ARTIFACT,
+        "issued_for_attempt": reading.is_some(),
+        "status": reading.and_then(|reading| reading.status.as_deref()),
+        "movement": reading.and_then(|reading| reading.movement.as_deref()),
+        "receipt_state": reading.map(|reading| reading.receipt_state.as_str()),
+        "shows_gap_closed": reading.is_some_and(AgentReceiptReading::shows_gap_closed),
+        "recommended_action": reading.and_then(|reading| reading.recommended_action.as_deref()),
+        "analysis_outcome_error": reading.and_then(|reading| reading.analysis_outcome_error.as_deref())
     })
 }
 
@@ -1253,6 +1563,9 @@ mod tests {
             disposition,
             manifest: format!("{REPAIR_ATTEMPT_DIRECTORY}/{id}/attempt.json"),
             command: command.map(str::to_string),
+            evidence_head: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            receipt: AgentStatusAttemptReceipt::NotApplicable,
+            last_after_refusal: None,
         }
     }
 

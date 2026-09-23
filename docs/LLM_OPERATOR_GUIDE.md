@@ -104,9 +104,11 @@ or receipt files, and prints one next command:
 | State | Next command |
 | --- | --- |
 | No seam known yet | `ripr pilot --root <root>`, which selects the seam |
-| One repair attempt waiting for its test edit at the current `HEAD` | that attempt's `ripr agent repair --attempt <id> --phase after` |
+| One repair attempt waiting for its test edit at the current `HEAD` | that attempt's `ripr agent repair --attempt <id> --phase after`; when its last after phase was refused, the reason names the refusal first |
 | A seam whose attempt failed, went stale, or was prepared at another `HEAD` | `ripr agent repair --seam-id <seam-id> --phase before`, which starts a new attempt |
-| Every artifact present | none; status is `complete` |
+| A seam whose finished attempt's receipt shows grip `unchanged`, `changed`, or `regressed` | `ripr agent repair --seam-id <seam-id> --phase before`: the gap is still open, so start a new attempt and strengthen the test |
+| A finished attempt whose receipt is `invalid` or `incomplete`, or whose evidence was recorded at another `HEAD` | none; status is `warning` and the warning says which |
+| Every artifact present, and any finished attempt's receipt is `advisory` with grip `improved` at the current `HEAD` | none; status is `complete` |
 | Otherwise | the first missing artifact's command below |
 
 When picking would mean guessing (two waiting attempts, several open seams, an

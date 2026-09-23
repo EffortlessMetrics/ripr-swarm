@@ -348,7 +348,8 @@ after phase applies) and selects `next_command` in this order:
 5. **Restart.** Group attempts by seam. A seam with a `ready_to_finish`
    attempt is finished. A seam whose attempts all ended (`failed`, `stale`,
    `incomparable`), were prepared at another `HEAD`, or never left `prepared`
-   is open. Exactly one open seam: `ripr agent repair --root <root> --seam-id
+   is open. (Refined below: a `ready_to_finish` attempt finishes its seam only
+   through the receipt issued for it.) Exactly one open seam: `ripr agent repair --root <root> --seam-id
    <seam> --phase before`, step `repair_attempt_before`. Several: select
    nothing and warn `multiple_open_repair_seams`, listing each start command.
 6. **Legacy loop.** Otherwise the first missing artifact's command, with two
@@ -362,6 +363,30 @@ after phase applies) and selects `next_command` in this order:
 adds `repair_attempts` (`attempt_id`, `seam_id`, `state`, `head_current`,
 `disposition`, `manifest`, `command`); `missing_commands` keeps its legacy
 meaning. `ripr agent review-summary` carries the same `next_command`.
+
+### Refinement: the attempt's outcome, not only its state
+
+`ready_to_finish` means the edit cage admitted the edit; it does not mean the
+gap closed. Status reads the workflow receipt against each `ready_to_finish`
+attempt, matching the receipt's `repair_attempt` binding (attempt ID, after
+`HEAD`, delta and packet digests) to the attempt's after verdict, and
+interprets it through the receipt owner (`output::agent_receipt`):
+
+- `advisory` with movement `improved`: `finished`. The loop is `complete` only
+  when such an attempt's evidence is at the current `HEAD`; otherwise a
+  `repair_receipt_stale` warning names both heads.
+- movement `unchanged`, `changed`, or `regressed`, whatever the receipt
+  status: `gap_open`. The seam is open, and rule 5 starts a new attempt whose
+  reason names the receipt status, movement, staleness, and the receipt's own
+  next action.
+- anything else (an `invalid` or `incomplete` improved receipt, a new or
+  resolved seam, or no receipt issued for the attempt): `unconfirmed`. The seam
+  is not restarted and a `repair_receipt_unconfirmed` warning says why.
+
+An after phase that refuses after selecting its attempt records the refusal on
+the attempt (`last_after_refusal`, owned by `app::repair_attempt`). Rule 2
+still resumes that attempt, but its reason names the refusal before repeating
+the command. The next after phase that reaches the durable finish clears it.
 
 Recorded resume commands keep the `--root` spelling the before phase was given,
 because the manifest is the authority for that command (including the

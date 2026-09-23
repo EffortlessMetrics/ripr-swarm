@@ -121,6 +121,8 @@ The manifest schema is `schemas/ripr/repair-attempt.schema.json` (`schema_versio
 
 The before commitment is derived from the prepared manifest. Terminal updates may add after-phase evidence, but they cannot silently rewrite the retained before identity or artifacts.
 
+When an after phase refuses after it selected the attempt (for example `agent verify` finds the pair incomparable or without movement, or the receipt is refused), the manifest gains an optional `last_after_refusal` object (`reason`, `repository_head`, `recorded_unix_ms`). It is an observation, not a state: it never changes `state` or `after`, the before commitment excludes it, and the next after phase that reaches the durable finish removes it. `ripr agent status` reports it instead of repeating the refused command unannotated. Manifests without a refusal omit the field.
+
 ## After-phase authority
 
 `--attempt <id>` resolves one manifest directly. Before producing a receipt, RIPR verifies that:

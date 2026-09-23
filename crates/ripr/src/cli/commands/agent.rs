@@ -452,7 +452,31 @@ fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), St
 /// by digest before recording the applied edit, and publishes the apply-phase
 /// record. The driver records no verification result, no static movement, and
 /// no closure; #3570 owns the verification phase.
+///
+/// When an after phase refuses after it selected its attempt, the refusal is
+/// recorded on that attempt through the attempt authority, so `ripr agent
+/// status` reports it instead of repeating the refused command unannotated.
 fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
+    let mut selected_after_attempt = None;
+    let result = run_agent_repair_phase(options, &mut selected_after_attempt);
+    if let (Err(error), Some((root, attempt_id))) = (&result, &selected_after_attempt)
+        && let Err(record_error) =
+            crate::app::repair_attempt::record_repair_attempt_after_refusal(root, attempt_id, error)
+    {
+        eprintln!(
+            "ripr: could not record the after-phase refusal on attempt `{}`: {record_error}",
+            attempt_id.as_str()
+        );
+    }
+    result
+}
+
+/// Runs one repair phase. `selected_after_attempt` receives the attempt the
+/// after phase selected, so a refusal past that point can be recorded on it.
+fn run_agent_repair_phase(
+    options: AgentRepairOptions,
+    selected_after_attempt: &mut Option<(PathBuf, crate::app::repair_attempt::RepairAttemptId)>,
+) -> Result<(), String> {
     let AgentRepairOptions {
         root,
         seam_id,
@@ -518,6 +542,7 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                 attempt_id.as_deref(),
                 seam_id.as_deref(),
             )?;
+            *selected_after_attempt = Some((root.clone(), attempt.attempt_id.clone()));
             eprintln!(
                 "ripr: agent repair --phase after for attempt `{}` (seam `{}`) at {}",
                 attempt.attempt_id.as_str(),

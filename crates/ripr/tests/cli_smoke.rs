@@ -3945,7 +3945,20 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     assert!(!coordinated_rejected.status.success());
     std::fs::write(&baseline_path, baseline_bytes)?;
     std::fs::write(&manifest_path, &manifest_bytes)?;
-    assert!(String::from_utf8_lossy(&after.stdout).contains("\"status\": \"complete\""));
+    // The status the after phase prints is `complete` only when the receipt
+    // it issued is `advisory` (improved grip at the current HEAD); an
+    // `invalid` or `incomplete` receipt keeps it at `warning` (F15-4).
+    let expected_status = if receipt["status"] == "advisory" {
+        "\"status\": \"complete\""
+    } else {
+        "\"status\": \"warning\""
+    };
+    assert!(
+        String::from_utf8_lossy(&after.stdout).contains(expected_status),
+        "after phase status must follow the receipt ({}):\n{}",
+        receipt["status"],
+        String::from_utf8_lossy(&after.stdout)
+    );
     assert!(String::from_utf8_lossy(&after.stderr).contains("after phase complete"));
 
     std::fs::remove_dir_all(root)?;
@@ -11219,7 +11232,397 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
         serde_json::Value::Null,
         "{report:#}"
     );
+    // The finished attempt's grip improved, so its seam is not restarted.
+    // Whether the loop is `complete` is the receipt's call: only an
+    // `advisory` receipt shows the gap closed; any other receipt status keeps
+    // status at `warning` and says why.
+    let finished = repair_route_attempt(&report, &finishing_attempt)?;
+    assert_eq!(
+        finished["receipt"]["issued_for_attempt"], true,
+        "{report:#}"
+    );
+    assert_eq!(finished["receipt"]["movement"], "improved", "{report:#}");
+    if finished["receipt"]["status"] == "advisory" {
+        assert_eq!(report["status"], "complete", "{report:#}");
+        assert_eq!(finished["disposition"], "finished", "{report:#}");
+    } else {
+        assert_eq!(report["status"], "warning", "{report:#}");
+        assert_eq!(finished["disposition"], "unconfirmed", "{report:#}");
+        assert!(
+            repair_route_warning_kinds(&report).contains(&"repair_receipt_unconfirmed".to_string()),
+            "{report:#}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// The attempt ID inside a printed `--attempt <id> --phase after` command.
+fn repair_route_attempt_id(command: &str) -> Result<String, String> {
+    command
+        .split_whitespace()
+        .skip_while(|word| *word != "--attempt")
+        .nth(1)
+        .map(|id| id.trim_matches('\'').to_string())
+        .ok_or_else(|| format!("no attempt ID in `{command}`"))
+}
+
+fn repair_route_after(root: &Path, attempt_id: &str) -> std::process::Output {
+    let root_arg = root.to_string_lossy().into_owned();
+    run_ripr(&[
+        "agent",
+        "repair",
+        "--root",
+        &root_arg,
+        "--attempt",
+        attempt_id,
+        "--phase",
+        "after",
+    ])
+}
+
+fn repair_route_manifest(
+    root: &Path,
+    attempt_id: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    Ok(serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/repair-attempts")
+            .join(attempt_id)
+            .join("attempt.json"),
+    )?)?)
+}
+
+fn repair_route_attempt<'a>(
+    report: &'a serde_json::Value,
+    attempt_id: &str,
+) -> Result<&'a serde_json::Value, String> {
+    report["repair_attempts"]
+        .as_array()
+        .and_then(|attempts| {
+            attempts
+                .iter()
+                .find(|attempt| attempt["attempt_id"] == attempt_id)
+        })
+        .ok_or_else(|| format!("status does not list attempt `{attempt_id}`: {report:#}"))
+}
+
+fn repair_route_markdown(root: &Path) -> Result<String, String> {
+    let root_arg = root.to_string_lossy().into_owned();
+    let markdown = run_ripr(&["agent", "status", "--root", &root_arg]);
+    assert_success(&markdown);
+    Ok(String::from_utf8_lossy(&markdown.stdout).into_owned())
+}
+
+const REPAIR_ROUTE_BOUNDARY_TEST: &str = "\n#[test]\nfn at_threshold_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
+/// A new test that reaches the seam but, like the existing ones, stays far
+/// from the boundary: the edit cage admits it and the grip does not move.
+const REPAIR_ROUTE_NON_DISCRIMINATING_TEST: &str = "\n#[test]\nfn well_above_threshold_discounts() {\n    assert_eq!(discounted_total(20_000, 100), 19_990);\n}\n";
+
+/// F15-2: an after phase that refuses leaves its attempt awaiting the edit.
+/// Status still resumes that attempt (it is the only way forward), but it
+/// names the refusal the attempt recorded instead of printing the same
+/// command as if it had never run. A successful retry clears the refusal.
+#[test]
+fn agent_status_names_a_refused_after_phase_before_repeating_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status refused after")?;
+    let printed = repair_route_before(&root)?;
+    let attempt_id = repair_route_attempt_id(&printed)?;
+
+    // No test edit yet: agent verify refuses a pair without movement.
+    let refused = repair_route_after(&root, &attempt_id);
+    assert!(!refused.status.success(), "{refused:?}");
+    let refused_stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        refused_stderr.contains("no repository movement"),
+        "{refused_stderr}"
+    );
+    // Precondition: the attempt record holds the refusal and is still
+    // awaiting the edit at the current HEAD.
+    let manifest = repair_route_manifest(&root, &attempt_id)?;
+    assert_eq!(manifest["state"], "awaiting_edit", "{manifest:#}");
+    let recorded = manifest["last_after_refusal"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(recorded.contains("no repository movement"), "{manifest:#}");
+
+    let report = repair_route_status(&root)?;
+    let (step, command) = repair_route_next(&report);
+    assert_eq!(step, "repair_attempt_after", "{report:#}");
+    assert_eq!(command, printed);
+    let reason = report["next_command"]["reason"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        reason.contains("was refused") && reason.contains("no repository movement"),
+        "the repeated command must say its last run was refused and why: {reason}"
+    );
+    assert!(
+        !reason.contains("once the test is in place"),
+        "the refused attempt must not read as untouched: {reason}"
+    );
+    let attempt = repair_route_attempt(&report, &attempt_id)?;
+    assert_eq!(attempt["disposition"], "resumable", "{report:#}");
+    assert_eq!(
+        attempt["last_after_refusal"]["reason"],
+        serde_json::Value::String(recorded),
+        "{report:#}"
+    );
+    assert_eq!(attempt["receipt"], serde_json::Value::Null, "{report:#}");
+    let markdown = repair_route_markdown(&root)?;
+    assert!(
+        markdown.contains("was refused: agent verify no repository movement"),
+        "{markdown}"
+    );
+    assert!(markdown.contains("last after phase refused"), "{markdown}");
+
+    // The focused edit resolves the cause; the retry finishes and the
+    // refusal no longer describes the attempt.
+    let test_path = root.join("tests/pricing.rs");
+    std::fs::write(
+        &test_path,
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_BOUNDARY_TEST}"),
+    )?;
+    assert_success(&repair_route_after(&root, &attempt_id));
+    let manifest = repair_route_manifest(&root, &attempt_id)?;
+    assert_eq!(manifest["state"], "ready_to_finish", "{manifest:#}");
+    assert!(manifest.get("last_after_refusal").is_none(), "{manifest:#}");
+    let report = repair_route_status(&root)?;
+    assert_eq!(
+        repair_route_attempt(&report, &attempt_id)?["last_after_refusal"],
+        serde_json::Value::Null,
+        "{report:#}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// F15-4: an after phase whose receipt shows the grip did not move finishes
+/// the edit cage but not the gap. Status is not `complete`: it names the
+/// receipt's status and movement and restarts the seam with the receipt's own
+/// next action. After the test is committed, it also says the evidence is
+/// stale against HEAD, and the printed restart still runs.
+#[test]
+fn agent_status_keeps_the_gap_open_when_the_receipt_did_not_improve()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status unchanged receipt")?;
+    let attempt_id = repair_route_attempt_id(&repair_route_before(&root)?)?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_NON_DISCRIMINATING_TEST}"),
+    )?;
+    assert_success(&repair_route_after(&root, &attempt_id));
+
+    // Preconditions: the edit cage admitted the edit and the receipt issued
+    // for this attempt records unchanged movement.
+    let manifest = repair_route_manifest(&root, &attempt_id)?;
+    assert_eq!(manifest["state"], "ready_to_finish", "{manifest:#}");
+    let receipt: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/reports/agent-receipt.json"),
+    )?)?;
+    assert_eq!(receipt["repair_attempt"]["attempt_id"], attempt_id.as_str());
+    assert_eq!(
+        receipt["provenance"]["movement"], "unchanged",
+        "{receipt:#}"
+    );
+    let receipt_status = receipt["status"].as_str().unwrap_or_default().to_string();
+
+    let report = repair_route_status(&root)?;
+    assert_ne!(report["status"], "complete", "{report:#}");
+    assert_eq!(report["status"], "incomplete", "{report:#}");
+    let attempt = repair_route_attempt(&report, &attempt_id)?;
+    assert_eq!(attempt["state"], "ready_to_finish", "{report:#}");
+    assert_eq!(attempt["disposition"], "gap_open", "{report:#}");
+    assert_eq!(attempt["receipt"]["issued_for_attempt"], true, "{report:#}");
+    assert_eq!(attempt["receipt"]["movement"], "unchanged", "{report:#}");
+    assert_eq!(
+        attempt["receipt"]["receipt_state"], "receipt_movement_unchanged",
+        "{report:#}"
+    );
+    assert_eq!(attempt["receipt"]["shows_gap_closed"], false, "{report:#}");
+    let (step, command) = repair_route_next(&report);
+    assert_eq!(step, "repair_attempt_before", "{report:#}");
+    assert_installed_command(&command)?;
+    let reason = report["next_command"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    for needle in [
+        format!("status `{receipt_status}`"),
+        "movement `unchanged`".to_string(),
+        "does not show the gap closed".to_string(),
+        "the gap is still open".to_string(),
+        "Add the missing discriminator or stronger assertion named by the packet".to_string(),
+    ] {
+        assert!(
+            reason.contains(&needle),
+            "reason lacks `{needle}`: {reason}"
+        );
+    }
+    assert!(!reason.contains("stale against HEAD"), "{reason}");
+    let markdown = repair_route_markdown(&root)?;
+    assert!(!markdown.contains("Status: complete"), "{markdown}");
+    assert!(
+        !markdown.contains("No missing agent-loop artifacts were detected."),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("| ready_to_finish | gap_open |"),
+        "{markdown}"
+    );
+
+    // Committing the test moves HEAD past the receipt's evidence.
+    run_git(&root, &["add", "tests"])?;
+    repair_route_commit(&root, "commit the non-discriminating test")?;
+    let report = repair_route_status(&root)?;
+    assert_eq!(report["status"], "incomplete", "{report:#}");
+    let attempt = repair_route_attempt(&report, &attempt_id)?;
+    assert_eq!(attempt["head_current"], false, "{report:#}");
+    assert_eq!(attempt["disposition"], "gap_open", "{report:#}");
+    let (step, command) = repair_route_next(&report);
+    assert_eq!(step, "repair_attempt_before", "{report:#}");
+    let reason = report["next_command"]["reason"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        reason.contains("stale against HEAD") && reason.contains("movement `unchanged`"),
+        "{reason}"
+    );
+    assert!(
+        repair_route_markdown(&root)?.contains("evidence stale against HEAD"),
+        "stale evidence must show in the attempt table"
+    );
+
+    // The printed restart runs at the new HEAD: the gap is still there.
+    let root_arg = root.to_string_lossy().into_owned();
+    assert_eq!(
+        command,
+        format!(
+            "ripr agent repair --root '{}' --seam-id {REPAIR_ROUTE_SEAM} --phase before",
+            root_arg.replace('\\', "/")
+        )
+    );
+    repair_route_before(&root)?;
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// Regression for the positive case: an attempt whose own receipt is
+/// `advisory` with improved grip at the current HEAD is `complete`. The
+/// ordinary after phase currently issues an `invalid` receipt (onboarding
+/// finding F15-3: the analysis-outcome base check), so the fixture sets the
+/// receipt's status to `advisory` the way a valid issuance records it; the
+/// binding to the attempt is left exactly as issued. Status is then stale
+/// once HEAD moves, and a receipt bound to another after verdict is not read
+/// as this attempt's.
+#[test]
+fn agent_status_is_complete_only_for_an_advisory_improved_receipt_at_head()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status advisory receipt")?;
+    let attempt_id = repair_route_attempt_id(&repair_route_before(&root)?)?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_BOUNDARY_TEST}"),
+    )?;
+    assert_success(&repair_route_after(&root, &attempt_id));
+
+    let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
+    let mut receipt: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&receipt_path)?)?;
+    assert_eq!(receipt["provenance"]["movement"], "improved", "{receipt:#}");
+    assert_eq!(receipt["repair_attempt"]["attempt_id"], attempt_id.as_str());
+    if receipt["status"] != "advisory" {
+        receipt["status"] = serde_json::Value::String("advisory".to_string());
+        receipt["analysis_outcome_status"] = serde_json::Value::String("complete".to_string());
+        receipt["analysis_outcome_error"] = serde_json::Value::Null;
+        std::fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt)?)?;
+    }
+    let manifest = repair_route_manifest(&root, &attempt_id)?;
+    assert_eq!(manifest["state"], "ready_to_finish", "{manifest:#}");
+    assert_eq!(
+        receipt["repair_attempt"]["delta_sha256"], manifest["after"]["delta_sha256"],
+        "fixture precondition: the receipt stays bound to this after verdict"
+    );
+
+    let report = repair_route_status(&root)?;
     assert_eq!(report["status"], "complete", "{report:#}");
+    assert_eq!(
+        report["next_command"],
+        serde_json::Value::Null,
+        "{report:#}"
+    );
+    assert!(repair_route_warning_kinds(&report).is_empty(), "{report:#}");
+    let attempt = repair_route_attempt(&report, &attempt_id)?;
+    assert_eq!(attempt["disposition"], "finished", "{report:#}");
+    assert_eq!(attempt["receipt"]["shows_gap_closed"], true, "{report:#}");
+    assert_eq!(attempt["receipt"]["status"], "advisory", "{report:#}");
+    let markdown = repair_route_markdown(&root)?;
+    assert!(markdown.contains("Status: complete"), "{markdown}");
+    assert!(
+        markdown.contains("No missing agent-loop artifacts were detected.\n"),
+        "{markdown}"
+    );
+
+    // HEAD moves after the receipt: the evidence is stale, so not complete.
+    run_git(&root, &["add", "tests"])?;
+    repair_route_commit(&root, "commit the focused test")?;
+    let report = repair_route_status(&root)?;
+    assert_eq!(report["status"], "warning", "{report:#}");
+    assert_eq!(
+        report["next_command"],
+        serde_json::Value::Null,
+        "{report:#}"
+    );
+    let stale = report["warnings"]
+        .as_array()
+        .and_then(|warnings| {
+            warnings
+                .iter()
+                .find(|warning| warning["kind"] == "repair_receipt_stale")
+        })
+        .and_then(|warning| warning["message"].as_str())
+        .unwrap_or_default()
+        .to_string();
+    let recorded_head = manifest["after"]["repository_head"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        stale.contains("stale against HEAD") && stale.contains(recorded_head),
+        "{report:#}"
+    );
+    assert_eq!(
+        repair_route_attempt(&report, &attempt_id)?["head_current"],
+        false,
+        "{report:#}"
+    );
+    let markdown = repair_route_markdown(&root)?;
+    assert!(markdown.contains("Status: warning"), "{markdown}");
+    assert!(markdown.contains("repair_receipt_stale"), "{markdown}");
+    assert!(
+        markdown.contains("but status does not report the loop complete"),
+        "{markdown}"
+    );
+
+    // A receipt that names a different after verdict is not this attempt's.
+    receipt["repair_attempt"]["delta_sha256"] =
+        serde_json::Value::String(format!("sha256:{}", "0".repeat(64)));
+    std::fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt)?)?;
+    let report = repair_route_status(&root)?;
+    let attempt = repair_route_attempt(&report, &attempt_id)?;
+    assert_eq!(attempt["disposition"], "unconfirmed", "{report:#}");
+    assert_eq!(
+        attempt["receipt"]["issued_for_attempt"], false,
+        "{report:#}"
+    );
+    assert_ne!(report["status"], "complete", "{report:#}");
+    assert!(
+        repair_route_warning_kinds(&report).contains(&"repair_receipt_unconfirmed".to_string()),
+        "{report:#}"
+    );
 
     let _ = std::fs::remove_dir_all(&root);
     Ok(())

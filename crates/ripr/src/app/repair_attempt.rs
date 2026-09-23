@@ -97,6 +97,29 @@ pub(crate) struct RepairAttemptManifest {
     pub(crate) non_claims: Vec<String>,
     #[serde(default)]
     pub(crate) after: Option<RepairAttemptAfter>,
+    /// The refusal of this attempt's most recent after phase, when that phase
+    /// refused after selecting the attempt. It is an observation, not a state:
+    /// it never changes `state` or `after`, the before commitment excludes it,
+    /// and the next after phase that reaches the durable finish clears it.
+    /// Absent (not `null`) when no refusal is recorded, so manifests without
+    /// one keep their exact bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) last_after_refusal: Option<RepairAttemptAfterRefusal>,
+}
+
+/// Why the last after phase of an attempt refused, recorded by the attempt
+/// authority so `ripr agent status` can report the outcome instead of
+/// repeating the refused command as if nothing had happened.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RepairAttemptAfterRefusal {
+    /// The refusal message the after phase exited with, bounded to
+    /// `REPAIR_ATTEMPT_REFUSAL_MAX_BYTES`.
+    pub(crate) reason: String,
+    /// The repository HEAD when the refusal was recorded, or `None` when it
+    /// could not be read.
+    pub(crate) repository_head: Option<String>,
+    pub(crate) recorded_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -456,6 +479,7 @@ fn complete_repair_attempt(
                     "this manifest does not authorize mutation execution or merge".to_string(),
                 ],
                 after: None,
+                last_after_refusal: None,
             };
             let manifest_path = write_repair_attempt_manifest(canonical_root, &manifest)?;
             Ok(BeginRepairAttemptResult {
@@ -626,6 +650,7 @@ fn manifest_before_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, St
     let mut before = manifest.clone();
     before.state = RepairAttemptState::AwaitingEdit;
     before.after = None;
+    before.last_after_refusal = None;
     serde_json::to_vec_pretty(&before)
         .map_err(|error| format!("serialize repair attempt commitment failed: {error}"))
 }
@@ -958,6 +983,9 @@ pub(crate) fn finish_repair_attempt(
         verdict,
     };
     manifest.after = Some(after.clone());
+    // This after phase reached the durable finish, so an earlier refusal no
+    // longer describes the attempt's last after phase.
+    manifest.last_after_refusal = None;
     manifest.state = if after.current {
         match after.verdict.status {
             crate::edit_cage::EditCageVerdictStatus::Compliant => RepairAttemptState::ReadyToFinish,
@@ -974,6 +1002,53 @@ pub(crate) fn finish_repair_attempt(
     bytes.push(b'\n');
     replace_manifest_bytes(&manifest_path, &bytes)?;
     Ok(after)
+}
+
+/// Records why the most recent after phase of an attempt refused. The attempt
+/// authority owns the write: the manifest is re-validated (before commitment
+/// and artifact digests) before and after the field changes, and only
+/// `last_after_refusal` moves, so the refusal can never alter the attempt's
+/// state, its after verdict, or its receipt binding. A later after phase that
+/// reaches `finish_repair_attempt` clears it.
+pub(crate) fn record_repair_attempt_after_refusal(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+    reason: &str,
+) -> Result<(), String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let (manifest_path, mut manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    let reason = bounded_refusal_reason(reason);
+    if reason.is_empty() {
+        return Err("an after-phase refusal needs a non-empty reason".to_string());
+    }
+    manifest.last_after_refusal = Some(RepairAttemptAfterRefusal {
+        reason,
+        repository_head: crate::agent::artifact::current_git_head(&root).ok(),
+        recorded_unix_ms: current_unix_ms()?,
+    });
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize repair attempt refusal failed: {error}"))?;
+    bytes.push(b'\n');
+    replace_manifest_bytes(&manifest_path, &bytes)?;
+    read_repair_attempt_manifest_at(&root, &manifest_path).map(|_| ())
+}
+
+/// Upper bound on a recorded after-phase refusal message.
+const REPAIR_ATTEMPT_REFUSAL_MAX_BYTES: usize = 4096;
+
+fn bounded_refusal_reason(reason: &str) -> String {
+    let reason = reason.trim();
+    if reason.len() <= REPAIR_ATTEMPT_REFUSAL_MAX_BYTES {
+        return reason.to_string();
+    }
+    let mut end = REPAIR_ATTEMPT_REFUSAL_MAX_BYTES;
+    while !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{} [truncated]", &reason[..end])
 }
 
 fn select_awaiting_repair_attempt_by_seam(
@@ -1223,6 +1298,13 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     );
     if has_after != state_requires_after {
         return Err("repair attempt state/after boundary is inconsistent".to_string());
+    }
+    if manifest
+        .last_after_refusal
+        .as_ref()
+        .is_some_and(|refusal| refusal.reason.trim().is_empty())
+    {
+        return Err("repair attempt after-phase refusal has an empty reason".to_string());
     }
     if manifest.artifacts.iter().any(|artifact| {
         artifact.role.is_empty() || artifact.path.is_empty() || !is_sha256_digest(&artifact.sha256)
@@ -1480,6 +1562,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: vec!["not merge authority".to_string()],
             after: None,
+            last_after_refusal: None,
         })
     }
 
@@ -2195,6 +2278,74 @@ mod tests {
                     "restoring an awaiting attempt was not refused: {other:?}"
                 ));
             }
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// A recorded after-phase refusal is an observation on the attempt: the
+    /// manifest still validates against its before commitment, the attempt
+    /// stays resumable, the reason is bounded, and the next after phase that
+    /// reaches the durable finish clears it.
+    #[test]
+    fn recorded_after_refusal_keeps_the_attempt_resumable_until_finish() -> Result<(), String> {
+        let root = test_repo_root("refusal")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "refusal")?;
+        let attempt_id = prepared.manifest.repair_attempt_id.clone();
+        let (manifest_path, _) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        let before_bytes = std::fs::read(&manifest_path)
+            .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
+        if String::from_utf8_lossy(&before_bytes).contains("last_after_refusal") {
+            return Err("a manifest without a refusal must not carry the field".to_string());
+        }
+
+        let long_reason = format!("agent verify refused: {}", "x".repeat(10_000));
+        record_repair_attempt_after_refusal(&root, &attempt_id, &long_reason)?;
+        let (_, refused) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        let refusal = refused
+            .last_after_refusal
+            .clone()
+            .ok_or_else(|| "the refusal was not recorded".to_string())?;
+        if refused.state != RepairAttemptState::AwaitingEdit || refused.after.is_some() {
+            return Err(format!(
+                "recording a refusal moved the attempt: {:?}",
+                refused.state
+            ));
+        }
+        if !refusal.reason.starts_with("agent verify refused: ")
+            || !refusal.reason.ends_with(" [truncated]")
+            || refusal.reason.len() > REPAIR_ATTEMPT_REFUSAL_MAX_BYTES + " [truncated]".len()
+        {
+            return Err(format!(
+                "the refusal reason is not bounded: {} bytes",
+                refusal.reason.len()
+            ));
+        }
+        if refusal.repository_head.as_deref() != Some(refused.repository_head.as_str()) {
+            return Err(format!(
+                "the refusal did not record the current HEAD: {:?}",
+                refusal.repository_head
+            ));
+        }
+        // The inventory status reads sees the same refusal, and the after
+        // phase can still select the attempt.
+        let inventory = inventory_repair_attempts(&root)?;
+        match inventory.as_slice() {
+            [RepairAttemptInventoryEntry::Valid(manifest)]
+                if manifest.last_after_refusal.as_ref() == Some(&refusal) => {}
+            other => return Err(format!("inventory lost the refusal: {other:?}")),
+        }
+        let resolved = resolve_awaiting_repair_attempt(&root, Some(attempt_id.as_str()), None)?;
+
+        if record_repair_attempt_after_refusal(&root, &attempt_id, "  ").is_ok() {
+            return Err("an empty refusal reason must be refused".to_string());
+        }
+
+        finish_repair_attempt(&root, &attempt_id, &resolved.packet_path)?;
+        let (_, finished) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        if finished.last_after_refusal.is_some() {
+            return Err("finish must clear the earlier refusal".to_string());
         }
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
