@@ -4,6 +4,7 @@ use super::render_helpers::{
 use super::why_line;
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
+use crate::analysis::repair_route::is_safe_for_repair_packet;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
 };
@@ -320,11 +321,14 @@ pub(crate) fn render_pilot_terminal(
             out.push_str(&format!("  candidate value: {value}\n"));
         }
         out.push_str(&format!("  assertion: {}\n", outline.assertion_shape));
-        // Only a seam whose repair route is actionable gets the paste-ready
-        // command. When the route is limited, the line above says so and the
-        // closing block already says what to run instead; offering a repair
-        // transaction there would promise a target the route does not have.
-        if !outline.is_not_applicable() {
+        // Only a seam the repair transaction would accept gets the
+        // paste-ready command, so the gate is the producer-owned flip
+        // (RIPR-SPEC-0087 section 8), the same one `lsp::actions` uses for the
+        // editor's repair surface. `outline.is_not_applicable()` is route
+        // readiness alone; the flip also requires a headline-eligible class and
+        // resolved cross-language oracle and test targets, so a route-ready
+        // Python or TypeScript seam can pass the outline and still be refused.
+        if is_safe_for_repair_packet(entry) {
             // Built here rather than in `agent::loop_commands`: xtask includes
             // that file into its own tree, so a template only the pilot
             // renderer calls reads as dead code there and fails
