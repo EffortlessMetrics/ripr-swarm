@@ -8616,6 +8616,19 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
     assert!(md.contains(&format!("  - Route: `{command}`")), "{md}");
     assert!(!md.contains("ripr outcome --before"), "{md}");
 
+    // The printed route must analyze the changed Python, not only parse.
+    let root_arg = root.display().to_string();
+    let routed = run_ripr(&["check", "--root", &root_arg]);
+    let routed_stdout = String::from_utf8_lossy(&routed.stdout);
+    assert!(
+        routed.status.code().is_some_and(|code| code <= 1),
+        "routed check failed: {routed:?}"
+    );
+    assert!(
+        routed_stdout.contains("src/pricing.py"),
+        "routed check must report the changed Python file:\n{routed_stdout}"
+    );
+
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&out_dir);
     Ok(())
