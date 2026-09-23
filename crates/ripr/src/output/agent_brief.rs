@@ -382,12 +382,17 @@ mod tests {
         assert_eq!(value["working_set"]["files"][0], "./src/pricing.rs");
         assert_eq!(value["limits"]["requested"], 0);
         assert_eq!(value["warnings"][0], "configured-off seam omitted");
+        // Issue #3872: the redirect anchors at the resolved --root, so the
+        // expectation builds from the same builder the renderer uses (the
+        // anchor math itself is pinned in loop_commands tests).
         assert_eq!(
             value["next"]["inspect_packet"],
-            format!(
-                "ripr check --root {} --mode fast --format agent-seam-packets-json > target/ripr/workflow/agent-seam-packets.json",
-                root.to_string_lossy().replace('\\', "/")
+            agent_seam_packets_command(
+                &display_path(&root),
+                Mode::Fast.as_str(),
+                WORKFLOW_AGENT_SEAM_PACKETS_ARTIFACT,
             )
+            .as_str()
         );
         Ok(())
     }

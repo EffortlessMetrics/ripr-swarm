@@ -98,7 +98,16 @@ fn clear_readonly_files(root: &Path) -> io::Result<()> {
         } else if kind.is_file() {
             let mut permissions = entry.metadata()?.permissions();
             if permissions.readonly() {
-                permissions.set_readonly(false);
+                // Clearing FILE_ATTRIBUTE_READONLY is the only way to remove
+                // the fixture tree on Windows; the Unix-mode lint does not
+                // apply to this cfg-gated helper.
+                #[expect(
+                    clippy::permissions_set_readonly_false,
+                    reason = "clearing the Windows readonly attribute before fixture cleanup"
+                )]
+                {
+                    permissions.set_readonly(false);
+                }
                 fs::set_permissions(entry.path(), permissions)?;
             }
         }
