@@ -1,5 +1,6 @@
 use super::markdown::{push_wrapped_paragraph, str_or, with_period};
 use super::*;
+use crate::agent::loop_commands::renderer_cwd_prefix;
 use crate::output::test_support::{read_file, repo_root};
 use std::path::Path;
 
@@ -38,8 +39,11 @@ fn first_useful_action_matches_actionable_fixture() -> Result<(), String> {
         editor_context_json: None,
     });
 
+    // Issue #3872: command redirects anchor at the resolved --root, so the
+    // machine prefix projects to `<cwd>/` before comparing against the
+    // checked-in expectation (placeholder rule: loop_commands).
     assert_eq!(
-        render_first_useful_action_json(&report)?,
+        render_first_useful_action_json(&report)?.replace(&renderer_cwd_prefix(), "<cwd>/"),
         read_file(&base.join("first-useful-action.json"))?.trim_end()
     );
     assert_eq!(

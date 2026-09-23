@@ -1,4 +1,6 @@
 use crate::agent::command_specs::command_displays_are_complete;
+#[cfg(test)]
+use crate::agent::loop_commands::renderer_cwd_prefix;
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_BRIEF_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_brief_command, agent_verify_command, display_path,
@@ -1877,17 +1879,22 @@ mod tests {
 
     fn assert_text_fixture(case: &str, file: &str, rendered: &str) -> Result<(), String> {
         let path = pr_guidance_fixture(case, file);
+        // Issue #3872: command redirects anchor at the resolved --root, so
+        // the machine prefix projects to `<cwd>/` before comparing AND
+        // before re-blessing — a blessed fixture must never carry a real
+        // machine directory (placeholder rule: loop_commands).
+        let normalized = rendered.replace(&renderer_cwd_prefix(), "<cwd>/");
         // #3742 class (e): only the explicit RIPR_UPDATE_FIXTURES=1 opt-in
         // rewrites; a leaked bare variable must assert, never re-bless.
         if crate::testing::rebless::fixture_rebless_enabled() {
-            fs::write(&path, rendered)
+            fs::write(&path, &normalized)
                 .map_err(|err| format!("write fixture {}: {err}", path.display()))?;
             return Ok(());
         }
         let expected = fs::read_to_string(&path)
             .map_err(|err| format!("read fixture {}: {err}", path.display()))?;
         assert_eq!(
-            expected, rendered,
+            expected, normalized,
             "PR guidance fixture drift for {case}/{file}"
         );
         Ok(())

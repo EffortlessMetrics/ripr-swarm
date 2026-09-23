@@ -79,7 +79,7 @@ fn gate_inline_failure_detail_names_seam_location_and_inspection_command() -> Re
     );
     assert!(
         inline.contains(
-            "`ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json`",
+            "`ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > <cwd>/target/ripr/workflow/agent-brief.json`",
         ),
         "inline detail missing inspection command: {inline}"
     );
@@ -1710,7 +1710,7 @@ fn gate_markdown_projects_complete_repair_route_for_ci_summary() -> Result<(), S
         ),
         (
             "inspection command",
-            "  - Inspect: `ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json`",
+            "  - Inspect: `ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > <cwd>/target/ripr/workflow/agent-brief.json`",
         ),
         (
             "authority boundary",

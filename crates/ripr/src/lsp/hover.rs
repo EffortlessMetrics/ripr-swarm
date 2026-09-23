@@ -1637,16 +1637,29 @@ mod seam_hover_tests {
         for needle in [
             "## Handoff, verify, and receipt commands",
             "- packet: `ripr agent packet --root . --seam-id",
-            "--json > target/ripr/agent/agent-packet.json",
             "- brief: `ripr agent brief --root . --seam-id",
-            "--json > target/ripr/agent/agent-brief.json",
-            "- after snapshot: `ripr check --root . --mode ready --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json`",
-            "- verify: `ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > target/ripr/agent/agent-verify.json`",
+            "- after snapshot: `ripr check --root . --mode ready --format repo-exposure-json > ",
+            "- verify: `ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > ",
             "ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id",
             "--json --out target/ripr/agent/agent-receipt.json",
         ] {
             if !md.contains(needle) {
                 return Err(format!("missing {needle:?} in:\n{md}"));
+            }
+        }
+        // Issue #3872: handoff redirects anchor at the resolved --root, so
+        // the anchored absolute targets build from the renderer prefix.
+        let anchor = crate::agent::loop_commands::renderer_cwd_prefix();
+        for needle in [
+            format!("--json > {anchor}target/ripr/agent/agent-packet.json"),
+            format!("--json > {anchor}target/ripr/agent/agent-brief.json"),
+            format!(
+                "--format repo-exposure-json > {anchor}target/ripr/pilot/after.repo-exposure.json"
+            ),
+            format!("--json > {anchor}target/ripr/agent/agent-verify.json"),
+        ] {
+            if !md.contains(needle.as_str()) {
+                return Err(format!("missing anchored {needle:?} in:\n{md}"));
             }
         }
         Ok(())
