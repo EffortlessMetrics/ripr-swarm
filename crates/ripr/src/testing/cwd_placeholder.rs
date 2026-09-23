@@ -113,10 +113,12 @@ mod tests {
 
     #[test]
     fn quoted_anchored_target_projects_to_unquoted_placeholder() {
-        let prefix = "C:/Users/John Doe/repo/";
+        // Synthetic `/srv` prefixes: hostile enough to quote, with no real
+        // machine path for the local-context policy to flag.
+        let prefix = "/srv/checkout with space/repo/";
         let rendered = format!("> {}", shell_arg(&format!("{prefix}target/ripr/out.json")));
         assert_eq!(
-            rendered, "> 'C:/Users/John Doe/repo/target/ripr/out.json'",
+            rendered, "> '/srv/checkout with space/repo/target/ripr/out.json'",
             "the hostile checkout path must reach the test quoted"
         );
         assert_eq!(
@@ -127,7 +129,7 @@ mod tests {
 
     #[test]
     fn bare_prefix_and_quote_free_checkout_keep_prior_shape() {
-        let prefix = "C:/work/repo/";
+        let prefix = "/srv/checkout/";
         assert_eq!(
             project_text_with_prefix(&format!("> {prefix}target/out.json"), prefix),
             "> <cwd>/target/out.json"
@@ -147,13 +149,13 @@ mod tests {
     fn hostile_tail_keeps_its_quoted_shape() {
         // The quote here comes from the tail (`repo root`), not the machine
         // prefix: the quoted placeholder is the stable golden shape.
-        let prefix = "C:/work/repo/";
+        let prefix = "/srv/checkout/";
         let rendered = format!(
             "> {}",
             shell_arg(&format!("{prefix}repo root/target/out.json"))
         );
         assert_eq!(
-            rendered, "> 'C:/work/repo/repo root/target/out.json'",
+            rendered, "> '/srv/checkout/repo root/target/out.json'",
             "the hostile tail must reach the test quoted"
         );
         assert_eq!(
@@ -167,7 +169,7 @@ mod tests {
         // The PowerShell-safe form quotes its path argument on every
         // checkout; its goldens pin that shape, so the projection must not
         // strip those quotes — only the Bash `> ` redirect unquotes.
-        let prefix = "C:/Users/John Doe/repo/";
+        let prefix = "/srv/checkout with space/repo/";
         let rendered = format!("[System.IO.File]::WriteAllText('{prefix}target/out.json', $x)");
         assert_eq!(
             project_text_with_prefix(&rendered, prefix),
