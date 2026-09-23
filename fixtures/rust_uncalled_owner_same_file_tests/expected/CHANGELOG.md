@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_uncalled_owner_same_file_tests (2)
+
+Reason:
+RIPR-SPEC-0001: fixture diff.patch drops blank context lines (git diff --check); only input_identity changes
+
+Command:
+`cargo xtask goldens bless rust_uncalled_owner_same_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
