@@ -56,6 +56,13 @@ map is:
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
 
+`ripr doctor --json` top-level `status` and `runtime_probes[].status` are
+`pass` or `fail`. Each `checks[].status` is `pass`, `fail`, or `skipped`;
+`skipped` (additive in schema `0.2`) marks a check that does not apply to the
+root, such as the `cargo_toml`, `tool_cargo`, and `tool_rustc` checks on a
+root where Rust is not in scope. A skipped check never fails the report, and
+its `evidence` states why it was skipped. See [Exit codes](EXIT_CODES.md).
+
 ## JSON object key ordering
 
 JSON object key order is not part of the semantic contract for ordinary

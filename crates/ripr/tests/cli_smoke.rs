@@ -5842,6 +5842,212 @@ fn doctor_json_process_fails_for_enabled_missing_node_runtime() -> Result<(), St
     Ok(())
 }
 
+/// A PATH holding only `git` plus working `node` and `python3` shims — no
+/// `cargo` and no `rustc` — so doctor's Rust toolchain scope is observable
+/// at the process boundary independent of the host toolchain.
+#[cfg(unix)]
+fn doctor_path_without_rust_toolchain(workspace: &Path) -> Result<String, String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let shims = workspace.join("no-rust-bin");
+    std::fs::create_dir_all(&shims).map_err(|error| format!("create shim dir: {error}"))?;
+    let host_path = std::env::var_os("PATH").ok_or("PATH is not set")?;
+    let git = std::env::split_paths(&host_path)
+        .map(|dir| dir.join("git"))
+        .find(|candidate| candidate.is_file())
+        .ok_or("git is not on PATH")?;
+    std::os::unix::fs::symlink(&git, shims.join("git"))
+        .map_err(|error| format!("link git: {error}"))?;
+    for (tool, version) in [("node", "v22.0.0"), ("python3", "Python 3.12.0")] {
+        // Stage, close, then publish so the executable path is never open
+        // for writing when it is exec'd (#2242).
+        let staged = shims.join(format!(".{tool}.staged"));
+        let mut file = std::fs::File::create(&staged)
+            .map_err(|error| format!("create {tool} shim: {error}"))?;
+        file.write_all(format!("#!/bin/sh\necho '{version}'\n").as_bytes())
+            .map_err(|error| format!("write {tool} shim: {error}"))?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o755))
+            .map_err(|error| format!("chmod {tool} shim: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("sync {tool} shim: {error}"))?;
+        drop(file);
+        std::fs::rename(&staged, shims.join(tool))
+            .map_err(|error| format!("publish {tool} shim: {error}"))?;
+    }
+    Ok(shims.display().to_string())
+}
+
+/// Run `ripr doctor` for `root` (human or `--json`) with `path` as PATH.
+#[cfg(unix)]
+fn run_doctor_with_path(root: &Path, path: &str, json: bool) -> Result<Output, String> {
+    let root_arg = root.display().to_string();
+    let mut args = vec!["doctor", "--root", root_arg.as_str()];
+    if json {
+        args.push("--json");
+    }
+    run_command_with_env(env!("CARGO_BIN_EXE_ripr"), root, &args, &[("PATH", path)])
+        .map_err(|error| format!("run doctor: {error}"))
+}
+
+#[cfg(unix)]
+fn doctor_check_status(report: &serde_json::Value, name: &str) -> String {
+    report["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == name))
+        .and_then(|check| check["status"].as_str())
+        .unwrap_or("absent")
+        .to_string()
+}
+
+/// A Python-only or TypeScript-only root is not a Rust project: doctor must
+/// pass without Cargo.toml, cargo, or rustc, and say why those checks were
+/// skipped instead of reporting them as broken setup.
+#[cfg(unix)]
+fn assert_doctor_passes_without_rust_toolchain(
+    root: &Path,
+    path: &str,
+    scope_reason: &str,
+) -> Result<(), String> {
+    let json_output = run_doctor_with_path(root, path, true)?;
+    let report: serde_json::Value = serde_json::from_slice(&json_output.stdout)
+        .map_err(|error| format!("doctor JSON did not parse: {error}"))?;
+    if !json_output.status.success() || report["status"] != "pass" {
+        return Err(format!(
+            "doctor --json must pass without a Rust toolchain: {report}"
+        ));
+    }
+    for name in ["cargo_toml", "tool_cargo", "tool_rustc"] {
+        if doctor_check_status(&report, name) != "skipped" {
+            return Err(format!("{name} must be skipped: {report}"));
+        }
+    }
+    if doctor_check_status(&report, "tool_git") != "pass" {
+        return Err(format!("git stays required and must pass: {report}"));
+    }
+
+    let human = run_doctor_with_path(root, path, false)?;
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    if !human.status.success()
+        || !stdout.contains(&format!("- Cargo.toml check skipped: {scope_reason}"))
+        || !stdout.contains(&format!("- cargo check skipped: {scope_reason}"))
+        || !stdout.contains(&format!("- rustc check skipped: {scope_reason}"))
+        || stdout.contains("! no Cargo.toml")
+        || !stdout.contains("✓ doctor checks passed")
+    {
+        return Err(format!(
+            "human doctor must pass and explain the skipped Rust checks:\n{stdout}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg(all(unix, feature = "lang-python"))]
+fn doctor_passes_python_only_root_without_rust_toolchain() -> Result<(), String> {
+    let workspace = unique_temp_workspace("doctor-python-only");
+    std::fs::create_dir_all(workspace.join("src/textfmt"))
+        .map_err(|error| format!("create python package: {error}"))?;
+    std::fs::write(
+        workspace.join("pyproject.toml"),
+        "[project]\nname = \"textfmt\"\n",
+    )
+    .map_err(|error| format!("write pyproject.toml: {error}"))?;
+    std::fs::write(
+        workspace.join("src/textfmt/__init__.py"),
+        "def shout(text):\n    return text.upper()\n",
+    )
+    .map_err(|error| format!("write python source: {error}"))?;
+    let path = doctor_path_without_rust_toolchain(&workspace)?;
+    let result = assert_doctor_passes_without_rust_toolchain(
+        &workspace,
+        &path,
+        "Rust not detected at this root (no Cargo.toml or .rs files); in scope: python",
+    );
+    let _ = std::fs::remove_dir_all(&workspace);
+    result
+}
+
+#[test]
+#[cfg(all(unix, feature = "lang-typescript"))]
+fn doctor_passes_typescript_root_without_rust_toolchain() -> Result<(), String> {
+    let workspace = unique_temp_workspace("doctor-typescript-only");
+    std::fs::create_dir_all(workspace.join("src"))
+        .map_err(|error| format!("create src: {error}"))?;
+    std::fs::write(
+        workspace.join("ripr.toml"),
+        "[languages]\nenabled = [\"typescript\"]\n",
+    )
+    .map_err(|error| format!("write ripr.toml: {error}"))?;
+    std::fs::write(workspace.join("package.json"), "{\"name\": \"pricing\"}\n")
+        .map_err(|error| format!("write package.json: {error}"))?;
+    std::fs::write(
+        workspace.join("src/price.ts"),
+        "export const price = (n: number) => n * 2;\n",
+    )
+    .map_err(|error| format!("write ts source: {error}"))?;
+    let path = doctor_path_without_rust_toolchain(&workspace)?;
+    let result = assert_doctor_passes_without_rust_toolchain(
+        &workspace,
+        &path,
+        "Rust is not enabled in [languages]",
+    );
+    let _ = std::fs::remove_dir_all(&workspace);
+    result
+}
+
+/// Discriminating negative for the two tests above: under the same PATH, a
+/// Rust root still fails on the missing toolchain, and Rust sources without
+/// a Cargo.toml still fail the Cargo.toml check.
+#[test]
+#[cfg(unix)]
+fn doctor_still_fails_rust_roots_without_cargo_or_manifest() -> Result<(), String> {
+    let workspace = unique_temp_workspace("doctor-rust-no-toolchain");
+    let path = doctor_path_without_rust_toolchain(&workspace)?;
+
+    let with_manifest = workspace.join("with-manifest");
+    std::fs::create_dir_all(with_manifest.join("src"))
+        .map_err(|error| format!("create rust root: {error}"))?;
+    std::fs::write(
+        with_manifest.join("Cargo.toml"),
+        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| format!("write Cargo.toml: {error}"))?;
+    std::fs::write(with_manifest.join("src/lib.rs"), "pub fn f() {}\n")
+        .map_err(|error| format!("write lib.rs: {error}"))?;
+    let output = run_doctor_with_path(&with_manifest, &path, true)?;
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("doctor JSON did not parse: {error}"))?;
+    let manifest_result = if output.status.success()
+        || report["status"] != "fail"
+        || doctor_check_status(&report, "cargo_toml") != "pass"
+        || doctor_check_status(&report, "tool_cargo") != "fail"
+        || doctor_check_status(&report, "tool_rustc") != "fail"
+    {
+        Err(format!("a Rust root without cargo must fail: {report}"))
+    } else {
+        Ok(())
+    };
+
+    let sources_only = workspace.join("sources-only");
+    std::fs::create_dir_all(sources_only.join("src"))
+        .map_err(|error| format!("create sources root: {error}"))?;
+    std::fs::write(sources_only.join("src/lib.rs"), "pub fn f() {}\n")
+        .map_err(|error| format!("write lib.rs: {error}"))?;
+    let output = run_doctor_with_path(&sources_only, &path, false)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let sources_result = if output.status.success() || !stdout.contains("! no Cargo.toml found") {
+        Err(format!(
+            "Rust sources without Cargo.toml must fail the manifest check:\n{stdout}"
+        ))
+    } else {
+        Ok(())
+    };
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    manifest_result.and(sources_result)
+}
+
 #[test]
 fn doctor_reports_loaded_config_path() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;

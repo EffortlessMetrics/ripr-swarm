@@ -12,6 +12,7 @@
 //! projection.
 
 use crate::config::{CONFIG_FILE_NAME, RiprConfig, load_for_root};
+use crate::domain::LanguageId;
 use serde::Serialize;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -34,6 +35,10 @@ pub(crate) const DOCTOR_FAILED_LINE: &str =
 /// the report) iterate this list, so there is exactly one place that names
 /// the probed tools.
 pub(crate) const DOCTOR_TOOLS: [&str; 3] = ["git", "cargo", "rustc"];
+
+/// The subset of [`DOCTOR_TOOLS`] that only a Rust root needs. `git` is
+/// required for every root because diff scoping reads Git history.
+const RUST_TOOLCHAIN_TOOLS: [&str; 2] = ["cargo", "rustc"];
 
 const MINIMUM_RUSTC_VERSION: &str = env!("CARGO_PKG_RUST_VERSION");
 
@@ -85,7 +90,18 @@ fn minimum_rustc_version() -> Option<RustcVersion> {
     })
 }
 
-fn validate_rustc_version(output: &str) -> Result<(), String> {
+/// Validate `rustc --version` output.
+///
+/// Output that does not parse as a rustc version still fails closed: the
+/// probed binary is not demonstrably rustc. A parsed version below ripr's own
+/// declared `rust-version` is advisory, not a failure: that minimum governs
+/// building ripr from source. ripr never invokes `rustc` on the analyzed
+/// code, and its only analysis-time Cargo call (`cargo metadata --no-deps
+/// --offline` for the test-target inventory) runs under the repository's own
+/// toolchain and fails closed. A Rust project that pins an older toolchain
+/// is therefore a supported setup, so the evidence carries a note instead of
+/// failing doctor. `Ok(Some(note))` is that advisory.
+fn validate_rustc_version(output: &str) -> Result<Option<String>, String> {
     let minimum = minimum_rustc_version().ok_or_else(|| {
         format!(
             "declared package rust-version `{MINIMUM_RUSTC_VERSION}` could not be parsed; update Cargo.toml"
@@ -98,11 +114,11 @@ fn validate_rustc_version(output: &str) -> Result<(), String> {
         )
     })?;
     if version < minimum {
-        return Err(format!(
-            "rustc {version} is below the minimum supported Rust version {minimum}; run `rustup update stable` or install Rust {minimum}+"
-        ));
+        return Ok(Some(format!(
+            "note: rustc {version} is below Rust {minimum}, the minimum for building ripr from source; ripr analysis never invokes rustc, so this is advisory"
+        )));
     }
-    Ok(())
+    Ok(None)
 }
 
 /// How long a tool probe may run before it is terminated (#2183 review): a
@@ -127,13 +143,39 @@ pub(crate) enum DoctorStatus {
     Fail,
 }
 
+/// The status of one top-level doctor check.
+///
+/// `Skipped` marks a check that does not apply to the selected root (for
+/// example the Cargo/Rust toolchain checks on a Python- or TypeScript-only
+/// root). It never fails the report, and its evidence says why the check was
+/// not run, so a skipped check never reads as a verified pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DoctorCheckStatus {
+    /// The check ran and passed.
+    Pass,
+    /// The check ran and failed; the report fails.
+    Fail,
+    /// The check does not apply to this root and was not run.
+    Skipped,
+}
+
+impl From<DoctorStatus> for DoctorCheckStatus {
+    fn from(status: DoctorStatus) -> Self {
+        match status {
+            DoctorStatus::Pass => Self::Pass,
+            DoctorStatus::Fail => Self::Fail,
+        }
+    }
+}
+
 /// A single typed doctor check (root, Cargo.toml, tool availability).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct DoctorCheck {
     /// The check name (e.g. "root_directory", "cargo_toml", "tool_git").
     pub(crate) name: String,
     /// The check status.
-    pub(crate) status: DoctorStatus,
+    pub(crate) status: DoctorCheckStatus,
     /// Human-readable evidence (e.g. "Cargo.toml found at /workspace").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) evidence: Option<String>,
@@ -201,8 +243,18 @@ impl DoctorReport {
         }
         self.checks.push(DoctorCheck {
             name: name.to_string(),
-            status,
+            status: status.into(),
             evidence,
+        });
+    }
+
+    /// Record a check that does not apply to this root. It never changes the
+    /// overall status; `evidence` must say why the check was skipped.
+    pub(crate) fn add_skipped_check(&mut self, name: &str, evidence: String) {
+        self.checks.push(DoctorCheck {
+            name: name.to_string(),
+            status: DoctorCheckStatus::Skipped,
+            evidence: Some(evidence),
         });
     }
 
@@ -247,10 +299,10 @@ impl DoctorReport {
         out.push_str("ripr doctor\n");
         out.push_str(&format!("- root: {}\n", self.root));
         for check in &self.checks {
-            let icon = if check.status == DoctorStatus::Pass {
-                "✓"
-            } else {
-                "!"
+            let icon = match check.status {
+                DoctorCheckStatus::Pass => "✓",
+                DoctorCheckStatus::Fail => "!",
+                DoctorCheckStatus::Skipped => "-",
             };
             if let Some(evidence) = &check.evidence {
                 out.push_str(&format!("{icon} {evidence}\n"));
@@ -305,15 +357,91 @@ pub(crate) struct DoctorCoreEvaluation {
 /// Evaluate the doctor core checks (root, Cargo.toml, config, tool
 /// availability) and return just the typed report.
 #[cfg(test)]
-pub(crate) fn evaluate_doctor_core(root: &Path) -> DoctorReport {
-    evaluate_doctor_core_with_config(root).report
+pub(crate) fn evaluate_doctor_core(root: &Path, detected: &[LanguageId]) -> DoctorReport {
+    evaluate_doctor_core_with_config(root, detected).report
+}
+
+/// Whether the Rust toolchain checks (`Cargo.toml`, `cargo`, `rustc`) apply
+/// to a doctor root.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RustToolchainScope {
+    /// Rust is in scope: a missing `Cargo.toml` or toolchain fails doctor.
+    Required,
+    /// Rust is not in scope for this root; the checks are reported as
+    /// skipped with this reason instead of failing.
+    NotInScope(String),
+}
+
+/// Decide whether the Rust toolchain checks apply to a root.
+///
+/// `detected` is doctor's marker scan of the root (`Cargo.toml` or `.rs`
+/// files mark Rust) and `config` is the effective configuration, whose
+/// enabled set already includes Python auto-enablement from
+/// `config::load_for_root`. The rule stays fail-closed for Rust:
+///
+/// - an unloadable config keeps the checks required (the config check
+///   already fails the report, and nothing proves Rust is out of scope);
+/// - Rust absent from the effective enabled set puts it out of scope;
+/// - detected Rust markers keep the checks required, so a Rust root without
+///   `Cargo.toml` still fails;
+/// - otherwise Rust is enabled only by default or by an explicit list that
+///   also names another language. When another language is detected or
+///   enabled, the root is that language's project and Rust is out of scope;
+///   with no other language at all (an empty or wrong root) the checks stay
+///   required, so the missing `Cargo.toml` is still reported as a failure.
+///
+/// `enabled = ["rust", "<language>"]` is what doctor's own enablement tip
+/// and the preview docs tell users to write, so an explicit `rust` entry
+/// alone cannot mean the root is a Rust project.
+pub(crate) fn rust_toolchain_scope(
+    config: &Result<RiprConfig, String>,
+    detected: &[LanguageId],
+) -> RustToolchainScope {
+    let Ok(config) = config else {
+        return RustToolchainScope::Required;
+    };
+    let enabled = config.languages().enabled();
+    if !enabled.contains(&LanguageId::Rust) {
+        return RustToolchainScope::NotInScope("Rust is not enabled in [languages]".to_string());
+    }
+    if detected.contains(&LanguageId::Rust) {
+        return RustToolchainScope::Required;
+    }
+    let mut others: Vec<&'static str> = Vec::new();
+    for language in detected.iter().chain(enabled) {
+        if *language != LanguageId::Rust && !others.contains(&language.as_str()) {
+            others.push(language.as_str());
+        }
+    }
+    if others.is_empty() {
+        return RustToolchainScope::Required;
+    }
+    RustToolchainScope::NotInScope(format!(
+        "Rust not detected at this root (no Cargo.toml or .rs files); in scope: {}",
+        others.join(", ")
+    ))
 }
 
 /// Evaluate the doctor core checks and also return the raw config load
 /// result, so the human-readable projection can print full local detail
-/// without going through the redacted JSON evidence.
-pub(crate) fn evaluate_doctor_core_with_config(root: &Path) -> DoctorCoreEvaluation {
+/// without going through the redacted JSON evidence. `detected` is the
+/// caller's marker scan of the root, used only to decide whether the Rust
+/// toolchain checks apply (see [`rust_toolchain_scope`]).
+pub(crate) fn evaluate_doctor_core_with_config(
+    root: &Path,
+    detected: &[LanguageId],
+) -> DoctorCoreEvaluation {
+    evaluate_doctor_core_with_probe(root, detected, doctor_tool_check_for_root)
+}
+
+fn evaluate_doctor_core_with_probe(
+    root: &Path,
+    detected: &[LanguageId],
+    mut probe_tool: impl FnMut(&str, &Path) -> (DoctorStatus, String),
+) -> DoctorCoreEvaluation {
     let mut report = DoctorReport::new(&root.display().to_string());
+    let config = load_for_root(root);
+    let rust_scope = rust_toolchain_scope(&config, detected);
     if root.is_dir() {
         report.add_check(
             "root_directory",
@@ -330,7 +458,9 @@ pub(crate) fn evaluate_doctor_core_with_config(root: &Path) -> DoctorCoreEvaluat
             )),
         );
     }
-    if root.join("Cargo.toml").exists() {
+    if let RustToolchainScope::NotInScope(reason) = &rust_scope {
+        report.add_skipped_check("cargo_toml", format!("Cargo.toml check skipped: {reason}"));
+    } else if root.join("Cargo.toml").exists() {
         report.add_check(
             "cargo_toml",
             DoctorStatus::Pass,
@@ -346,7 +476,6 @@ pub(crate) fn evaluate_doctor_core_with_config(root: &Path) -> DoctorCoreEvaluat
             Some(format!("no Cargo.toml found at {}", root.display())),
         );
     }
-    let config = load_for_root(root);
     match &config {
         Ok(config) => report.add_check(
             "config",
@@ -363,8 +492,16 @@ pub(crate) fn evaluate_doctor_core_with_config(root: &Path) -> DoctorCoreEvaluat
         ),
     }
     for tool in DOCTOR_TOOLS {
-        let (status, evidence) = doctor_tool_check_for_root(tool, root);
-        report.add_check(&format!("tool_{tool}"), status, Some(evidence));
+        let name = format!("tool_{tool}");
+        match &rust_scope {
+            RustToolchainScope::NotInScope(reason) if RUST_TOOLCHAIN_TOOLS.contains(&tool) => {
+                report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
+            }
+            _ => {
+                let (status, evidence) = probe_tool(tool, root);
+                report.add_check(&name, status, Some(evidence));
+            }
+        }
     }
     // Typed language surface for generated CI (#2072): mirror exactly the
     // effective enabled set the human projection prints.
@@ -452,7 +589,8 @@ fn doctor_tool_check_success(tool: &str, stdout: &[u8]) -> DoctorToolCheckResult
         return DoctorToolCheckResult::pass(evidence);
     }
     match validate_rustc_version(&evidence) {
-        Ok(()) => DoctorToolCheckResult::pass(evidence),
+        Ok(None) => DoctorToolCheckResult::pass(evidence),
+        Ok(Some(note)) => DoctorToolCheckResult::pass(format!("{evidence} ({note})")),
         Err(error) => DoctorToolCheckResult::failure(error),
     }
 }
@@ -613,17 +751,28 @@ mod tests {
         assert_eq!(report.status, DoctorStatus::Fail);
     }
 
+    /// ripr's own `rust-version` governs building ripr, not analyzing a
+    /// repository: an older rustc passes with an advisory note that names
+    /// the version and the source-build minimum, while supported versions
+    /// pass without the note.
     #[test]
-    fn rustc_version_check_fails_below_msrv_and_passes_supported_versions() -> Result<(), String> {
+    fn rustc_version_below_ripr_msrv_is_advisory_and_supported_versions_pass() -> Result<(), String>
+    {
+        let minimum = minimum_rustc_version()
+            .ok_or_else(|| "declared rust-version must parse".to_string())?;
+        let below = format!(
+            "rustc 1.80.0 is below Rust {minimum}, the minimum for building ripr from source"
+        );
+        let at_minimum = format!("rustc {minimum} (abc 2026-04-14)");
         let cases = [
             (
                 "rustc 1.80.0 (abc 2024-01-01)",
-                DoctorStatus::Fail,
-                "below the minimum supported Rust version",
+                DoctorStatus::Pass,
+                below.as_str(),
             ),
-            ("rustc 1.95.0 (abc 2026-04-14)", DoctorStatus::Pass, ""),
+            (at_minimum.as_str(), DoctorStatus::Pass, ""),
             (
-                "rustc 1.96.1-nightly (abc 2026-05-01)",
+                "rustc 99.0.1-nightly (abc 2026-05-01)",
                 DoctorStatus::Pass,
                 "",
             ),
@@ -639,6 +788,12 @@ mod tests {
             if !result.evidence.contains(expected_fragment) {
                 return Err(format!(
                     "missing expected evidence for {evidence:?}: {:?}",
+                    result.evidence
+                ));
+            }
+            if expected_fragment.is_empty() && result.evidence.contains("note:") {
+                return Err(format!(
+                    "supported rustc must not carry the advisory note: {:?}",
                     result.evidence
                 ));
             }
@@ -742,16 +897,19 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
 
+        // The target-root shim answers 1.94.0 and the caller-root branch
+        // answers 1.96.0, so the advisory note naming 1.94.0 proves the probe
+        // ran from the selected root. Below ripr's own MSRV is advisory, so
+        // the status stays pass.
         assert_eq!(
             result.status,
-            DoctorStatus::Fail,
+            DoctorStatus::Pass,
             "evidence: {}",
             result.evidence
         );
         assert!(
-            result
-                .evidence
-                .contains("below the minimum supported Rust version"),
+            result.evidence.starts_with("rustc 1.94.0 (target-root)")
+                && result.evidence.contains("rustc 1.94.0 is below Rust"),
             "evidence: {}",
             result.evidence
         );
@@ -814,6 +972,250 @@ mod tests {
         Ok(())
     }
 
+    /// Build a doctor root holding `files` (relative path, contents).
+    fn doctor_scope_root(
+        label: &str,
+        files: &[(&str, &str)],
+    ) -> Result<std::path::PathBuf, String> {
+        let root = unique_test_dir(label);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        for (relative, contents) in files {
+            let path = root.join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|err| format!("create parent: {err}"))?;
+            }
+            std::fs::write(&path, contents).map_err(|err| format!("write {relative}: {err}"))?;
+        }
+        Ok(root)
+    }
+
+    /// Evaluate a root with a probe where every tool except `git` is
+    /// missing, recording which tools doctor actually probed.
+    fn evaluate_without_rust_toolchain(
+        root: &Path,
+        detected: &[LanguageId],
+    ) -> (DoctorReport, Vec<String>) {
+        let mut probed = Vec::new();
+        let report = evaluate_doctor_core_with_probe(root, detected, |tool, _root| {
+            probed.push(tool.to_string());
+            if tool == "git" {
+                (DoctorStatus::Pass, "git version 2.43.0".to_string())
+            } else {
+                (DoctorStatus::Fail, format!("{tool} not available"))
+            }
+        })
+        .report;
+        (report, probed)
+    }
+
+    fn check<'a>(report: &'a DoctorReport, name: &str) -> Result<&'a DoctorCheck, String> {
+        report
+            .checks
+            .iter()
+            .find(|check| check.name == name)
+            .ok_or_else(|| format!("missing {name} check: {:?}", report.checks))
+    }
+
+    /// The three Rust toolchain checks are skipped (with a reason naming
+    /// `reason_fragment`), never probed, and the report passes although
+    /// neither cargo nor rustc is available.
+    fn assert_rust_toolchain_skipped(
+        report: &DoctorReport,
+        probed: &[String],
+        reason_fragment: &str,
+    ) -> Result<(), String> {
+        for name in ["cargo_toml", "tool_cargo", "tool_rustc"] {
+            let skipped = check(report, name)?;
+            if skipped.status != DoctorCheckStatus::Skipped {
+                return Err(format!("{name} was not skipped: {skipped:?}"));
+            }
+            let evidence = skipped.evidence.as_deref().unwrap_or_default();
+            if !evidence.contains("skipped: ") || !evidence.contains(reason_fragment) {
+                return Err(format!("{name} evidence does not say why: {evidence:?}"));
+            }
+        }
+        if probed != ["git"] {
+            return Err(format!("only git may be probed, probed {probed:?}"));
+        }
+        if report.status != DoctorStatus::Pass {
+            return Err(format!("report must pass: {:?}", report.checks));
+        }
+        let json: serde_json::Value = serde_json::from_str(&report.render_json()?)
+            .map_err(|err| format!("invalid JSON: {err}"))?;
+        if json["status"] != "pass" || json["checks"][1]["status"] != "skipped" {
+            return Err(format!("unexpected JSON projection: {json}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "lang-python")]
+    fn python_root_skips_rust_toolchain_checks_without_cargo_or_rustc() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-python",
+            &[
+                ("pyproject.toml", "[project]\nname = \"textfmt\"\n"),
+                ("src/textfmt/__init__.py", "def f():\n    return 1\n"),
+            ],
+        )?;
+        let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Python]);
+        let _ = std::fs::remove_dir_all(&root);
+        // Python auto-enablement keeps the default `rust` entry, so the skip
+        // must come from the absent Rust markers, not a missing `rust` entry.
+        if report.languages != ["rust", "python"] {
+            return Err(format!("unexpected enabled set: {:?}", report.languages));
+        }
+        assert_rust_toolchain_skipped(&report, &probed, "in scope: python")
+    }
+
+    #[test]
+    #[cfg(feature = "lang-typescript")]
+    fn typescript_enabled_root_skips_rust_toolchain_checks() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-typescript",
+            &[
+                (
+                    CONFIG_FILE_NAME,
+                    "[languages]\nenabled = [\"typescript\"]\n",
+                ),
+                ("package.json", "{}\n"),
+            ],
+        )?;
+        let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::TypeScript]);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_rust_toolchain_skipped(&report, &probed, "Rust is not enabled in [languages]")
+    }
+
+    /// `enabled = ["rust", "typescript"]` is the list doctor's own tip tells
+    /// a TypeScript user to write; with no Rust markers the root is still a
+    /// TypeScript project.
+    #[test]
+    #[cfg(feature = "lang-typescript")]
+    fn rust_listed_beside_typescript_without_rust_markers_skips_rust_toolchain()
+    -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-rust-and-typescript",
+            &[
+                (
+                    CONFIG_FILE_NAME,
+                    "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+                ),
+                ("package.json", "{}\n"),
+            ],
+        )?;
+        let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::TypeScript]);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_rust_toolchain_skipped(&report, &probed, "in scope: typescript")
+    }
+
+    #[test]
+    fn rust_sources_without_cargo_toml_still_fail_the_cargo_toml_check() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-rust-no-manifest",
+            &[("src/lib.rs", "pub fn f() {}\n")],
+        )?;
+        let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Rust]);
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        if cargo_toml.status != DoctorCheckStatus::Fail
+            || !cargo_toml
+                .evidence
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("no Cargo.toml found")
+        {
+            return Err(format!(
+                "Rust root must fail the Cargo.toml check: {cargo_toml:?}"
+            ));
+        }
+        if probed != ["git", "cargo", "rustc"] || report.status != DoctorStatus::Fail {
+            return Err(format!(
+                "Rust root must probe and fail: {probed:?} {:?}",
+                report.checks
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rust_root_with_missing_cargo_still_fails() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-rust-no-cargo",
+            &[
+                ("Cargo.toml", "[package]\nname = \"probe\"\n"),
+                ("src/lib.rs", "pub fn f() {}\n"),
+            ],
+        )?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Rust]);
+        let _ = std::fs::remove_dir_all(&root);
+        if check(&report, "cargo_toml")?.status != DoctorCheckStatus::Pass {
+            return Err(format!("Cargo.toml must pass: {:?}", report.checks));
+        }
+        for tool in ["tool_cargo", "tool_rustc"] {
+            let failed = check(&report, tool)?;
+            if failed.status != DoctorCheckStatus::Fail {
+                return Err(format!("{tool} must fail on a Rust root: {failed:?}"));
+            }
+        }
+        if report.status != DoctorStatus::Fail {
+            return Err("missing cargo must fail a Rust root".to_string());
+        }
+        Ok(())
+    }
+
+    /// A mixed Rust + Python root is a Rust root: the Python markers do not
+    /// excuse a missing Rust toolchain.
+    #[test]
+    #[cfg(feature = "lang-python")]
+    fn mixed_rust_and_python_root_keeps_rust_toolchain_required() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-mixed",
+            &[
+                ("Cargo.toml", "[package]\nname = \"probe\"\n"),
+                ("pyproject.toml", "[project]\nname = \"probe\"\n"),
+            ],
+        )?;
+        let (report, _probed) =
+            evaluate_without_rust_toolchain(&root, &[LanguageId::Rust, LanguageId::Python]);
+        let _ = std::fs::remove_dir_all(&root);
+        if check(&report, "tool_cargo")?.status != DoctorCheckStatus::Fail
+            || report.status != DoctorStatus::Fail
+        {
+            return Err(format!(
+                "mixed root must require cargo: {:?}",
+                report.checks
+            ));
+        }
+        Ok(())
+    }
+
+    /// An empty (likely wrong) root under the Rust-only default keeps the
+    /// missing-Cargo.toml failure instead of silently passing.
+    #[test]
+    fn empty_root_with_default_config_keeps_the_cargo_toml_failure() -> Result<(), String> {
+        let root = doctor_scope_root("scope-empty", &[])?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        if check(&report, "cargo_toml")?.status != DoctorCheckStatus::Fail
+            || report.status != DoctorStatus::Fail
+        {
+            return Err(format!(
+                "empty root must fail Cargo.toml: {:?}",
+                report.checks
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unloadable_config_keeps_rust_toolchain_required() {
+        let config: Result<RiprConfig, String> = Err("invalid ripr.toml".to_string());
+        assert_eq!(
+            rust_toolchain_scope(&config, &[LanguageId::TypeScript]),
+            RustToolchainScope::Required
+        );
+    }
+
     #[test]
     fn render_text_names_checks_without_evidence_and_passes() {
         let mut report = DoctorReport::new("/workspace");
@@ -861,7 +1263,7 @@ mod tests {
         )
         .map_err(|err| format!("write config: {err}"))?;
 
-        let report = evaluate_doctor_core(&root);
+        let report = evaluate_doctor_core(&root, &[LanguageId::Rust]);
         let json = report.render_json()?;
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         let parsed: serde_json::Value =
@@ -923,7 +1325,7 @@ mod tests {
         std::fs::write(dir.join(CONFIG_FILE_NAME), "[invalid\n")
             .map_err(|err| format!("write invalid config: {err}"))?;
 
-        let report = evaluate_doctor_core(&dir);
+        let report = evaluate_doctor_core(&dir, &[]);
         let _ = std::fs::remove_dir_all(&dir);
 
         let config_check = report
@@ -931,7 +1333,7 @@ mod tests {
             .iter()
             .find(|check| check.name == "config")
             .ok_or_else(|| "missing config check".to_string())?;
-        assert_eq!(config_check.status, DoctorStatus::Fail);
+        assert_eq!(config_check.status, DoctorCheckStatus::Fail);
         let evidence = config_check
             .evidence
             .as_deref()
