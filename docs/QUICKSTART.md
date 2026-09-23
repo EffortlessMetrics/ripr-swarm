@@ -50,7 +50,7 @@ Most adopters should choose one of these first-hour paths:
 
 | Path | Use when | Start with | First success |
 | --- | --- | --- | --- |
-| CLI first | You want one local before/after proof. | `ripr check --base origin/main` | Top Rust gap or an honest no-action/limited state, followed by one bounded repair attempt. |
+| CLI first | You want one local before/after proof. | `ripr check` | Top Rust gap or an honest no-action/limited state, followed by one bounded repair attempt. |
 | PR first | You want reviewers to see advisory evidence in GitHub. | `ripr init --ci github` | Non-blocking summary, repair card, artifact packet. |
 | Editor or agent first | You are repairing while coding, or handing work to an LLM. | VS Code `ripr: Show Status` or `ripr agent repair --seam-id <id> --phase before` | Current gap, related test, edit cage, verify route, and receipt. |
 
@@ -148,10 +148,12 @@ cargo install --path crates/ripr
 Inspect the current change:
 
 ```bash
-ripr check --base origin/main
+ripr check
 ```
 
-`check` diffs committed history. To include uncommitted edits, add
+`check` diffs committed history against this repository's own default branch
+(`origin/HEAD`, then `origin/main`, `origin/master`, `main`, `master`); pass
+`--base <ref>` for a different base. To include uncommitted edits, add
 `--worktree`.
 
 After a short summary header, the bounded human output shows one `Start here:`
@@ -225,6 +227,10 @@ ripr check --base origin/main --format json > target/ripr/check.json
 ripr review-comments --base origin/main --head HEAD --check-output target/ripr/check.json
 ripr gate evaluate --pr-guidance target/ripr/review/comments.json --mode acknowledgeable
 ```
+
+Pass `--base` to `check` here, and pass the same ref to `review-comments`:
+`review-comments` reads the base out of the producer envelope and requires it to
+match its own, and a scope-less `check` writes `"base": null`.
 
 `gate evaluate` exits non-zero when the decision is `blocked` or
 `config_error`. The full CI
