@@ -124,6 +124,10 @@ pub(super) struct TopRepair {
     pub(super) repair_kind: String,
     /// repair.target_file from start-here selected.
     pub(super) target: String,
+    /// start-here `selected.repair_command`, carried unchanged (#3906).
+    /// Start-here emits it only for a review-card selection past the
+    /// fail-closed repair-packet flip; pr-summary never derives one.
+    pub(super) repair_command: Option<String>,
     pub(super) verify_command: String,
     pub(super) receipt_command: String,
     pub(super) receipt_state: String,

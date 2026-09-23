@@ -101,6 +101,11 @@ pub(super) fn start_here_cli_summary(
             if let Some(intent) = string_path(selected, &["focused_proof_intent"]) {
                 out.push_str(&format!("Focused proof intent: {intent}\n"));
             }
+            // The carried review-card repair start (#3906) leads the proof
+            // path; its before phase prints the after-phase command.
+            if let Some(command) = string_path(selected, &["repair_command"]) {
+                out.push_str(&format!("Start repair: `{command}`\n"));
+            }
             if let Some(command) = string_path(selected, &["verify_command"]) {
                 out.push_str(&format!("Verify command: `{command}`\n"));
             }
@@ -320,6 +325,9 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     if let Some(intent) = selected.get("focused_proof_intent").and_then(Value::as_str) {
         out.push_str(&format!("- Focused proof intent: {intent}\n"));
     }
+    if let Some(command) = string_path(selected, &["repair_command"]) {
+        out.push_str(&format!("- Start repair: `{command}`\n"));
+    }
     if let Some(command) = selected.get("verify_command").and_then(Value::as_str) {
         out.push_str(&format!("- Verify command: `{command}`\n"));
     }
@@ -374,13 +382,24 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         }
         out.push('\n');
     }
+    if let Some(command) = string_path(selected, &["repair_command"]) {
+        push_shell_command_pair(out, "Start repair", &command, true);
+    }
     if let Some(command) = selected.get("verify_command").and_then(Value::as_str) {
         push_shell_command_pair(out, "Verify command", command, true);
     }
+    let agent_packet_command = selected.get("agent_packet_command").and_then(Value::as_str);
     if let Some(command) = selected.get("receipt_command").and_then(Value::as_str) {
-        push_shell_command_pair(out, "Receipt command", command, true);
+        // A review-card selection has no agent packet block, so the receipt
+        // block closes the section without a trailing blank line.
+        push_shell_command_pair(
+            out,
+            "Receipt command",
+            command,
+            agent_packet_command.is_some(),
+        );
     }
-    if let Some(command) = selected.get("agent_packet_command").and_then(Value::as_str) {
+    if let Some(command) = agent_packet_command {
         push_shell_command_pair(out, "Agent packet command", command, false);
     }
 }
