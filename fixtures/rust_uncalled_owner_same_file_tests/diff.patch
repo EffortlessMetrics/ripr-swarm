@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..1111111 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@ pub fn discount(total: u32) -> u32 {
+ }
+ 
+ pub fn untested_rounding(cents: u32) -> u32 {
+-    (cents + 50) / 100
++    (cents + 49) / 100
+ }
+ 
+ #[cfg(test)]

@@ -71,6 +71,11 @@ Static findings may use only these exposure classes:
 - `propagation_unknown`
 - `static_unknown`
 
+`exposed` requires reach evidence that a test runs the changed owner: a
+captured call, a helper chain, or assertion affinity. A test linked only by
+sharing the changed file, module, or a name token stays listed as the likely
+place to add a test, but reach is `weak` and the finding cannot be `exposed`.
+
 ## Non-Goals
 
 This spec does not require:
