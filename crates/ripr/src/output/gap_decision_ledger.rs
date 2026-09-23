@@ -3946,7 +3946,7 @@ mod tests {
                 }
             }
         }
-        if (direct, no_strong, orthogonal) != (2, 28, 10) {
+        if (direct, no_strong, orthogonal) != (2, 28, 11) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
             ));
