@@ -2139,3 +2139,77 @@ Two durable lessons:
   reclamation or recovery, absence of `success` is the signal to watch — not
   presence of `failure`. This is the same false-confidence class as
   2026-07-25, arriving through scheduling rather than through assertions.
+
+## 2026-09-22: A test that pins a defect fails when the defect is repaired, and a platform gate hides that locally
+
+The non-unix corpus fingerprint (#3848) reproduced exactly across a same-length
+edit that restored the modification time, so the stored mapping served an
+aggregate content hash taken before the edit. The repair makes
+`corpus_fingerprint` produce no signature at all where no field of the stat
+tuple is a content-change witness, and every consumer degrades to the
+read-everything path it already handled.
+
+The candidate passed `cargo xtask precommit` and every required check while
+being broken on Windows. The test that failed there,
+`analysis::seam_inventory::tests::given_preserved_signature_when_content_is_swapped_then_stored_hash_is_reused`,
+had pinned the defect as the intended fast path: it swapped a file's bytes for
+different same-length content, restored the mtime, and required the doctored
+(empty) cache entry to be served. Its name reads as a feature, and it is gated
+`#[cfg(not(unix))]`, so it compiles nowhere on a Linux development host.
+
+Two durable lessons:
+
+- A repair's blast radius includes the tests that pinned the old behavior.
+  Those tests are found by searching the defect's vocabulary — here the
+  scenario, "preserved signature", "swapped content", "reused hash" — not by
+  searching the symbols the diff changed. An assertion of the defect is
+  indistinguishable from an assertion of a contract until it is read.
+- `#[cfg(not(<host>))]` code is invisible to every local gate, so its
+  correctness is not established by any number of green local runs. It can be
+  executed on the host by temporarily forcing the production branch it guards:
+  making the unix arm of `corpus_fingerprint` return `None` and running the
+  library suite runs the non-unix expectations on Linux in seconds. The
+  failures that arrive are either the unix-only tests, which is the expected
+  noise, or the other platform's real breakage. This is the cheapest available
+  discriminating experiment for a platform-gated change, and the advisory
+  Windows lane — whose job conclusion is green by design and therefore proves
+  nothing on its own — should be a confirmation of it rather than the first
+  place the breakage is seen.
+
+## 2026-09-22: A directory's mtime is not a lease on the tree below it
+
+Both scratch cleaners ran `find /mnt/ci-scratch/{cargo-home,target,tmp}
+-mindepth 1 -maxdepth 1 -mmin +30 -exec rm -rf {} +` (#3841). A per-run
+directory's mtime changes only when an entry directly inside it is created,
+renamed, or removed. Cargo writing deep inside `target/<run>/debug/...` never
+refreshes it, so a 120-minute job with a 3,600-second evidence step becomes
+"stale" to every other job and to the scheduled sweep after 30 minutes. A
+reproduction with `touch -d '40 minutes ago'` and a fresh nested write deletes
+the live tree without any real wait. No age threshold fixes this; a larger one
+only delays it.
+
+Durable rules:
+
+- Liveness comes from something the kernel ties to the owner's lifetime. The
+  lease is an exclusive `flock` held by a background process for the whole
+  job, which the runner kills with the job's other orphan processes, so
+  completion, cancellation, timeout, and crash all release it. Reclaim takes
+  `flock -n` on the lease and deletes while still holding it, so no job can be
+  observed dead and then come back before the delete.
+- Unknown is not permission. A tree with no lease, a lease from another
+  repository, a malformed lease, a symlink, or a root that is itself a symlink
+  is skipped and counted. The cost is that trees left by the old selector, and
+  crashed jobs that never took a lease, stay until an operator removes them
+  on an idle host; `ci-disk-guard` and the exit-75 hosted fallback bound that
+  leak. A cleaner that deletes what it cannot attribute will eventually delete
+  a sibling consumer's live state.
+- Every cleaner sharing the roots must use the same authority. A second
+  cleaner that ignores the lease re-opens the defect however correct the
+  first one is, so inventory the cleaners (other repositories and host
+  services included) before calling it fixed.
+- Test the lock, not the story. The harness in
+  `xtask/src/policy/ci_scratch/tests.rs` runs the action's own script, and two
+  negative controls (lock check removed; lock check replaced by an mtime test)
+  must make the same harness fail. Also wait on the lock, not the PID, when
+  simulating job death: in containers without a reaping init, `kill -0` keeps
+  succeeding on a zombie long after its descriptors, and its lock, are gone.

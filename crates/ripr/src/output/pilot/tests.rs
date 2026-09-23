@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::loop_commands::check_repo_exposure_command;
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
@@ -10,6 +11,7 @@ use crate::domain::{
     Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
     ValueFact,
 };
+use crate::output::markdown::powershell_command;
 use crate::output::path::display_path;
 use crate::output::pilot::ranking::top_actionable_seams;
 use crate::output::python_repair_card::PythonRepairCard;
@@ -360,9 +362,16 @@ fn pilot_summary_md_pairs_bash_next_commands_with_powershell_variants() -> Resul
     let artifacts = pilot_artifacts();
     let md = render_pilot_summary_md(&[entry], pilot_context(&artifacts));
 
-    let bash_block = "```bash\nripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json\nripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json\n```";
+    // Issue #3872: the after-snapshot redirect anchors at the resolved --root,
+    // so both presented forms build from the same builder output the pilot
+    // renderer uses (the anchor math itself is pinned in loop_commands tests).
+    let after_snapshot =
+        check_repo_exposure_command(".", "draft", "target/ripr/pilot/after.repo-exposure.json");
+    let bash_block = format!(
+        "```bash\n{after_snapshot}\nripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json\n```"
+    );
     assert!(
-        md.contains(bash_block),
+        md.contains(bash_block.as_str()),
         "bash next-commands block drifted:\n{md}"
     );
     // The default pilot path is unquoted in the bash form; PowerShell parses
@@ -370,9 +379,10 @@ fn pilot_summary_md_pairs_bash_next_commands_with_powershell_variants() -> Resul
     // arrive as a quoted literal (PR #3617 review), and the write is guarded by
     // $LASTEXITCODE with the status propagated so a failed run cannot publish
     // the artifact (PR #3625 review, codex P1).
-    let powershell_snapshot = "$ripr = ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/pilot/after.repo-exposure.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }";
+    let powershell_snapshot = powershell_command(&after_snapshot)
+        .ok_or_else(|| "redirect commands gain a powershell variant".to_string())?;
     assert!(
-        md.contains(powershell_snapshot),
+        md.contains(powershell_snapshot.as_str()),
         "powershell after-snapshot translation missing:\n{md}"
     );
     // Disclosure precedes the first copyable command, mirroring the landed
@@ -411,6 +421,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         vec![missing()],
         vec![related_test()],
     );
+    let seam_id = entry.seam.id().as_str().to_string();
     let artifacts = pilot_artifacts();
     let terminal = render_pilot_terminal(&[entry], pilot_context(&artifacts));
 
@@ -420,7 +431,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         "mode: draft",
         "config: loaded ripr.toml",
         "Top recommendation:",
-        "inspected seam: src/pricing.rs:88 predicate_boundary in pricing::discounted_total (weakly_gripped)",
+        "inspected seam:",
         "why it matters: missing discriminator: input that hits the boundary: amount >= discount_threshold",
         "focused test: not applicable (route limited: producer-owned route readiness is not eligible for a repair target)",
         "assertion: not_applicable",
@@ -429,7 +440,6 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         "Structured packet:",
         "target/ripr/pilot/agent-seam-packets.json",
         "Run after producer evidence makes a repair route actionable:",
-        "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json",
         "ripr outcome --before target/ripr/pilot/repo-exposure.json",
     ] {
         assert!(
@@ -437,6 +447,32 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
             "missing terminal needle: {needle}"
         );
     }
+    // Issue #3872: the after-snapshot redirect anchors at the resolved --root.
+    let after_snapshot =
+        check_repo_exposure_command(".", "draft", "target/ripr/pilot/after.repo-exposure.json");
+    assert!(
+        terminal.contains(after_snapshot.as_str()),
+        "missing anchored after-snapshot needle:\n{terminal}"
+    );
+
+    // The id leads the line, so the next documented step
+    // (`ripr agent repair --seam-id <id>`) is reachable from the screen alone.
+    assert!(
+        terminal.contains(&format!(
+            "inspected seam: {seam_id} src/pricing.rs:88 predicate_boundary in pricing::discounted_total (weakly_gripped)"
+        )),
+        "the terminal seam line must lead with the seam id:\n{terminal}"
+    );
+
+    // This seam's repair route is limited, so the paste-ready repair command
+    // must not appear: the id is what the user needs here, not a transaction
+    // against a target the route does not have. The applicable-route half of
+    // this contract is proved end to end by
+    // `pilot_writes_default_packet_outputs_for_boundary_gap_fixture`.
+    assert!(
+        !terminal.contains("repair this seam:"),
+        "a route-limited seam must not be offered a repair transaction:\n{terminal}"
+    );
 }
 
 #[test]

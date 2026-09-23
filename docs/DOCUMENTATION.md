@@ -152,9 +152,14 @@ Reference docs define stable commands, schemas, config, and enum meanings.
 
 Current reference docs:
 
+- [Public command hierarchy](COMMAND_HIERARCHY.md)
 - [Output schema](OUTPUT_SCHEMA.md)
 - [Static exposure model](STATIC_EXPOSURE_MODEL.md)
 - [Configuration](CONFIGURATION.md)
+- [Exit codes](EXIT_CODES.md)
+- [Terminology](TERMINOLOGY.md)
+- [Repair attempt identity](REPAIR_ATTEMPT.md)
+- [MCP workspace status server](interop/mcp.md)
 - [Support tiers](status/SUPPORT_TIERS.md)
 - [Repo tracking model](REPO_TRACKING_MODEL.md)
 - [Context system](agent-context/CONTEXT_SYSTEM.md)

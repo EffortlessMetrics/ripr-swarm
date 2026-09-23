@@ -197,8 +197,9 @@ are scoped or reviewed.
   "bash on Windows": generated paths keep their Windows drive-letter prefix,
   which WSL resolves as a relative path, so WSL needs each path translated to
   `/mnt/c/...` and `ripr` installed inside it. This is disclosure only: no
-  command string, schema version, or existing field changed. A shell-neutral
-  argv form (#1617) and a PowerShell variant (#2964) remain separate work
+  command string, schema version, or existing field changed. The PowerShell
+  variants (#2964) and typed argv command specs (#1617) that this entry left
+  as separate work landed later in this release; see the entries below
   ([#2963](https://github.com/EffortlessMetrics/ripr-swarm/issues/2963)).
 
 - Published schemas that had only a reverse-direction `schema_version` check are
@@ -293,6 +294,14 @@ are scoped or reviewed.
   ([#3565](https://github.com/EffortlessMetrics/ripr-swarm/issues/3565)).
 
 ### Changed
+
+- `cargo xtask check-allow-attributes` now fails a
+  `.ripr/allow-attributes.txt` row whose `max_count` is higher than the
+  current source count, including a row whose suppression is gone. The
+  live `path_dependencies.rs` `allow(dead_code)` budget is tightened from
+  7 to 4, matching the four remaining suppressions. Over-budget
+  suppressions still fail
+  ([#3923](https://github.com/EffortlessMetrics/ripr-swarm/issues/3923)).
 
 - `cargo xtask check-covered-by` now parses `policy/clippy-exceptions.toml`
   as TOML: unique ids, required nonblank fields, optional ISO `expires`
@@ -415,7 +424,81 @@ are scoped or reviewed.
   actionable signal at equal or higher prominence than uncertain ones
   ([#2592](https://github.com/EffortlessMetrics/ripr-swarm/issues/2592)).
 
+- Generated commands now come with a PowerShell form next to the bash one.
+  The agent workflow packet, pilot summaries, agent status and review
+  summaries, PR evidence reproduction commands, and the first-pr start-here
+  packet pair each bash fence with a `powershell` fence produced by one shared
+  translator. The bash bytes are unchanged and cmd.exe stays explicitly
+  unsupported. Quoted redirect tokens keep their quoting, and multiline
+  command lists that cannot be translated safely show only the bash form
+  ([#2964](https://github.com/EffortlessMetrics/ripr-swarm/issues/2964),
+  [#3438](https://github.com/EffortlessMetrics/ripr-swarm/pull/3438),
+  [#3617](https://github.com/EffortlessMetrics/ripr-swarm/pull/3617),
+  [#3625](https://github.com/EffortlessMetrics/ripr-swarm/pull/3625),
+  [#3661](https://github.com/EffortlessMetrics/ripr-swarm/pull/3661),
+  [#3662](https://github.com/EffortlessMetrics/ripr-swarm/pull/3662)).
+
+- Rust match-arm analysis gains one bounded source of discrimination
+  evidence: when a changed arm belongs to a `match` over two direct,
+  immutable `bool` parameters (four distinct unguarded tuple arms with
+  simple string results), and a test that calls the owner directly
+  asserts equality between that exact input tuple and the arm's
+  current result, the arm can now reach `exposed` instead of staying
+  `weakly_exposed` with `observation_unverified`. The assertion must sit
+  at a conventional Cargo compilation-unit root (`src/lib.rs`,
+  `src/main.rs`, `src/bin/<target>.rs`) or the owner package's direct
+  `tests/<target>.rs`. Sibling, reordered, transformed, guarded,
+  aliased, lexical-fallback, nested or inherited-macro, custom-root, and
+  cross-package shapes stay unverified. The producer refines only the
+  discrimination stage; reach, propagation, and the final class combiner
+  are unchanged
+  ([#3767](https://github.com/EffortlessMetrics/ripr-swarm/pull/3767),
+  [ripr#1714](https://github.com/EffortlessMetrics/ripr/issues/1714)).
+
+- The published `ripr` crate now depends on `toml` 1 (was 0.9),
+  `ra_ap_syntax` 0.0.349 (was 0.0.330), and, on Windows, `winsafe`
+  0.0.29 (was 0.0.28), alongside 85 compatible lockfile updates.
+  `unicode-ident` stays held at 1.0.24, and `oxc` and `sha2` stay on
+  their current majors. MSRV is unchanged
+  ([#3827](https://github.com/EffortlessMetrics/ripr-swarm/pull/3827)).
+
 ### Fixed
+
+- Gate baselines now treat canonical gap identity as the normal authority and
+  disclose every legacy fallback match. `ripr baseline create` refuses
+  `path:line:static_class` fallback identity as primary authority for new
+  entries (refusals count under `summary.skipped.fallback_only`) and preserves
+  the source-report repository root on the report and each entry.
+  `ripr baseline diff` marks fallback-only joins with
+  `baseline_match_kind: legacy_path_line_class`, `stale_baseline_warning`,
+  the retained legacy identity, and the retained canonical replacement
+  candidate; a diverged canonical gap or a cross-root join goes stale instead
+  of looking historical, and all such joins count in
+  `delta.legacy_fallback_match`, which generated CI summarizes.
+  `ripr baseline update --migrate-legacy-identities` deterministically
+  replaces reviewed legacy identities with the joined canonical gap id
+  (recorded for review; conflicts and cross-root joins refused), while
+  removal of resolved debt now requires `--remove-resolved` explicitly, so a
+  migration-only run never shrinks the reviewed baseline. Schema stays `0.1`;
+  older ledgers remain parseable and comparable
+  ([#1964](https://github.com/EffortlessMetrics/ripr-swarm/issues/1964)).
+
+- The stat-only aggregate corpus shortcut no longer grants authoritative
+  cache reuse on platforms without a content-change witness. Its signature
+  is `(path, mtime, size)` plus the unix inode change time; on unix ctime
+  moves on every content write, but on Windows and other non-unix targets
+  a same-length edit that restores the modification time reproduced the
+  whole signature and could serve stale seam evidence and classification
+  after a real source or test edit. `corpus_fingerprint` now produces no
+  signature at all on those platforms, so the cache-key fast path, the
+  compact projection, and the targeted-rerun identity check all degrade to
+  the read-everything path rather than reusing a stale aggregate hash. No
+  mapping can be looked up or stored there, which leaves mappings written
+  by earlier builds unreachable by construction; the content-keyed
+  per-file fact cache and all unix behavior are unchanged. Non-unix runs
+  trade the shortcut's speed for correctness until a native change-identity
+  design is proven
+  ([#3848](https://github.com/EffortlessMetrics/ripr-swarm/issues/3848)).
 
 - `ripr first-pr`, `pr-summary`, `annotations`, `pr-evidence`,
   `impacted-evidence`, and `plus` unknown-flag errors now go through the
@@ -718,6 +801,84 @@ are scoped or reviewed.
   borrow, and opaque expressions remain fail-closed; unsupported direct writes
   report `field_assignment_value_unresolved` instead of an ineffective repair
   route.
+
+- Rust literal match-arm observation is now bound to the input that
+  selects the changed arm. A test asserting a sibling arm's result, a
+  diagnostic-only call, an ambiguous owner, a conditional input, or an
+  unsatisfied guard no longer credits the changed arm with observation.
+  Arm separators, guard keywords, and literal comparisons are scanned
+  with cooked, byte, and raw strings, character literals, and nested
+  comments treated as opaque, so `=>` inside a literal no longer cuts a
+  pattern short and quoted text inside a comment no longer supplies an
+  arm value. Malformed input fails closed. The
+  `match_arm_shared_result_no_promotion` and
+  `match_arm_comment_literal_no_promotion` fixtures pin non-promotion in
+  the evidence-promotion honesty corpus, and classified-seam cache
+  generations advance so warm caches cannot serve the previous credit
+  ([#3759](https://github.com/EffortlessMetrics/ripr-swarm/pull/3759),
+  [#3766](https://github.com/EffortlessMetrics/ripr-swarm/pull/3766),
+  [ripr#1714](https://github.com/EffortlessMetrics/ripr/issues/1714)).
+
+- A changed Rust function-parameter declaration or named struct-field
+  declaration (for example `value: Marker`) is now reported as an
+  explicit `static_unknown` probe instead of a `field_construction`
+  probe, which described it as executable field initialization. The
+  parser confirms the declaration against the exact current line;
+  receivers, trivia, visibility, and enclosing `unsafe` identity are
+  preserved. Real record initializers keep their field-construction
+  probe, and unparseable source keeps the previous lexical fallback. No
+  exposure credit, schema, or threshold changes
+  ([#3755](https://github.com/EffortlessMetrics/ripr-swarm/pull/3755),
+  [#3758](https://github.com/EffortlessMetrics/ripr-swarm/pull/3758)).
+
+- `ripr doctor` no longer lists the start-here packet as if it already
+  exists. The line now reads
+  `target/ripr/reports/start-here.md (present; open it first)` when the
+  file exists and `(not yet generated; run the safe next action below)`
+  otherwise. A directory at that path does not count as present. JSON
+  output is unchanged
+  ([#3866](https://github.com/EffortlessMetrics/ripr-swarm/pull/3866)).
+
+- `ripr first-pr --check` on a workspace without a start-here packet
+  now suggests a recovery command whose `--out-dir` is the resolved
+  directory `--check` validated, not the raw relative option, so the
+  command writes the packet where `--check` looks even when pasted from
+  another working directory. The `Missing:` path, the `Start here:` and
+  `Artifacts:` summary lines, and the `Wrote` lines now render with
+  forward slashes on every platform instead of mixing separators on
+  Windows. Packet contents, JSON, and path resolution are unchanged
+  ([#3869](https://github.com/EffortlessMetrics/ripr-swarm/pull/3869),
+  [#3873](https://github.com/EffortlessMetrics/ripr-swarm/pull/3873)).
+
+- `ripr first-pr` recovery guidance now pairs a bash regeneration or
+  next command that writes through `>` with its PowerShell form, in
+  both the CLI summary and the start-here Markdown
+  (`Regeneration command (PowerShell): ...`). The PowerShell form writes
+  BOM-free UTF-8, so stock Windows PowerShell no longer produces UTF-16
+  artifacts that readers reject. The two-step `check && gap-ledger`
+  bridge renders as numbered `PowerShell 1/2` and `2/2` steps rather
+  than a `;`-joined line that would run the second step after a failed
+  first. Commands the translator cannot translate keep only the bash
+  line, which stays byte-identical
+  ([#3870](https://github.com/EffortlessMetrics/ripr-swarm/issues/3870)).
+
+### Docs
+
+- `docs/REPAIR_ATTEMPT.md` and `docs/COMMAND_HIERARCHY.md` now document
+  the three-phase governed Python repair sequence: trust-selection flags
+  on `before` only, matching `--edit-authorized` / `--edit-authority`
+  on `before` and `after`, and a separately authorized
+  `--phase verify` that accepts only `--attempt`. They cover the
+  optional `--verify-rollback` request and its `proved` / `blocked` /
+  `not_run` disposition, the retained receipt and execution-record
+  paths, and the rule that command success and static movement are
+  separate observations
+  ([#3747](https://github.com/EffortlessMetrics/ripr-swarm/issues/3747)).
+
+- `AGENTS.md` and `CLAUDE.md` gate inventories now list
+  `cargo xtask check-agent-skills`, which routed Rust CI already
+  requires, and name the formatter check as `cargo fmt --check`
+  ([#3826](https://github.com/EffortlessMetrics/ripr-swarm/pull/3826)).
 
 ## 0.10.0 - Honest-by-construction evidence and downstream gate adoption
 

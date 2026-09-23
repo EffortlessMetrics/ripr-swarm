@@ -50,6 +50,7 @@ map is:
 | `ripr receipt write/check` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` | `schema_version` | `0.1` |
+| `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 
 Bump rules below apply per contract: a breaking change to one family bumps
@@ -125,6 +126,14 @@ The optional `analysis_outcome` block preserves producer-owned completeness;
 the optional `finding_alignment` block is the typed canonical seam projection.
 Unknown top-level fields are rejected by the verification contract. Nested
 finding and seam details may grow additively within the pinned version.
+
+Top-level `base` records the base ref the diff loader actually used (#3940):
+the explicit `--base` when one was given, the resolved default base
+(RIPR-SPEC-0084) for scope-less runs, and absent when no base was involved
+(diff-file/stdin inputs and repo-scope runs). Base-matching consumers (for
+example `review-comments --check-output`, which requires the envelope `base`
+to equal its own `--base`) may rely on a present `base`; an absent `base`
+means the run cannot be attributed to a base.
 
 ```json
 {
@@ -691,6 +700,11 @@ The evidence-first fields are additive in schema `0.2`:
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
   integrations.
+- Both are always present and may be the empty string, which is the producer's
+  "no action to recommend" for this finding. Consumers should treat `""` as an
+  absent recommendation rather than as guidance. Whether an omitted field would
+  say this better than an empty string is a producer-shape question that is not
+  settled here; the published schema describes what the tool emits today.
 - `changed_sink`, `observed_sink`, `oracle_alignment`, and `alignment_reason`
   are additive optional fields (RIPR-SPEC-0028) that surface the Python
   classifier's **sink-alignment** decision — *why* a strong oracle did or did
@@ -6735,7 +6749,7 @@ JSON shape:
 
 ```json
 {
-  "schema_version": "0.4",
+  "schema_version": "0.5",
   "tool": "ripr",
   "status": "advisory",
   "analysis_outcome_status": "complete",
@@ -6819,7 +6833,7 @@ JSON shape:
 
 Field contract:
 
-- `schema_version` - currently `"0.4"`. Version `0.2` added receipt
+- `schema_version` - currently `"0.5"`. Version `0.2` added receipt
   provenance fields; version `0.3` added structured next-action guidance;
   version `0.4` adds the producer-owned analysis-outcome envelope while
   preserving the selected-seam and handoff fields from `0.1`.
@@ -12948,7 +12962,7 @@ schema bump.
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "scope": "repo",
   "packets_total": 12565,
   "packets": [
@@ -15496,7 +15510,8 @@ generated CI does not infer a complete result from the derived
 
 ## PR Evidence Summary
 
-`cargo xtask ripr-pr-summary` writes two sibling files after the legacy
+`ripr pr-summary` (repository wrapper: `cargo xtask ripr-pr-summary`) writes
+two sibling files after the legacy
 `pr-summary.md`:
 
 ```text

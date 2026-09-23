@@ -475,47 +475,21 @@ only the lane-only gates enumerated (`check-evidence-promotion-honesty`,
 for docs-only pull requests. It keeps advisory evidence artifacts
 non-blocking and uploads the normal `target/ripr` report packet when present.
 
-The legacy Rust workflow currently runs on pushes to `main` or `master`, manual
-dispatches, pull requests labeled `release-check`, and pull requests labeled
-`full-ci`:
+The legacy `CI` workflow (`.github/workflows/ci.yml`) no longer runs the
+workspace test suite; the routed `Ripr Rust Small` lane owns ordinary
+merge-safety, and its runner contract is in
+[PRODUCT_GATE_PLAN.md](ci/PRODUCT_GATE_PLAN.md) (#3825). The legacy workflow's
+`Perl and release proof` job runs on pushes to `main` or `master`, manual
+dispatches, and pull requests labeled `release-check` or `full-ci`, and keeps
+only the proof unique to it, the non-default `lang-perl` feature:
 
 ```bash
-cargo fmt --check
-cargo check --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo xtask check-static-language
-cargo xtask check-no-panic-family
-cargo xtask check-allow-attributes
-cargo xtask check-local-context
-cargo xtask check-file-policy
-cargo xtask check-covered-by
-cargo xtask check-executable-files
-cargo xtask check-workflows
-cargo xtask check-spec-format
-cargo xtask check-spec-numbering
-cargo xtask check-fixture-contracts
-cargo xtask check-traceability
-cargo xtask check-capabilities
-cargo xtask check-workspace-shape
-cargo xtask check-architecture
-cargo xtask check-public-api
-cargo xtask check-output-contracts
-cargo xtask check-doc-index
-cargo xtask check-readme-state
-cargo xtask markdown-links
-cargo xtask check-pr-shape
-cargo xtask check-generated
-cargo xtask check-badge-diff-policy
-cargo xtask check-generated-clean
-cargo xtask check-dependencies
-cargo xtask check-process-policy
-cargo xtask check-network-policy
+cargo check -p ripr --features lang-perl
+cargo test -p ripr --features lang-perl --lib analysis::language::perl
 ```
 
-On those same Rust workflow runs, pull requests labeled `release-check`, pull
-requests labeled `full-ci`, and pushes to `main` or `master` also run the
-release-surface package checks:
+On pushes to `main` or `master` and on pull requests labeled `release-check`
+or `full-ci`, the same job also runs the release-surface package checks:
 
 ```bash
 cargo package -p ripr --list
@@ -530,11 +504,12 @@ The CI workflow also has an explicit MSRV job that pins Rust `1.95.0` and runs:
 cargo check --workspace --all-targets
 ```
 
-The main Rust job stays on `stable` so routine CI also proves the current stable
-toolchain, while the MSRV job proves the declared workspace baseline.
+The `release-proof` job pins the declared `1.95.0` toolchain; the MSRV job
+duplicates that baseline and runs only on manual dispatch or `full-ci` pull
+requests.
 
-The legacy Rust workflow's `rust` and `msrv` jobs run on `ubuntu-latest`. These
-jobs are release-surface proof on main and manual dispatches; they must not
+The legacy workflow's `release-proof` and `msrv` jobs run on `ubuntu-latest`.
+They carry release-surface and baseline proof and must not
 depend on self-hosted runner capacity when preparing a source release. The
 routed Rust-small workflow remains the swarm development lane that selects
 self-hosted runners when available and falls back to hosted capacity.
@@ -1610,6 +1585,7 @@ jobs:
               stale_baseline_entry="$(jq -r '.delta.stale_baseline_entry // 0' "$delta_json" 2>/dev/null || echo 0)"
               invalid_baseline_entry="$(jq -r '.delta.invalid_baseline_entry // 0' "$delta_json" 2>/dev/null || echo 0)"
               missing_current_input="$(jq -r '.delta.missing_current_input // 0' "$delta_json" 2>/dev/null || echo 0)"
+              legacy_fallback_match="$(jq -r '.delta.legacy_fallback_match // 0' "$delta_json" 2>/dev/null || echo 0)"
               limits_note="$(jq -r '.limits_note // "Advisory baseline debt movement; gate decision owns pass or fail."' "$delta_json" 2>/dev/null || echo unknown)"
               baseline_path="$(markdown_inline "$baseline_path")"
               still_present="$(markdown_inline "$still_present")"
@@ -1620,10 +1596,11 @@ jobs:
               stale_baseline_entry="$(markdown_inline "$stale_baseline_entry")"
               invalid_baseline_entry="$(markdown_inline "$invalid_baseline_entry")"
               missing_current_input="$(markdown_inline "$missing_current_input")"
+              legacy_fallback_match="$(markdown_inline "$legacy_fallback_match")"
               limits_note="$(markdown_inline "$limits_note")"
               echo '#### Baseline debt movement'
               echo "- Baseline: \`$baseline_path\`"
-              echo "- Counts: still_present=\`$still_present\`, resolved=\`$resolved\`, new_policy_eligible=\`$new_policy_eligible\`, acknowledged=\`$acknowledged_delta\`, suppressed=\`$suppressed_delta\`, stale=\`$stale_baseline_entry\`, invalid=\`$invalid_baseline_entry\`, missing_current_input=\`$missing_current_input\`"
+              echo "- Counts: still_present=\`$still_present\`, resolved=\`$resolved\`, new_policy_eligible=\`$new_policy_eligible\`, acknowledged=\`$acknowledged_delta\`, suppressed=\`$suppressed_delta\`, stale=\`$stale_baseline_entry\`, invalid=\`$invalid_baseline_entry\`, missing_current_input=\`$missing_current_input\`, legacy_fallback=\`$legacy_fallback_match\`"
               echo "- Boundary: $limits_note"
               echo "- Baseline delta artifacts: \`target/ripr/reports/baseline-debt-delta.json\`, \`target/ripr/reports/baseline-debt-delta.md\`"
               echo

@@ -3,34 +3,72 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+#[cfg(test)]
+mod contract_tests;
+
+/// A loaded diff together with the base ref that produced it (#3940).
+///
+/// `effective_base` is the explicit base when one was given, the resolved
+/// default base when the loader chose one, and `None` when the text came
+/// from a diff file or stdin (where `base` is ignored by contract).
+///
+/// A reported base is always one that resolved, because the field only exists
+/// on a successful load: `resolve_effective_base` rejects an unresolvable
+/// explicit `--base` before the diff runs, and a base that slipped past that
+/// probe still fails in `run_git_diff`.
+pub struct LoadedDiff {
+    pub text: String,
+    pub effective_base: Option<String>,
+}
+
 pub fn load_diff(
     root: &Path,
     base: Option<&str>,
     diff_file: Option<&PathBuf>,
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
+    load_diff_with_effective_base(root, base, diff_file, git_timeout).map(|loaded| loaded.text)
+}
+
+pub fn load_diff_with_effective_base(
+    root: &Path,
+    base: Option<&str>,
+    diff_file: Option<&PathBuf>,
+    git_timeout: Option<Duration>,
+) -> Result<LoadedDiff, String> {
     if let Some(diff_file) = diff_file {
         if diff_file == std::path::Path::new("-") {
             let mut buffer = String::new();
             std::io::stdin()
                 .read_to_string(&mut buffer)
                 .map_err(|err| format!("failed to read diff from stdin: {err}"))?;
-            return Ok(buffer);
+            return Ok(LoadedDiff {
+                text: buffer,
+                effective_base: None,
+            });
         }
-        return std::fs::read_to_string(diff_file)
-            .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()));
+        let text = std::fs::read_to_string(diff_file)
+            .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()))?;
+        return Ok(LoadedDiff {
+            text,
+            effective_base: None,
+        });
     }
 
     warn_if_git_operation_in_progress(root, git_timeout);
 
-    let base = effective_base(root, base, git_timeout)?;
+    let base = resolve_effective_base(root, base, git_timeout)?;
 
-    run_git_diff(
+    let text = run_git_diff(
         root,
         &format!("{base}...HEAD"),
         &["--no-ext-diff", "--submodule=short", "--unified=0"],
         git_timeout,
-    )
+    )?;
+    Ok(LoadedDiff {
+        text,
+        effective_base: Some(base),
+    })
 }
 
 /// Load the diff from `base` to the live working tree.
@@ -43,14 +81,27 @@ pub fn load_worktree_diff(
     base: Option<&str>,
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
-    warn_if_git_operation_in_progress(root, git_timeout);
-
-    let base = effective_base(root, base, git_timeout)?;
-
-    run_git_diff(root, &base, &["--submodule=short"], git_timeout)
+    load_worktree_diff_with_effective_base(root, base, git_timeout).map(|loaded| loaded.text)
 }
 
-/// Resolve the base ref the diff will actually run against.
+pub fn load_worktree_diff_with_effective_base(
+    root: &Path,
+    base: Option<&str>,
+    git_timeout: Option<Duration>,
+) -> Result<LoadedDiff, String> {
+    warn_if_git_operation_in_progress(root, git_timeout);
+
+    let base = resolve_effective_base(root, base, git_timeout)?;
+
+    let text = run_git_diff(root, &base, &["--submodule=short"], git_timeout)?;
+    Ok(LoadedDiff {
+        text,
+        effective_base: Some(base),
+    })
+}
+
+/// Resolve the base ref the diff will actually run against, which is also
+/// the value reported as [`LoadedDiff::effective_base`].
 ///
 /// RIPR-SPEC-0084: an explicit `--base` is never substituted. It is only
 /// verified, so an unresolvable ref fails in ripr's own voice — naming the ref
@@ -73,7 +124,7 @@ pub fn load_worktree_diff(
 /// ran is never allowed to assert a bad ref, and an unusable root keeps
 /// producing the `failed to run git diff: ...` text that the `context` and
 /// `explain` invalid-root contract pins.
-fn effective_base(
+fn resolve_effective_base(
     root: &Path,
     base: Option<&str>,
     git_timeout: Option<Duration>,
@@ -415,6 +466,17 @@ fn run_git_diff(
     // change.
     let mut args: Vec<&str> = vec!["-c", "core.quotePath=true", "diff"];
     args.extend_from_slice(extra_args);
+    // Analysis consumes source-coordinate patches, not human diff views.
+    // Pin every caller, including worktree mode: helpers can suppress real
+    // changes, textconv can invent source coordinates, and ambient context
+    // can expand a one-line edit into a full-file payload (#3850).
+    args.extend_from_slice(&[
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--unified=0",
+        "--inter-hunk-context=0",
+    ]);
     args.push(range);
     let output = match crate::git::run_git_output_with_deadline(root, &args, git_timeout) {
         Ok(output) => output,
@@ -772,6 +834,51 @@ mod tests {
             result.as_deref(),
             Ok("origin/master"),
             "expected origin/master resolution via symbolic-ref"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn load_diff_with_effective_base_reports_the_base_the_loader_used() -> std::io::Result<()> {
+        // #3940: the loader is the single authority for which base produced
+        // the diff — explicit, resolved default, or none for diff files.
+        let dir = unique_fixture_root("effective-base-reporting")?;
+        let _ = fs::remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["update-ref", "refs/remotes/origin/master", "HEAD"])?;
+        run_git_checked(
+            &dir,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/master",
+            ],
+        )?;
+
+        let resolved =
+            load_diff_with_effective_base(&dir, None, None, None).map_err(std::io::Error::other)?;
+        assert_eq!(
+            resolved.effective_base.as_deref(),
+            Some("origin/master"),
+            "a scope-less load must report the resolved default base"
+        );
+        let explicit = load_diff_with_effective_base(&dir, Some("master"), None, None)
+            .map_err(std::io::Error::other)?;
+        assert_eq!(
+            explicit.effective_base.as_deref(),
+            Some("master"),
+            "an explicit base must be reported as-is"
+        );
+
+        let diff_file = dir.join("change.diff");
+        fs::write(&diff_file, "diff --git a/x b/x\n")?;
+        let from_file = load_diff_with_effective_base(&dir, Some("master"), Some(&diff_file), None)
+            .map_err(std::io::Error::other)?;
+        assert_eq!(
+            from_file.effective_base, None,
+            "a diff file ignores base, so none is reported"
         );
 
         let _ = fs::remove_dir_all(&dir);

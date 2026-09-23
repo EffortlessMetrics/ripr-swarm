@@ -1,5 +1,7 @@
 use crate::agent::command_specs::report_regeneration_command_spec_from_display;
-use crate::agent::loop_commands::{check_repo_exposure_command, display_path, shell_arg};
+use crate::agent::loop_commands::{
+    anchored_redirect_target, check_repo_exposure_command, display_path, shell_arg,
+};
 use crate::config::detect_python_project;
 use crate::domain::CommandSpec;
 use crate::output::gap_decision_ledger::projection_eligible_from_value;
@@ -8,6 +10,8 @@ use crate::output::receipt_write::receipt_write_command;
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
 };
+#[cfg(test)]
+use crate::testing::cwd_placeholder::{project_cwd_text, project_renderer_cwd};
 use serde_json::{Map, Value, json};
 use std::env;
 use std::fs;
@@ -117,8 +121,8 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         "{}",
         start_here_cli_summary(&packet, &json_path, &markdown_path)
     );
-    println!("Wrote {}", json_path.display());
-    println!("Wrote {}", markdown_path.display());
+    println!("Wrote {}", display_path(&json_path));
+    println!("Wrote {}", display_path(&markdown_path));
     Ok(())
 }
 
@@ -137,6 +141,7 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
             &json_path,
             &markdown_path,
             options,
+            &out_dir,
         ));
     }
     let packet = validate_start_here_packet(&json_path, &markdown_path)?;
@@ -153,20 +158,25 @@ fn first_pr_missing_packet_recovery_error(
     json_path: &Path,
     markdown_path: &Path,
     options: &FirstPrOptions,
+    out_dir: &Path,
 ) -> String {
     let missing = if !json_path.exists() {
         json_path
     } else {
         markdown_path
     };
+    // Render the already-resolved locations: the suggested command must
+    // reproduce the exact directory `--check` validated, even when pasted
+    // from a different working directory, and paths render with stable
+    // separators on every host.
     format!(
         "first-pr --check validates an existing start-here packet; it does not create one.\n\nMissing:\n  {}\n\nCreate and validate it with:\n  {}",
-        missing.display(),
-        first_pr_write_command(options)
+        display_path(missing),
+        first_pr_write_command(options, out_dir)
     )
 }
 
-fn first_pr_write_command(options: &FirstPrOptions) -> String {
+fn first_pr_write_command(options: &FirstPrOptions, out_dir: &Path) -> String {
     let mut parts = vec![
         "ripr".to_string(),
         "first-pr".to_string(),
@@ -186,7 +196,7 @@ fn first_pr_write_command(options: &FirstPrOptions) -> String {
         parts.push(shell_arg(&options.gap_ledger));
     }
     parts.push("--out-dir".to_string());
-    parts.push(shell_arg(&options.out_dir));
+    parts.push(shell_arg(&display_path(out_dir)));
     parts.join(" ")
 }
 
@@ -1223,7 +1233,14 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
             shell_arg(&options.root),
             shell_arg(&options.gap_ledger),
             shell_arg(&gap_id),
-            shell_arg(&options.agent_packet)
+            // Issue #3872: the shell redirect anchors at --root like every
+            // other funnel redirect, so the pasted packet command reproduces
+            // the validated write location from any working directory (and
+            // the derived PowerShell WriteAllText form inherits the anchor).
+            shell_arg(&anchored_redirect_target(
+                &options.root,
+                &options.agent_packet
+            ))
         ),
     }
 }
@@ -1536,12 +1553,11 @@ fn regenerate_repo_exposure_gap_ledger_command(out: &str) -> String {
 fn regenerate_check_output_gap_ledger_command(options: &FirstPrOptions) -> String {
     let root = shell_arg(&options.root);
     let base = shell_arg(&options.base);
-    let check_output = shell_arg(
-        options
-            .check_output
-            .as_deref()
-            .unwrap_or(DEFAULT_CHECK_OUTPUT),
-    );
+    let check_output_raw = options
+        .check_output
+        .as_deref()
+        .unwrap_or(DEFAULT_CHECK_OUTPUT);
+    let check_output = shell_arg(check_output_raw);
     let out = shell_arg(&options.gap_ledger);
     let out_md = shell_arg(&with_extension(&options.gap_ledger, "md"));
     if options.check_output.is_some() {
@@ -1549,8 +1565,15 @@ fn regenerate_check_output_gap_ledger_command(options: &FirstPrOptions) -> Strin
             "ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
         )
     } else {
+        // The shell redirect target anchors at --root (issue #3872) so the
+        // pasted compound reproduces the validated write location from any
+        // working directory. The paired --check-output read names the same
+        // anchored file: a relative read next to an absolute write would
+        // split the compound across directories when pasted elsewhere.
+        let anchored = anchored_redirect_target(&options.root, check_output_raw);
+        let anchored_arg = shell_arg(&anchored);
         format!(
-            "ripr check --root {root} --base {base} --json > {check_output} && ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
+            "ripr check --root {root} --base {base} --json > {anchored_arg} && ripr reports gap-ledger --check-output {anchored_arg} --root {root} --out {out} --out-md {out_md}"
         )
     }
 }
@@ -1692,13 +1715,32 @@ fn with_extension(path: &str, extension: &str) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
+/// Join a possibly relative path onto the command root, without carrying the
+/// root's own `.` into every path this command prints.
+///
+/// `ripr first-pr --root .` makes `root` end in a `CurDir` component, so a
+/// plain `root.join(...)` renders as `/repo/./target/ripr/reports/start-here.md`
+/// in the `Start here:`, `Artifacts:` and `Wrote` lines — a path nobody would
+/// type, on the command whose whole job is handing a reader a file to open.
+/// Collecting the components drops the interior `CurDir` while keeping both a
+/// leading `./`, which other surfaces already render, and every `ParentDir`:
+/// dropping a `..` would name a different directory. The filesystem target is
+/// unchanged either way.
 fn resolve_path(root: &Path, path: &str) -> PathBuf {
     let candidate = Path::new(path);
-    if candidate.is_absolute() {
+    let joined = if candidate.is_absolute() {
         candidate.to_path_buf()
     } else {
         root.join(candidate)
+    };
+    let resolved: PathBuf = joined.components().collect();
+    // A path made only of `.` components keeps one `CurDir` and collects back
+    // to `.`, so the fallback is for the empty-path case alone, which would
+    // name nothing at all.
+    if resolved.as_os_str().is_empty() {
+        return PathBuf::from(".");
     }
+    resolved
 }
 
 fn normalized_path(path: &Path) -> String {
@@ -1715,6 +1757,35 @@ fn repo_root() -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resolve_path_drops_the_roots_own_cur_dir() {
+        // `--root .` used to render every emitted artifact as
+        // `/repo/./target/...`. The rendered path is now the one a reader
+        // would type, and names the same file.
+        assert_eq!(
+            resolve_path(Path::new("/repo/."), "target/ripr/reports/start-here.md"),
+            PathBuf::from("/repo/target/ripr/reports/start-here.md")
+        );
+        // A leading `./` is kept: `Components` only drops interior `CurDir`,
+        // so the existing relative rendering that other surfaces already emit
+        // is untouched and this change stays confined to the joined case.
+        assert_eq!(
+            resolve_path(Path::new("."), "target/ripr/reports"),
+            PathBuf::from("./target/ripr/reports")
+        );
+        // An absolute argument still wins over the root, unchanged.
+        assert_eq!(
+            resolve_path(Path::new("/repo/."), "/elsewhere/out"),
+            PathBuf::from("/elsewhere/out")
+        );
+        // Discriminator: `..` is not a `.`. Dropping it would name a different
+        // directory, so it survives.
+        assert_eq!(
+            resolve_path(Path::new("/repo/."), "../shared/out"),
+            PathBuf::from("/repo/../shared/out")
+        );
+    }
+
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1727,30 +1798,48 @@ mod tests {
         };
         options.check = true;
         let err = first_pr_missing_packet_recovery_error(
-            Path::new("target/ripr/foo/reports/start-here.json"),
-            Path::new("target/ripr/foo/reports/start-here.md"),
+            Path::new("/repo/target/ripr/foo/reports/start-here.json"),
+            Path::new("/repo/target/ripr/foo/reports/start-here.md"),
             &options,
+            Path::new("/repo/target/ripr/foo/reports"),
         );
 
         assert!(err.contains("first-pr --check validates an existing start-here packet"));
         assert!(err.contains("it does not create one"));
-        assert!(err.contains("Missing:\n  target/ripr/foo/reports/start-here.json"));
+        assert!(err.contains("Missing:\n  /repo/target/ripr/foo/reports/start-here.json"));
         assert!(err.contains("--check-output target/ripr/foo/check.json"));
-        assert!(err.contains("--out-dir target/ripr/foo/reports"));
+        assert!(err.contains("--out-dir /repo/target/ripr/foo/reports"));
+        assert!(!err.contains("--out-dir target/ripr/foo/reports"));
         assert!(!err.trim_end().ends_with(" --check"));
     }
 
     #[test]
     fn first_pr_write_command_preserves_explicit_gap_ledger_only() {
         let implicit = FirstPrOptions::default();
-        assert!(!first_pr_write_command(&implicit).contains("--gap-ledger"));
+        assert!(
+            !first_pr_write_command(&implicit, Path::new("target/ripr/reports"))
+                .contains("--gap-ledger")
+        );
 
         let explicit = FirstPrOptions {
             gap_ledger: "target/custom/gaps.json".to_string(),
             gap_ledger_explicit: true,
             ..FirstPrOptions::default()
         };
-        assert!(first_pr_write_command(&explicit).contains("--gap-ledger target/custom/gaps.json"));
+        assert!(
+            first_pr_write_command(&explicit, Path::new("target/ripr/reports"))
+                .contains("--gap-ledger target/custom/gaps.json")
+        );
+    }
+
+    #[test]
+    fn first_pr_write_command_renders_resolved_out_dir() {
+        let options = FirstPrOptions::default();
+        // Mixed-case anchored path: proves the resolved directory renders
+        // verbatim (no CWD-relative fallback, no separator or case folding).
+        let rendered = first_pr_write_command(&options, Path::new("/Repo/out/Reports"));
+        assert!(rendered.contains("--out-dir /Repo/out/Reports"));
+        assert!(!rendered.contains("--out-dir target/ripr/reports"));
     }
 
     #[test]
@@ -2037,11 +2126,17 @@ mod tests {
             packet["selected"]["artifact"]["path"],
             DEFAULT_REPO_EXPOSURE
         );
+        // Issue #3872: the redirect target anchors at the resolved --root, so
+        // the expectation builds the same anchored path instead of pinning a
+        // machine directory.
+        let expected_regeneration = format!(
+            "ripr check --root . --mode instant --format repo-exposure-json > {}",
+            shell_arg(&anchored_redirect_target(".", DEFAULT_REPO_EXPOSURE))
+        );
         assert!(
             packet["selected"]["regeneration_command"]
                 .as_str()
-                .is_some_and(|command| command
-                    == "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json")
+                .is_some_and(|command| command == expected_regeneration)
         );
         let summary = start_here_cli_summary(
             &packet,
@@ -2119,11 +2214,14 @@ mod tests {
         assert_eq!(packet["selected"]["state"], "missing_artifact");
         assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
         assert_eq!(packet["selected"]["artifact"]["id"], "repo_exposure");
+        let expected_regeneration = format!(
+            "ripr check --root . --mode instant --format repo-exposure-json > {}",
+            shell_arg(&anchored_redirect_target(".", DEFAULT_REPO_EXPOSURE))
+        );
         assert!(
             packet["selected"]["regeneration_command"]
                 .as_str()
-                .is_some_and(|command| command
-                    == "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json")
+                .is_some_and(|command| command == expected_regeneration)
         );
         cleanup(&repo)
     }
@@ -2363,12 +2461,15 @@ mod tests {
         let command = packet["selected"]["regeneration_command"]
             .as_str()
             .ok_or_else(|| "selected regeneration command missing".to_string())?;
-        assert!(command.contains(
-            "ripr check --root . --base origin/main --json > target/ripr/reports/check.json"
-        ));
-        assert!(command.contains(
-            "ripr reports gap-ledger --check-output target/ripr/reports/check.json --root . --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md"
-        ));
+        // Issue #3872: both the redirect target and the paired --check-output
+        // read name the same anchored file.
+        let anchored_check = shell_arg(&anchored_redirect_target(".", DEFAULT_CHECK_OUTPUT));
+        assert!(command.contains(&format!(
+            "ripr check --root . --base origin/main --json > {anchored_check}"
+        )));
+        assert!(command.contains(&format!(
+            "ripr reports gap-ledger --check-output {anchored_check} --root . --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md"
+        )));
         assert!(!command.contains("--repo-exposure"));
         assert_eq!(packet["commands"]["regenerate_gap_ledger"], command);
         assert_eq!(packet["artifacts"][0]["regeneration_command"], command);
@@ -2934,9 +3035,16 @@ mod tests {
         // forms must quote it: unquoted, bash truncates the argument at `>`
         // and redirects to a file literally named `=threshold` (PR #3625
         // review round 3, coderabbit).
+        // Issue #3872: the packet redirect anchors at the resolved --root.
         assert_eq!(
             packet["selected"]["agent_packet_command"],
-            "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id 'gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --json > target/ripr/workflow/agent-packet.json"
+            format!(
+                "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id 'gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --json > {}",
+                shell_arg(&anchored_redirect_target(
+                    ".",
+                    "target/ripr/workflow/agent-packet.json"
+                ))
+            )
         );
         let quoted_id = "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold";
         let markdown = render_start_here_markdown(&packet);
@@ -3445,17 +3553,23 @@ mod tests {
             ..FirstPrOptions::default()
         };
         let actual_json = render_start_here_packet(&case, &options);
+        let actual_md = render_start_here_markdown(&actual_json);
+        // Issue #3872: funnel redirect targets anchor at the resolved --root,
+        // so the machine prefix projects to `<cwd>/` before comparing against
+        // the checked-in expectation (placeholder rule: loop_commands).
+        let mut normalized_json = actual_json;
+        project_renderer_cwd(&mut normalized_json);
+        let normalized_md = project_cwd_text(&actual_md);
         let expected_json = read_packet(&case.join("expected/start-here.json"))?;
         assert_eq!(
-            actual_json, expected_json,
+            normalized_json, expected_json,
             "start-here JSON drift in {case_id}"
         );
 
-        let actual_md = render_start_here_markdown(&actual_json);
         let expected_md = fs::read_to_string(case.join("expected/start-here.md"))
             .map_err(|err| format!("read expected start-here markdown for {case_id}: {err}"))?;
         assert_eq!(
-            actual_md.replace("\r\n", "\n"),
+            normalized_md.replace("\r\n", "\n"),
             expected_md.replace("\r\n", "\n"),
             "start-here Markdown drift in {case_id}"
         );

@@ -1190,7 +1190,10 @@ fn collect_workspace_state_from_files(
 
 /// Discover the corpus and compute its stat-only fingerprint in one pass
 /// (issue #2108). The fingerprint is `None` when any file cannot be
-/// stat'd; callers then fall back to the always-correct content read.
+/// stat'd, and on any platform where [`corpus_fingerprint`] refuses to
+/// sign because no field of the stat tuple is a content-change witness
+/// (issue #3848); callers then fall back to the always-correct content
+/// read.
 fn scan_corpus_fingerprint(root: &Path) -> Result<(Vec<PathBuf>, Option<String>), String> {
     let rust_files = workspace::discover_rust_files(root)?;
     let fingerprint = corpus_fingerprint(root, &rust_files);
@@ -2440,18 +2443,26 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
 
     #[cfg(not(unix))]
     #[test]
-    fn given_preserved_signature_when_content_is_swapped_then_stored_hash_is_reused()
+    fn given_preserved_signature_when_content_is_swapped_then_stale_seams_are_not_served()
     -> Result<(), String> {
-        // Pins the issue #2108 fast path on non-unix platforms: when every
-        // file keeps its (path, mtime, size) signature, the warm run must
-        // rebuild the byte-identical cache key from the fingerprint store
-        // WITHOUT re-reading file contents. Proof: the bytes on disk are
-        // swapped for different same-length content (so any content read
-        // would produce a different key), yet the run still hits the cache
-        // entry written under the original content's key. On unix this
-        // scenario invalidates via ctime instead — see the unix-gated
-        // companion test below.
-        let root = make_tempdir("fingerprint-warm-hit")?;
+        // The scenario the issue #2108 fast path got wrong on non-unix
+        // platforms, now pinned at its repaired outcome (#3848). Every file
+        // keeps its (path, mtime, size) signature across a same-length edit
+        // that restores the modification time, so a stat-only signature
+        // reproduces exactly and the stored mapping would serve an aggregate
+        // hash taken before the edit. There is no field of the non-unix stat
+        // tuple that moves on every content write, so `corpus_fingerprint`
+        // produces no signature there at all and the warm run must re-read
+        // the corpus and classify the content that is actually on disk.
+        //
+        // The cache entry is doctored to empty first, so serving it is
+        // observable: an empty result means the stale entry was served, a
+        // non-empty result means the swapped content was read. Until #3848
+        // this test asserted the empty result as the intended behavior.
+        //
+        // On unix the same rewrite invalidates through the inode change time
+        // instead — see the unix-gated companion test below.
+        let root = make_tempdir("fingerprint-stale-refused")?;
         write_file(
             &root.join("src/foo.rs"),
             "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
@@ -2502,10 +2513,22 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             .map_err(|err| format!("set_modified: {err}"))?;
 
         let warm = inventory_classified_seams_at(&root)?;
-        if !warm.is_empty() {
+        if warm.is_empty() {
+            return Err(
+                "a same-length edit that restores the modification time must not be answered \
+                 from the mapping written before it: with no content-change witness in the \
+                 non-unix stat tuple the warm run must re-read the corpus and return the \
+                 swapped content's seams, and it returned the doctored (empty) cache entry \
+                 instead"
+                    .into(),
+            );
+        }
+        if warm.len() != cold.len() {
             return Err(format!(
-                "fingerprint hit should reuse the stored hash and return the cached (empty) seams without re-reading the corpus, got {} seams",
-                warm.len()
+                "the re-read run should classify the same seam count as a cold run over the \
+                 swapped content, got {} against {} cold",
+                warm.len(),
+                cold.len()
             ));
         }
 
@@ -2516,7 +2539,9 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     /// Unix companion to the test above (codex P2 on #2175): the same
     /// mtime-preserving rewrite bumps the inode change time, so the
     /// fingerprint changes, the doctored cache entry under the old key is
-    /// NOT served, and the rerun recomputes from the swapped content.
+    /// NOT served, and the rerun recomputes from the swapped content. Both
+    /// platforms therefore refuse the stale entry; they differ in how, since
+    /// unix has a witness to invalidate against and non-unix has none.
     #[cfg(unix)]
     #[test]
     fn given_mtime_preserving_rewrite_when_inventory_reruns_then_ctime_invalidates_mapping()
@@ -2592,6 +2617,153 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         Ok(())
     }
 
+    /// Render a classified-seam inventory as comparable bytes. `ClassifiedSeam`
+    /// has no `PartialEq`, and the serialized form is what the cache itself
+    /// stores, so comparing it compares the thing a warm run would serve.
+    fn rendered_inventory(seams: &[ClassifiedSeam]) -> Result<String, String> {
+        serde_json::to_string(seams).map_err(|err| format!("encode inventory: {err}"))
+    }
+
+    /// The acceptance discriminator for #3848, run end to end on the analysis
+    /// result rather than on the cache key.
+    ///
+    /// A changed cache key and a non-empty rerun are both weaker than the
+    /// property that matters. What has to hold is that a warm run over an
+    /// edited corpus produces **exactly what a cold run over that same edited
+    /// corpus produces** — anything else is stale semantic reuse wearing a
+    /// fresh key. The edit is the one that defeats a stat-only signature:
+    /// identical byte length, modification time restored afterwards, which is
+    /// what `rsync -a` and `cp --preserve=timestamps` leave behind.
+    ///
+    /// The assertion is deliberately platform-neutral, because the two
+    /// platforms reach it by different routes and both routes must land here:
+    /// unix invalidates the signature through the inode change time, and a
+    /// platform with no content-change witness refuses to sign at all and
+    /// recomputes (#3848). This test cannot tell those apart, and does not try
+    /// to — it states the consequence they must share. Which mechanism ran on
+    /// which platform is `corpus_fingerprint`'s own contract, locked
+    /// separately, and native-platform identity belongs to the Windows
+    /// evidence packet, not here.
+    fn equal_length_timestamp_restored_edit_replays_a_cold_run(
+        label: &str,
+        relative: &str,
+        fixed: &[(&str, &str)],
+        before: &str,
+        after: &str,
+    ) -> Result<(), String> {
+        if before.len() != after.len() {
+            return Err(format!(
+                "{label}: the edit must preserve byte length to be the stale-reuse case ({} vs {})",
+                before.len(),
+                after.len()
+            ));
+        }
+
+        // An independent cold run over the edited corpus, in its own root, so
+        // the expected value is never produced by the machinery under test.
+        let cold_root = make_tempdir(&format!("{label}-cold-after"))?;
+        for (path, content) in fixed {
+            write_file(&cold_root.join(path), content)?;
+        }
+        write_file(&cold_root.join(relative), after)?;
+        let cold_after = rendered_inventory(&inventory_classified_seams_at(&cold_root)?)?;
+
+        let root = make_tempdir(&format!("{label}-warm"))?;
+        for (path, content) in fixed {
+            write_file(&root.join(path), content)?;
+        }
+        write_file(&root.join(relative), before)?;
+        let cold_before = rendered_inventory(&inventory_classified_seams_at(&root)?)?;
+        if cold_before == cold_after {
+            return Err(format!(
+                "{label}: the two corpora classify identically, so the equality below \
+                 would hold even under stale reuse; this is not a discriminator"
+            ));
+        }
+
+        // Second run over the unedited corpus: this is what stores the
+        // fingerprint -> content-hash mapping the edit then has to defeat.
+        let _ = inventory_classified_seams_at(&root)?;
+
+        let edited = root.join(relative);
+        let original_mtime = std::fs::metadata(&edited)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|err| format!("{label}: stat mtime: {err}"))?;
+        let original_len = std::fs::metadata(&edited)
+            .map(|metadata| metadata.len())
+            .map_err(|err| format!("{label}: stat len: {err}"))?;
+        // Identical bytes, so content is untouched; this only guarantees the
+        // filesystem timestamp clock has advanced before the real edit, which
+        // coarse-granularity filesystems otherwise hide.
+        #[cfg(unix)]
+        wait_for_ctime_tick(&edited)?;
+        write_file(&edited, after)?;
+        let handle = std::fs::File::options()
+            .write(true)
+            .open(&edited)
+            .map_err(|err| format!("{label}: open for set_modified: {err}"))?;
+        handle
+            .set_modified(original_mtime)
+            .map_err(|err| format!("{label}: set_modified: {err}"))?;
+        drop(handle);
+
+        // Assert the observed filesystem state really is the trap, rather than
+        // assuming the rewrite and the restore both took effect.
+        let observed =
+            std::fs::metadata(&edited).map_err(|err| format!("{label}: re-stat: {err}"))?;
+        if observed.len() != original_len {
+            return Err(format!(
+                "{label}: the edit must preserve length on disk ({} vs {original_len})",
+                observed.len()
+            ));
+        }
+        if observed
+            .modified()
+            .map_err(|err| format!("{label}: re-stat mtime: {err}"))?
+            != original_mtime
+        {
+            return Err(format!("{label}: the edit must restore mtime on disk"));
+        }
+
+        let warm_after_edit = rendered_inventory(&inventory_classified_seams_at(&root)?)?;
+        if warm_after_edit != cold_after {
+            return Err(format!(
+                "{label}: #3848 stale semantic reuse — a warm run after an \
+                 equal-length, mtime-restored edit did not reproduce the cold \
+                 run over the same corpus"
+            ));
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&cold_root);
+        Ok(())
+    }
+
+    #[test]
+    fn source_only_equal_length_timestamp_restored_edit_replays_a_cold_run() -> Result<(), String> {
+        equal_length_timestamp_restored_edit_replays_a_cold_run(
+            "source-only",
+            "src/foo.rs",
+            &[],
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount <= threshold }\n",
+        )
+    }
+
+    #[test]
+    fn test_only_equal_length_timestamp_restored_edit_replays_a_cold_run() -> Result<(), String> {
+        equal_length_timestamp_restored_edit_replays_a_cold_run(
+            "test-only",
+            "tests/discount_test.rs",
+            &[(
+                "src/foo.rs",
+                "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+            )],
+            "#[test]\nfn discounts() { assert!(crate::discount(9, 4)); }\n",
+            "#[test]\nfn discounts() { assert!(crate::discount(4, 9)); }\n",
+        )
+    }
+
     #[test]
     fn fingerprint_cached_workspace_key_rebuilds_key_from_stored_hash() -> Result<(), String> {
         let root = make_tempdir("fingerprint-key-hit")?;
@@ -2599,11 +2771,14 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n";
         let relative = PathBuf::from("src/foo.rs");
         write_file(&root.join(&relative), content)?;
-        let fingerprint = corpus_fingerprint(&root, std::slice::from_ref(&relative))
-            .ok_or("fingerprint should compute for the test corpus")?;
+        // The helper only ever receives an already-computed signature, so
+        // key rebuilding does not depend on this value. Using a literal
+        // keeps the property under test on platforms that produce no
+        // signature at all (#3848).
+        let fingerprint = "0123456789abcdef";
         let content_hash = files_content_hash(&[(relative.clone(), content.as_bytes().to_vec())]);
         RepoCorpusFingerprintCache::at(&root)
-            .store(&root, &fingerprint, &content_hash)
+            .store(&root, fingerprint, &content_hash)
             .map_err(|err| format!("store fingerprint mapping: {err}"))?;
         // Change the on-disk bytes after storing the mapping. The helper only
         // receives the already-computed fingerprint, so returning the stored
@@ -2613,7 +2788,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         write_file(&root.join(&relative), changed_content)?;
 
         let inputs = workspace_key_inputs(&root, &RiprConfig::default());
-        let key = fingerprint_cached_workspace_key(&root, &inputs, Some(&fingerprint))
+        let key = fingerprint_cached_workspace_key(&root, &inputs, Some(fingerprint))
             .ok_or("stored fingerprint should rebuild a cache key")?;
         (key.files_content_hash == content_hash)
             .then_some(())
@@ -2622,6 +2797,13 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             .is_none()
             .then_some(())
             .ok_or("unknown fingerprint mapping must fail closed to the content-read path")?;
+        // The production state on a platform with no content-change
+        // witness (#3848): no signature at all must fail closed to the
+        // content-read path, never to a mapping stored by an older build.
+        fingerprint_cached_workspace_key(&root, &inputs, None)
+            .is_none()
+            .then_some(())
+            .ok_or("absent fingerprint must fail closed to the content-read path")?;
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
@@ -2694,13 +2876,27 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         if new_key == cold_key {
             return Err("content change with mtime bump must produce a new cache key".into());
         }
-        let new_fingerprint = corpus_fingerprint(&root, &[PathBuf::from("src/foo.rs")])
-            .ok_or("fingerprint should compute for the changed corpus")?;
-        let stored = RepoCorpusFingerprintCache::at(&root).lookup(&root, &new_fingerprint);
-        if stored.as_deref() != Some(new_key.files_content_hash.as_str()) {
-            return Err(format!(
-                "rerun should store the new fingerprint mapping, got {stored:?}"
-            ));
+        match corpus_fingerprint(&root, &[PathBuf::from("src/foo.rs")]) {
+            Some(new_fingerprint) => {
+                let stored = RepoCorpusFingerprintCache::at(&root).lookup(&root, &new_fingerprint);
+                if stored.as_deref() != Some(new_key.files_content_hash.as_str()) {
+                    return Err(format!(
+                        "rerun should store the new fingerprint mapping, got {stored:?}"
+                    ));
+                }
+            }
+            // #3848: with no content-change witness no signature is
+            // produced, so no mapping is refreshed and the next run reads
+            // the corpus. The rerun assertions above already established
+            // that this path returns the recomputed result.
+            None => {
+                if cfg!(unix) {
+                    return Err(
+                        "unix carries a content-change witness and must sign a stat-able corpus"
+                            .into(),
+                    );
+                }
+            }
         }
 
         let _ = std::fs::remove_dir_all(&root);
@@ -2770,7 +2966,19 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         )?;
 
         store_corpus_fingerprint_mapping(&state, pre_fingerprint.clone(), &key);
-        let fingerprint = pre_fingerprint.ok_or("pre-read fingerprint should compute")?;
+        let Some(fingerprint) = pre_fingerprint else {
+            // #3848: with no content-change witness there is no pre-read
+            // signature, so the store is skipped before this guard is
+            // reached and nothing can be written either way.
+            if cfg!(unix) {
+                return Err(
+                    "unix carries a content-change witness and must produce a pre-read signature"
+                        .into(),
+                );
+            }
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(());
+        };
         let stored = RepoCorpusFingerprintCache::at(&root).lookup(&root, &fingerprint);
         if stored.is_some() {
             return Err(format!(

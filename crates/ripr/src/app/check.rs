@@ -91,6 +91,8 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             preview_language_advisories: Vec::new(),
             language_runs: Vec::new(),
             partial_scope: None,
+            // No analysis ran, so no loader chose a base (#3940).
+            effective_base: None,
         },
     )
 }
@@ -677,6 +679,45 @@ mod tests {
         assert_eq!(output.mode, Mode::Draft);
         assert_eq!(output.root, sample_root());
         Ok(())
+    }
+
+    fn minimal_result_with_effective_base(effective_base: Option<String>) -> AnalysisResult {
+        AnalysisResult {
+            harness_projections: Vec::new(),
+            analysis_outcome: None,
+            summary: Summary::default(),
+            findings: Vec::new(),
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            partial_scope: None,
+            effective_base,
+        }
+    }
+
+    #[test]
+    fn check_output_records_the_loader_effective_base_over_an_unset_input() {
+        // #3940: a scope-less run whose loader resolved a default base must
+        // record it, so base-matching consumers accept the envelope.
+        let mut input = sample_diff_input();
+        input.base = None;
+        let output = output_builder::check_output_from_analysis(
+            input,
+            minimal_result_with_effective_base(Some("origin/master".to_string())),
+        );
+        assert_eq!(output.base.as_deref(), Some("origin/master"));
+    }
+
+    #[test]
+    fn check_output_keeps_input_base_when_no_loader_base_applies() {
+        // Diff-file/stdin runs involve no base; the caller's own value
+        // (including a stale default) passes through unchanged.
+        let mut input = sample_diff_input();
+        input.base = Some("origin/main".to_string());
+        let output = output_builder::check_output_from_analysis(
+            input,
+            minimal_result_with_effective_base(None),
+        );
+        assert_eq!(output.base.as_deref(), Some("origin/main"));
     }
 
     #[test]

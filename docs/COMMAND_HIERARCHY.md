@@ -6,11 +6,14 @@ under #1613.
 
 | User task | Primary command | Boundary |
 | --- | --- | --- |
-| Diagnose setup | `ripr doctor` | Checks whether the workspace can produce evidence and gives bounded recovery. It is not required before every run. |
+| Diagnose setup | `ripr doctor` | Checks whether the workspace can produce evidence and gives bounded recovery. It is not required before every run. `ripr doctor --json` gives the same checks as JSON; `ripr config validate` checks `ripr.toml` without running probes. |
 | Inspect one change | `ripr check --base origin/main` | Ordinary first value: analyze the selected diff and name the top gap or an honest no-action/limited state. |
+| Understand a finding | `ripr explain <finding-id>`, `ripr context --at <finding-id>` | Drill into one finding named by `check`; `context` emits an agent-ready packet. |
 | Adopt RIPR in a repository | `ripr pilot --root .` | Guided repository analysis and materialization. It is broader than the ordinary one-change check. |
 | Repair one named gap | `ripr agent repair --seam-id <id> --phase before`, then `--attempt <repair-attempt-id> --phase after`; for a trust-bound Python attempt, continue with `--attempt <repair-attempt-id> --phase verify` and explicit authorization | RIPR owns the evidence plumbing and bounded verification. A human or external agent owns the focused test edit; execution and static movement remain separate observations. |
 | Compose PR evidence | `ripr first-pr --root . --base origin/main --head HEAD` | Composes existing artifacts into the start-here packet. It does not run analysis or repair a gap. |
+| Work in an editor | `ripr lsp --stdio` | Saved-workspace diagnostics sidecar for VS Code and standard LSP clients. |
+| Expose status to an MCP client | `ripr mcp --stdio [--root PATH]` | Read-only workspace status; no analysis, edits, verification, or mutation execution. See [MCP workspace status server](interop/mcp.md). |
 | Adopt advisory CI | `ripr init --ci github` | Writes the non-blocking GitHub workflow. Blocking policy remains a later explicit repository decision. |
 | Inspect advanced commands | `ripr help --all` | Complete reference for policy, reports, compatibility, and operator surfaces. |
 
