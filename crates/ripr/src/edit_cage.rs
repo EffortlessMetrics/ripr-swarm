@@ -216,16 +216,7 @@ fn capture_repository_state(
     let index = git_bytes(&root, &["ls-files", "--stage", "-z"])?;
     let tracked = git_bytes(&root, &["ls-files", "-z"])?;
     let untracked = git_bytes(&root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-    let ignored = git_bytes(
-        &root,
-        &[
-            "ls-files",
-            "--others",
-            "--ignored",
-            "--exclude-standard",
-            "-z",
-        ],
-    )?;
+    let ignored = ignored_inventory(&root, &policy)?;
 
     let (inventory, mut ambiguous) =
         inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS)?;
@@ -325,16 +316,7 @@ fn capture_repository_state(
     let stable_index = git_bytes(&root, &["ls-files", "--stage", "-z"])?;
     let stable_tracked = git_bytes(&root, &["ls-files", "-z"])?;
     let stable_untracked = git_bytes(&root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-    let stable_ignored = git_bytes(
-        &root,
-        &[
-            "ls-files",
-            "--others",
-            "--ignored",
-            "--exclude-standard",
-            "-z",
-        ],
-    )?;
+    let stable_ignored = ignored_inventory(&root, &policy)?;
     let ignored_paths = nul_records(&stable_ignored).collect::<Result<BTreeSet<_>, _>>()?;
     let mut stable_file_bytes = MAX_CAPTURE_TOTAL_FILE_BYTES;
     let mut stable_worktree = true;
@@ -377,6 +359,102 @@ fn capture_repository_state(
         #[cfg(windows)]
         _expected_write_authorities: expected_write_authorities,
     })
+}
+
+const IGNORED_LISTING: [&str; 5] = [
+    "ls-files",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "-z",
+];
+
+/// Lists the git-ignored paths the cage observes.
+///
+/// Without a declared `ignored_build_output` this is every ignored path, the
+/// historical behavior. With one (Cargo's `target/` for a Rust repair), the
+/// ignored contents of that subtree are toolchain build output: running the
+/// project tests between the phases rewrites them (fingerprints, dep-info,
+/// incremental objects, test binaries), so observing them would turn the
+/// documented `cargo test` step into a violation, and a real project's build
+/// tree also exceeds the bounded inventory. The exclusion cannot hide a
+/// source, test, or configuration edit:
+///
+/// - it applies only to this ignored listing; tracked paths (`ls-files`) and
+///   untracked-not-ignored paths are inventoried separately and in full, even
+///   inside the build-output subtree;
+/// - every path the policy itself names under the subtree (for example the
+///   `target/ripr` operational writes, or a forbidden rule) is listed again,
+///   so its identity is still captured;
+/// - static analysis never reads the build-output subtree as source
+///   (workspace discovery skips `target`), so its bytes cannot move the
+///   static evidence a receipt records.
+///
+/// The positive `.` pathspec keeps the listing fail-closed: if pathspec magic
+/// is disabled (`GIT_LITERAL_PATHSPECS`), the exclusion becomes an unmatched
+/// literal and the listing degrades to every ignored path. A rule path that
+/// Git would read as a wildcard pattern disables the exclusion outright.
+fn ignored_inventory(root: &Path, policy: &EditCagePolicy) -> Result<Vec<u8>, String> {
+    let Some(build_output) = policy
+        .ignored_build_output
+        .as_ref()
+        .filter(|rule| rule.scope == CagePathScope::Subtree)
+    else {
+        return git_bytes(root, &IGNORED_LISTING);
+    };
+    let build_output = build_output.path.as_str();
+    let observed_rules = policy_rules(policy)
+        .map(|rule| rule.path.as_str())
+        .filter(|path| {
+            *path == build_output
+                || path
+                    .strip_prefix(build_output)
+                    .is_some_and(|tail| tail.starts_with('/'))
+        })
+        .collect::<BTreeSet<_>>();
+    if has_pathspec_wildcard(build_output)
+        || observed_rules
+            .iter()
+            .any(|path| has_pathspec_wildcard(path))
+    {
+        return git_bytes(root, &IGNORED_LISTING);
+    }
+    let exclude = format!(":(exclude){build_output}/");
+    let mut records = BTreeSet::new();
+    let mut listing = IGNORED_LISTING.to_vec();
+    listing.extend(["--", ".", exclude.as_str()]);
+    collect_nul_records(&git_bytes(root, &listing)?, &mut records);
+    for path in observed_rules {
+        let mut listing = IGNORED_LISTING.to_vec();
+        listing.extend(["--", path]);
+        collect_nul_records(&git_bytes(root, &listing)?, &mut records);
+    }
+    let mut bytes = Vec::new();
+    for record in records {
+        bytes.extend_from_slice(&record);
+        bytes.push(0);
+    }
+    Ok(bytes)
+}
+
+fn policy_rules(policy: &EditCagePolicy) -> impl Iterator<Item = &CagePathRule> {
+    std::iter::once(&policy.selected_target)
+        .chain(&policy.allowed_edit_surface)
+        .chain(&policy.forbidden_paths)
+        .chain(&policy.expected_operational_writes)
+}
+
+fn has_pathspec_wildcard(path: &str) -> bool {
+    path.contains(['*', '?', '[', '\\'])
+}
+
+fn collect_nul_records(bytes: &[u8], records: &mut BTreeSet<Vec<u8>>) {
+    records.extend(
+        bytes
+            .split(|byte| *byte == 0)
+            .filter(|record| !record.is_empty())
+            .map(<[u8]>::to_vec),
+    );
 }
 
 fn inventory_paths(
@@ -990,6 +1068,13 @@ pub(crate) struct EditCagePolicy {
     /// Command-declared generated or receipt writes that may occur alongside
     /// the authored test edit. They never satisfy `selected_target` movement.
     pub(crate) expected_operational_writes: Vec<CagePathRule>,
+    /// Toolchain build-output subtree (Cargo's `target` for a Rust repair)
+    /// whose git-ignored contents are expected build output rather than
+    /// edits. Only the ignored listing is narrowed; see `ignored_inventory`.
+    /// Absent in baselines captured before this field existed, which keep
+    /// observing every ignored path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) ignored_build_output: Option<CagePathRule>,
 }
 
 impl EditCagePolicy {
@@ -1270,6 +1355,20 @@ fn validate_policy(policy: &EditCagePolicy) -> Vec<EditCageViolation> {
             "the selected target overlaps an explicit forbidden path",
         ));
     }
+    if let Some(build_output) = &policy.ignored_build_output {
+        if build_output.scope != CagePathScope::Subtree {
+            violations.push(invalid_policy_violation(
+                &build_output.path,
+                "the ignored build output must be a subtree rule",
+            ));
+        }
+        if build_output.matches(&selected_path) {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "the selected target lies inside the ignored build output",
+            ));
+        }
+    }
     violations
 }
 
@@ -1438,6 +1537,7 @@ mod tests {
                 CagePathRule::exact("Cargo.toml")?,
             ],
             expected_operational_writes: vec![CagePathRule::subtree("target/ripr")?],
+            ignored_build_output: None,
         })
     }
 
@@ -1731,6 +1831,218 @@ mod tests {
             WorktreeIdentity::Other
         );
         assert_eq!(cumulative_budget, one_pass_work - 1);
+        Ok(())
+    }
+
+    fn build_output_policy() -> Result<EditCagePolicy, String> {
+        let mut policy = policy()?;
+        policy.ignored_build_output = Some(CagePathRule::subtree("target")?);
+        Ok(policy)
+    }
+
+    fn write_fixture_file(
+        fixture: &GitFixture,
+        relative: &str,
+        contents: &str,
+    ) -> Result<(), String> {
+        let path = fixture.root.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("create fixture parent {}: {err}", parent.display()))?;
+        }
+        fs::write(&path, contents).map_err(|err| format!("write fixture {}: {err}", path.display()))
+    }
+
+    const CARGO_BUILD_OUTPUT: [&str; 3] = [
+        "target/debug/.fingerprint/pricing-1/invoked.timestamp",
+        "target/debug/incremental/pricing-1/s-1/0.o",
+        "target/debug/deps/pricing-1.d",
+    ];
+
+    fn write_cargo_build_output(fixture: &GitFixture, generation: &str) -> Result<(), String> {
+        for relative in CARGO_BUILD_OUTPUT {
+            write_fixture_file(fixture, relative, generation)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn declared_cargo_build_output_rewrite_is_not_an_attempt_edit() -> Result<(), String> {
+        let fixture = git_fixture("build-output-rewrite")?;
+        commit_target_ignore(&fixture)?;
+        write_cargo_build_output(&fixture, "baseline build")?;
+
+        let declared = capture_attempt_baseline(&fixture.root, &build_output_policy()?)?;
+        let undeclared = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        write_cargo_build_output(&fixture, "rebuilt by cargo test")?;
+        write_fixture_file(&fixture, "target/debug/deps/pricing-2", "new test binary")?;
+        write_fixture_file(&fixture, "target/ripr/reports/agent-receipt.json", "{}")?;
+
+        let verdict = evaluate_repository_edit_cage(&declared)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+        // The command-owned `target/ripr` write is still observed inside the
+        // declared build-output subtree.
+        assert_eq!(
+            verdict.changed_paths,
+            vec![
+                "target/ripr/reports/agent-receipt.json".to_string(),
+                "tests/pricing.rs".to_string(),
+            ]
+        );
+
+        // Alternate proof: the same stimulus under a policy that declares no
+        // build output is caged, so the declaration is what admits it.
+        let caged = evaluate_repository_edit_cage(&undeclared)?;
+        assert_eq!(caged.status, EditCageVerdictStatus::Violated, "{caged:?}");
+        for relative in CARGO_BUILD_OUTPUT
+            .iter()
+            .copied()
+            .chain(["target/debug/deps/pricing-2"])
+        {
+            assert!(
+                caged.violations.iter().any(|violation| {
+                    violation.kind == EditCageViolationKind::OutsideAllowedSurface
+                        && violation.path == relative
+                }),
+                "undeclared build output {relative} must be a violation: {caged:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn declared_build_output_does_not_hide_other_writes() -> Result<(), String> {
+        let fixture = git_fixture("build-output-boundary")?;
+        // Only `target/debug/` and `notes.log` are ignored, so `target/notes.rs`
+        // is an untracked-not-ignored path inside the build-output subtree.
+        fs::write(
+            fixture.root.join(".gitignore"),
+            "target/debug/\nnotes.log\n",
+        )
+        .map_err(|err| format!("write ignore rules: {err}"))?;
+        git_ok(&fixture.root, &["add", ".gitignore"])?;
+        git_ok(&fixture.root, &["commit", "-qm", "ignore build output"])?;
+        write_cargo_build_output(&fixture, "baseline build")?;
+        write_fixture_file(&fixture, "target/debug/forbidden/state", "baseline")?;
+        let mut policy = build_output_policy()?;
+        policy
+            .forbidden_paths
+            .push(CagePathRule::subtree("target/debug/forbidden")?);
+
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        write_cargo_build_output(&fixture, "rebuilt by cargo test")?;
+        write_fixture_file(&fixture, "notes.log", "ignored but not build output")?;
+        write_fixture_file(&fixture, "target/notes.rs", "untracked, not ignored")?;
+        write_fixture_file(&fixture, "target/debug/forbidden/state", "rewritten")?;
+        fs::write(fixture.root.join("src/pricing.rs"), "pub fn changed() {}\n")
+            .map_err(|err| format!("write tracked source: {err}"))?;
+
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Violated,
+            "{verdict:?}"
+        );
+        assert_eq!(
+            verdict.changed_paths,
+            vec![
+                "notes.log".to_string(),
+                "src/pricing.rs".to_string(),
+                "target/debug/forbidden/state".to_string(),
+                "target/notes.rs".to_string(),
+                "tests/pricing.rs".to_string(),
+            ]
+        );
+        for (kind, path) in [
+            (EditCageViolationKind::OutsideAllowedSurface, "notes.log"),
+            (
+                EditCageViolationKind::OutsideAllowedSurface,
+                "target/notes.rs",
+            ),
+            (EditCageViolationKind::ForbiddenPath, "src/pricing.rs"),
+            (
+                EditCageViolationKind::ForbiddenPath,
+                "target/debug/forbidden/state",
+            ),
+        ] {
+            assert!(
+                verdict
+                    .violations
+                    .iter()
+                    .any(|violation| violation.kind == kind && violation.path == path),
+                "{path} must remain a {kind:?} violation: {verdict:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn wildcard_rule_inside_build_output_disables_the_exclusion() -> Result<(), String> {
+        let fixture = git_fixture("build-output-wildcard")?;
+        commit_target_ignore(&fixture)?;
+        write_cargo_build_output(&fixture, "baseline build")?;
+        let mut policy = build_output_policy()?;
+        let exclusive = String::from_utf8(ignored_inventory(&fixture.root, &policy)?)
+            .map_err(|err| format!("ignored listing is not UTF-8: {err}"))?;
+        assert!(!exclusive.contains("target/debug/"), "{exclusive:?}");
+
+        policy
+            .forbidden_paths
+            .push(CagePathRule::subtree("target/debug/[x]")?);
+        let listing = String::from_utf8(ignored_inventory(&fixture.root, &policy)?)
+            .map_err(|err| format!("ignored listing is not UTF-8: {err}"))?;
+        for relative in CARGO_BUILD_OUTPUT {
+            assert!(
+                listing.split('\0').any(|record| record == relative),
+                "{relative} must be listed when the exclusion is disabled: {listing:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ignored_build_output_policy_shape_is_validated_and_optional() -> Result<(), String> {
+        let mut inside = build_output_policy()?;
+        inside.ignored_build_output = Some(CagePathRule::subtree("tests")?);
+        let mut exact = build_output_policy()?;
+        exact.ignored_build_output = Some(CagePathRule::exact("target")?);
+        for invalid_policy in [inside, exact] {
+            let verdict = evaluate_edit_cage(
+                &invalid_policy,
+                &AttemptDelta {
+                    comparable: true,
+                    changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
+                },
+            );
+            assert_eq!(verdict.status, EditCageVerdictStatus::Incomparable);
+            assert!(
+                verdict
+                    .violations
+                    .iter()
+                    .any(|violation| violation.kind == EditCageViolationKind::InvalidPolicy),
+                "{verdict:?}"
+            );
+        }
+
+        // Baselines captured before the field existed keep observing every
+        // ignored path, and an undeclared policy serializes without it.
+        let mut legacy =
+            serde_json::to_value(policy()?).map_err(|err| format!("serialize policy: {err}"))?;
+        assert!(legacy.get("ignored_build_output").is_none(), "{legacy}");
+        if let Some(object) = legacy.as_object_mut() {
+            object.remove("ignored_build_output");
+        }
+        let decoded: EditCagePolicy =
+            serde_json::from_value(legacy).map_err(|err| format!("decode legacy policy: {err}"))?;
+        assert_eq!(decoded.ignored_build_output, None);
         Ok(())
     }
 
@@ -2364,6 +2676,7 @@ mod tests {
             allowed_edit_surface: vec![CagePathRule::subtree("tests/pricing")?],
             forbidden_paths: Vec::new(),
             expected_operational_writes: Vec::new(),
+            ignored_build_output: None,
         };
         let verdict = evaluate_edit_cage(
             &subtree_policy,

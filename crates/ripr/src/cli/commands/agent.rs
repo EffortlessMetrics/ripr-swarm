@@ -616,6 +616,9 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                 cage_after.attempt_id.as_str(),
                 cage_after.verdict.status
             );
+            for line in repair_after_cage_recovery_lines(&root, &attempt.seam_id, &cage_after) {
+                eprintln!("ripr: {line}");
+            }
 
             // The receipt can refuse (for example an escape verdict is not
             // receipt-ready). The refusal must not swallow the typed apply
@@ -828,6 +831,63 @@ fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
             receipt_path.display()
         )],
     }
+}
+
+/// Upper bound on cage violations the after-phase narration lists; the attempt
+/// manifest retains all of them.
+const CAGE_RECOVERY_MAX_VIOLATIONS: usize = 10;
+
+/// Recovery narration for an after phase whose attempt did not finish
+/// compliant and current. Such an attempt is terminal: re-running it, or the
+/// receipt command `agent status` projects from the workflow artifacts,
+/// refuses. The lines name each cage violation (bounded) and the one route
+/// that recovers: a new attempt prepared while the gap still exists.
+fn repair_after_cage_recovery_lines(
+    root: &Path,
+    seam_id: &str,
+    after: &crate::app::repair_attempt::RepairAttemptAfter,
+) -> Vec<String> {
+    use crate::agent::loop_commands::{display_path, shell_arg};
+    use crate::edit_cage::EditCageVerdictStatus;
+
+    if after.current && after.verdict.status == EditCageVerdictStatus::Compliant {
+        return Vec::new();
+    }
+    let attempt_id = after.attempt_id.as_str();
+    let mut lines = Vec::new();
+    if !after.current {
+        lines.push(format!(
+            "attempt `{attempt_id}` is stale: repository HEAD moved after its before phase."
+        ));
+    }
+    let violations = &after.verdict.violations;
+    if !violations.is_empty() {
+        lines.push(format!(
+            "the edit cage refused {} path(s); only the packet's allowed test surface may change:",
+            violations.len()
+        ));
+        for violation in violations.iter().take(CAGE_RECOVERY_MAX_VIOLATIONS) {
+            lines.push(format!(
+                "  {} ({:?}): {}",
+                violation.path, violation.kind, violation.reason
+            ));
+        }
+        if violations.len() > CAGE_RECOVERY_MAX_VIOLATIONS {
+            lines.push(format!(
+                "  ... and {} more; see the `after` block of the attempt manifest.",
+                violations.len() - CAGE_RECOVERY_MAX_VIOLATIONS
+            ));
+        }
+    }
+    let root_arg = shell_arg(&display_path(root));
+    let seam_arg = shell_arg(seam_id);
+    lines.push(format!(
+        "attempt `{attempt_id}` is terminal and cannot produce a receipt; re-running it or `ripr agent receipt` will refuse."
+    ));
+    lines.push(format!(
+        "to recover: undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+    ));
+    lines
 }
 
 /// One-line human result for the repair after phase, read from the receipt
