@@ -135,9 +135,9 @@ use super::{
     lane1_readiness_packet_specs, limited_badge_artifacts_json, limited_badge_artifacts_markdown,
     line_has_static_language_inline_allow, local_context_line_findings, local_markdown_target,
     lsp_cockpit_report, lsp_cockpit_report_json, lsp_cockpit_report_markdown,
-    markdown_links_in_text, mutation_calibration_report_json, mutation_calibration_report_markdown,
-    next_checkpoints_from_capabilities, next_spec_id_from_ids,
-    non_rust_programming_retention_reason, normalize_fixture_human_output,
+    markdown_links_in_text, missing_anchor_violation, mutation_calibration_report_json,
+    mutation_calibration_report_markdown, next_checkpoints_from_capabilities,
+    next_spec_id_from_ids, non_rust_programming_retention_reason, normalize_fixture_human_output,
     normalize_fixture_json_output, normalize_golden_text, normalize_path,
     parse_actionable_gap_outcomes_args, parse_doc_artifact_ledger_text,
     parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
@@ -21942,6 +21942,57 @@ fn local_markdown_target_returns_relative_local_paths() {
             fragment: None,
         })
     );
+}
+
+#[test]
+fn a_fragment_with_no_heading_names_the_link_and_the_target() -> Result<(), String> {
+    let target = Path::new("docs/CI.md");
+    let slugs = heading_slugs("# Copyable ripr advisory workflow\n");
+    let resolving = MarkdownLink {
+        line: 118,
+        target: "CI.md#copyable-ripr-advisory-workflow".to_string(),
+    };
+    let broken = MarkdownLink {
+        line: 118,
+        target: "CI.md#this-anchor-does-not-exist".to_string(),
+    };
+
+    let mut failures = Vec::new();
+    if let Some(violation) = missing_anchor_violation(
+        "docs/QUICKSTART.md",
+        &resolving,
+        target,
+        "copyable-ripr-advisory-workflow",
+        &slugs,
+    ) {
+        failures.push(format!("a resolving anchor was reported: {violation}"));
+    }
+    match missing_anchor_violation(
+        "docs/QUICKSTART.md",
+        &broken,
+        target,
+        "this-anchor-does-not-exist",
+        &slugs,
+    ) {
+        None => failures.push("a fragment with no heading was reported as a pass".to_string()),
+        Some(violation) => {
+            for expected in [
+                "docs/QUICKSTART.md:118",
+                "CI.md#this-anchor-does-not-exist",
+                "docs/CI.md",
+            ] {
+                if !violation.contains(expected) {
+                    failures.push(format!("`{violation}` does not name `{expected}`"));
+                }
+            }
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 #[test]

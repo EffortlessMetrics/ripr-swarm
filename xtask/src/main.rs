@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -14767,21 +14768,16 @@ fn markdown_links() -> Result<(), String> {
             {
                 continue;
             }
-            if !heading_cache.contains_key(&resolved) {
-                let target_text = read_text_lossy(&resolved)?;
-                heading_cache.insert(resolved.clone(), heading_slugs(&target_text));
-            }
-            let known = heading_cache
-                .get(&resolved)
-                .is_some_and(|slugs| slugs.contains(&fragment));
-            if !known {
-                violations.push(format!(
-                    "{file}:{} links to `{}`, and `{}` has no heading with that anchor",
-                    link.line,
-                    link.target,
-                    resolved.display()
-                ));
-            }
+            let slugs = match heading_cache.entry(resolved.clone()) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    let target_text = read_text_lossy(&resolved)?;
+                    entry.insert(heading_slugs(&target_text))
+                }
+            };
+            violations.extend(missing_anchor_violation(
+                &file, &link, &resolved, &fragment, slugs,
+            ));
         }
     }
 
@@ -14802,6 +14798,31 @@ fn markdown_links() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// The violation a link's `#fragment` produces against the anchors `slugs`
+/// offers, or `None` when the fragment names one of them.
+///
+/// This is the decision the whole check exists to make, so it is its own
+/// function and has its own test: a refactor that stopped producing the
+/// violation would otherwise leave a tree that passes and a gate that no
+/// longer gates.
+fn missing_anchor_violation(
+    file: &str,
+    link: &MarkdownLink,
+    resolved: &Path,
+    fragment: &str,
+    slugs: &BTreeSet<String>,
+) -> Option<String> {
+    if slugs.contains(fragment) {
+        return None;
+    }
+    Some(format!(
+        "{file}:{} links to `{}`, and `{}` has no heading with that anchor",
+        link.line,
+        link.target,
+        resolved.display()
+    ))
 }
 
 /// The anchor GitHub gives a heading whose text is `text`.
