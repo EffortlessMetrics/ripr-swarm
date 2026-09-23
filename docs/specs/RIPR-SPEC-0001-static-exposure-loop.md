@@ -95,6 +95,23 @@ If existing tests use `50` and `10_000`, and only assert
 `quote.total > Money::zero()`, `ripr` should report weak exposure and name the
 missing equality-boundary value and exact assertion shape.
 
+Returned-comparison boundary example:
+
+```rust
+pub fn ships_free(items: u32) -> bool {
+    items >= 10
+}
+```
+
+When the changed comparison is the whole tail expression of an owner with a
+return type (no `;`, `if`, `let`, `return`, or continuation line), its boolean
+is the returned value, so the predicate propagates to the returned value
+without a branch. If tests reach the owner, directly or through a wrapper such
+as `shipping(items)`, only at `20` and `2` items, `ripr` should report weak
+exposure naming `items == 10` with the boundary-test next step, not
+`propagation_unknown`. A predicate retargeted from a changed `let` initializer
+keeps its RIPR-SPEC-0158 operand-value limitation and does not gain this sink.
+
 Error example:
 
 ```rust
@@ -149,6 +166,9 @@ Fixture coverage:
   predicate-to-error, match-arm result, output field, event/outbound call,
   state write, persistence write, log message, configuration change, and
   unknown propagation fallback
+- `fixtures/tail_comparison_boundary`
+- `predicate_that_is_the_owner_tail_flows_to_the_returned_value`
+- `predicate_tail_sink_fails_closed_off_the_bare_returned_comparison`
 - `given_direct_field_assignments_from_named_constant_boundaries_then_values_are_observed`
 - `given_other_object_or_field_assignments_then_boundary_value_is_not_credited`
 - `given_similarly_named_constant_then_equality_boundary_stays_missing`

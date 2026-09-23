@@ -223,6 +223,14 @@ fn predicate_flow_sinks(
             owner,
         )];
     }
+    if let Some(tail) = predicate_as_owner_tail(probe, owner_fn) {
+        return vec![flow_sink(
+            FlowSinkKind::ReturnValue,
+            tail.text,
+            tail.line,
+            owner,
+        )];
+    }
     if let Some(return_fact) = nearest_return(owner_fn, probe.location.line) {
         return vec![flow_sink(
             FlowSinkKind::ReturnValue,
@@ -378,6 +386,53 @@ fn first_error_return(
                 line: return_fact.line,
                 text: return_fact.text.clone(),
             })
+    })
+}
+
+/// The changed predicate when it is the owner's whole tail expression
+/// (`items >= 10` as the last expression of `fn ships_free(..) -> bool`):
+/// the comparison's boolean is the returned value itself, so it propagates
+/// to the return without any branch. Requires a non-unit signature, the
+/// changed line to be exactly the comparison (no `;`, `if`, `let`, or
+/// `return`), and only the function's closing brace after it. A predicate
+/// retargeted from a changed `let` initializer (RIPR-SPEC-0158) is excluded:
+/// its changed text is the initializer, not the returned comparison, and its
+/// operand value stays a named limitation rather than a repair target.
+fn predicate_as_owner_tail(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+) -> Option<LocalTextFact> {
+    let function = owner_fn?;
+    if probe.after.as_deref().map(str::trim) != Some(probe.expression.trim()) {
+        return None;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
+    let mut lines = masked.lines();
+    let signature = lines.next()?;
+    if !signature.contains("->") {
+        return None;
+    }
+    let offset = probe.location.line.checked_sub(function.start_line)?;
+    let changed = masked.lines().nth(offset)?.trim();
+    let expression = probe.expression.trim();
+    if offset == 0
+        || changed != expression
+        || changed.ends_with(';')
+        || ["if ", "let ", "return ", "match ", "while "]
+            .iter()
+            .any(|keyword| changed.starts_with(keyword))
+    {
+        return None;
+    }
+    let rest = masked
+        .lines()
+        .skip(offset + 1)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    (rest == ["}"]).then(|| LocalTextFact {
+        line: probe.location.line,
+        text: expression.to_string(),
     })
 }
 
@@ -832,6 +887,62 @@ mod tests {
         assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
         assert_eq!(sinks[0].text, "amount - 1");
         assert_eq!(sinks[0].line, 3);
+    }
+
+    #[test]
+    fn predicate_that_is_the_owner_tail_flows_to_the_returned_value() {
+        let owner = tail_owner("pub fn ships_free(items: u32) -> bool {\n    items >= 10\n}");
+        let probe = probe(ProbeFamily::Predicate, "items >= 10", 2);
+
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(sinks[0].text, "items >= 10");
+        assert_eq!(sinks[0].line, 2);
+    }
+
+    #[test]
+    fn predicate_tail_sink_fails_closed_off_the_bare_returned_comparison() {
+        // (owner body, probe expression, probe `after` text): a unit owner,
+        // a comparison continued by `&&` on the next line, a let-bound
+        // comparison, and a predicate retargeted from a changed `let`
+        // initializer (its changed text is the initializer, not the tail).
+        for (body, expression, after) in [
+            (
+                "pub fn check(items: u32) {\n    items >= 10\n}",
+                "items >= 10",
+                "items >= 10",
+            ),
+            (
+                "pub fn ships_free(items: u32, ready: bool) -> bool {\n    items >= 10\n        && ready\n}",
+                "items >= 10",
+                "items >= 10",
+            ),
+            (
+                "pub fn ships_free(items: u32) -> bool {\n    let free = items >= 10;\n    free\n}",
+                "items >= 10",
+                "let free = items >= 10;",
+            ),
+            (
+                "pub fn within(other: &str) -> bool {\n    size == 3\n}",
+                "size == 3",
+                "other.len()",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let mut probe = probe(ProbeFamily::Predicate, expression, 2);
+            probe.after = Some(after.to_string());
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not treat `{expression}` as the returned value: {sinks:?}"
+            );
+        }
     }
 
     #[test]
@@ -1305,6 +1416,13 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+        }
+    }
+
+    fn tail_owner(body: &str) -> FunctionSummary {
+        FunctionSummary {
+            returns: Vec::new(),
+            ..function(body)
         }
     }
 
