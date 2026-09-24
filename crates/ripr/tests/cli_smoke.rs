@@ -12071,7 +12071,7 @@ fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> 
         ));
     }
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
