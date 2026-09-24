@@ -154,6 +154,15 @@ Which file contains the structured packet?
 How do I compare before and after after adding the test?
 ```
 
+Pilot ranks Rust repo seams only. When that scan produces no Rust seams and
+the workspace contains TypeScript, JavaScript, Python or Perl files, pilot must
+not present the empty ranking as a clean result: the terminal and Markdown name
+each such language, its diff-first `ripr check --root <root>` route (or, when
+this binary cannot analyze the language, the unavailable-adapter notice), and
+close with that route instead of the Rust before/after snapshot commands. When
+Rust seams exist, the human output is unchanged and other languages are listed
+only in `pilot-summary.json` `language_routes` (#3906).
+
 The pilot command must remain advisory. It should not edit source files,
 generate tests, run mutation testing, or enable CI blocking policy.
 It should also be bounded for interactive first runs: if analysis exceeds the
@@ -336,6 +345,22 @@ then ripr writes a pilot packet and prints the top actionable seam, why it was
 flagged, and how to compare before and after after a focused test is added.
 ```
 
+### Pilot names languages its Rust scan did not rank
+
+```text
+Given a workspace whose code is TypeScript, JavaScript, Python or Perl and
+whose Rust seam scan produces no seams,
+when a user runs ripr pilot,
+then pilot names each detected language and its diff-first ripr check route,
+or says the language is not available from this ripr binary, and does not
+report the empty ranking as a clean result.
+
+Given a workspace with Rust seams and other-language files,
+when a user runs ripr pilot,
+then the terminal and Markdown output are unchanged and pilot-summary.json
+lists the other languages under language_routes with state supplementary.
+```
+
 ### Outcome is public CLI
 
 ```text
@@ -437,11 +462,17 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/output/pilot/tests.rs::pilot_terminal_prints_top_test_and_follow_up_commands`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_summary_json_projects_python_first_use_repair_card`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_markdown_and_terminal_use_python_repair_card_when_no_seam_ranked`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_language_routes_state_follows_rust_seams_and_discovered_languages`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_show_language_routes_only_without_rust_seams`
 - `crates/ripr/tests/cli_smoke.rs::pilot_writes_default_packet_outputs_for_boundary_gap_fixture`
 - `crates/ripr/tests/cli_smoke.rs::pilot_accepts_python_project_without_ripr_config`
 - `crates/ripr/tests/cli_smoke.rs::pilot_projects_python_repair_card_for_git_diff`
 - `crates/ripr/tests/cli_smoke.rs::pilot_uses_repo_config_mode_without_explicit_flag`
 - `crates/ripr/tests/cli_smoke.rs::pilot_honors_explicit_mode_over_repo_config`
+- `crates/ripr/tests/cli_smoke.rs::pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams`
+- `crates/ripr/tests/cli_smoke.rs::pilot_names_python_check_route_when_repo_has_no_rust_seams`
+- `crates/ripr/tests/cli_smoke.rs::pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams`
+- `crates/ripr/tests/cli_smoke.rs::pilot_keeps_rust_output_byte_identical_when_rust_seams_exist`
 - `crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_report_buckets_seam_movement`
 - `crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_json_and_markdown_are_structured`
 - `crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_repo_exposure_json_parses_static_evidence`

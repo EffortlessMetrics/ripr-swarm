@@ -91,11 +91,14 @@ inspect or avoid inferring. It does not run analysis, edit source, generate
 tests, run mutation testing, claim runtime correctness or coverage adequacy,
 approve merges, or decide CI policy.
 
-Limitation: the comparison matches seams/findings by id only. The before/after
-artifacts do not carry a head SHA, so ripr cannot verify they came from the
-same repository or adjacent commits. Ensure the before snapshot is from the
-same repo's base and the after snapshot is from the same repo's head before
-trusting the movement report.
+Limitation: the comparison matches seams/findings by id. Whether ripr can say
+anything about provenance depends on the artifacts. A snapshot written through
+the artifact-identity path, such as `ripr check --format repo-exposure-json`,
+carries the repository head, and ripr reports on stderr whether the two
+snapshots name the same head. A snapshot written without that identity,
+including the `repo-exposure.json` that `ripr pilot` writes, carries no head;
+ripr then says so and cannot verify the pair came from the same repository or
+adjacent commits. Matching heads still do not mean matching working trees.
 "#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
@@ -104,7 +107,10 @@ Usage: ripr check [OPTIONS]
 Options:
   --root PATH              Workspace root. Defaults to current directory, then
                            walks up to a Cargo.toml containing [workspace].
-  --base REV               Base revision for git diff. Defaults to origin/main.
+  --base REV               Base revision for git diff. When omitted, ripr uses
+                           the local origin/HEAD ref, then origin/main,
+                           origin/master, main, and master in order; when none
+                           of those resolves, the analysis does not run.
   --diff PATH              Read a unified diff file instead of running git diff.
                            Use --diff - to read from stdin (e.g.
                            `git diff origin/main | ripr check --diff -`).
@@ -228,7 +234,9 @@ Usage: ripr diff [--root PATH] [--base REV] [--head REV] [--mode MODE] [--format
 
 Options:
   --root PATH              Workspace root. Defaults to current directory.
-  --base REV               Base revision for git diff. Defaults to origin/main.
+  --base REV               Base revision for git diff. Defaults to origin/main,
+                           used exactly as given (unlike check, no default
+                           branch is resolved).
   --head REV               Head revision for git diff. Defaults to HEAD.
   --mode MODE              instant, draft, fast, deep, or ready. Defaults to draft.
   --format FORMAT          human, text, md, markdown, or json. Defaults to human.
@@ -297,7 +305,7 @@ Performance:
   Use --from to skip re-analysis when you already ran
   `ripr check --write-artifact PATH` (see `ripr explain --help`).
 "#;
-pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (Rust toolchain, workspace, paths).
+pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace, config, toolchains, paths).
 
 Usage: ripr doctor [--root PATH] [--json]
 
@@ -311,9 +319,14 @@ decision.
 
 Checks:
   - root directory exists
-  - Cargo.toml is present at the selected root
+  - Cargo.toml is present at the selected root (when Rust is in scope)
   - ripr.toml load status and effective defaults are visible
-  - git, cargo, and rustc are available
+  - git is available; cargo and rustc are available (when Rust is in scope)
+
+Rust is in scope when it is enabled and Cargo.toml or .rs files are detected,
+or when no other language is detected or enabled. Otherwise (for example a
+Python-only or TypeScript-only root) the Cargo.toml, cargo, and rustc checks
+print as skipped with the reason and do not fail doctor.
 
 First-run diagnosis (printed automatically):
   - Detected languages: shallow file-marker scan; each language shows its
@@ -326,13 +339,19 @@ First-run diagnosis (printed automatically):
   - Known limitations: static notes on preview coverage, cross-language
     oracle visibility (fail-closed), large-repo scan bounds, and advisory
     nature of preview-language evidence.
-  - Recommended first command: ripr check --base origin/main
+  - Recommended first command: ripr check (no base: the loader resolves this
+    repository's own default branch)
 
 Start-here next step:
-  - after setup is valid, run `ripr first-pr --root . --base origin/main --head HEAD`
-    or `ripr start-here --root . --base origin/main --head HEAD`
-    or this repo's `cargo xtask first-pr` wrapper
   - open `target/ripr/reports/start-here.md` first when it exists
+  - when it does not, run the recommended first command: `ripr first-pr` and
+    `ripr start-here` compose that packet from analysis evidence and run no
+    analysis of their own, so on a fresh workspace they report
+    `missing_artifacts`
+  - to compose or refresh the packet, run
+    `ripr first-pr --root . --base <ref> --head HEAD`
+    or `ripr start-here --root . --base <ref> --head HEAD`
+    or this repo's `cargo xtask first-pr` wrapper
   - safe next action means repair one named gap, regenerate missing or malformed
     evidence, refresh stale evidence, fix wrong-root setup, or stop on no-action
   - treat missing artifact, stale evidence, wrong root, malformed artifact,

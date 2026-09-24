@@ -43,10 +43,12 @@ fn gate_acknowledgeable_blocks_policy_candidate_without_label() -> Result<(), St
 }
 
 #[test]
-fn gate_inline_failure_detail_names_seam_location_and_inspection_command() -> Result<(), String> {
+fn gate_inline_failure_detail_names_seam_location_and_next_command() -> Result<(), String> {
     // #1440: at the point of failure the inline detail must name the exact
-    // seam location and the producer-owned inspection command so consumers
-    // do not need artifact archaeology to act on a correct signal.
+    // seam location and the producer-owned next command so consumers do not
+    // need artifact archaeology to act on a correct signal. #3906: that
+    // command is the repair start when the card carries one, else the
+    // inspection brief.
     let input = fixture_input(GateMode::Acknowledgeable)?;
     let report = build_gate_decision_report(&input)?;
     assert_eq!(report.status, "blocked");
@@ -77,9 +79,26 @@ fn gate_inline_failure_detail_names_seam_location_and_inspection_command() -> Re
         inline.contains("[src/pricing.rs:88]"),
         "inline detail missing seam location: {inline}"
     );
+    // #3906: the fixture seam passes the repair-packet flip, so the blocked
+    // gate names the repair transaction's start, not the inspection brief.
     assert!(
         inline.contains(
-            "`ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json`",
+            "; start the repair with `ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before`",
+        ),
+        "inline detail missing the repair start: {inline}"
+    );
+    assert!(
+        !inline.contains("inspect with"),
+        "inline detail must offer one route: {inline}"
+    );
+
+    // Without a carried repair start the inspection brief stays the route.
+    let mut without_repair = report.clone();
+    without_repair.decisions[0].repair_route.repair_command = None;
+    let inline = gate_decision_inline_detail(&without_repair);
+    assert!(
+        inline.contains(
+            "; inspect with `ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > <cwd>/target/ripr/workflow/agent-brief.json`",
         ),
         "inline detail missing inspection command: {inline}"
     );
@@ -1710,7 +1729,7 @@ fn gate_markdown_projects_complete_repair_route_for_ci_summary() -> Result<(), S
         ),
         (
             "inspection command",
-            "  - Inspect: `ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json`",
+            "  - Inspect: `ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > <cwd>/target/ripr/workflow/agent-brief.json`",
         ),
         (
             "authority boundary",

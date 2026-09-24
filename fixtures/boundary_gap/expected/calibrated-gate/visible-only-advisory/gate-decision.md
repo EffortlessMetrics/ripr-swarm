@@ -18,10 +18,11 @@ Advisory: 1
   - Changed behavior: amount >= discount_threshold
   - Why it remains open: amount == discount_threshold
   - Near test: `above_threshold_gets_discount` at `tests/pricing.rs:12`
+  - Start repair: `ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before`
   - Add: Write one focused Rust test for amount == discount_threshold. Place it in tests/pricing.rs near above_threshold_gets_discount. Do not change production code. Preserve existing fixture style. Verify with ripr agent verify.
   - Verify: `ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
   - Receipt: `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 8f7fa8644fd12280 --json --out target/ripr/reports/agent-receipt.json`
-  - Inspect: `ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json`
+  - Inspect: `ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > <cwd>/target/ripr/workflow/agent-brief.json`
   - Boundary: `static_ripr_evidence_only`
 
 ## Limits

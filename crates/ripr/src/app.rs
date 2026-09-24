@@ -77,6 +77,9 @@ pub struct CheckInput {
     /// Workspace root used for discovery and analysis.
     pub root: PathBuf,
     /// Git base revision used when collecting a diff automatically.
+    /// `None` resolves the repository's real default branch
+    /// (RIPR-SPEC-0084); the library default is `None` so every consumer
+    /// inherits resolution instead of a hardcoded branch.
     pub base: Option<String>,
     /// Optional path to a unified diff file. When set, `base` is ignored.
     pub diff_file: Option<PathBuf>,
@@ -116,7 +119,10 @@ impl Default for CheckInput {
     fn default() -> Self {
         Self {
             root: PathBuf::from("."),
-            base: Some("origin/main".to_string()),
+            // #3952 / RIPR-SPEC-0084: no hardcoded branch. `None` sends
+            // every consumer through default-branch resolution instead of
+            // `origin/main`, which need not exist in the analyzed repo.
+            base: None,
             diff_file: None,
             mode: Mode::Draft,
             format: OutputFormat::Human,

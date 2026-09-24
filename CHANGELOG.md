@@ -295,6 +295,33 @@ are scoped or reviewed.
 
 ### Changed
 
+- `seam_cache` tests no longer discard `remove_dir_all` with `let _ =`.
+  Cleanup matches the `io::Result` in `ignore_remove_dir_all` and still
+  ignores a failure. The same file uses its `Iterator::next` and
+  `write!` results. `clippy-debt-0001` stays deferred; its `blocked_by`
+  text now counts the remaining `let _ =` sites
+  ([#4013](https://github.com/EffortlessMetrics/ripr-swarm/issues/4013)).
+
+- `path_dependencies.rs` no longer carries `allow(dead_code)`.
+  `cycle_manifests`, `contains_node`, `forward_walk`, and the scope
+  expansion `status` accessor are `#[cfg(test)]`. Cycle-set recording
+  moves with the getter; reverse diff-scope reachability is unchanged.
+  The `.ripr/allow-attributes.txt` row for that file is removed
+  ([#3997](https://github.com/EffortlessMetrics/ripr-swarm/issues/3997)).
+
+- `PanicAllowEntryVersioned::V2` is now `Box<PanicAllowEntryV2>`, so
+  `clippy::large_enum_variant` no longer needs an allow on that enum.
+  `policy/clippy-exceptions.toml` has no live rows;
+  `clippy-exception-0001` is retired
+  ([#3995](https://github.com/EffortlessMetrics/ripr-swarm/issues/3995)).
+
+- `cargo xtask check-lint-policy` now requires a non-MSRV `blocked_by` on
+  every `[[planned]]` row whose `activate_when_msrv` is already met by
+  workspace `rust-version`. Empty or MSRV-only `blocked_by` fails. A
+  narrative `reason` does not satisfy the gate. The four current planned
+  lints copy their existing `reason` into `blocked_by` and are not promoted
+  ([#3990](https://github.com/EffortlessMetrics/ripr-swarm/issues/3990)).
+
 - `cargo xtask check-allow-attributes` now fails a
   `.ripr/allow-attributes.txt` row whose `max_count` is higher than the
   current source count, including a row whose suppression is gone. The
