@@ -18,7 +18,7 @@ Start here:
   Related test: tests/lower.rs:4 lower_ast_preserves_storage
   Next step: Escalate to real mutation testing or deep static analysis for this probe.
   Evidence:
-    - reach yes: Related tests appear to reach lower_statement: lower_ast_preserves_storage
+    - reach weak: No test is seen calling lower_statement; tests share only its file or a name token: lower_ast_preserves_storage
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more evidence line(s) hidden
 
@@ -29,3 +29,10 @@ Next: drill into the top finding:
 More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
+
+
+Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
+  analyzed: 1 changed Rust file(s), 1 changed expression(s), and 1 statically linked related
+  test(s). This is not a coverage assessment. A test may already exercise these changes through
+  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
+  none does, add co-located tests that observe the changed behavior.

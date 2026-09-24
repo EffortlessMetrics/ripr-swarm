@@ -109,7 +109,13 @@ to completion.
 3. **Adapter NOT enabled (default) + preview files in scope** (`enabled ==
    false`) — the files were detected but NOT analyzed; the user is told their
    change was not analyzed and how to enable the adapter. This is the primary
-   #1111 fix.
+   #1111 fix. When the adapter is not compiled into the running binary (only
+   Perl is disclosed in that state), a `ripr.toml` edit cannot enable it —
+   config load rejects the language — so the human note, JSON/diff-report
+   `why`, and typed outcome recovery instead carry the shared
+   `LanguageId::unavailable_adapter_recovery` text naming the real
+   prerequisites (a `lang-perl` build and the not-yet-published
+   `perl-ripr-facts` exporter) and omit the TOML block.
 
 Pure-Rust diffs produce no advisory in either case.
 
