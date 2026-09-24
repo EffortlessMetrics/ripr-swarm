@@ -846,15 +846,15 @@ mod tests {
             markdown.contains("cmd.exe is not supported."),
             "command presentation must state the cmd.exe boundary:\n{markdown}"
         );
-        // The default derived commands keep byte-identical bash bytes and gain
-        // their PowerShell pairs.
+        // A command that runs unchanged in PowerShell keeps its bash bytes and
+        // gains no second, identical block (F60-12).
         assert!(
             markdown.contains("```bash\nripr check --base origin/main\n```\n\n"),
             "bash form drifted:\n{markdown}"
         );
         assert!(
-            markdown.contains("```powershell\nripr check --base origin/main\n```\n\n"),
-            "powershell form missing or drifted:\n{markdown}"
+            !markdown.contains("```powershell\nripr check --base origin/main\n```"),
+            "an unchanged command must not repeat as a PowerShell block:\n{markdown}"
         );
         // A redirecting verify command round-trips through the shared
         // translation: bash bytes unchanged, PowerShell gets the guarded

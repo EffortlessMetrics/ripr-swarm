@@ -3,7 +3,7 @@ use super::{
     string_path,
 };
 use crate::agent::loop_commands::display_path;
-use crate::output::markdown::powershell_command;
+use crate::output::markdown::{PowershellForm, powershell_command, powershell_form};
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state,
 };
@@ -437,17 +437,23 @@ fn push_shell_command_pair(
 ) {
     out.push_str(&format!("{label}:\n"));
     out.push_str(&format!("`{command}`\n\n"));
-    match powershell_command(command) {
-        Some(line) => {
+    match powershell_form(command) {
+        PowershellForm::Translated(line) => {
             out.push_str(&format!("{label} (PowerShell):\n"));
             out.push_str(&format!("`{line}`\n\n"));
+            out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
         }
-        None => out.push_str(&format!(
-            "{}: `{command}`\n\n",
-            crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
-        )),
+        PowershellForm::SameAsBash => {
+            out.push_str("It runs unchanged in Bash and PowerShell; cmd.exe is not supported.\n");
+        }
+        PowershellForm::Unavailable => {
+            out.push_str(&format!(
+                "{}: `{command}`\n\n",
+                crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
+            ));
+            out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
+        }
     }
-    out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
     if trailing_blank_line {
         out.push('\n');
     }

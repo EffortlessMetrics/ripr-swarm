@@ -1,5 +1,5 @@
 use super::types::AgentReviewSummaryReport;
-use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, powershell_command};
+use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
 
 /// What a missing agent receipt means before any repair (#3906, N5).
 ///
@@ -75,13 +75,14 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
         rendered.push_str("```bash\n");
         rendered.push_str(&next_command.command);
         rendered.push_str("\n```\n");
-        match powershell_command(&next_command.command) {
-            Some(line) => {
+        match powershell_form(&next_command.command) {
+            PowershellForm::Translated(line) => {
                 rendered.push_str("\n```powershell\n");
                 rendered.push_str(&line);
                 rendered.push_str("\n```\n");
             }
-            None => rendered.push_str(&format!(
+            PowershellForm::SameAsBash => {}
+            PowershellForm::Unavailable => rendered.push_str(&format!(
                 "{}: `{}`\n",
                 crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE,
                 next_command.command
