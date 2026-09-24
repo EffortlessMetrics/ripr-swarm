@@ -615,10 +615,16 @@ mod tests {
     use std::fs;
     use std::process::Command;
 
+    /// Best-effort temp-dir teardown. The `io::Result` is matched with `if let`
+    /// so a `#[must_use]` cleanup failure is an explicit ignore.
+    fn ignore_remove_dir_all(path: &Path) {
+        if let Ok(()) = fs::remove_dir_all(path) {}
+    }
+
     #[test]
     fn load_diff_from_file_returns_content() -> std::io::Result<()> {
         let dir = unique_fixture_root("load-diff-test")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         fs::create_dir_all(&dir)?;
         let diff_file = dir.join("test.diff");
         fs::write(&diff_file, "test content")?;
@@ -626,7 +632,7 @@ mod tests {
         let result = load_diff(&dir, None, Some(&diff_file), None);
         assert_eq!(result.as_deref(), Ok("test content"));
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -709,7 +715,7 @@ mod tests {
             "raw invalid bytes must remain distinct in parsed paths: {paths:?}"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -793,7 +799,7 @@ mod tests {
             "valid UTF-8 names must keep their on-disk identity: {paths:?}"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -817,13 +823,13 @@ mod tests {
     /// A unique fixture root, so two concurrent or overlapping suite runs cannot
     /// share a git repo.
     ///
-    /// Fixed names are unsafe here beyond the obvious collision: the cleanup is
-    /// `let _ = fs::remove_dir_all(..)`, and on Windows that cannot delete a git
-    /// object store whose files are read-only, so a half-deleted repo would be
-    /// silently reused by the next run.
+    /// Fixed names are unsafe here beyond the obvious collision: the cleanup
+    /// ignores a failed `fs::remove_dir_all`, and on Windows that cannot delete
+    /// a git object store whose files are read-only, so a half-deleted repo
+    /// would be silently reused by the next run.
     fn unique_fixture_root(name: &str) -> std::io::Result<PathBuf> {
         let dir = unique_fixture_path(name);
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         fs::create_dir_all(&dir)?;
         Ok(dir)
     }
@@ -889,7 +895,7 @@ mod tests {
     fn explicit_base_resolves_to_exact_commit_and_unknown_refs_fail_closed() -> std::io::Result<()>
     {
         let dir = unique_fixture_root("resolve-exact-base")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
         let expected = String::from_utf8(
@@ -909,7 +915,7 @@ mod tests {
         );
         assert_eq!(resolve_base_commit(&dir, Some("missing-base"), None), None);
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -920,7 +926,7 @@ mod tests {
         // We create a local repo, then set refs/remotes/origin/HEAD to point at
         // refs/remotes/origin/master, and create that ref.
         let dir = unique_fixture_root("resolve-base-origin-master")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "master")?;
         // Create the remote-tracking ref manually (simulates a fetched remote).
         Command::new("git")
@@ -943,7 +949,7 @@ mod tests {
             "expected origin/master resolution via symbolic-ref"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -952,7 +958,7 @@ mod tests {
         // #3940: the loader is the single authority for which base produced
         // the diff — explicit, resolved default, or none for diff files.
         let dir = unique_fixture_root("effective-base-reporting")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "master")?;
         run_git_checked(&dir, &["update-ref", "refs/remotes/origin/master", "HEAD"])?;
         run_git_checked(
@@ -988,7 +994,7 @@ mod tests {
             "a diff file ignores base, so none is reported"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -996,12 +1002,11 @@ mod tests {
     fn resolve_default_base_uses_local_main_when_no_remote() -> std::io::Result<()> {
         // Simulates a fresh git init with no remote; local branch is "main".
         let dir = unique_fixture_root("resolve-base-local-main")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
         // Confirm no remote refs exist.
         let refs_remote = dir.join(".git").join("refs").join("remotes");
-        let _ = fs::remove_dir_all(&refs_remote);
-
+        ignore_remove_dir_all(&refs_remote);
         let result = resolve_default_base(&dir, None);
         assert_eq!(
             result.as_deref(),
@@ -1009,7 +1014,7 @@ mod tests {
             "expected local main fallback when no remote"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -1018,7 +1023,7 @@ mod tests {
         // Simulates a bare repo with no commits and no remote refs. We create
         // a temp dir, run git init, but do NOT create any commits or refs.
         let dir = unique_fixture_root("resolve-base-no-base")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         fs::create_dir_all(&dir)?;
         Command::new("git").arg("init").current_dir(&dir).output()?;
         Command::new("git")
@@ -1046,7 +1051,7 @@ mod tests {
             "expected --format repo-exposure-md guidance in message, got: {err}"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -1057,7 +1062,7 @@ mod tests {
         // never the auto-resolve message (that would mean we silently
         // substituted it).
         let dir = unique_fixture_root("explicit-base-no-subst")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
         let result = load_diff(&dir, Some("nonexistent-branch-xyz"), None, None);
@@ -1071,7 +1076,7 @@ mod tests {
             "expected error naming the chosen ref, got: {err}"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -1084,7 +1089,7 @@ mod tests {
         // mistake the user did not make. The failure now names the ref, says the
         // analysis did not run, and gives the two real next actions.
         let dir = unique_fixture_root("explicit-base-named-failure")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
         let err = load_diff(&dir, Some("origin/main"), None, None)
@@ -1113,7 +1118,7 @@ mod tests {
             "raw git usage advice must not reach the user, got: {err}"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -1123,7 +1128,7 @@ mod tests {
         // analyzed exactly as before, so the new check cannot pass by rejecting
         // every explicit base.
         let dir = unique_fixture_root("explicit-base-resolvable")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
         fs::write(dir.join("src.rs"), "pub fn added() -> i32 { 1 }\n")?;
@@ -1136,7 +1141,7 @@ mod tests {
             "expected a resolvable explicit base to analyze the changed file, got: {loaded:?}"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -1144,7 +1149,7 @@ mod tests {
     fn worktree_load_reports_an_unresolvable_explicit_base_by_name() -> std::io::Result<()> {
         // `--worktree` shares the same base authority, so it shares the fix.
         let dir = unique_fixture_root("worktree-base-named-failure")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
         let err = load_worktree_diff(&dir, Some("origin/main"), None)
@@ -1154,7 +1159,7 @@ mod tests {
             "expected the named non-resolution state, got: {err}"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -1231,8 +1236,8 @@ mod tests {
             }
         }
 
-        let _ = fs::remove_dir_all(&bare);
-        let _ = fs::remove_dir_all(&gitfile);
+        ignore_remove_dir_all(&bare);
+        ignore_remove_dir_all(&gitfile);
         Ok(())
     }
 
@@ -1242,7 +1247,7 @@ mod tests {
         // same base the candidate search picks and the exact commit the
         // analysis will diff against.
         let dir = unique_fixture_root("resolve-default-base-commit")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
         let expected = String::from_utf8(
@@ -1266,7 +1271,7 @@ mod tests {
         // only branch is neither main nor master has no candidate in the
         // loader's default-base search order.
         let bare = unique_fixture_root("resolve-default-base-commit-empty")?;
-        let _ = fs::remove_dir_all(&bare);
+        ignore_remove_dir_all(&bare);
         init_git_repo(&bare, "trunk")?;
         let err = resolve_default_base_commit(&bare, None)
             .expect_err("expected a named error when no default base resolves");
@@ -1275,8 +1280,8 @@ mod tests {
             "expected the candidate-search error, got: {err}"
         );
 
-        let _ = fs::remove_dir_all(&dir);
-        let _ = fs::remove_dir_all(&bare);
+        ignore_remove_dir_all(&dir);
+        ignore_remove_dir_all(&bare);
         Ok(())
     }
 
@@ -1295,7 +1300,7 @@ mod tests {
     #[test]
     fn git_operation_probe_detects_rebase_merge_and_cherry_pick_markers() -> std::io::Result<()> {
         let dir = unique_fixture_root("git-operation-markers")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
         for (marker, expected) in [
@@ -1326,7 +1331,7 @@ mod tests {
             assert_eq!(git_operation_in_progress(&dir, None), None);
         }
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -1394,14 +1399,14 @@ mod tests {
             ));
         }
 
-        let _ = fs::remove_file(&file);
+        if let Ok(()) = fs::remove_file(&file) {}
         Ok(())
     }
 
     #[test]
     fn tracked_change_detector_ignores_untracked_only_files() -> std::io::Result<()> {
         let dir = unique_fixture_root("tracked-change-untracked-only")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
         fs::write(dir.join("scratch.rs"), "fn scratch() {}\n")?;
 
@@ -1411,14 +1416,14 @@ mod tests {
             ));
         }
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
     #[test]
     fn tracked_change_detector_detects_tracked_edit() -> std::io::Result<()> {
         let dir = unique_fixture_root("tracked-change-edit")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
         fs::write(dir.join("README"), "changed\n")?;
 
@@ -1428,14 +1433,14 @@ mod tests {
             ));
         }
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
     #[test]
     fn tracked_change_detector_ignores_parent_repo_changes_outside_root() -> std::io::Result<()> {
         let dir = unique_fixture_root("tracked-change-parent-dirty")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
         let nested = dir.join("nested-workspace");
         fs::create_dir_all(&nested)?;
@@ -1447,7 +1452,7 @@ mod tests {
             ));
         }
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -1457,7 +1462,7 @@ mod tests {
         // named, matchable `git_invocation_timeout` error — the string the
         // LSP refresh path converts into a committed limited snapshot.
         let dir = unique_fixture_root("load-diff-zero-deadline")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
         let result = load_diff(&dir, Some("HEAD"), None, Some(Duration::ZERO));
@@ -1467,7 +1472,7 @@ mod tests {
             "expected the named git_invocation_timeout error, got: {err}"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -1477,7 +1482,7 @@ mod tests {
         // candidate resolution instead of silently falling back to an
         // unbounded Git probe or fabricating a base.
         let dir = unique_fixture_root("load-diff-default-base-zero-deadline")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
         let result = load_diff(&dir, None, None, Some(Duration::ZERO));
@@ -1487,7 +1492,7 @@ mod tests {
             "expected fail-closed default-base error, got: {err}"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -1496,7 +1501,7 @@ mod tests {
         // #2303: probe-path timeouts degrade to the same fail-closed states
         // as an unresolvable ref — never to a fabricated base or commit.
         let dir = unique_fixture_root("probe-zero-deadline")?;
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
         assert_eq!(
@@ -1517,7 +1522,7 @@ mod tests {
             "unbounded probe must resolve HEAD in the same repo"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 }
