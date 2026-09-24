@@ -303,6 +303,34 @@ pub(super) fn agent_brief_owners_for_lines(
         .collect()
 }
 
+/// Innermost and enclosing owner attribution for changed lines from one
+/// index build. PR review placement uses the enclosing list to decide whether
+/// a seam owner's span overlaps the diff (RIPR-SPEC-0012). A resolution error
+/// yields empty lists, so owner-span overlap stays unknown and review
+/// placement falls back to summary-only instead of a guessed line.
+pub(super) fn agent_brief_owner_attribution_for_lines(
+    root: &Path,
+    lines: &[AgentBriefLine],
+) -> (Vec<AgentBriefChangedOwner>, Vec<AgentBriefChangedOwner>) {
+    let owner_inputs = lines
+        .iter()
+        .map(|line| (line.file.clone(), line.line))
+        .collect::<Vec<_>>();
+    let Ok(ownership) = analysis::changed_line_ownership_for_lines(root, &owner_inputs) else {
+        return (Vec::new(), Vec::new());
+    };
+    let project = |owners: Vec<analysis::ChangedLineOwner>| {
+        owners
+            .into_iter()
+            .map(|owner| AgentBriefChangedOwner::new(owner.file, owner.line, owner.owner))
+            .collect::<Vec<_>>()
+    };
+    (
+        project(ownership.owners),
+        project(ownership.enclosing_owners),
+    )
+}
+
 /// Confine an agent-brief `--files` entry to the workspace (#2100): strip
 /// the root prefix when present, then fail closed with a named error when
 /// the result still escapes — a `..` component, an absolute path outside

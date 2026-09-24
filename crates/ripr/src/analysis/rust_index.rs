@@ -186,6 +186,21 @@ pub fn find_owner_function<'a>(
         .max_by_key(|f| f.start_line)
 }
 
+/// Every indexed function whose line span contains `line`, outermost and
+/// nested alike. `find_owner_function` names only the innermost one; review
+/// placement needs the whole chain to know whether a seam owner's span
+/// overlaps a changed line that owner attribution bound to a nested function.
+pub(crate) fn find_enclosing_functions<'a>(
+    index: &'a RustIndex,
+    file: &Path,
+    line: usize,
+) -> impl Iterator<Item = &'a FunctionSummary> {
+    find_file_facts(index, file)
+        .into_iter()
+        .flat_map(|facts| facts.functions.iter())
+        .filter(move |f| f.start_line <= line && line <= f.end_line)
+}
+
 pub(crate) fn find_file_facts<'a>(index: &'a RustIndex, file: &Path) -> Option<&'a FileFacts> {
     if let Some(summary) = index.files.get(file) {
         return Some(summary);

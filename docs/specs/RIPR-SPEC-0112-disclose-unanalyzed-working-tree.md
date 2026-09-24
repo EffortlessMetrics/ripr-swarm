@@ -9,6 +9,8 @@ Created: 2026-06-15
 Linked issues:
 
 - #1291 (check --base silently ignores uncommitted working-tree changes)
+- #3888 (default-base amendment: bare `ripr check` has the same gap, and the
+  note named remedies that do not work)
 
 Linked PRs:
 
@@ -36,6 +38,30 @@ Policy impact:
 - No new crates, binaries, dependencies, parsers, runtime executors, or LSP
   servers introduced by this spec.
 
+## Amendment (#3888, default base)
+
+The original problem statement below assumed that `ripr check` without
+`--base` analyzes the working tree. It does not: default-base resolution
+(RIPR-SPEC-0084) runs the same committed-history `git diff <base>...HEAD`, so
+an uncommitted tracked edit is excluded there too, silently. The original
+notes also named two remedies that do not work. Staging leaves a `--base` diff
+unchanged, and bare `ripr check` excludes the same edit. The working remedy is
+`--worktree` (RIPR-SPEC-0116).
+
+This amendment:
+
+- fires the disclosure for every committed-history diff, meaning an explicit
+  `--base` or the resolved default base;
+- keeps it off for `--diff`, `--worktree`, `--candidate-tree`, and repo-scope
+  formats, none of which is a committed-history diff of the live repository;
+- replaces both human notes with one note that names `--worktree`;
+- drops the generic no-scope note when the worktree note fires, because the
+  no-scope note recommends `--base origin/main`, which excludes the same edit.
+  The JSON `no_scope_provided` disclosure is unchanged.
+
+The sections below are updated to match; the original wording is in git
+history.
+
 ## Problem
 
 When a user runs `ripr check --base <rev>`, the tool diffs committed history
@@ -54,9 +80,9 @@ Exit code is 0. There are 0 findings. The result looks clean — but the develop
 actual uncommitted edit was never analyzed. This is the cardinal "silence reads as
 clean" honesty failure for the `--base` mode.
 
-`ripr check` (no `--base`) correctly analyzes the working tree by passing the
-diff through git's staging/unstaged diff, so that path is fine and unchanged.
-Only the `--base` path has this gap.
+The #3888 amendment corrects the original claim that `ripr check` (no
+`--base`) analyzes the working tree: the resolved default base takes the same
+committed-history path and has the same gap.
 
 ## Behavior
 
@@ -65,9 +91,11 @@ Only the `--base` path has this gap.
 The disclosure fires when ALL of the following are true:
 
 1. The CLI `check` command was invoked.
-2. `--base <rev>` was explicitly provided by the user.
-3. `--diff <file>` was NOT provided (file-based diff is out-of-scope for
-   working-tree disclosure; only the live-repo `--base` path has the gap).
+2. The analyzed diff is committed history: `--base <rev>` was provided, or no
+   scope flag was provided and the default base was resolved.
+3. None of `--diff <file>`, `--worktree`, or `--candidate-tree` was provided,
+   and the format is not repo-scope (none of those is a committed-history
+   diff of the live repository).
 4. The working tree has at least one uncommitted change to a tracked source
    file, as detected by `git status --porcelain` returning non-empty output.
 
@@ -80,8 +108,9 @@ cases.
 The guidance does NOT fire when:
 
 - `ripr check --diff <file>` was given (file-based diff; not a live worktree).
-- `ripr check` was given with no `--base` (analyzes the worktree via the
-  default base resolution path — that path is already correct and must not change).
+- `ripr check --worktree` was given (the edits are in the analyzed diff).
+- `ripr check --candidate-tree <tree>` was given (exact trees; no live worktree).
+- A repo-scope format was requested (it reads the live files).
 - The worktree is clean (nothing uncommitted) — a clean result is honest.
 - `git status --porcelain` cannot be run (fail-closed: no fabricated disclosure).
 
@@ -101,17 +130,17 @@ When `unanalyzed_working_tree` is true, the following note is appended:
 In the empty-findings branch (after "No diff-derived static exposure probes found."):
 
 ```
-Note: uncommitted changes to tracked source were not analyzed. `--base` compares
-committed history only — commit or stage these changes and re-run, or analyze a
-committed branch with `ripr check --base origin/main`.
+Note: uncommitted changes to tracked source were not analyzed. `ripr check`
+compares committed history only; add `--worktree` to include staged and
+unstaged tracked edits (for example `ripr check --worktree`).
 ```
 
 In the non-empty-findings branch (after the all-no-path-disclosure):
 
 ```
-Note: uncommitted changes to tracked source were not analyzed. `--base` compares
-committed history only — commit or stage these changes and re-run, or analyze a
-committed branch with `ripr check --base origin/main`.
+Note: uncommitted changes to tracked source were not analyzed. `ripr check`
+compares committed history only; add `--worktree` to include staged and
+unstaged tracked edits (for example `ripr check --worktree`).
 ```
 
 The note does not change the exit code or pass/fail status.
@@ -134,8 +163,8 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
   means the committed history had no probes AND uncommitted changes were excluded.
 - This spec does NOT change what the analyzer classifies.
 - This spec does NOT analyze the uncommitted changes under `--base` mode.
-- This spec does NOT fire for `ripr check` (no `--base`) — that path already
-  analyzes the worktree correctly.
+- This spec does NOT change which diff `ripr check` analyzes, with or without
+  `--base`; it only discloses what the committed-history diff excluded.
 
 ## Non-Goals
 
@@ -143,7 +172,8 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
 - Auto-staging or auto-analyzing uncommitted changes under `--base`.
 - Changing behavior when `--diff <file>` is used.
 - Runtime mutation testing, coverage measurement, or correctness claims.
-- Changing the `ripr check` (no `--base`) path in any way.
+- Changing the diff source of `ripr check` (no `--base`); only its disclosure
+  changes (#3888).
 
 ## Acceptance Examples
 
@@ -155,8 +185,10 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
 3. **Committed diff with `--base`**: `ripr check --base HEAD~1` with committed
    changes (real findings) and a CLEAN worktree → no disclosure; result is
    honest.
-4. **Worktree mode (no `--base`)**: `ripr check` (no `--base`) → no disclosure;
-   this path already analyzes the worktree correctly and MUST NOT change.
+4. **Default base (#3888)**: `ripr check` (no `--base`) with an uncommitted
+   `.rs` edit → human output includes the Note naming `--worktree`, without the
+   generic no-scope note; JSON includes `"unanalyzed_working_tree": true`.
+   With a clean tracked worktree (untracked files only) → no disclosure.
 5. **File diff mode**: `ripr check --diff change.diff` → no disclosure; file
    diff is not a live worktree query.
 
@@ -169,8 +201,8 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
 
 | Input | Required? | Purpose |
 | --- | --- | --- |
-| CLI flag `--base` presence | yes | Determines `base_explicitly_provided` signal |
-| CLI flag `--diff` absence | yes | Ensures we are in live-worktree mode, not file mode |
+| CLI flags `--diff`, `--worktree`, `--candidate-tree` absence | yes | Ensures the analyzed diff is committed history of the live repository |
+| Output format | yes | Repo-scope formats read live files and never disclose |
 | `working_tree_has_tracked_changes(&root)` | yes | Detects uncommitted changes |
 
 ## Outputs
@@ -184,6 +216,8 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
 
 - `crates/ripr/tests/cli_smoke.rs::check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure`
 - `crates/ripr/tests/cli_smoke.rs::check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure`
+- `crates/ripr/tests/cli_smoke.rs::check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure`
+- `crates/ripr/tests/cli_smoke.rs::check_default_base_with_clean_worktree_keeps_no_scope_note_only`
 
 ## Implementation Mapping
 
@@ -191,7 +225,7 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
 |---|---|
 | `CheckOutput::unanalyzed_working_tree` field | `crates/ripr/src/app.rs` |
 | `working_tree_has_tracked_changes` fn | `crates/ripr/src/analysis/diff/load.rs` |
-| SPEC-0112 disclosure block | `crates/ripr/src/cli/commands.rs` |
+| SPEC-0112 disclosure block | `crates/ripr/src/cli/commands/check.rs` |
 | Human rendering | `crates/ripr/src/output/human.rs` |
 | JSON field | `crates/ripr/src/output/json/report.rs` |
 
