@@ -31,6 +31,14 @@ ripr" in CI pipelines.
 any check fails (including missing language runtimes that are enabled in
 the effective configuration).
 
+The `Cargo.toml`, `cargo`, and `rustc` checks apply only when Rust is in
+scope for the root: Rust is enabled and either Rust markers (`Cargo.toml` or
+`.rs` files) are detected or no other language is detected or enabled. A
+Python-only or TypeScript-only root reports those checks as `skipped` with the
+reason and does not fail on them. A Rust root, a root with Rust sources but no
+`Cargo.toml`, and an empty root under the Rust-only default still fail on a
+missing manifest or toolchain.
+
 ## CI integration
 
 In generated GitHub Actions workflows, ripr preserves the exit code:

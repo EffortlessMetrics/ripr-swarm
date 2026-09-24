@@ -7,15 +7,17 @@
 
 use crate::agent::loop_commands::{
     WORKFLOW_AGENT_RECEIPT_ARTIFACT, WORKFLOW_AGENT_VERIFY_ARTIFACT, agent_receipt_command,
+    shell_arg,
 };
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::CanonicalGapIdentity;
 use crate::analysis::repair_route::{
-    RepairRouteState, RepairTargetSelection, repair_route_readiness,
+    RepairRouteState, RepairTargetSelection, repair_packet_eligibility, repair_route_readiness,
 };
 // The cross-language producer facts now live in `analysis::repair_route`
 // (the repair-packet eligibility authority). Re-exported here so existing
 // output/lsp callers keep compiling until their migration slice lands.
+use crate::analysis::is_test_surface_path;
 pub(crate) use crate::analysis::repair_route::{
     cross_language_oracle_visibility_unresolved, cross_language_test_target_unresolved,
 };
@@ -110,6 +112,10 @@ pub(crate) struct EvidenceRecordCanonicalItem {
     pub(crate) related_test: Option<EvidenceRecordAlignmentRelatedTest>,
     pub(crate) verify_command: Option<String>,
     pub(crate) receipt_command: Option<String>,
+    /// The documented start of the repair transaction (#3906), present only
+    /// when the gap is actionable and the seam passes the fail-closed
+    /// repair-packet flip. Consumers carry it; none recompute it.
+    pub(crate) repair_command: Option<String>,
     pub(crate) verify_command_spec: Option<CommandSpec>,
     pub(crate) receipt_command_spec: Option<CommandSpec>,
     pub(crate) confidence: EvidenceRecordAlignmentConfidence,
@@ -588,6 +594,7 @@ fn canonical_item_for(
             }),
         verify_command: recommendation.verify_command.clone(),
         receipt_command: canonical_receipt_command_for(entry, gap_state),
+        repair_command: canonical_repair_command_for(entry, gap_state),
         verify_command_spec: recommendation
             .verify_command
             .as_deref()
@@ -877,6 +884,51 @@ fn recommendation_for(
         assertion_shape,
         verify_command,
     }
+}
+
+/// `ripr agent repair --root . --seam-id <id> --phase before` for an
+/// actionable gap whose seam passes `repair_packet_eligibility`, else `None`.
+/// Actionability alone is not enough: an actionable gap can still fail the
+/// flip (for example, an unresolved cross-language oracle), and `agent repair`
+/// would refuse it. A wrong actionable repair signal is worse than falling
+/// back to the verify and receipt commands (#3906).
+///
+/// Built here rather than in `agent::loop_commands`, whose file xtask
+/// includes into its own tree: a template only output calls reads as dead
+/// code there.
+pub(crate) fn canonical_repair_command_for(
+    entry: &ClassifiedSeam,
+    gap_state: &str,
+) -> Option<String> {
+    if gap_state != "actionable" {
+        return None;
+    }
+    repair_start_command_for(entry)
+}
+
+/// The `agent repair ... --phase before` command for a seam, or `None` when
+/// the repair transaction would refuse it. Every surface that offers the
+/// repair start builds it here.
+///
+/// Two conditions, both fail-closed:
+/// - the repair-packet flip (`repair_packet_eligibility(..).eligible()`);
+/// - the edit target the packet will name is a test surface. The
+///   transaction refuses any other target before it builds an edit cage
+///   (`app::repair_attempt`, "is not a test surface"), so a seam whose only
+///   test lives in an inline `#[cfg(test)]` module of a source file passes the
+///   flip but cannot start a repair. Offering it would print a command that
+///   fails (#3906).
+pub(crate) fn repair_start_command_for(entry: &ClassifiedSeam) -> Option<String> {
+    if !repair_packet_eligibility(entry).eligible() {
+        return None;
+    }
+    if !is_test_surface_path(&recommended_test_for(entry).file) {
+        return None;
+    }
+    Some(format!(
+        "ripr agent repair --root . --seam-id {} --phase before",
+        shell_arg(entry.seam.id().as_str())
+    ))
 }
 
 pub(crate) fn canonical_receipt_command_for(
@@ -1453,6 +1505,7 @@ fn canonical_item_json(item: &EvidenceRecordCanonicalItem) -> Value {
             .map_or(Value::Null, alignment_related_test_json),
         "verify_command": item.verify_command.as_deref(),
         "receipt_command": item.receipt_command.as_deref(),
+        "repair_command": item.repair_command.as_deref(),
         "command_specs": {
             "verify": item.verify_command_spec.as_ref(),
             "receipt": item.receipt_command_spec.as_ref(),
@@ -2320,6 +2373,102 @@ mod tests {
                 RepairRouteState::PolicyExcluded
             );
         }
+    }
+
+    /// #3906: the canonical repair card names `agent repair` only for an
+    /// actionable seam past the fail-closed repair-packet flip. The second
+    /// entry keeps its seam id but adds a TypeScript observer beside the Rust
+    /// test, so the flip refuses it (unresolved oracle path) and the item
+    /// becomes a static limitation: a known seam with a non-actionable route
+    /// gets no repair start and no verify or receipt command.
+    #[test]
+    fn canonical_item_names_the_repair_start_only_past_the_repair_packet_flip() -> Result<(), String>
+    {
+        let eligible = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        let mut ineligible = eligible.clone();
+        let mut observer = ineligible
+            .evidence
+            .related_tests
+            .first()
+            .cloned()
+            .ok_or("fixture must have a related test")?;
+        observer.file = std::path::PathBuf::from("tests/pricing.test.ts");
+        ineligible.evidence.related_tests.push(observer);
+
+        for (entry, want) in [(eligible, true), (ineligible, false)] {
+            if repair_packet_eligibility(&entry).eligible() != want {
+                return Err(format!("fixture eligibility must be {want}"));
+            }
+            let json = evidence_record_json_value(&evidence_record_for(&entry, None));
+            let item = &json["canonical_item"];
+            let expected_state = if want {
+                "actionable"
+            } else {
+                "static_limitation"
+            };
+            if item["gap_state"] != expected_state {
+                return Err(format!(
+                    "fixture gap_state must be {expected_state}: {item}"
+                ));
+            }
+            let expected = want.then(|| {
+                format!(
+                    "ripr agent repair --root . --seam-id {} --phase before",
+                    entry.seam.id().as_str()
+                )
+            });
+            if item["repair_command"] != json!(expected) {
+                return Err(format!(
+                    "repair_command {} for eligible={want}",
+                    item["repair_command"]
+                ));
+            }
+            // Today actionability already refuses what the flip refuses, so
+            // the record above cannot tell the two checks apart. Hand the
+            // builder an actionable state directly: the flip alone must still
+            // withhold the command if actionability ever drifts wider.
+            if canonical_repair_command_for(&entry, "actionable").is_some() != want {
+                return Err(format!(
+                    "builder must follow the flip, not gap_state, for eligible={want}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A seam whose related test lives in an inline `#[cfg(test)]` module of
+    /// the source file passes the repair-packet flip, but `agent repair`
+    /// refuses a non-test-surface edit target before it builds a cage. The
+    /// repair start must not be offered for it; the same seam with its test
+    /// under `tests/` keeps it (#3906).
+    #[test]
+    fn repair_start_requires_a_test_surface_edit_target() -> Result<(), String> {
+        let under_tests = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        let mut inline = under_tests.clone();
+        for test in &mut inline.evidence.related_tests {
+            test.file = std::path::PathBuf::from("src/lib.rs");
+        }
+
+        for (entry, want) in [(under_tests, true), (inline, false)] {
+            if !repair_packet_eligibility(&entry).eligible() {
+                return Err(format!("fixture must pass the flip (want={want})"));
+            }
+            let target = recommended_test_for(&entry).file;
+            if is_test_surface_path(&target) != want {
+                return Err(format!("fixture edit target `{target}` for want={want}"));
+            }
+            if repair_start_command_for(&entry).is_some() != want {
+                return Err(format!("repair start for edit target `{target}`"));
+            }
+            let json = evidence_record_json_value(&evidence_record_for(&entry, None));
+            if json["canonical_item"]["repair_command"].is_null() == want {
+                return Err(format!(
+                    "canonical_item.repair_command for edit target `{target}`: {}",
+                    json["canonical_item"]["repair_command"]
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[test]

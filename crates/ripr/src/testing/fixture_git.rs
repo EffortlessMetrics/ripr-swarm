@@ -223,6 +223,63 @@ fn fixture_head(root: &Path, deadline: Duration) -> Result<Option<String>, Strin
     ))
 }
 
+/// Remove a real-git fixture tree, clearing the Windows readonly attribute
+/// git sets on object files first (shared by real-git regression tests so
+/// the cleanup helper is not hand-copied per module). A missing tree is
+/// not an error; any other failure names the path.
+pub(crate) fn remove_fixture_tree(root: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    clear_fixture_readonly(root)?;
+    match std::fs::remove_dir_all(root) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "remove fixture tree {} failed: {error}",
+            root.display()
+        )),
+    }
+}
+
+#[cfg(windows)]
+fn clear_fixture_readonly(root: &Path) -> Result<(), String> {
+    if !root.exists() {
+        return Ok(());
+    }
+    let entries = std::fs::read_dir(root)
+        .map_err(|error| format!("read {} failed: {error}", root.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("read fixture entry failed: {error}"))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("stat {} failed: {error}", path.display()))?;
+        if file_type.is_dir() {
+            clear_fixture_readonly(&path)?;
+            continue;
+        }
+        let mut permissions = entry
+            .metadata()
+            .map_err(|error| format!("stat {} failed: {error}", path.display()))?
+            .permissions();
+        if !permissions.readonly() {
+            continue;
+        }
+        // Clearing FILE_ATTRIBUTE_READONLY is the only way to remove
+        // the fixture tree on Windows; the Unix-mode lint does not
+        // apply to this cfg-gated helper.
+        #[expect(
+            clippy::permissions_set_readonly_false,
+            reason = "clearing the Windows readonly attribute before fixture cleanup"
+        )]
+        {
+            permissions.set_readonly(false);
+            std::fs::set_permissions(&path, permissions)
+                .map_err(|error| format!("clear readonly on {} failed: {error}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

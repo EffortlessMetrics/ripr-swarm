@@ -10,7 +10,7 @@
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:87cb6e5bc6b4749c0bbfdbb85377b295a1515790a66959e8d656db8557dd05dc",
+    "content_sha256": "sha256:2918fc4d123aa7753d1c60237d27411db0ada9931548b7061ebf6a6fdc9a3543",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
@@ -194,6 +194,7 @@
             "name": "below_threshold_has_no_discount",
             "reason": "direct_owner_call"
           },
+          "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
           "repair_route": {
             "repair_kind": "add_boundary_assertion",
             "suggested_assertion": "assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)",
