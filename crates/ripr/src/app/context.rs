@@ -124,10 +124,12 @@ mod tests {
             1,
         );
 
+        // #3952: a missing root must fail as a missing root, not as an
+        // unresolvable default base.
         assert!(
             result
                 .err()
-                .is_some_and(|err| err.contains("failed to run git diff"))
+                .is_some_and(|err| err.contains("does not exist or is not a directory"))
         );
     }
 }

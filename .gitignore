@@ -1,6 +1,11 @@
 /target
 /a.out
 fixtures/**/target/
+# Exception: the report-packet-index corpus ships real packet trees whose
+# layout is the one `ripr reports index` documents, so the goldens show the
+# paths a user actually sees. A negation must name the excluded directory
+# itself; git cannot re-include a file under an excluded directory.
+!fixtures/boundary_gap/expected/report-packet-index/*/packet/target/
 /xtask/target/
 .ripr/release/
 *.profraw

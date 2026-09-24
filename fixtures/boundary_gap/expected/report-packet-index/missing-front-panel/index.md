@@ -10,12 +10,16 @@ Packet summary:
 - Warnings: 1
 - Failures: 0
 
+Start here:
+- PR review front panel: missing
+  - next: `ripr pr-review front-panel --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md`
+
 PR review story:
-- first useful action: target/ripr/reports/first-useful-action.md
-- review comments: target/ripr/review/comments.md
+- First useful action: target/ripr/reports/first-useful-action.md
+- Review guidance: target/ripr/review/comments.md
 
 Repair and agent handoff:
-- assistant proof: target/ripr/reports/test-oracle-assistant-proof.md
+- Assistant proof: target/ripr/reports/test-oracle-assistant-proof.md
 
 Missing expected:
 - PR review front panel: not_generated

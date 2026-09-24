@@ -50,8 +50,10 @@ target/ripr/pilot/pilot-summary.md
 ```
 
 The pilot summary is the first screen. It should name the top actionable gap,
-why it matters, the related test to inspect when available, and the command to
-capture after evidence.
+why it matters, and the related test to inspect when available. When the gap is
+eligible for a repair transaction, it ends with the `ripr agent repair ...
+--phase before` command for that seam (step 5). Otherwise it ends with the
+snapshot commands in step 7.
 
 If the pilot reports `partial`, use the retry command it prints. Do not guess
 at cache or timeout settings.
@@ -203,11 +205,15 @@ movement is not a replacement for the test suite.
 
 ## 7. Verify Movement
 
-Capture the after snapshot with the command from the pilot, first-action report,
-or agent packet. The common shape is:
+If you started a repair attempt in step 5, run the `--attempt ... --phase after`
+command its before phase printed. It captures the after snapshot, compares it,
+and writes the verify and receipt artifacts; steps 7 and 8 need nothing else.
+
+Without a repair attempt, capture the after snapshot with the command from the
+pilot, first-action report, or agent packet. The common shape is:
 
 ```bash
-ripr check --root . --mode ready --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json
+ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json
 ```
 
 Then compare before and after:
