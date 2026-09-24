@@ -175,7 +175,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// through a pattern comment stops confirming the changed arm. Old
 /// classified entries would serve comment-literal over-credits for warm
 /// workspaces.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.13";
+/// `1.13` -> `1.14`: a predicate boundary that names a same-file integer
+/// `const` (`amount >= DISCOUNT_THRESHOLD`) now matches observed values
+/// against the constant's value and accepts a test argument naming the
+/// constant; an undeclared or ambiguous constant routes to the
+/// unresolved-operand limitation. Old classified entries would keep
+/// serving the unclosable `weakly_gripped` gap for warm workspaces.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.14";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -218,7 +224,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.13";
 /// `0.18` -> `0.19`: match-arm pattern literals exclude quoted comment
 /// text (#3766) — same semantic transition as the outer classified-seam
 /// cache.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.19";
+/// `0.19` -> `0.20`: named-constant boundary resolution — same semantic
+/// transition as the outer classified-seam cache.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.20";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -267,7 +275,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.19";
 /// `0.19` -> `0.20`: match-arm pattern literals exclude quoted comment
 /// text (#3766) — same semantic transition as the outer classified-seam
 /// cache.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.20";
+/// `0.20` -> `0.21`: named-constant boundary resolution — same semantic
+/// transition as the outer classified-seam cache.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.21";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -2684,15 +2694,20 @@ pub(crate) fn workspace_named_file_identities(root: &Path) -> (Option<String>, O
 /// whole identity to `None` when any collected path is still absolute after
 /// collection — a `None` renders into the caller's canonical string as a
 /// stable, root-independent placeholder, never as checkout-instance evidence.
+///
+/// `lockfile_scope` narrows the collected lockfiles before they are hashed
+/// (the artifact identity keeps only Git-tracked lockfiles); manifests are
+/// always hashed in full.
 pub(crate) fn workspace_named_file_identities_relative(
     root: &Path,
+    lockfile_scope: impl FnOnce(Vec<(PathBuf, Vec<u8>)>) -> Vec<(PathBuf, Vec<u8>)>,
 ) -> (Option<String>, Option<String>) {
     let mut files = [Vec::new(), Vec::new()];
     collect_named_workspace_files_by_name(root, root, &mut files);
     let [manifest_files, lockfile_files] = files;
     (
         workspace_file_identity_portable(manifest_files),
-        workspace_file_identity_portable(lockfile_files),
+        workspace_file_identity_portable(lockfile_scope(lockfile_files)),
     )
 }
 
@@ -2986,7 +3001,10 @@ mod tests {
         // 1.12 -> 1.13: match-arm pattern literals exclude quoted comment
         // text (#3766), so a sibling assertion observed only through a
         // pattern comment stops confirming the changed arm.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.13");
+        // 1.13 -> 1.14: a predicate boundary naming a same-file integer
+        // `const` resolves through the shared named-constant lookup, so a
+        // warm pre-bump hit would keep an unclosable boundary gap open.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.14");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -2996,8 +3014,10 @@ mod tests {
         // 0.19 (sharded) / 0.20 (compact): the #3766 comment-literal
         // exclusion — same semantic transition as the outer
         // classified-seam cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.19");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.20");
+        // 0.20 (sharded) / 0.21 (compact): named-constant boundary
+        // resolution — same semantic transition as the outer cache.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.20");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.21");
     }
 
     #[test]

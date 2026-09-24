@@ -1,5 +1,7 @@
 use super::super::rust_index::{TestSummary, extract_literals};
-use super::activation::{has_observed_boundary_equality, owner_input_values};
+use super::activation::{
+    boundary_constant_operand_name, has_observed_boundary_equality, owner_input_values,
+};
 use crate::domain::*;
 
 pub(in crate::analysis) fn infection_evidence(
@@ -63,7 +65,7 @@ pub(in crate::analysis) fn infection_evidence(
                 StageEvidence::new(
                     StageState::Unknown,
                     Confidence::Low,
-                    "Predicate changed, but no literal boundary was visible in the changed expression",
+                    no_literal_boundary_summary(&probe.expression),
                 )
             } else if !boundary_input_literals.is_empty() {
                 StageEvidence::new(
@@ -130,6 +132,21 @@ pub(in crate::analysis) fn infection_evidence(
     }
 }
 
+/// Why a changed predicate with no literal boundary stays unknown. A
+/// boundary that names a constant says so: ripr could not see that
+/// constant's value in the owner's file (or it is declared more than once),
+/// and no related test passes the constant itself, so it cannot tell
+/// whether any test input sits on the boundary.
+fn no_literal_boundary_summary(expression: &str) -> String {
+    match boundary_constant_operand_name(expression) {
+        Some(name) => format!(
+            "Predicate compares against constant {name}; ripr cannot see its value statically or match it to a related test input (a same-file integer const, a matching literal input, or an argument naming {name} would resolve it), so activation/infection is unknown"
+        ),
+        None => "Predicate changed, but no literal boundary was visible in the changed expression"
+            .to_string(),
+    }
+}
+
 /// Returns true iff the expression is an exact wildcard discard that provably
 /// cannot infect any sink.  Matches the `let` + `_` + `:`/`=` token grammar
 /// across any legal whitespace (#3233) but NOT `let _name` — those bindings
@@ -172,6 +189,28 @@ mod tests {
         assert_eq!(
             evidence.summary,
             "Detected test input literal matching changed boundary: 4e-2"
+        );
+    }
+
+    #[test]
+    fn predicate_infection_names_an_unmatched_constant_boundary() {
+        let constant = probe(ProbeFamily::Predicate, "amount >= DISCOUNT_THRESHOLD");
+        let test = test_with_literals(&["10000"]);
+        let evidence = infection_evidence(&constant, &[&test], &ActivationEvidence::default());
+
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert!(
+            evidence
+                .summary
+                .starts_with("Predicate compares against constant DISCOUNT_THRESHOLD; ripr cannot see its value statically"),
+            "{}",
+            evidence.summary
+        );
+
+        let parameter = probe(ProbeFamily::Predicate, "amount >= threshold");
+        assert_eq!(
+            infection_evidence(&parameter, &[&test], &ActivationEvidence::default()).summary,
+            "Predicate changed, but no literal boundary was visible in the changed expression"
         );
     }
 

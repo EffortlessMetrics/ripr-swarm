@@ -527,6 +527,33 @@ fn item_defines_name(line: &str, name: &str) -> bool {
     false
 }
 
+/// Drop leading `#[...]` attribute groups written on the same line as an
+/// item (`#[cfg(test)] const LIMIT: u32 = 5;`), so the item keyword is seen.
+fn strip_leading_attributes(mut line: &str) -> &str {
+    while let Some(rest) = line.strip_prefix("#[") {
+        let mut depth = 1usize;
+        let mut end = None;
+        for (i, ch) in rest.char_indices() {
+            match ch {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = end else {
+            return line;
+        };
+        line = rest[end + 1..].trim_start();
+    }
+    line
+}
+
 fn strip_visibility_prefix(line: &str) -> &str {
     let Some(rest) = line.strip_prefix("pub") else {
         return line;
@@ -598,6 +625,137 @@ pub(crate) fn test_let_bound_literal(body: &str, ident: &str) -> Option<String> 
         return None;
     }
     extract_let_bindings(body).remove(ident)
+}
+
+/// What one source file says about a named constant, for consumers that
+/// compare a changed boundary against a `const` operand
+/// (`amount >= DISCOUNT_THRESHOLD`). Reuses the same-file declaration scan
+/// behind [`ValueEnvFacts`]'s module constants, and fails closed where that
+/// scan is permissive: a name declared more than once in the file (for
+/// example in two inline modules) is ambiguous, and only an integer literal
+/// counts as a visible value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum NamedConstant {
+    /// Declared exactly once as `[pub[(..)]] const NAME: T = <integer>;`.
+    Value(String),
+    /// Declared exactly once, but its value is not a plain integer literal
+    /// (a computed initializer, a typed suffix, a string, or a `static mut`).
+    Opaque,
+    /// Declared more than once in the file.
+    Ambiguous,
+    /// Not declared in the file.
+    Undeclared,
+}
+
+/// Look up `name` among the file's `const`/`static` declarations.
+pub(crate) fn named_constant(file_source: &str, name: &str) -> NamedConstant {
+    if !is_simple_identifier(name) {
+        return NamedConstant::Undeclared;
+    }
+    let cleaned = strip_comments_and_strings(file_source);
+    let mut declarations = 0usize;
+    let mut mutable = false;
+    for line in cleaned.lines() {
+        let item = strip_visibility_prefix(strip_leading_attributes(line.trim()));
+        let (rest, is_mut) = if let Some(rest) = item.strip_prefix("const ") {
+            (rest, false)
+        } else if let Some(rest) = item.strip_prefix("static mut ") {
+            (rest, true)
+        } else if let Some(rest) = item.strip_prefix("static ") {
+            (rest, false)
+        } else {
+            continue;
+        };
+        let declared = rest.split([':', '=']).next().unwrap_or(rest).trim();
+        if declared == name {
+            declarations += 1;
+            mutable |= is_mut;
+        }
+    }
+    match declarations {
+        0 => NamedConstant::Undeclared,
+        1 if !mutable => extract_module_constants(file_source)
+            .remove(name)
+            .filter(|value| is_integer_literal(value))
+            .map_or(NamedConstant::Opaque, NamedConstant::Value),
+        1 => NamedConstant::Opaque,
+        _ => NamedConstant::Ambiguous,
+    }
+}
+
+impl NamedConstant {
+    /// The constant's visible integer value.
+    pub(crate) fn value(&self) -> Option<&str> {
+        match self {
+            NamedConstant::Value(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// A test argument that names the constant is the boundary value by
+    /// identity only when the file declares that constant exactly once.
+    pub(crate) fn is_declared_once(&self) -> bool {
+        matches!(self, NamedConstant::Value(_) | NamedConstant::Opaque)
+    }
+
+    /// Why the value is not statically visible, for honest evidence text.
+    pub(crate) fn limitation(&self) -> &'static str {
+        match self {
+            NamedConstant::Value(_) => "its literal value is visible",
+            NamedConstant::Opaque => "its initializer is not a plain integer literal",
+            NamedConstant::Ambiguous => "the owner's file declares it more than once",
+            NamedConstant::Undeclared => "it is not declared in the owner's file",
+        }
+    }
+}
+
+/// True when a test outside the owner's file may name its own constant
+/// rather than the owner's: its file declares the same name, or its source
+/// is not available to check. A test in the owner's own file needs no check
+/// here, because a second declaration there already makes the owner lookup
+/// [`NamedConstant::Ambiguous`].
+pub(crate) fn test_file_may_shadow_constant(
+    owner_file: &std::path::Path,
+    test_file: &std::path::Path,
+    test_file_source: Option<&str>,
+    name: &str,
+) -> bool {
+    test_file != owner_file
+        && test_file_source
+            .is_none_or(|source| named_constant(source, name) != NamedConstant::Undeclared)
+}
+
+/// The constant a comparison operand names, when the operand is
+/// constant-shaped: an upper-case identifier (`DISCOUNT_THRESHOLD`),
+/// optionally `Self::` qualified. Anything else is not a named constant.
+pub(crate) fn constant_operand_name(operand: &str) -> Option<&str> {
+    let operand = operand.trim();
+    let name = operand.strip_prefix("Self::").unwrap_or(operand);
+    (name.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_'))
+    .then_some(name)
+}
+
+/// True when one call argument names the constant `name` itself, bare or
+/// through a plain path (`DISCOUNT_THRESHOLD`, `&DISCOUNT_THRESHOLD`,
+/// `pricing::DISCOUNT_THRESHOLD`).
+pub(crate) fn argument_names_constant(argument: &str, name: &str) -> bool {
+    let argument = argument.trim().trim_start_matches('&').trim();
+    if argument == name {
+        return true;
+    }
+    argument
+        .strip_suffix(name)
+        .and_then(|path| path.strip_suffix("::"))
+        .is_some_and(|path| !path.is_empty() && path.split("::").all(is_simple_identifier))
+}
+
+fn is_integer_literal(value: &str) -> bool {
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    digits.starts_with(|ch: char| ch.is_ascii_digit())
+        && digits.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
 }
 
 /// Position of the first top-level `;` in `text`, or `None` if no
