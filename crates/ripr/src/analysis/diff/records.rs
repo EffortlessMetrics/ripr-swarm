@@ -4,9 +4,11 @@
 //! Single owner for path-record decoding shared by the product and xtask
 //! routes (#4006). Callers must pass `-z` output: NUL-separated records with
 //! no C-quoting. Decoding is strict and lossless — non-UTF-8 records fail
-//! instead of collapsing through lossy conversion, and empty or truncated
-//! records fail instead of vanishing. The decoder applies no confinement or
-//! normalization policy: consumers own what a decoded path may reference.
+//! instead of collapsing through lossy conversion. Empty records and status
+//! records with missing path fields fail instead of vanishing; a missing
+//! trailing NUL after the final non-empty field is tolerated. The decoder
+//! applies no confinement or normalization policy: consumers own what a
+//! decoded path may reference.
 //!
 //! Wire shapes (verified against real `git diff` output):
 //!
@@ -47,6 +49,11 @@ pub enum PathRecordError {
     EmptyPath { record: usize },
     /// A rename/copy record is missing its paired path.
     TruncatedRecord { record: usize, status: String },
+    /// A status field is not a Git status token. Callers must pass
+    /// `--name-status -z` output: feeding a framed path inventory (such as
+    /// `--name-only -z` bytes) fails here instead of decoding `Ok` with a
+    /// path misattributed as a status.
+    InvalidStatus { record: usize, status: String },
 }
 
 impl std::fmt::Display for PathRecordError {
@@ -62,6 +69,10 @@ impl std::fmt::Display for PathRecordError {
             Self::TruncatedRecord { record, status } => write!(
                 f,
                 "path record {record} with status {status:?} is missing its paired path"
+            ),
+            Self::InvalidStatus { record, status } => write!(
+                f,
+                "path record {record} has invalid status token {status:?}"
             ),
         }
     }
@@ -101,10 +112,14 @@ pub fn parse_git_status_records(output: &[u8]) -> Result<Vec<StatusRecord>, Path
             return Err(PathRecordError::EmptyPath { record });
         }
         let status = decode_record_str(status_field, record)?.to_string();
+        let kind = status_kind(&status).ok_or_else(|| PathRecordError::InvalidStatus {
+            record,
+            status: status.clone(),
+        })?;
         // A rename/copy record is `STATUS\0old\0new\0`: the paired target
         // follows as the next NUL-delimited field. A missing pair fails
         // instead of attributing the change to half a record.
-        if status.starts_with('R') || status.starts_with('C') {
+        if matches!(kind, 'R' | 'C') {
             let origin = next_record_str(&mut fields, record, &status)?;
             let target = next_record_str(&mut fields, record, &status)?;
             records.push(StatusRecord {
@@ -162,6 +177,20 @@ fn nul_fields(output: &[u8]) -> Vec<&[u8]> {
         fields.pop();
     }
     fields
+}
+
+/// Return the status letter when `status` is a Git status token.
+///
+/// Accepts exactly one status letter (`A`, `C`, `D`, `M`, `R`, `T`, `U`,
+/// `X`, `B` — the `--name-status` alphabet, including rename/copy scores
+/// such as `R100`) followed only by ASCII digits. Anything else is
+/// misframed input, not a status.
+fn status_kind(status: &str) -> Option<char> {
+    let mut chars = status.chars();
+    let kind = chars.next()?;
+    let valid = matches!(kind, 'A' | 'C' | 'D' | 'M' | 'R' | 'T' | 'U' | 'X' | 'B')
+        && chars.all(|c| c.is_ascii_digit());
+    valid.then_some(kind)
 }
 
 /// Decode one NUL-delimited record field as a verbatim UTF-8 path fragment.
@@ -328,6 +357,48 @@ mod tests {
                 Ok(())
             }
             Ok(decoded) => Err(format!("non-UTF-8 path must fail, decoded {decoded:?}")),
+        }
+    }
+
+    #[test]
+    fn status_rejects_misframed_path_as_status() -> Result<(), String> {
+        // `--name-only -z` bytes fed to the status decoder must fail, not
+        // decode `Ok` with a path misattributed as a status.
+        match statuses(b"src/a.rs\0src/b.rs\0") {
+            Err(err) => {
+                assert_eq!(
+                    err,
+                    PathRecordError::InvalidStatus {
+                        record: 0,
+                        status: "src/a.rs".to_string()
+                    }
+                    .to_string()
+                );
+                Ok(())
+            }
+            Ok(decoded) => Err(format!(
+                "misframed path-as-status must fail, decoded {decoded:?}"
+            )),
+        }
+    }
+
+    #[test]
+    fn status_rejects_rename_shaped_misframing() -> Result<(), String> {
+        match statuses(b"README.md\0x\0y\0") {
+            Err(err) => {
+                assert_eq!(
+                    err,
+                    PathRecordError::InvalidStatus {
+                        record: 0,
+                        status: "README.md".to_string()
+                    }
+                    .to_string()
+                );
+                Ok(())
+            }
+            Ok(decoded) => Err(format!(
+                "rename-shaped misframing must fail, decoded {decoded:?}"
+            )),
         }
     }
 
