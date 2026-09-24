@@ -15618,8 +15618,10 @@ JSON shape (schema version `0.1`):
 ```
 
 When `top_repair` is absent, `top_repair_state` appears in its place
-and `top_repair` is `null`. When `limitations` is empty, `top_limitation`
-is omitted entirely. When delta fields are computed (baseline supplied),
+and `top_repair` is `null`. When `limitations` is empty or
+`"not_available"`, `top_limitation` is omitted entirely; the Markdown
+panel distinguishes the two, rendering `- none` for the first and
+`- not_available` for the second. When delta fields are computed (baseline supplied),
 `gap_delta_note` is absent.
 
 Field sources:
@@ -15633,7 +15635,7 @@ Field sources:
 | `gaps.total_actionable` | gap-decision-ledger | `summary.repairable_total` |
 | `gaps.total_static_limitation` | gap-decision-ledger | `summary.static_limitation_total` |
 | `gaps.*` delta fields | computed from `--baseline` | before/after `gaps.total_actionable` |
-| `limitations[]` | repo-exposure | `limitations[]` |
+| `limitations` | repo-exposure | `limitations[]` when the artifact was read; `"not_available"` when it is missing, unreadable, or carries a non-array `limitations` value. An empty array means repo-exposure was read and named none, which is a different finding from not having read it. |
 | `missing_receipts` | gap-decision-ledger | `summary.repairable_total - receipt_improved_total` |
 | `receipt_status.receipts_present` | gap-decision-ledger | `summary.receipt_improved_total + summary.receipt_unchanged_after_attempt_total` |
 | `receipt_status.missing_receipts` | gap-decision-ledger | mirrors top-level `missing_receipts` |
