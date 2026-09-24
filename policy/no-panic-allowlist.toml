@@ -1117,7 +1117,7 @@ id = "panic-0076"
 path = "crates/ripr/tests/cli_smoke.rs"
 family = "unwrap"
 classification = "test_only"
-explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git init for temp git repo; canonical fail-fast pattern for binary integration tests"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git init -b main for temp git repo (branch pinned so resolve_default_base recognizes it regardless of init.defaultBranch); canonical fail-fast pattern for binary integration tests"
 owner = "core/cli"
 expires = "2027-09-30"
 
@@ -1125,7 +1125,7 @@ expires = "2027-09-30"
 kind = "method_call"
 container = "check_mode_fast_alone_on_empty_range_names_compared_base_smoke"
 callee = "unwrap"
-receiver_fingerprint = "run_git(&root, &[\"init\"])"
+receiver_fingerprint = "run_git(&root, &[\"init\", \"-b\", \"main\"])"
 
 [allow.last_seen]
 line = 11427
@@ -1269,7 +1269,7 @@ id = "panic-0084"
 path = "crates/ripr/tests/cli_smoke.rs"
 family = "unwrap"
 classification = "test_only"
-explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git init for temp git repo; canonical fail-fast pattern for binary integration tests"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git init -b main for temp git repo (branch pinned so resolve_default_base recognizes it regardless of init.defaultBranch); canonical fail-fast pattern for binary integration tests"
 owner = "core/cli"
 expires = "2027-09-30"
 
@@ -1277,7 +1277,7 @@ expires = "2027-09-30"
 kind = "method_call"
 container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
 callee = "unwrap"
-receiver_fingerprint = "run_git(&root, &[\"init\"])"
+receiver_fingerprint = "run_git(&root, &[\"init\", \"-b\", \"main\"])"
 
 [allow.last_seen]
 line = 11473
