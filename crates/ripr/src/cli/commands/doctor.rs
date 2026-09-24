@@ -50,6 +50,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
 
     ok &= report_doctor_core_check(core_report, "root_directory");
     ok &= report_doctor_core_check(core_report, "cargo_toml");
+    ok &= report_doctor_core_check(core_report, "git_repository");
     report_config_status(&root, core_evaluation.config, &mut ok);
     report_cache_status(&root);
     report_detected_languages(&root);
@@ -1645,9 +1646,14 @@ mod tests {
         let json = report.render_json()?;
         let value: serde_json::Value =
             serde_json::from_str(&json).map_err(|err| format!("parse report JSON: {err}"))?;
-        if value["status"] != "fail"
-            || value["checks"][2]["name"] != "config"
-            || value["checks"][2]["status"] != "fail"
+        // Found by name, not by position: the check list grows, and an index
+        // pins the order rather than the claim.
+        let config_in_json = value["checks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|check| check["name"] == "config");
+        if value["status"] != "fail" || config_in_json.is_none_or(|check| check["status"] != "fail")
         {
             return Err(format!("unexpected invalid-config JSON report: {value}"));
         }

@@ -249,13 +249,27 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         out.push_str("    {\n");
         field(&mut out, 3, "scope_status", "no_scope_provided", true);
         field(&mut out, 3, "category", "no_scope_disclosure", true);
-        field(
-            &mut out,
-            3,
-            "why",
-            "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run ripr check --base origin/main or ripr check --root . --format repo-exposure-md",
-            false,
-        );
+        // #4012: on an established-but-empty range the why names the
+        // compared base instead of claiming no scope was provided.
+        if let Some(base) = output.base.as_deref() {
+            field(
+                &mut out,
+                3,
+                "why",
+                &format!(
+                    "empty range: {base}...HEAD contains no changed files; nothing was analyzed because nothing changed"
+                ),
+                false,
+            );
+        } else {
+            field(
+                &mut out,
+                3,
+                "why",
+                "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run ripr check --base origin/main or ripr check --root . --format repo-exposure-md",
+                false,
+            );
+        }
         out.push_str("    }\n");
         out.push_str("  ]");
     }
