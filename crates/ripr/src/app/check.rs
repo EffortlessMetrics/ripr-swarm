@@ -695,6 +695,81 @@ mod tests {
     }
 
     #[test]
+    fn default_check_input_resolves_the_repo_default_branch() -> Result<(), String> {
+        // #3952 / RIPR-SPEC-0084: consumers built from
+        // `CheckInput::default()` must analyze the repository's real
+        // default branch instead of `origin/main`. The fixture's only
+        // branch is `master` with no `origin/*` refs: diffing
+        // `origin/main...HEAD` fails, while the resolved default
+        // analyzes and records `master`.
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        struct FixtureGuard<'a> {
+            repo: &'a Path,
+        }
+        impl Drop for FixtureGuard<'_> {
+            fn drop(&mut self) {
+                let _ = remove_fixture_tree(self.repo);
+            }
+        }
+
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("system time before unix epoch: {error}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-check-default-base-{}-{stamp}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _guard = FixtureGuard { repo: &repo };
+        std::fs::create_dir_all(repo.join("src"))
+            .map_err(|error| format!("create fixture src failed: {error}"))?;
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            "[package]\nname = \"default-base-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| format!("write fixture manifest failed: {error}"))?;
+        std::fs::write(repo.join("src/lib.rs"), "pub const VALUE: u32 = 1;\n")
+            .map_err(|error| format!("write base source failed: {error}"))?;
+        fixture_git_ok(&repo, &["init", "--initial-branch=master"])?;
+        for (key, value) in [
+            ("user.name", "Default Base"),
+            ("user.email", "default-base@example.com"),
+            ("commit.gpgsign", "false"),
+            ("core.autocrlf", "false"),
+        ] {
+            fixture_git_ok(&repo, &["config", "--local", key, value])?;
+        }
+        fixture_git_ok(&repo, &["add", "."])?;
+        fixture_git_ok(&repo, &["commit", "--quiet", "-m", "base"])?;
+        std::fs::write(repo.join("src/lib.rs"), "pub const VALUE: u32 = 2;\n")
+            .map_err(|error| format!("write edited source failed: {error}"))?;
+        fixture_git_ok(&repo, &["add", "src/lib.rs"])?;
+        fixture_git_ok(&repo, &["commit", "--quiet", "-m", "edit"])?;
+        // The consumer path the CLI explain/context/pilot commands build:
+        // repository root plus library defaults, no explicit base.
+        let input = CheckInput {
+            root: repo.clone(),
+            ..CheckInput::default()
+        };
+        assert_eq!(
+            input.base, None,
+            "the library default must not name a branch (RIPR-SPEC-0084)"
+        );
+        let output = check_workspace(input)?;
+        assert_eq!(
+            output.base.as_deref(),
+            Some("master"),
+            "the default run must record the resolved repository default branch"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn check_output_records_the_loader_effective_base_over_an_unset_input() {
         // #3940: a scope-less run whose loader resolved a default base must
         // record it, so base-matching consumers accept the envelope.
@@ -709,8 +784,8 @@ mod tests {
 
     #[test]
     fn check_output_keeps_input_base_when_no_loader_base_applies() {
-        // Diff-file/stdin runs involve no base; the caller's own value
-        // (including a stale default) passes through unchanged.
+        // Diff-file/stdin runs involve no base; an explicitly provided
+        // value passes through unchanged.
         let mut input = sample_diff_input();
         input.base = Some("origin/main".to_string());
         let output = output_builder::check_output_from_analysis(

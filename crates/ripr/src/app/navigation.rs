@@ -121,7 +121,12 @@ mod tests {
 
     #[test]
     fn finding_navigation_preserves_explicit_draft_mode() {
-        let input = CheckInput::default();
+        // #3952: the default carries no base, so name the base explicitly;
+        // the test pins mode preservation, not the old default.
+        let input = CheckInput {
+            base: Some("origin/main".to_string()),
+            ..CheckInput::default()
+        };
         let navigation = finding_navigation(&input, None, true);
 
         assert_eq!(
