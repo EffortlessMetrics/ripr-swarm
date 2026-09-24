@@ -89,3 +89,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — perl_cpan_alpha (3)
+
+Reason:
+RIPR-SPEC-0082 follow-through: the why line must use the not-compiled wording from the unavailable-adapter recovery story (ripr.toml [languages] alone cannot enable Perl), matching the branch's intended check.json flip
+
+Command:
+`cargo xtask goldens bless perl_cpan_alpha --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

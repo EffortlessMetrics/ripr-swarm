@@ -18,7 +18,7 @@
       "enabled": false,
       "analyzed": false,
       "category": "preview_language_advisory",
-      "why": "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"perl\"]"
+      "why": "preview adapter not compiled into this ripr binary; files detected but not analyzed; empty result is not Rust-grade clean; Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it"
     }
   ]
 }
