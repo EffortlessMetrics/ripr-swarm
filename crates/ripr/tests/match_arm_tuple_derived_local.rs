@@ -211,6 +211,7 @@ fn uninvoked_projection_assertions_are_not_observation() {
 
     let _never_called = || {
         assert_eq!(terminal.len(), 1);
+        assert_eq!(terminal[0].0.id, "receipt-1");
         assert_eq!(terminal[0].1, "request_identity_v2");
     };
 }
@@ -549,10 +550,13 @@ fn unrelated_receipts_cannot_certify_the_request_arm() -> Result<(), String> {
     let argument = "        &receipts,\n";
     assert_eq!(REQUEST_ONLY_TEST.matches(input).count(), 1);
     assert_eq!(REQUEST_ONLY_TEST.matches(argument).count(), 1);
+    // Both collections carry the asserted receipt identity, so the fed
+    // identity and its assertion agree and the unrelated iterator receiver
+    // (`canonical_receipt_iteration`) is the only rejection reason.
     let test_source = REQUEST_ONLY_TEST
         .replace(
             input,
-            "    let receipts = vec![Receipt { id: \"different-input-receipt\".to_string() }];\n    let unrelated_receipts = vec![Receipt { id: \"receipt-1\".to_string() }];",
+            "    let receipts = vec![Receipt { id: \"receipt-1\".to_string() }];\n    let unrelated_receipts = vec![Receipt { id: \"receipt-1\".to_string() }];",
         )
         .replace(argument, "        &receipts,\n        &unrelated_receipts,\n");
     let repo = TempRepo::create(&source, &test_source)?;

@@ -94,7 +94,16 @@ pub(super) fn discrimination(
         let Some(test_function) = named_function(&test_root, &test.name) else {
             continue;
         };
-        if projection_observes_result(&test_function, &owner.name, &witness) {
+        // `derived_admission` owns the projection oracle. Re-check its one
+        // strict implementation here so this path keeps the same guarantees
+        // even if the admission wiring in `tuple_match::discrimination` ever
+        // changes; the former local weaker copy is deleted.
+        if super::derived_admission::top_level_projection_observes(
+            &test_function,
+            &owner.name,
+            witness.result.as_str(),
+        ) == Some(true)
+        {
             return Some(StageEvidence::new(
                 StageState::Yes,
                 Confidence::High,
@@ -353,100 +362,6 @@ fn returns_none(expression: &ast::Expr) -> bool {
         == Some("None")
 }
 
-fn projection_observes_result(function: &ast::Fn, owner: &str, witness: &DerivedWitness) -> bool {
-    projection_observes_result_inner(function, owner, witness).unwrap_or(false)
-}
-
-fn projection_observes_result_inner(
-    function: &ast::Fn,
-    owner: &str,
-    witness: &DerivedWitness,
-) -> Option<bool> {
-    let attributes = function.attrs().collect::<Vec<_>>();
-    let [attribute] = attributes.as_slice() else {
-        return None;
-    };
-    if attribute.syntax().text() != "#[test]"
-        || function.async_token().is_some()
-        || function.param_list()?.params().next().is_some()
-    {
-        return None;
-    }
-
-    let body = function.body()?.stmt_list()?;
-    let mut result_binding = None;
-    for statement in body.statements() {
-        let ast::Stmt::LetStmt(binding) = statement else {
-            continue;
-        };
-        let initializer = binding.initializer()?;
-        let Some(call) = ast::CallExpr::cast(initializer.syntax().clone()) else {
-            continue;
-        };
-        if direct_name(&call.expr()?).as_deref() != Some(owner) {
-            continue;
-        }
-        if result_binding.is_some() {
-            return None;
-        }
-        result_binding = Some(immutable_binding_name(&binding)?);
-    }
-    let result_binding = result_binding?;
-
-    let mut length_observed = false;
-    let mut result_observed = false;
-    for expression in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::MacroExpr::cast)
-    {
-        let call = expression.macro_call()?;
-        if call.path()?.syntax().text() != "assert_eq" {
-            continue;
-        }
-        let Some((left, right)) = assertion_operands(&call) else {
-            continue;
-        };
-        let left_text = compact(&left.syntax().text().to_string());
-        let right_text = compact(&right.syntax().text().to_string());
-        let length = format!("{result_binding}.len()");
-        let result = format!("{result_binding}[0].1");
-        if (left_text == length && right_text == "1") || (right_text == length && left_text == "1")
-        {
-            length_observed = true;
-        }
-        if (left_text == result && plain_string(&right).as_ref() == Some(&witness.result))
-            || (right_text == result && plain_string(&left).as_ref() == Some(&witness.result))
-        {
-            result_observed = true;
-        }
-    }
-
-    Some(length_observed && result_observed)
-}
-
-fn assertion_operands(call: &ast::MacroCall) -> Option<(ast::Expr, ast::Expr)> {
-    let tokens = call.token_tree()?.syntax().text().to_string();
-    let inner = tokens.strip_prefix('(')?.strip_suffix(')')?;
-    let source = format!("fn __operands() {{ ({inner}) }}");
-    let root = parsed(&source)?;
-    let function = named_function(&root, "__operands")?;
-    let body = function.body()?.stmt_list()?;
-    if body.statements().next().is_some() {
-        return None;
-    }
-    let tuple = ast::TupleExpr::cast(body.tail_expr()?.syntax().clone())?;
-    let operands = tuple
-        .syntax()
-        .children()
-        .filter_map(ast::Expr::cast)
-        .collect::<Vec<_>>();
-    let [left, right, ..] = operands.as_slice() else {
-        return None;
-    };
-    Some((left.clone(), right.clone()))
-}
-
 fn closure_parameter(closure: &ast::ClosureExpr) -> Option<String> {
     let text = closure.syntax().text().to_string();
     let rest = text.strip_prefix('|')?;
@@ -581,7 +496,7 @@ fn same_current_file(
     let Ok(owner_path) = authority.root.join(owner_file).canonicalize() else {
         return false;
     };
-    let Ok(probe_path) = probe_file.canonicalize() else {
+    let Ok(probe_path) = authority.root.join(probe_file).canonicalize() else {
         return false;
     };
     owner_path == probe_path

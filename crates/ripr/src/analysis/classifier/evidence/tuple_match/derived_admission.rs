@@ -173,7 +173,10 @@ fn current_result(source: &str, function: &ast::Fn, probe: &Probe) -> Option<Str
     selected
 }
 
-fn top_level_projection_observes(
+/// The single owner of the derived tuple-arm projection oracle. The sibling
+/// `derived` discrimination re-checks this same implementation so no weaker
+/// copy can drift back into the evidence path.
+pub(super) fn top_level_projection_observes(
     function: &ast::Fn,
     owner: &str,
     expected_result: &str,
@@ -301,8 +304,7 @@ fn fed_receipt_identity(call: &ast::CallExpr, statements: &[ast::Stmt]) -> Optio
             let ast::Stmt::LetStmt(binding) = statement else {
                 return None;
             };
-            let pattern = ast::IdentPat::cast(binding.pat()?.syntax().clone())?;
-            (pattern.name()?.text() == name).then_some(binding)
+            (immutable_binding_name(binding)?.as_str() == name).then_some(binding)
         });
         let binding = bindings.next()?;
         if bindings.next().is_some() {
@@ -550,11 +552,27 @@ mod tests {
     }
 
     #[test]
-    fn assertions_before_the_owner_call_are_not_its_observation() {
+    fn mutable_receipt_binding_remains_unverified() {
         assert!(!projection_is_admitted(
-            r#"assert_eq!(terminal.len(), 1);
+            r#"let mut receipts = vec![Receipt { id: "receipt-1".to_string() }];
+            let terminal = terminalize_proof(&receipts);
+            assert_eq!(terminal.len(), 1);
+            assert_eq!(terminal[0].0.id, "receipt-1");
+            assert_eq!(terminal[0].1, "request_identity_v2");"#
+        ));
+    }
+
+    #[test]
+    fn assertions_before_the_owner_call_are_not_its_observation() {
+        // The complete oracle evidence is present, but every observation
+        // precedes the owner call, so statement order is the only rejection
+        // reason and the fed-identity requirement cannot mask it.
+        assert!(!projection_is_admitted(
+            r#"let receipts = vec![Receipt { id: "receipt-1".to_string() }];
+            assert_eq!(terminal.len(), 1);
+            assert_eq!(terminal[0].0.id, "receipt-1");
             assert_eq!(terminal[0].1, "request_identity_v2");
-            let terminal = terminalize_proof();"#
+            let terminal = terminalize_proof(&receipts);"#
         ));
     }
 }
