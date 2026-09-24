@@ -6479,9 +6479,17 @@ fn doctor_reports_missing_config_defaults() -> Result<(), String> {
     assert!(stdout.contains("LSP seam diagnostics default: true"));
     assert!(stdout.contains("Suppressions path: .ripr/suppressions.toml"));
     assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
-    assert!(stdout.contains("(not yet generated; run the safe next action below)"));
+    assert!(stdout.contains("`ripr first-pr` composes it once analysis evidence exists"));
     assert!(!stdout.contains("(present; open it first)"));
-    assert!(stdout.contains("Safe next action: run `ripr first-pr --root"));
+    // On a workspace with no artifacts, `first-pr` has nothing to compose: it
+    // returns `missing_artifacts` and answers with a `ripr check` regeneration
+    // command. So the safe next action must route to the analysis command this
+    // screen already recommends, not to the compose command.
+    assert!(stdout.contains("Safe next action: run the recommended first command below"));
+    assert!(
+        !stdout.contains("Safe next action: run `ripr first-pr"),
+        "a fresh workspace must not be sent to the compose command:\n{stdout}"
+    );
     assert!(stdout.contains("Recovery states: missing artifact, stale evidence, wrong root"));
     assert!(stdout.contains("Proof rail: verify command, receipt command, and receipt path"));
 
@@ -6504,6 +6512,9 @@ fn doctor_reports_present_start_here_packet() -> Result<(), String> {
     assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
     assert!(stdout.contains("(present; open it first)"));
     assert!(!stdout.contains("not yet generated"));
+    // With a packet on disk `first-pr` has something to refresh, so naming it
+    // here is a real route rather than a dead end.
+    assert!(stdout.contains("Safe next action: open that packet"));
 
     let _ = std::fs::remove_dir_all(&workspace);
     Ok(())
@@ -6519,8 +6530,69 @@ fn doctor_reports_directory_squatting_packet_path_as_not_generated() -> Result<(
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("(not yet generated; run the safe next action below)"));
+    assert!(stdout.contains("`ripr first-pr` composes it once analysis evidence exists"));
     assert!(!stdout.contains("(present; open it first)"));
+    assert!(stdout.contains("Safe next action: run the recommended first command below"));
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn check_rejects_missing_and_file_roots_without_leaking_the_git_invocation() -> Result<(), String> {
+    // An explicit --root that is not a directory used to reach the diff loader
+    // and print git's spawn failure with the whole argv. `check` now validates
+    // it through the same authority the other root-taking commands use.
+    let workspace = make_temp_workspace(None)?;
+
+    let missing = workspace.join("missing-root");
+    let missing_string = missing.display().to_string();
+    let missing_output = run_ripr(&["check", "--root", &missing_string, "--base", "HEAD"]);
+    assert_failure(&missing_output);
+    let missing_stderr = String::from_utf8_lossy(&missing_output.stderr).into_owned();
+    assert!(
+        missing_stderr.contains("is not a directory"),
+        "stderr:\n{missing_stderr}"
+    );
+    assert!(
+        missing_stderr.contains(&missing_string),
+        "expected the offending path to be named; stderr:\n{missing_stderr}"
+    );
+    // Discriminator: the git invocation must not reach the user.
+    assert!(
+        !missing_stderr.contains("core.quotePath") && !missing_stderr.contains("failed to run git"),
+        "git invocation leaked into stderr:\n{missing_stderr}"
+    );
+
+    let file_root = workspace.join("root-file");
+    std::fs::write(&file_root, "not a directory\n")
+        .map_err(|error| format!("write file root: {error}"))?;
+    let file_string = file_root.display().to_string();
+    let file_output = run_ripr(&["check", "--root", &file_string, "--base", "HEAD"]);
+    assert_failure(&file_output);
+    assert!(
+        String::from_utf8_lossy(&file_output.stderr).contains("is not a directory"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&file_output.stderr)
+    );
+
+    // Negative control: a real workspace root is still analyzed. The workspace
+    // gets its own repository and an explicit base because the temp dir is
+    // inside the checkout running the tests (.cargo/config.toml sets TMPDIR to
+    // target/). A bare `check` there would diff the enclosing branch against
+    // its default base and fail on that branch's size, not on this root.
+    run_git(&workspace, &["init"])?;
+    run_git(&workspace, &["config", "user.email", "test@test.com"])?;
+    run_git(&workspace, &["config", "user.name", "Test"])?;
+    run_git(&workspace, &["add", "."])?;
+    run_git(&workspace, &["commit", "-m", "initial"])?;
+    let workspace_string = workspace.display().to_string();
+    let ok_output = run_ripr(&["check", "--root", &workspace_string, "--base", "HEAD"]);
+    assert!(
+        ok_output.status.success(),
+        "expected a valid explicit root to run; stderr:\n{}",
+        String::from_utf8_lossy(&ok_output.stderr)
+    );
 
     let _ = std::fs::remove_dir_all(&workspace);
     Ok(())
@@ -6960,7 +7032,7 @@ fn doctor_reports_language_tiers_and_limitations() -> Result<(), String> {
     // worktree-state-aware (see doctor_recommends_worktree_check_on_dirty_worktree);
     // here we only require the diff-first command to be present.
     assert!(
-        stdout.contains("ripr check --base origin/main"),
+        stdout.contains("Recommended first command: ripr check"),
         "expected the diff-first recommended command in stdout:\n{stdout}"
     );
 
@@ -7121,8 +7193,17 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
     assert_success(&clean);
     let clean_out = String::from_utf8_lossy(&clean.stdout);
     assert!(
-        clean_out.contains("Recommended first command: ripr check --base origin/main"),
+        clean_out
+            .lines()
+            .any(|line| line.trim_end() == "- Recommended first command: ripr check"),
         "clean worktree must recommend the diff-first command directly:\n{clean_out}"
+    );
+    // The base is resolved, not asserted: `origin/main` does not exist in a
+    // repository whose default branch is not `main`, and this fixture has no
+    // remote at all.
+    assert!(
+        !clean_out.contains("Recommended first command: ripr check --base origin/main"),
+        "the recommendation must not hardcode a base this repository may not have:\n{clean_out}"
     );
 
     // DIRTY worktree: route the user to the explicit live-worktree diff.
@@ -7143,7 +7224,9 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
         "dirty worktree must disclose the tracked-edit scope:\n{dirty_out}"
     );
     assert!(
-        !dirty_out.contains("Recommended first command: ripr check --base origin/main"),
+        !dirty_out
+            .lines()
+            .any(|line| line.trim_end() == "- Recommended first command: ripr check"),
         "dirty worktree must NOT give the unconditional clean recommendation:\n{dirty_out}"
     );
 
@@ -7927,7 +8010,14 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
     assert!(stdout.contains("config: missing, using built-in defaults"));
     assert!(stdout.contains("Top recommendation:"));
     assert!(stdout.contains("focused test:"));
-    assert!(stdout.contains("Run after adding the focused test:"));
+    // #3906: an eligible top seam gets one ordinary route, the repair
+    // transaction, not the manual before/after snapshot pair as well.
+    assert!(stdout.contains("Next, in order:"), "{stdout}");
+    assert!(
+        !stdout.contains("Run after adding the focused test:")
+            && !stdout.contains("ripr outcome --before"),
+        "legacy snapshot choreography must not be offered beside the repair route:\n{stdout}"
+    );
 
     let summary_json = std::fs::read_to_string(out_dir.join("pilot-summary.json"))
         .map_err(|e| format!("read pilot summary json: {e}"))?;
@@ -8004,6 +8094,36 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
         flag_value("--root").map(|value| value.replace('\\', "/")),
         Some(root.display().to_string().replace('\\', "/")),
         "the repair command must name the analyzed root: {repair_line}"
+    );
+
+    // The closing block, the JSON `next.repair_command`, and the Markdown
+    // Next Commands block all carry that same command (#3906).
+    assert!(
+        stdout.contains(&format!("  1. {repair_line}\n")),
+        "step 1 must be the repair command printed above:\n{stdout}"
+    );
+    let summary: serde_json::Value =
+        serde_json::from_str(&summary_json).map_err(|e| format!("parse pilot summary: {e}"))?;
+    assert_eq!(
+        summary
+            .pointer("/next/repair_command")
+            .and_then(serde_json::Value::as_str),
+        Some(repair_line),
+        "pilot-summary.json next.repair_command"
+    );
+    let summary_md = std::fs::read_to_string(out_dir.join("pilot-summary.md"))
+        .map_err(|e| format!("read pilot summary md: {e}"))?;
+    let next_section = summary_md
+        .split("## Next Commands")
+        .nth(1)
+        .ok_or_else(|| format!("pilot-summary.md has no Next Commands:\n{summary_md}"))?;
+    assert!(
+        next_section.contains(&format!("```bash\n{repair_line}\n```")),
+        "Markdown next command must be the repair command:\n{next_section}"
+    );
+    assert!(
+        !next_section.contains("ripr outcome"),
+        "Markdown must not offer the snapshot pair beside the repair route:\n{next_section}"
     );
 
     let _ = std::fs::remove_dir_all(&out_dir);
@@ -9009,6 +9129,69 @@ fn outcome_prints_markdown_receipt_by_default() -> Result<(), String> {
     assert!(stdout.contains("does not run mutation testing"));
 
     let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// Give a snapshot the artifact identity that `ripr check --format
+/// repo-exposure-json` writes, so the process-boundary behaviour can be
+/// observed without running an analysis.
+fn stamp_outcome_snapshot_head(path: &Path, head: &str) -> Result<(), String> {
+    let raw = std::fs::read_to_string(path).map_err(|e| format!("read snapshot: {e}"))?;
+    let mut value: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("parse snapshot: {e}"))?;
+    value["artifact"] = serde_json::json!({
+        "kind": "repo_exposure",
+        "repository": { "root": "/workspace", "head": head },
+    });
+    std::fs::write(path, value.to_string()).map_err(|e| format!("write snapshot: {e}"))
+}
+
+/// `ripr outcome`'s stderr disclosure must follow the artifacts it was handed,
+/// through the real binary rather than the helper alone. Before this, the line
+/// asserted unconditionally that the artifacts carry no head SHA, which is
+/// false for any snapshot written through the artifact-identity path.
+///
+/// Both arms run in one test so the identity-free pair is a discriminating
+/// control for the identity-carrying pair: a regression that hardcoded either
+/// sentence fails here.
+#[test]
+fn outcome_disclosure_follows_the_artifacts_it_was_given() -> Result<(), String> {
+    let workspace = unique_temp_workspace("outcome-head-disclosure");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create outcome workspace: {e}"))?;
+    write_outcome_snapshots(&workspace)?;
+    let before = workspace.join("before.json").display().to_string();
+    let after = workspace.join("after.json").display().to_string();
+
+    // Control: the shape `ripr pilot` writes, with no artifact identity.
+    let without_identity = run_ripr(&["outcome", "--before", &before, "--after", &after]);
+    assert_success(&without_identity);
+    let stderr = String::from_utf8_lossy(&without_identity.stderr).to_string();
+    let missing_head_is_disclosed = stderr.contains("does not carry a head SHA");
+
+    let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+    stamp_outcome_snapshot_head(&workspace.join("before.json"), head)?;
+    stamp_outcome_snapshot_head(&workspace.join("after.json"), head)?;
+    let with_identity = run_ripr(&["outcome", "--before", &before, "--after", &after]);
+    assert_success(&with_identity);
+    let identity_stderr = String::from_utf8_lossy(&with_identity.stderr).to_string();
+
+    let _ = std::fs::remove_dir_all(&workspace);
+
+    if !missing_head_is_disclosed {
+        return Err(format!(
+            "identity-free snapshots must still disclose the missing head: {stderr}"
+        ));
+    }
+    if !identity_stderr.contains(head) {
+        return Err(format!(
+            "a snapshot carrying a head must have it named: {identity_stderr}"
+        ));
+    }
+    if identity_stderr.contains("carry a head SHA") {
+        return Err(format!(
+            "must not claim the artifacts lack a head they carry: {identity_stderr}"
+        ));
+    }
     Ok(())
 }
 
@@ -11669,7 +11852,142 @@ fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosur
         human.contains("uncommitted changes to tracked source were not analyzed"),
         "check --base HEAD with uncommitted edit must show Note in human output; got:\n{human}"
     );
+    // The note must name the remedy that works. Staging does not change a
+    // committed-history diff, so "commit or stage" was a false remedy.
+    assert!(
+        human.contains("add `--worktree`"),
+        "the disclosure must name --worktree as the remedy; got:\n{human}"
+    );
+    assert!(
+        !human.contains("commit or stage"),
+        "the disclosure must not suggest staging, which leaves a --base diff unchanged; got:\n{human}"
+    );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// RIPR-SPEC-0112 (default base): bare `ripr check` resolves the default base
+/// and diffs committed history exactly like an explicit `--base`, so an
+/// uncommitted tracked edit is excluded there too and must be disclosed. This
+/// is the first-run path: edit a file, run `ripr check`, see nothing.
+#[test]
+fn check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure()
+-> Result<(), String> {
+    let root = unique_temp_workspace("unanalyzed-wt-default-base");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+    )
+    .map_err(|err| format!("write base lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"spec-0112-default-base-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+    )
+    .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    // Fixture precondition: the default base resolves to `main` == HEAD, so
+    // the committed diff is empty while the edit exists only in the worktree.
+    let worktree = run_ripr(&["check", "--root", &root_str, "--worktree", "--json"]);
+    assert_success(&worktree);
+    let worktree_stdout = String::from_utf8_lossy(&worktree.stdout);
+    let worktree_report: serde_json::Value = serde_json::from_str(&worktree_stdout)
+        .map_err(|err| format!("parse --worktree JSON: {err}\n{worktree_stdout}"))?;
+    let worktree_findings = worktree_report
+        .pointer("/findings")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    if worktree_findings == 0 {
+        return Err(format!(
+            "fixture must carry an analyzable uncommitted edit; --worktree found none:\n{worktree_stdout}"
+        ));
+    }
+
+    let json = run_ripr(&["check", "--root", &root_str, "--json"]);
+    assert_success(&json);
+    let json_stdout = String::from_utf8_lossy(&json.stdout);
+    if !json_stdout.contains("\"unanalyzed_working_tree\": true") {
+        return Err(format!(
+            "bare check with an uncommitted edit must emit unanalyzed_working_tree: true; got:\n{json_stdout}"
+        ));
+    }
+
+    let human = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&human);
+    let human_stdout = String::from_utf8_lossy(&human.stdout);
+    if !human_stdout.contains("uncommitted changes to tracked source were not analyzed")
+        || !human_stdout.contains("add `--worktree`")
+    {
+        return Err(format!(
+            "bare check must disclose the excluded edit and name --worktree; got:\n{human_stdout}"
+        ));
+    }
+    // The generic no-scope note recommends `--base origin/main`, which would
+    // exclude the same edit; the specific worktree note replaces it.
+    if human_stdout.contains("no analysis scope was provided") {
+        return Err(format!(
+            "bare check must not pair the worktree note with the no-scope remedy; got:\n{human_stdout}"
+        ));
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// RIPR-SPEC-0112 (default base, clean): a bare `ripr check` on a clean
+/// worktree must not claim uncommitted edits were excluded, and keeps the
+/// no-scope disclosure for its empty committed diff.
+#[test]
+fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(), String> {
+    let root = unique_temp_workspace("unanalyzed-wt-default-base-clean");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"spec-0112-default-base-clean\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    // An untracked file is outside every diff source and must not trigger the
+    // tracked-edit disclosure.
+    std::fs::write(root.join("notes.txt"), "scratch\n")
+        .map_err(|err| format!("write untracked file: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let human = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&human);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    if stdout.contains("uncommitted changes") {
+        return Err(format!(
+            "clean tracked worktree must not disclose uncommitted edits; got:\n{stdout}"
+        ));
+    }
+    if !stdout.contains("no analysis scope was provided") {
+        return Err(format!(
+            "empty default-base run must keep the no-scope disclosure; got:\n{stdout}"
+        ));
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
 }
 
 /// RIPR-SPEC-0112: `ripr check --base HEAD` with a CLEAN worktree (no uncommitted changes)

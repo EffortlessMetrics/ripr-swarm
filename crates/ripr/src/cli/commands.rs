@@ -322,14 +322,15 @@ pub(super) fn outcome(args: &[String]) -> Result<(), String> {
         output::outcome::display_path(&options.before),
         output::outcome::display_path(&options.after),
     )?;
-    // The before/after artifacts do not carry a head SHA, so we cannot
-    // verify they came from the same repository or adjacent commits. The
-    // comparison matches seams/findings by id only. Disclose this on stderr
-    // (machine JSON output on stdout is unchanged) so a user who did not
-    // read the help knows the movement report assumes same-repo/same-base
-    // before/after. See #1942.
+    // Disclose on stderr (machine JSON output on stdout is unchanged) what
+    // can actually be said about the two snapshots' provenance, so a user who
+    // did not read the help knows what the movement report assumes. See
+    // #1942; the line used to assert unconditionally that the artifacts carry
+    // no head SHA, which is false for any snapshot written through the
+    // artifact-identity path.
     eprintln!(
-        "ripr outcome: comparison matches seams/findings by id only; the before/after artifacts do not carry a head SHA, so ensure both snapshots are from the same repository and adjacent commits."
+        "{}",
+        output::outcome::head_provenance_disclosure(&before_json, &after_json)
     );
     let rendered = match options.format {
         OutcomeFormat::Markdown => output::outcome::render_targeted_test_outcome_md(&report),

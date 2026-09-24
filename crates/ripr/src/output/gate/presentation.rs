@@ -627,8 +627,6 @@ mod tests {
     fn repair_route_leads_with_the_repair_start_when_carried() -> Result<(), String> {
         let command = "ripr agent repair --root . --seam-id seam-a --phase before";
         let mut with = String::new();
-        // #3968 added the changed-line flag; the start line is the same
-        // either way, so this pins the changed-line form.
         push_repair_route(&mut with, &route_with_repair(Some(command)), true);
         let start = with
             .find(&format!("  - Start repair: `{command}`\n"))
