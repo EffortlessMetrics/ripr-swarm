@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::cli::commands_agent_support::{
-    agent_brief_lines_from_diff, agent_brief_owners_for_lines,
+    agent_brief_lines_from_diff, agent_brief_owner_attribution_for_lines,
 };
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
@@ -322,14 +322,15 @@ pub(super) fn outcome(args: &[String]) -> Result<(), String> {
         output::outcome::display_path(&options.before),
         output::outcome::display_path(&options.after),
     )?;
-    // The before/after artifacts do not carry a head SHA, so we cannot
-    // verify they came from the same repository or adjacent commits. The
-    // comparison matches seams/findings by id only. Disclose this on stderr
-    // (machine JSON output on stdout is unchanged) so a user who did not
-    // read the help knows the movement report assumes same-repo/same-base
-    // before/after. See #1942.
+    // Disclose on stderr (machine JSON output on stdout is unchanged) what
+    // can actually be said about the two snapshots' provenance, so a user who
+    // did not read the help knows what the movement report assumes. See
+    // #1942; the line used to assert unconditionally that the artifacts carry
+    // no head SHA, which is false for any snapshot written through the
+    // artifact-identity path.
     eprintln!(
-        "ripr outcome: comparison matches seams/findings by id only; the before/after artifacts do not carry a head SHA, so ensure both snapshots are from the same repository and adjacent commits."
+        "{}",
+        output::outcome::head_provenance_disclosure(&before_json, &after_json)
     );
     let rendered = match options.format {
         OutcomeFormat::Markdown => output::outcome::render_targeted_test_outcome_md(&report),
@@ -1458,7 +1459,8 @@ fn review_comments_with_diff_loader_at(
     receipt.phase("diff_discovery", "language_facts");
     receipt.write_atomic(&receipt_path)?;
     let changed_lines = agent_brief_lines_from_diff(&input.root, &diff_text);
-    let changed_owners = agent_brief_owners_for_lines(&input.root, &changed_lines);
+    let (changed_owners, enclosing_owners) =
+        agent_brief_owner_attribution_for_lines(&input.root, &changed_lines);
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -1470,7 +1472,8 @@ fn review_comments_with_diff_loader_at(
     receipt.phase("language_facts", "canonical_analysis");
     receipt.write_atomic(&receipt_path)?;
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
-        .with_changed_owners(changed_owners);
+        .with_changed_owners(changed_owners)
+        .with_enclosing_owners(enclosing_owners);
     let changed_owner_names = working_set
         .changed_owners
         .iter()

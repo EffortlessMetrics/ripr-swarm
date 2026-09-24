@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -94,7 +95,9 @@ pub(crate) use dogfood::{
     dogfood_typescript_false_actionable_audit_summary,
     dogfood_typescript_preview_repair_loop_scenarios, finding_alignment_verify_command_is_missing,
     json_number_after, parse_bun_ub_preview_summary_args, parse_configured_bridge_inventory_args,
-    repo_rooted_fixture_path, typescript_bun_ub_calibration_cases,
+    pin_report_packet_index_generated_at, repo_rooted_fixture_path,
+    report_packet_index_case_id_violation, report_packet_index_generated_at_violation,
+    report_packet_index_render_plan, typescript_bun_ub_calibration_cases,
     typescript_preview_false_actionable_audit_cases,
 };
 pub(crate) use dogfood::{
@@ -344,8 +347,8 @@ pub(crate) use ripr_swarm::{
 use run::{
     TimedFileOutput, TimedOutput, capture_output, capture_output_with_timeout,
     capture_stdout_to_file_with_timeout, command_success_owned, run, run_in_dir,
-    run_in_dir_with_envs, run_output, run_output_optional, run_output_owned, run_owned,
-    run_with_envs,
+    run_in_dir_with_envs, run_output, run_output_optional, run_output_owned, run_output_owned_in,
+    run_output_owned_with_timeout, run_owned, run_with_envs, tool_build_timeout,
 };
 
 /// Process-wide fair reader-writer gate serialising tests that mutate the process
@@ -14725,6 +14728,7 @@ fn check_readme_state() -> Result<(), String> {
 
 fn markdown_links() -> Result<(), String> {
     let mut violations = Vec::new();
+    let mut heading_cache: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
     for file in tracked_files()? {
         if !file.ends_with(".md") {
             continue;
@@ -14738,16 +14742,44 @@ fn markdown_links() -> Result<(), String> {
         }
         let text = read_text_lossy(path)?;
         for link in markdown_links_in_text(&text) {
-            let Some(target_path) = local_markdown_target(&link.target) else {
+            let Some(target) = local_markdown_target(&link.target) else {
                 continue;
             };
-            let resolved = resolve_markdown_link(path, &target_path);
-            if !resolved.exists() {
-                violations.push(format!(
-                    "{file}:{} links to missing local target `{}`",
-                    link.line, link.target
-                ));
+            let resolved = match target.path.as_deref() {
+                Some(target_path) => {
+                    let resolved = resolve_markdown_link(path, target_path);
+                    if !resolved.exists() {
+                        violations.push(format!(
+                            "{file}:{} links to missing local target `{}`",
+                            link.line, link.target
+                        ));
+                        continue;
+                    }
+                    resolved
+                }
+                None => path.to_path_buf(),
+            };
+            let Some(fragment) = target.fragment else {
+                continue;
+            };
+            // Only a Markdown document has headings to name. A fragment on any
+            // other target (`src/lib.rs#L20`) is not this check's subject.
+            if !resolved
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+            {
+                continue;
             }
+            let slugs = match heading_cache.entry(resolved.clone()) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    let target_text = read_text_lossy(&resolved)?;
+                    entry.insert(heading_slugs(&target_text))
+                }
+            };
+            violations.extend(missing_anchor_violation(
+                &file, &link, &resolved, &fragment, slugs,
+            ));
         }
     }
 
@@ -14755,10 +14787,11 @@ fn markdown_links() -> Result<(), String> {
         PolicyReportSpec {
             report_file: "markdown-links.md",
             check: "markdown-links",
-            why_it_matters: "Markdown links are repo state for humans and long-context agents; links to deleted or renamed docs should fail before review.",
+            why_it_matters: "Markdown links are repo state for humans and long-context agents; links to deleted or renamed docs, and deep links to headings that have been renamed, should fail before review.",
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Update links when docs are renamed or deleted.",
+                "Update `#anchor` fragments when a heading is renamed.",
                 "Use relative links for repo-local Markdown targets.",
                 "Run cargo xtask markdown-links before opening docs-heavy PRs.",
             ],
@@ -14767,6 +14800,103 @@ fn markdown_links() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// The violation a link's `#fragment` produces against the anchors `slugs`
+/// offers, or `None` when the fragment names one of them.
+///
+/// This is the decision the whole check exists to make, so it is its own
+/// function and has its own test: a refactor that stopped producing the
+/// violation would otherwise leave a tree that passes and a gate that no
+/// longer gates.
+fn missing_anchor_violation(
+    file: &str,
+    link: &MarkdownLink,
+    resolved: &Path,
+    fragment: &str,
+    slugs: &BTreeSet<String>,
+) -> Option<String> {
+    if slugs.contains(fragment) {
+        return None;
+    }
+    Some(format!(
+        "{file}:{} links to `{}`, and `{}` has no heading with that anchor",
+        link.line,
+        link.target,
+        resolved.display()
+    ))
+}
+
+/// The anchor GitHub gives a heading whose text is `text`.
+///
+/// GitHub lowercases the text, turns each space into `-`, and drops every other
+/// character that is not a letter, digit, `_` or `-`. Dropping rather than
+/// collapsing is load-bearing: an em-dash or a slash surrounded by spaces
+/// leaves both of those spaces behind and so produces a doubled dash, which
+/// links into this repository's own headings depend on.
+fn heading_slug(text: &str) -> String {
+    let mut slug = String::new();
+    for ch in text.chars() {
+        if ch.is_alphanumeric() || ch == '_' || ch == '-' {
+            slug.extend(ch.to_lowercase());
+        } else if ch == ' ' {
+            slug.push('-');
+        }
+    }
+    slug
+}
+
+/// Every anchor the headings of `text` offer.
+///
+/// Headings that slugify the same way are numbered the way GitHub numbers them:
+/// the first keeps the bare slug and later ones gain `-1`, `-2`, and so on.
+fn heading_slugs(text: &str) -> BTreeSet<String> {
+    let mut slugs = BTreeSet::new();
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    let mut in_fence = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let Some(title) = atx_heading_title(trimmed) else {
+            continue;
+        };
+        let base = heading_slug(title);
+        let count = seen.entry(base.clone()).or_insert(0);
+        let slug = if *count == 0 {
+            base
+        } else {
+            format!("{base}-{count}")
+        };
+        *count += 1;
+        slugs.insert(slug);
+    }
+    slugs
+}
+
+/// The heading text of an ATX heading line, or `None` when `trimmed` is not one.
+fn atx_heading_title(trimmed: &str) -> Option<&str> {
+    let rest = trimmed.trim_start_matches('#');
+    let level = trimmed.len() - rest.len();
+    if level == 0 || level > 6 {
+        return None;
+    }
+    if !rest.is_empty() && !rest.starts_with(' ') {
+        // `#hashtag` is body text, not a heading.
+        return None;
+    }
+    let title = rest.trim();
+    // A closing sequence of hashes is decoration when a space precedes it.
+    let without_closing = title.trim_end_matches('#');
+    if without_closing.len() < title.len() && without_closing.ends_with(' ') {
+        return Some(without_closing.trim_end());
+    }
+    Some(title)
 }
 
 fn next_checkpoints_from_capabilities(text: &str) -> Result<Vec<String>, String> {
@@ -14826,7 +14956,7 @@ fn markdown_links_in_line(line: &str, line_number: usize) -> Vec<MarkdownLink> {
     links
 }
 
-fn local_markdown_target(raw_target: &str) -> Option<String> {
+fn local_markdown_target(raw_target: &str) -> Option<LocalMarkdownTarget> {
     let mut target = raw_target.trim();
     if target.starts_with('<') {
         let end = target.find('>')?;
@@ -14834,7 +14964,7 @@ fn local_markdown_target(raw_target: &str) -> Option<String> {
     } else if let Some((first, _)) = target.split_once(char::is_whitespace) {
         target = first;
     }
-    if target.is_empty() || target.starts_with('#') {
+    if target.is_empty() {
         return None;
     }
     let lower = target.to_ascii_lowercase();
@@ -14846,14 +14976,25 @@ fn local_markdown_target(raw_target: &str) -> Option<String> {
     {
         return None;
     }
-    let without_query = target.split('?').next().unwrap_or(target);
-    let without_anchor = without_query.split('#').next().unwrap_or(without_query);
-    let local = without_anchor.trim();
-    if local.is_empty() {
+    let (document, fragment) = match target.split_once('#') {
+        Some((document, fragment)) => (document, Some(fragment)),
+        None => (target, None),
+    };
+    let without_query = document.split('?').next().unwrap_or(document);
+    let local = without_query.trim();
+    let path = if local.is_empty() {
         None
     } else {
         Some(local.trim_start_matches('/').to_string())
+    };
+    let fragment = fragment
+        .map(str::trim)
+        .filter(|fragment| !fragment.is_empty())
+        .map(str::to_string);
+    if path.is_none() && fragment.is_none() {
+        return None;
     }
+    Some(LocalMarkdownTarget { path, fragment })
 }
 
 fn resolve_markdown_link(source: &Path, target: &str) -> PathBuf {
@@ -15504,6 +15645,7 @@ struct LedgerLintEntry {
     level: String,
     activate_when_msrv: Option<String>,
     reason: Option<String>,
+    blocked_by: Option<String>,
     block_line: usize,
     is_planned: bool,
 }
@@ -15560,6 +15702,7 @@ fn parse_clippy_lints_ledger(text: &str) -> (Vec<LedgerLintEntry>, Vec<String>) 
                     level: String::new(),
                     activate_when_msrv: None,
                     reason: None,
+                    blocked_by: None,
                     block_line: line_number,
                     is_planned,
                 });
@@ -15599,6 +15742,11 @@ fn parse_clippy_lints_ledger(text: &str) -> (Vec<LedgerLintEntry>, Vec<String>) 
             "reason" => {
                 if let Some(reason) = unquoted {
                     entry.reason = Some(reason);
+                }
+            }
+            "blocked_by" => {
+                if let Some(blocked_by) = unquoted {
+                    entry.blocked_by = Some(blocked_by);
                 }
             }
             _ => {}
@@ -15852,15 +16000,77 @@ fn collect_clippy_debt_violations(
 
 /// First basic TOML string on a value (`"..."` or `'...'`). Table-form and
 /// multiline strings are intentionally out of scope for these ledgers.
+/// Double-quoted strings decode basic escapes so `\n` is whitespace, not the
+/// token `n`. Single-quoted strings stay literal, matching TOML.
 fn unquote_toml_basic_string(value: &str) -> Option<String> {
     let value = value.trim();
     if let Some(rest) = value.strip_prefix('"') {
-        return rest.split_once('"').map(|(token, _)| token.to_string());
+        return rest
+            .split_once('"')
+            .map(|(token, _)| decode_toml_basic_escapes(token));
     }
     if let Some(rest) = value.strip_prefix('\'') {
         return rest.split_once('\'').map(|(token, _)| token.to_string());
     }
     None
+}
+
+/// Decode TOML basic-string escapes. Invalid sequences are left intact so
+/// they still count as leftover tokens in the MSRV filter.
+fn decode_toml_basic_escapes(token: &str) -> String {
+    let mut out = String::with_capacity(token.len());
+    let bytes = token.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'\\' {
+            let Some(ch) = token[index..].chars().next() else {
+                break;
+            };
+            out.push(ch);
+            index += ch.len_utf8();
+            continue;
+        }
+        let Some(esc) = bytes.get(index + 1).copied() else {
+            out.push('\\');
+            break;
+        };
+        let simple = match esc {
+            b'b' => Some('\u{0008}'),
+            b't' => Some('\t'),
+            b'n' => Some('\n'),
+            b'f' => Some('\u{000c}'),
+            b'r' => Some('\r'),
+            b'"' => Some('"'),
+            b'\\' => Some('\\'),
+            _ => None,
+        };
+        if let Some(ch) = simple {
+            out.push(ch);
+            index += 2;
+            continue;
+        }
+        let width = match esc {
+            b'u' => Some(4),
+            b'U' => Some(8),
+            _ => None,
+        };
+        if let Some(width) = width {
+            let start = index + 2;
+            let end = start + width;
+            if end <= bytes.len()
+                && let Ok(hex) = std::str::from_utf8(&bytes[start..end])
+                && let Ok(code) = u32::from_str_radix(hex, 16)
+                && let Some(ch) = char::from_u32(code)
+            {
+                out.push(ch);
+                index = end;
+                continue;
+            }
+        }
+        out.push('\\');
+        index += 1;
+    }
+    out
 }
 
 /// Parse `1.95` / `1.95.0` into a comparable triple. Rejects empty or extra parts.
@@ -15878,12 +16088,14 @@ fn parse_msrv_triple(value: &str) -> Option<(u32, u32, u32)> {
     Some((major, minor, patch))
 }
 
-/// True when `reason` is empty or only restates an MSRV/Rust-version delay.
+/// True when `text` is empty or only restates an MSRV/Rust-version delay.
 ///
 /// This is a closed token filter, not NLP: version triples and a small
 /// MSRV-vocabulary list are stripped, then any leftover token counts as a
-/// remaining (non-MSRV) blocker. Typed `blocked_by` metadata is a later slice.
-fn planned_reason_is_msrv_only(reason: &str) -> bool {
+/// remaining (non-MSRV) blocker. `check-lint-policy` applies it to
+/// `[[planned]]` `blocked_by` once `activate_when_msrv` is already met.
+/// `reason` is narrative and is not this gate.
+fn planned_blocker_text_is_msrv_only(text: &str) -> bool {
     const MSRV_VOCABULARY: &[&str] = &[
         "a",
         "activate",
@@ -15935,7 +16147,7 @@ fn planned_reason_is_msrv_only(reason: &str) -> bool {
         "waiting",
         "when",
     ];
-    let leftover = reason
+    let leftover = text
         .to_ascii_lowercase()
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '.')
         .filter_map(|raw| {
@@ -15984,15 +16196,17 @@ fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<St
                         entry.block_line, entry.name
                     )),
                     (Some(activate), Some(workspace), Some(ws)) if activate <= workspace => {
-                        let reason = entry.reason.as_deref().map(str::trim).unwrap_or("");
-                        if reason.is_empty() {
+                        // #3990: blocked_by is the remaining-blocker field.
+                        // reason stays narrative and does not satisfy the gate.
+                        let blocked_by = entry.blocked_by.as_deref().map(str::trim).unwrap_or("");
+                        if blocked_by.is_empty() {
                             violations.push(format!(
-                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. Record a non-MSRV `reason` why it is still `[[planned]]`, or promote it.",
+                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. Record a non-MSRV `blocked_by` explaining why it is still `[[planned]]`, or promote it.",
                                 entry.block_line, entry.name
                             ));
-                        } else if planned_reason_is_msrv_only(reason) {
+                        } else if planned_blocker_text_is_msrv_only(blocked_by) {
                             violations.push(format!(
-                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. `reason` {reason:?} is MSRV-only. Record a remaining non-MSRV blocker, or promote it.",
+                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. `blocked_by` {blocked_by:?} is MSRV-only. Record a remaining non-MSRV blocker, or promote it.",
                                 entry.block_line, entry.name
                             ));
                         }
@@ -16059,11 +16273,11 @@ fn check_lint_policy() -> Result<(), String> {
         PolicyReportSpec {
             report_file: "lint-policy.md",
             check: "check-lint-policy",
-            why_it_matters: "`policy/clippy-lints.toml` is the reviewable ledger of the workspace lint stance, including planned 1.94 / 1.95 flips. If Cargo.toml drifts from the ledger, reviewers lose the trajectory and the dual-rail design (clippy + semantic checker) loses its receipt. `activate_when_msrv` is compared to `[workspace.package] rust-version`; an already-met MSRV without a remaining non-MSRV `reason` is overdue. `policy/clippy-debt.toml` is parsed as TOML: required nonblank fields, unknown fields, duplicate keys, trailing garbage, `target` dates, and dual-rail collisions fail here rather than being trusted as comments.",
+            why_it_matters: "`policy/clippy-lints.toml` is the reviewable ledger of the workspace lint stance, including planned 1.94 / 1.95 flips. If Cargo.toml drifts from the ledger, reviewers lose the trajectory and the dual-rail design (clippy + semantic checker) loses its receipt. `activate_when_msrv` is compared to `[workspace.package] rust-version`; an already-met MSRV without a remaining non-MSRV `blocked_by` is overdue. `reason` is narrative and does not satisfy that gate. `policy/clippy-debt.toml` is parsed as TOML: required nonblank fields, unknown fields, duplicate keys, trailing garbage, `target` dates, and dual-rail collisions fail here rather than being trusted as comments.",
             fix_kind: FixKind::PolicyExceptionRequired,
             recommended_fixes: &[
                 "Make `Cargo.toml` and `policy/clippy-lints.toml` agree: every `[[active.<group>]]` entry must appear in `[workspace.lints.*]` at the same level, and `[[planned]]` entries must not yet appear there.",
-                "When a planned lint's `activate_when_msrv` is already met by workspace `rust-version`, record a remaining non-MSRV `reason` (not an MSRV-only delay) or promote the entry.",
+                "When a planned lint's `activate_when_msrv` is already met by workspace `rust-version`, record a remaining non-MSRV `blocked_by` (not an MSRV-only delay) or promote the entry. `reason` does not satisfy that gate.",
                 "When promoting a planned lint, move the ledger entry from `[[planned]]` to `[[active.<group>]]` and add the matching `Cargo.toml` line in the same PR.",
                 "Keep `policy/clippy-debt.toml` rows unique, complete, and not already active, planned, or present in Cargo.toml. A past `target` must be renewed or the debt paid.",
                 "Document `[[active.<group>]]` family blocks in `docs/CLIPPY_POLICY.md` so the public surface stays in sync.",

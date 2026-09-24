@@ -189,6 +189,8 @@ pub(crate) struct DogfoodFrontPanelRun {
 pub(crate) struct DogfoodReportPacketIndexScenario {
     pub(crate) name: String,
     pub(crate) scenario: String,
+    pub(crate) packet_root: PathBuf,
+    pub(crate) canonical_command: String,
     pub(crate) expected_report: PathBuf,
     pub(crate) expected_markdown: PathBuf,
     pub(crate) expected_status: String,
@@ -204,6 +206,9 @@ pub(crate) struct DogfoodReportPacketIndexScenario {
 #[derive(Debug)]
 pub(crate) struct DogfoodReportPacketIndexRun {
     pub(crate) name: String,
+    pub(crate) packet_root: PathBuf,
+    pub(crate) render_command: String,
+    pub(crate) rendered: bool,
     pub(crate) actual_dir: PathBuf,
     pub(crate) json_path: PathBuf,
     pub(crate) markdown_path: PathBuf,
@@ -2351,6 +2356,8 @@ pub(crate) fn dogfood_report_packet_index_scenarios() -> Vec<DogfoodReportPacket
         vec![DogfoodReportPacketIndexScenario {
             name: "corpus".to_string(),
             scenario: reason.clone(),
+            packet_root: corpus_path.to_path_buf(),
+            canonical_command: String::new(),
             expected_report: corpus_path.to_path_buf(),
             expected_markdown: corpus_path.to_path_buf(),
             expected_status: "missing".to_string(),
@@ -2372,6 +2379,11 @@ pub(crate) fn dogfood_report_packet_index_scenarios() -> Vec<DogfoodReportPacket
     let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
         return fallback("report-packet-index corpus is missing cases array".to_string());
     };
+    // The corpus publishes one `canonical_command` for every case, and the
+    // render parses it rather than restating it, so the command this gate
+    // proves is the command the corpus and the generated CI cockpit tell a
+    // user to run.
+    let canonical_command = json_string_field(&corpus, "canonical_command").unwrap_or_default();
 
     cases
         .iter()
@@ -2385,6 +2397,10 @@ pub(crate) fn dogfood_report_packet_index_scenarios() -> Vec<DogfoodReportPacket
                 name,
                 scenario: json_string_field(case, "scenario")
                     .unwrap_or_else(|| "missing scenario".to_string()),
+                packet_root: json_string_field(case, "packet_root")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| corpus_path.to_path_buf()),
+                canonical_command: canonical_command.clone(),
                 expected_report,
                 expected_markdown: json_string_field(case, "expected_markdown")
                     .map(PathBuf::from)
@@ -2449,30 +2465,324 @@ pub(crate) fn json_string_values_from_array(
     sorted_unique_strings(values)
 }
 
+/// Scratch root for report-packet-index renders.
+///
+/// `ripr reports index` writes its output under the directory it runs in, so
+/// each case renders in a copy of its committed packet tree instead of in the
+/// fixture itself. That keeps the checked-in inputs byte-stable while the
+/// render still resolves `--reports-dir` and its siblings the way a user's
+/// repository does.
+pub(crate) const REPORT_PACKET_INDEX_RENDER_ROOT: &str = "target/ripr/dogfood/report-packet-index";
+
+/// Pinned `generated_at` value in the committed report-packet-index goldens.
+pub(crate) const REPORT_PACKET_INDEX_PINNED_GENERATED_AT: &str = "unix_ms:0";
+
+/// The `ripr` binary these renders drive, built once per process.
+///
+/// The gate proves the shipped route, so it runs the real binary rather than
+/// calling the renderer in-process: `build_report_packet_index_report` and
+/// `render_report_packet_index_markdown` are `pub(crate)` to `ripr` and are
+/// not reachable from `xtask` at all.
+fn report_packet_index_ripr_binary() -> Result<PathBuf, String> {
+    static BINARY: std::sync::OnceLock<Result<PathBuf, String>> = std::sync::OnceLock::new();
+    BINARY
+        .get_or_init(|| {
+            let args = ["build", "-p", "ripr", "--quiet"]
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect::<Vec<_>>();
+            run_output_owned_with_timeout(
+                "cargo",
+                &args,
+                tool_build_timeout()?,
+                "report-packet-index dogfood build of ripr",
+            )?;
+            let binary = PathBuf::from("target")
+                .join("debug")
+                .join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
+            if !binary.exists() {
+                return Err(format!(
+                    "report-packet-index dogfood build reported success but {} is absent",
+                    normalize_path(&binary)
+                ));
+            }
+            // The render runs with the packet copy as its working directory,
+            // so a relative program path would resolve against that copy.
+            binary
+                .canonicalize()
+                .map_err(|err| format!("failed to resolve {}: {err}", normalize_path(&binary)))
+        })
+        .clone()
+}
+
+/// Names a case id that cannot be used as a scratch directory component.
+///
+/// The render clears `target/ripr/dogfood/report-packet-index/<id>` with
+/// `remove_dir_all` before copying, so an id carrying a separator or `..`
+/// would delete a directory the corpus never named. Corpus ids are committed
+/// rather than typed by a user, which is a reason to check cheaply here, not a
+/// reason to assume.
+pub(crate) fn report_packet_index_case_id_violation(name: &str) -> Option<String> {
+    if !name.is_empty() && Path::new(name).file_name() == Some(std::ffi::OsStr::new(name)) {
+        return None;
+    }
+    Some(format!(
+        "report-packet-index case id must name one directory component, got `{name}`"
+    ))
+}
+
+/// Copies a committed packet tree into the scratch render root.
+///
+/// Anything that is neither a plain file nor a directory is a hard error: a
+/// symlink in a committed fixture would let the render read outside the packet
+/// and quietly change what the gate is measuring.
+fn copy_report_packet_index_tree(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination)
+        .map_err(|err| format!("failed to create {}: {err}", normalize_path(destination)))?;
+    let entries = fs::read_dir(source)
+        .map_err(|err| format!("failed to read {}: {err}", normalize_path(source)))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|err| format!("failed to read {}: {err}", normalize_path(source)))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|err| format!("failed to inspect {}: {err}", normalize_path(&path)))?;
+        let target = destination.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_report_packet_index_tree(&path, &target)?;
+        } else if file_type.is_file() {
+            fs::copy(&path, &target)
+                .map_err(|err| format!("failed to copy into {}: {err}", normalize_path(&target)))?;
+        } else {
+            return Err(format!(
+                "report-packet-index packet entry is neither a file nor a directory: {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The argument vector and the two output paths named by the corpus
+/// `canonical_command`.
+///
+/// Parsing the documented command instead of restating it keeps the render and
+/// the published regeneration instruction from drifting apart: a corpus that
+/// moves `--out` renders to the new path or fails by name.
+pub(crate) fn report_packet_index_render_plan(
+    canonical_command: &str,
+) -> Result<(Vec<String>, PathBuf, PathBuf), String> {
+    let mut tokens = canonical_command.split_whitespace();
+    match tokens.next() {
+        Some("ripr") => {}
+        Some(other) => {
+            return Err(format!(
+                "report-packet-index canonical_command must start with `ripr`, got `{other}`"
+            ));
+        }
+        None => return Err("report-packet-index canonical_command is empty".to_string()),
+    }
+    let args = tokens.map(str::to_string).collect::<Vec<_>>();
+    let value_of = |flag: &str| -> Result<PathBuf, String> {
+        args.iter()
+            .position(|arg| arg == flag)
+            .and_then(|index| args.get(index + 1))
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                format!("report-packet-index canonical_command is missing `{flag} <path>`")
+            })
+    };
+    let json = value_of("--out")?;
+    let markdown = value_of("--out-md")?;
+    Ok((args, json, markdown))
+}
+
+/// What one production render of a corpus case produced.
+pub(crate) struct RenderedReportPacketIndex {
+    pub(crate) command: String,
+    pub(crate) render_root: PathBuf,
+    pub(crate) json_path: PathBuf,
+    pub(crate) markdown_path: PathBuf,
+    pub(crate) json: String,
+    pub(crate) markdown: String,
+}
+
+fn render_report_packet_index_case(
+    scenario: &DogfoodReportPacketIndexScenario,
+) -> Result<RenderedReportPacketIndex, String> {
+    if let Some(violation) = report_packet_index_case_id_violation(&scenario.name) {
+        return Err(violation);
+    }
+    if !scenario.packet_root.is_dir() {
+        return Err(format!(
+            "report-packet-index packet tree is missing: {}",
+            normalize_path(&scenario.packet_root)
+        ));
+    }
+    let (args, relative_json, relative_markdown) =
+        report_packet_index_render_plan(&scenario.canonical_command)?;
+    let binary = report_packet_index_ripr_binary()?;
+    let render_root = Path::new(REPORT_PACKET_INDEX_RENDER_ROOT).join(&scenario.name);
+    if render_root.exists() {
+        fs::remove_dir_all(&render_root)
+            .map_err(|err| format!("failed to clear {}: {err}", normalize_path(&render_root)))?;
+    }
+    copy_report_packet_index_tree(&scenario.packet_root, &render_root)?;
+
+    let command = format!("ripr {}", args.join(" "));
+    run_output_owned_in(&binary.to_string_lossy(), &args, &render_root)
+        .map_err(|err| format!("`{command}` failed in the rendered packet: {err}"))?;
+
+    let json_path = render_root.join(&relative_json);
+    let markdown_path = render_root.join(&relative_markdown);
+    let json = fs::read_to_string(&json_path).map_err(|err| {
+        format!(
+            "`{command}` did not produce {}: {err}",
+            normalize_path(&json_path)
+        )
+    })?;
+    let markdown = fs::read_to_string(&markdown_path).map_err(|err| {
+        format!(
+            "`{command}` did not produce {}: {err}",
+            normalize_path(&markdown_path)
+        )
+    })?;
+    Ok(RenderedReportPacketIndex {
+        command,
+        render_root,
+        json_path,
+        markdown_path,
+        json,
+        markdown,
+    })
+}
+
+/// Names a `generated_at` that is not the wall-clock stamp this renderer emits.
+///
+/// The golden comparison substitutes the observed stamp, so without this check
+/// a renderer that stopped emitting `unix_ms:<millis>` would be reported only
+/// as a whole-document mismatch. Naming the stamp keeps the cause separate
+/// from ordinary content drift.
+pub(crate) fn report_packet_index_generated_at_violation(observed: &str) -> Option<String> {
+    // An absent prefix is the loudest case, not a pass: a renderer that
+    // switched to an ISO stamp would leave the pin a no-op, and reporting
+    // nothing here would push the whole document into ordinary content drift.
+    let Some(millis) = observed.strip_prefix("unix_ms:") else {
+        return Some(format!(
+            "rendered generated_at must be `unix_ms:<millis>`, got `{observed}`"
+        ));
+    };
+    if millis.is_empty() || !millis.chars().all(|value| value.is_ascii_digit()) {
+        return Some(format!(
+            "rendered generated_at must be `unix_ms:<millis>`, got `{observed}`"
+        ));
+    }
+    if observed == REPORT_PACKET_INDEX_PINNED_GENERATED_AT {
+        return Some(
+            "rendered generated_at is the pinned golden value, so the render did not stamp its own clock"
+                .to_string(),
+        );
+    }
+    None
+}
+
+/// The rendered report with its wall-clock stamp replaced by the pinned golden
+/// value.
+///
+/// `generated_at` is `unix_ms:<millis>` taken from the run's own clock, so it
+/// can never equal a committed golden. Substituting the exact observed value —
+/// after checking its shape separately — leaves every other byte under
+/// comparison, so a renderer change still has to re-bless the golden.
+pub(crate) fn pin_report_packet_index_generated_at(json: &str, observed: &str) -> String {
+    json.replace(
+        &format!("\"generated_at\": \"{observed}\""),
+        &format!("\"generated_at\": \"{REPORT_PACKET_INDEX_PINNED_GENERATED_AT}\""),
+    )
+}
+
+/// Reports the first line on which two rendered documents diverge.
+fn first_text_divergence(produced: &str, golden: &str) -> Option<String> {
+    let mut produced_lines = produced.lines();
+    let mut golden_lines = golden.lines();
+    let mut line = 0usize;
+    loop {
+        line += 1;
+        match (produced_lines.next(), golden_lines.next()) {
+            (None, None) => return None,
+            (Some(produced_line), Some(golden_line)) if produced_line == golden_line => {}
+            (produced_line, golden_line) => {
+                return Some(format!(
+                    "line {line}: produced {:?}, golden {:?}",
+                    produced_line.unwrap_or("<end of file>"),
+                    golden_line.unwrap_or("<end of file>")
+                ));
+            }
+        }
+    }
+}
+
+fn compare_report_packet_index_golden(
+    errors: &mut Vec<String>,
+    label: &str,
+    produced: &str,
+    golden_path: &Path,
+) {
+    let golden = match fs::read_to_string(golden_path) {
+        Ok(golden) => golden,
+        Err(err) => {
+            errors.push(format!(
+                "failed to read {label} golden {}: {err}",
+                normalize_path(golden_path)
+            ));
+            return;
+        }
+    };
+    if produced == golden {
+        return;
+    }
+    let divergence = first_text_divergence(produced, &golden)
+        .unwrap_or_else(|| "trailing content differs".to_string());
+    errors.push(format!(
+        "rendered {label} does not match {} ({divergence}); regenerate the golden with the corpus canonical_command",
+        normalize_path(golden_path)
+    ));
+}
+
+/// Renders one report-packet-index corpus case through the shipped
+/// `ripr reports index` route and checks what the renderer produced.
+///
+/// Before #3972 this read the committed `expected_report` and compared it to
+/// the corpus declaration, so neither side of the comparison came from the
+/// renderer and no renderer change could fail the gate. The run now builds the
+/// binary, renders the case's committed packet tree, checks the produced
+/// report against the corpus contract, and compares the produced JSON and
+/// Markdown to the goldens.
 pub(crate) fn dogfood_report_packet_index_run(
     scenario: &DogfoodReportPacketIndexScenario,
 ) -> Result<DogfoodReportPacketIndexRun, String> {
-    let actual_dir = scenario
-        .expected_report
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let json_path = scenario.expected_report.clone();
-    let markdown_path = scenario.expected_markdown.clone();
     let mut errors = Vec::new();
 
     if !scenario.expected_report.exists() {
         errors.push(format!(
-            "expected report fixture is missing: {}",
+            "expected report golden is missing: {}",
             normalize_path(&scenario.expected_report)
         ));
     }
     if !scenario.expected_markdown.exists() {
         errors.push(format!(
-            "expected Markdown fixture is missing: {}",
+            "expected Markdown golden is missing: {}",
             normalize_path(&scenario.expected_markdown)
         ));
     }
+
+    let rendered = match render_report_packet_index_case(scenario) {
+        Ok(rendered) => Some(rendered),
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
 
     let mut status = "missing".to_string();
     let mut missing_expected = 0usize;
@@ -2482,64 +2792,84 @@ pub(crate) fn dogfood_report_packet_index_run(
     let mut gate_authority_present = false;
     let mut groups = Vec::<String>::new();
 
-    match read_json_value(&json_path) {
-        Ok(report) => {
-            if json_string_field(&report, "kind").as_deref() != Some("report_packet_index") {
-                errors.push("report kind must be report_packet_index".to_string());
-            }
-            status = json_string_field(&report, "status").unwrap_or_else(|| "missing".to_string());
-            if let Some(summary) = report.get("summary") {
-                missing_expected = json_usize_field(summary, "missing_expected").unwrap_or(0);
-                failures = json_usize_field(summary, "failures").unwrap_or(0);
-                warnings = json_usize_field(summary, "warnings").unwrap_or(0);
-                start_here_available = json_string_field(summary, "start_here")
-                    .is_some_and(|value| !value.trim().is_empty());
-                gate_authority_present = json_string_field(summary, "gate_authority")
-                    .is_some_and(|value| !value.trim().is_empty());
-            } else {
-                errors.push("report summary is missing".to_string());
-            }
-            groups = report
-                .get("groups")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| json_string_field(item, "group"))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let limits = report
-                .get("limits")
-                .and_then(Value::as_array)
-                .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
-                .unwrap_or_default();
-            if !limits.contains(&"Advisory report-packet index only.") {
-                errors.push("report is missing advisory report-packet index limit".to_string());
-            }
-            if !limits.contains(&"Gate decision remains pass/fail authority when configured.") {
-                errors.push("report is missing gate-authority limit".to_string());
-            }
-        }
-        Err(err) => errors.push(err),
-    }
+    if let Some(rendered) = rendered.as_ref() {
+        match serde_json::from_str::<Value>(&rendered.json) {
+            Ok(report) => {
+                if json_string_field(&report, "kind").as_deref() != Some("report_packet_index") {
+                    errors.push("report kind must be report_packet_index".to_string());
+                }
+                status =
+                    json_string_field(&report, "status").unwrap_or_else(|| "missing".to_string());
+                if let Some(summary) = report.get("summary") {
+                    missing_expected = json_usize_field(summary, "missing_expected").unwrap_or(0);
+                    failures = json_usize_field(summary, "failures").unwrap_or(0);
+                    warnings = json_usize_field(summary, "warnings").unwrap_or(0);
+                    start_here_available = json_string_field(summary, "start_here")
+                        .is_some_and(|value| !value.trim().is_empty());
+                    gate_authority_present = json_string_field(summary, "gate_authority")
+                        .is_some_and(|value| !value.trim().is_empty());
+                } else {
+                    errors.push("report summary is missing".to_string());
+                }
+                groups = report
+                    .get("groups")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| json_string_field(item, "group"))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let limits = report
+                    .get("limits")
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+                    .unwrap_or_default();
+                if !limits.contains(&"Advisory report-packet index only.") {
+                    errors.push("report is missing advisory report-packet index limit".to_string());
+                }
+                if !limits.contains(&"Gate decision remains pass/fail authority when configured.") {
+                    errors.push("report is missing gate-authority limit".to_string());
+                }
 
-    match fs::read_to_string(&markdown_path) {
-        Ok(markdown) => {
-            if !markdown.contains("# RIPR Report Packet Index") {
-                errors.push("Markdown must use the report-packet index heading".to_string());
+                let observed_generated_at = json_string_field(&report, "generated_at")
+                    .unwrap_or_else(|| "missing".to_string());
+                if let Some(violation) =
+                    report_packet_index_generated_at_violation(&observed_generated_at)
+                {
+                    errors.push(violation);
+                }
+                let pinned =
+                    pin_report_packet_index_generated_at(&rendered.json, &observed_generated_at);
+                compare_report_packet_index_golden(
+                    &mut errors,
+                    "report",
+                    &pinned,
+                    &scenario.expected_report,
+                );
             }
-            if !markdown.contains(&format!("Status: {}", scenario.expected_status)) {
-                errors.push(format!(
-                    "Markdown should pin status {}",
-                    scenario.expected_status
-                ));
-            }
+            Err(err) => errors.push(format!("rendered report is not valid JSON: {err}")),
         }
-        Err(err) => errors.push(format!(
-            "failed to read report-packet index Markdown {}: {err}",
-            normalize_path(&markdown_path)
-        )),
+
+        if !rendered.markdown.contains("# RIPR Report Packet Index") {
+            errors.push("Markdown must use the report-packet index heading".to_string());
+        }
+        if !rendered
+            .markdown
+            .contains(&format!("Status: {}", scenario.expected_status))
+        {
+            errors.push(format!(
+                "Markdown should pin status {}",
+                scenario.expected_status
+            ));
+        }
+        compare_report_packet_index_golden(
+            &mut errors,
+            "Markdown",
+            &rendered.markdown,
+            &scenario.expected_markdown,
+        );
     }
 
     if status != scenario.expected_status {
@@ -2584,8 +2914,28 @@ pub(crate) fn dogfood_report_packet_index_run(
         }
     }
 
+    let render_command = rendered
+        .as_ref()
+        .map(|rendered| rendered.command.clone())
+        .unwrap_or_else(|| scenario.canonical_command.clone());
+    let actual_dir = rendered
+        .as_ref()
+        .map(|rendered| rendered.render_root.clone())
+        .unwrap_or_else(|| PathBuf::from(REPORT_PACKET_INDEX_RENDER_ROOT));
+    let json_path = rendered
+        .as_ref()
+        .map(|rendered| rendered.json_path.clone())
+        .unwrap_or_else(|| scenario.expected_report.clone());
+    let markdown_path = rendered
+        .as_ref()
+        .map(|rendered| rendered.markdown_path.clone())
+        .unwrap_or_else(|| scenario.expected_markdown.clone());
+
     Ok(DogfoodReportPacketIndexRun {
         name: scenario.name.clone(),
+        packet_root: scenario.packet_root.clone(),
+        render_command,
+        rendered: rendered.is_some(),
         actual_dir,
         json_path,
         markdown_path,
@@ -12632,10 +12982,21 @@ pub(crate) fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> Strin
         }
     }
     body.push_str("## Report Packet Index Receipts\n\n");
-    body.push_str("These receipts validate checked `report-packet-index` fixture outputs for the documented Campaign 25 packet-index routes. They verify reviewer-first grouping, missing-surface counts, start-here discovery, gate-authority visibility, and advisory limits without rerunning hidden analysis or changing pass/fail authority.\n\n");
+    body.push_str("These receipts render each `report-packet-index` corpus case through the shipped `ripr reports index` route and check what the renderer produced. They verify reviewer-first grouping, missing-surface counts, start-here discovery, gate-authority visibility, and advisory limits, and compare the rendered JSON and Markdown to the committed goldens, without rerunning hidden analysis or changing pass/fail authority.\n\n");
     body.push_str("- Default CI blocking: no\n");
+    body.push_str(&format!(
+        "- Rendered cases: {} of {}\n",
+        report_packet_index_runs
+            .iter()
+            .filter(|run| run.rendered)
+            .count(),
+        report_packet_index_runs.len()
+    ));
     body.push_str(
-        "- Receipt outputs: `fixtures/boundary_gap/expected/report-packet-index/<case>/index.{json,md}`\n\n",
+        "- Packet inputs: `fixtures/boundary_gap/expected/report-packet-index/<case>/packet`\n",
+    );
+    body.push_str(
+        "- Compared goldens: `fixtures/boundary_gap/expected/report-packet-index/<case>/index.{json,md}`\n\n",
     );
     body.push_str("| Case | Status | Missing | Warnings | Failures | Start here | Gate authority | Groups |\n");
     body.push_str("| --- | --- | ---: | ---: | ---: | --- | --- | --- |\n");
@@ -12663,6 +13024,15 @@ pub(crate) fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> Strin
     body.push('\n');
     for run in report_packet_index_runs {
         body.push_str(&format!("### Report Packet Index `{}`\n\n", run.name));
+        body.push_str(&format!("- Rendered: {}\n", run.rendered));
+        body.push_str(&format!(
+            "- Packet input: `{}`\n",
+            normalize_path(&run.packet_root)
+        ));
+        body.push_str(&format!(
+            "- Render command: `{}`\n",
+            markdown_cell(&run.render_command)
+        ));
         body.push_str(&format!("- Status: `{}`\n", markdown_cell(&run.status)));
         body.push_str(&format!(
             "- Expected status: `{}`\n",
@@ -14799,6 +15169,14 @@ pub(crate) fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
     }
     body.push_str("\n    ]\n  },\n  \"report_packet_index\": {\n");
     body.push_str("    \"default_ci_blocking\": false,\n");
+    body.push_str(&format!(
+        "    \"rendered_cases\": {},\n    \"total_cases\": {},\n",
+        report_packet_index_runs
+            .iter()
+            .filter(|run| run.rendered)
+            .count(),
+        report_packet_index_runs.len()
+    ));
     body.push_str(
         "    \"receipt_dir\": \"fixtures/boundary_gap/expected/report-packet-index\",\n    \"cases\": [\n",
     );
@@ -14810,6 +15188,15 @@ pub(crate) fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
         body.push_str(&format!(
             "        \"name\": \"{}\",\n",
             json_escape(&run.name)
+        ));
+        body.push_str(&format!("        \"rendered\": {},\n", run.rendered));
+        body.push_str(&format!(
+            "        \"packet_root\": \"{}\",\n",
+            json_escape(&normalize_path(&run.packet_root))
+        ));
+        body.push_str(&format!(
+            "        \"render_command\": \"{}\",\n",
+            json_escape(&run.render_command)
         ));
         body.push_str(&format!(
             "        \"actual_dir\": \"{}\",\n",

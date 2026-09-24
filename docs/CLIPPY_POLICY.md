@@ -181,8 +181,9 @@ verifies that:
   (they're future flips, not active);
 - every `[workspace.lints.*]` line has a matching ledger entry;
 - every `[[planned]]` `activate_when_msrv` that is already met by
-  `[workspace.package] rust-version` has a remaining non-MSRV `reason`
-  (empty or MSRV-only `reason` text fails);
+  `[workspace.package] rust-version` has a remaining non-MSRV `blocked_by`
+  (empty or MSRV-only `blocked_by` text fails; `reason` does not satisfy
+  this check);
 - every `[[debt]]` row in `policy/clippy-debt.toml` is valid TOML with
   unique `id` / `lint`, required nonblank fields, a `target` that is not
   in the past, and a lint that is not already `[[active]]`, `[[planned]]`,
@@ -190,18 +191,16 @@ verifies that:
 
 `activate_when_msrv` on `[[planned]]` entries is compared to
 `[workspace.package] rust-version`. When the recorded MSRV is already
-met, the entry must have a remaining non-MSRV `reason` or be promoted.
-A `reason` that only names an MSRV or Rust version is treated as missing.
-The values are not verified available-since (`clippy::manual_pop_if`
-records `1.95` while `reason` says pinned 1.95.0 Clippy does not
-recognize the lint). Remaining blockers live in `reason`. Typed
-`blocked_by` metadata is a later slice; this gate is a closed token
-filter on unstructured `reason` text.
+met, the entry must have a remaining non-MSRV `blocked_by` or be promoted.
+A `blocked_by` that only names an MSRV or Rust version is treated as missing.
+`reason` is narrative and does not satisfy the gate. The values are not
+verified available-since (`clippy::manual_pop_if` records `1.95` while
+`blocked_by` says pinned 1.95.0 Clippy does not recognize the lint).
 
 When promoting a planned lint, move the entry from `[[planned]]` to
 `[[active.<group>]]`, add the matching `Cargo.toml` line, and update
 this doc — the gate makes Cargo.toml drift visible immediately. An
-already-met `activate_when_msrv` without `reason` is overdue, not a
+already-met `activate_when_msrv` without `blocked_by` is overdue, not a
 silent documentary leftover.
 
 ## Companion ledgers
@@ -215,8 +214,9 @@ Two companion ledgers track Clippy state alongside the active/planned table:
 - [`policy/clippy-exceptions.toml`](../policy/clippy-exceptions.toml) records
   per-call-site `#[expect(...)]` / `#[allow(...)]` suppressions with an `id`,
   `owner`, `reason`, `covered_by`, and `expires`. It is the reviewable
-  counterpart to `.ripr/allow-attributes.txt`. It currently records
-  `clippy-exception-0001`.
+  counterpart to `.ripr/allow-attributes.txt`. It has no live rows;
+  `clippy-exception-0001` was retired when `PanicAllowEntryVersioned::V2`
+  was boxed.
 
 These companion ledgers are gated as follows:
 
@@ -263,10 +263,11 @@ Planned lints retained after PR 03:
 
 The rollout PR stack is in `docs/ci/ripr-rollout-plan.md`. Future lint flips
 must move entries from `[[planned]]` to `[[active]]` only after the matching
-toolchain support, configuration, and receipts in `reason` are present.
+toolchain support, configuration, and receipts in `blocked_by` are present.
 `check-lint-policy` compares `activate_when_msrv` to workspace
-`rust-version` and requires a remaining non-MSRV `reason` when that
-version is already met (MSRV-only `reason` text fails).
+`rust-version` and requires a remaining non-MSRV `blocked_by` when that
+version is already met (MSRV-only `blocked_by` text fails; `reason` does
+not satisfy the gate).
 
 ## See also
 

@@ -477,18 +477,25 @@ fn push_decision_section(
                     .delta_attribution
                     .map(|attribution| attribution.as_str()),
             );
-            push_repair_route(out, &decision.repair_route);
+            push_repair_route(out, &decision.repair_route, decision.changed_line_anchored);
         }
     }
     out.push('\n');
 }
 
-fn push_repair_route(out: &mut String, route: &GateRepairRoute) {
+fn push_repair_route(out: &mut String, route: &GateRepairRoute, changed_line_anchored: bool) {
+    // A seam outside the PR's changed lines keeps its owner and behavior
+    // visible but is not labeled changed (RIPR-SPEC-0012 placement).
+    let (owner_label, behavior_label) = if changed_line_anchored {
+        ("Changed owner", "Changed behavior")
+    } else {
+        ("Owner", "Behavior")
+    };
     push_optional_code(out, "Gap", route.canonical_gap_id.as_deref());
     push_optional_code(out, "Seam", route.seam_id.as_deref());
     push_optional_code(out, "Classification", route.classification.as_deref());
-    push_optional_code(out, "Changed owner", route.changed_owner.as_deref());
-    push_optional_text(out, "Changed behavior", route.changed_behavior.as_deref());
+    push_optional_code(out, owner_label, route.changed_owner.as_deref());
+    push_optional_text(out, behavior_label, route.changed_behavior.as_deref());
     push_optional_text(
         out,
         "Why it remains open",
@@ -660,7 +667,7 @@ mod tests {
         carried.test_intent = Some(prompt.clone());
         carried.receipt_command = Some("ripr agent receipt --root . --json".to_string());
         let mut with = String::new();
-        push_repair_route(&mut with, &carried);
+        push_repair_route(&mut with, &carried, true);
         let at = |needle: &str| {
             with.find(needle)
                 .ok_or_else(|| format!("missing `{needle}`:\n{with}"))
@@ -692,7 +699,7 @@ mod tests {
         bare.test_intent = Some(prompt.clone());
         bare.receipt_command = carried.receipt_command.clone();
         let mut without = String::new();
-        push_repair_route(&mut without, &bare);
+        push_repair_route(&mut without, &bare, true);
         if without.contains("Start repair")
             || without.contains(&format!("  - {REPAIR_AFTER_PHASE_LABEL}: "))
         {

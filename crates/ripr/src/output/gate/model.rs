@@ -158,6 +158,12 @@ pub(super) struct GateDecision {
     pub(super) policy: GateDecisionPolicy,
     pub(super) evidence: GateEvidence,
     pub(super) repair_route: GateRepairRoute,
+    /// `false` only for PR-guidance summary items the review producer could
+    /// not place on a changed line (`no_safe_changed_line_placement`): the
+    /// seam's own line and owner span sit outside the diff as far as the
+    /// producer knows. Markdown then names the owner and behavior without
+    /// calling them changed. Not serialized; JSON keeps its field names.
+    pub(super) changed_line_anchored: bool,
     /// Whether the candidate was absent from the baseline at decision time.
     /// Always `true` for diff-scoped modes (no baseline).
     /// Used when computing `new_unsuppressed.count` in baseline mode.
