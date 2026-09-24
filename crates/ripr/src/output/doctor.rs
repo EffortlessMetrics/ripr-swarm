@@ -411,6 +411,27 @@ pub(crate) fn rust_toolchain_scope(
     ))
 }
 
+/// Whether `root` is inside a Git work tree, or `None` when the probe could
+/// not run at all.
+///
+/// A probe that never ran may not assert that a directory is not a
+/// repository: git missing from `PATH`, or a spawn that times out, is a
+/// different state from git running and reporting no work tree, and only the
+/// second one has a repair the user can act on. `rev-parse` exiting nonzero
+/// is git answering, so that arm reports `false` rather than the unknown.
+fn is_inside_work_tree(root: &Path) -> Option<bool> {
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--is-inside-work-tree"],
+        Some(DOCTOR_TOOL_TIMEOUT),
+    )
+    .ok()?;
+    if !output.status.success() {
+        return Some(false);
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim() == "true")
+}
+
 /// Evaluate the doctor core checks and also return the raw config load
 /// result, so the human-readable projection can print full local detail
 /// without going through the redacted JSON evidence. `detected` is the
@@ -464,6 +485,33 @@ fn evaluate_doctor_core_with_probe(
             DoctorStatus::Fail,
             Some(format!("no Cargo.toml found at {}", root.display())),
         );
+    }
+    match is_inside_work_tree(root) {
+        Some(true) => report.add_check(
+            "git_repository",
+            DoctorStatus::Pass,
+            Some(format!("inside a Git work tree at {}", root.display())),
+        ),
+        Some(false) => report.add_check(
+            "git_repository",
+            DoctorStatus::Fail,
+            Some(format!(
+                "not inside a Git work tree at {}; the diff-scoped commands read committed \
+                 history and cannot run here. For a repository-free scan, run `ripr check --root \
+                 {} --format repo-exposure-md`",
+                root.display(),
+                root.display()
+            )),
+        ),
+        None => report.add_check(
+            "git_repository",
+            DoctorStatus::Fail,
+            Some(format!(
+                "could not determine whether {} is inside a Git work tree; the git tool check \
+                 below carries the reason",
+                root.display()
+            )),
+        ),
     }
     match &config {
         Ok(config) => report.add_check(
@@ -713,6 +761,108 @@ mod tests {
             std::process::id(),
             TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    /// Run `git` in `dir` and return its trimmed stdout.
+    fn git_in(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+        let output = crate::git::run_git_output_with_deadline(dir, args, Some(DOCTOR_TOOL_TIMEOUT))
+            .map_err(|error| format!("git {args:?} in {}: {error}", dir.display()))?;
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    #[test]
+    fn a_root_outside_a_git_work_tree_is_named_as_such() -> Result<(), String> {
+        // A bare repository is not a work tree wherever the fixture lands.
+        // `std::env::temp_dir()` resolves inside this checkout in some
+        // environments, so a plain empty directory would be a work tree and
+        // this test would prove nothing. The construction check below is what
+        // catches that, and it is the reason the fixture is a bare repository.
+        let mut failures = Vec::new();
+
+        // Two fixtures, because git answers this question two different ways
+        // and the reported case is the second. A bare repository prints
+        // `false` and exits 0; a directory git cannot read as a repository
+        // exits nonzero, which is the arm a plain directory outside any
+        // checkout takes. A plain directory is not usable as a fixture here:
+        // the temp root resolves inside this checkout in some environments,
+        // where it would be a work tree.
+        let bare = unique_test_dir("outside-work-tree-bare");
+        std::fs::create_dir_all(&bare).map_err(|error| format!("create fixture: {error}"))?;
+        git_in(&bare, &["init", "--bare", "."])?;
+
+        let gitfile = unique_test_dir("outside-work-tree-gitfile");
+        std::fs::create_dir_all(&gitfile).map_err(|error| format!("create fixture: {error}"))?;
+        std::fs::write(gitfile.join(".git"), "not a gitfile\n")
+            .map_err(|error| format!("write fixture gitfile: {error}"))?;
+
+        for fixture in [&bare, &gitfile] {
+            let inside =
+                git_in(fixture, &["rev-parse", "--is-inside-work-tree"]).unwrap_or_default();
+            if inside == "true" {
+                failures.push(format!(
+                    "fixture {} is inside a work tree, so it proves nothing",
+                    fixture.display()
+                ));
+                continue;
+            }
+            let report = evaluate_doctor_core_with_config(fixture, &[]).report;
+            match report
+                .checks
+                .iter()
+                .find(|check| check.name == "git_repository")
+            {
+                None => failures.push(format!(
+                    "{}: no git_repository check was reported",
+                    fixture.display()
+                )),
+                Some(check) => {
+                    if check.status != DoctorStatus::Fail.into() {
+                        failures.push(format!(
+                            "{}: a root outside a work tree reported {:?}",
+                            fixture.display(),
+                            check.status
+                        ));
+                    }
+                    let evidence = check.evidence.as_deref().unwrap_or_default();
+                    // The line has to carry the state, the consequence, and a
+                    // command that works where the user is standing. Advice
+                    // that cannot run there is what this check replaces.
+                    for expected in [
+                        "not inside a Git work tree",
+                        "cannot run here",
+                        "--format repo-exposure-md",
+                    ] {
+                        if !evidence.contains(expected) {
+                            failures.push(format!("`{evidence}` does not say `{expected}`"));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Positive control: this checkout is a work tree, so the same check
+        // must pass here. Without it the test would also pass against a check
+        // that always fails.
+        let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        match evaluate_doctor_core_with_config(checkout, &[])
+            .report
+            .checks
+            .iter()
+            .find(|check| check.name == "git_repository")
+        {
+            Some(check) if check.status == DoctorStatus::Pass.into() => {}
+            other => failures.push(format!(
+                "this checkout should report a work tree, reported {other:?}"
+            )),
+        }
+
+        let _ = std::fs::remove_dir_all(&bare);
+        let _ = std::fs::remove_dir_all(&gitfile);
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
     }
 
     #[test]

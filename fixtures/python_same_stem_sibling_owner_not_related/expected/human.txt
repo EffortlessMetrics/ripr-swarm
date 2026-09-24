@@ -1,0 +1,38 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_same_stem_sibling_owner_not_related/input
+
+Summary: 5 probe(s), 1 exposed, 0 weak, 0 unrevealed, 4 no path, 0 unknown
+
+Changed file(s) by language: python: 1, rust: 0.
+
+Analysis outcome: complete_with_findings (analysis complete).
+  Counts: 1 changed file(s), 8 changed line(s), 5 candidate line(s), 5 probe(s), 5 finding(s).
+
+Start here:
+  State: preview_limited
+  Safe next action: preview-language evidence is advisory; complete the missing repair-packet fields before acting.
+  File: pricing.py:10
+  Language: python
+  Language status: preview
+  Static exposure: no_static_path (warning, confidence 0.40)
+  Why no_static_path: the changed behavior could not be traced to an observable output
+  Canonical gap: gap:python:pricing.py:loyalty_price:predicate_boundary:predicate:def_loyalty_price_amount_years
+  Changed behavior: def loyalty_price(amount, years):
+  Missing discriminator: No Python test references `loyalty_price(`; add a pytest or unittest test that calls the changed owner.
+  Evidence:
+    - reach no: 0 related Python test(s) found for owner `loyalty_price`
+    - infection yes: Changed Python expression can alter preview-classified predicate behavior: `def loyalty_price(amount, years):`
+    - 4 more evidence line(s) hidden
+
+Next: drill into the top finding:
+  ripr explain --root fixtures/python_same_stem_sibling_owner_not_related/input --diff fixtures/python_same_stem_sibling_owner_not_related/diff.patch --mode fast probe:pricing.py:python_preview:837738e4
+  ripr context --root fixtures/python_same_stem_sibling_owner_not_related/input --diff fixtures/python_same_stem_sibling_owner_not_related/diff.patch --mode fast --at probe:pricing.py:python_preview:837738e4
+
+Hidden:
+  4 lower-priority finding(s) omitted from default human output.
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 Python(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

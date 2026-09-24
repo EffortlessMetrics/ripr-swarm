@@ -3589,7 +3589,7 @@ fn classify_change_uses_same_stem_test_as_weak_proximity() -> Result<(), String>
     );
     let tests = extract_tests(
         Path::new("tests/test_pricing.py"),
-        "def test_boundary_documented_elsewhere():\n    assert 90 == 90\n",
+        "def test_boundary_documented_elsewhere():\n    handler = apply_discount\n    assert 90 == 90\n",
     );
 
     let Some(finding) = classify_change(
@@ -3620,7 +3620,7 @@ fn same_stem_relation_accepts_suffix_and_orders_after_direct_calls() {
     );
     let mut tests = extract_tests(
         Path::new("tests/pricing_test.py"),
-        "def test_same_stem_only():\n    assert 90 == 90\n",
+        "def test_same_stem_only():\n    handler = apply_discount\n    assert 90 == 90\n",
     );
     tests.extend(extract_tests(
         Path::new("tests/test_checkout.py"),
@@ -4405,5 +4405,362 @@ fn analyze_repo_returns_an_honest_zero_for_a_tests_only_workspace() -> Result<()
     assert_eq!(result.production_files, 0);
     assert_eq!(result.partial_reason, None);
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+// ── A test is related to an owner only when it references the owner ────────
+//
+// Flat layout: `pricing.py` at the repository root with
+// `tests/test_pricing.py`. The same stem used to relate every test in the file
+// to the new `loyalty_price`, which no test references (RIPR-SPEC-0028).
+
+const FLAT_PRICING_SOURCE: &str = "DISCOUNT_THRESHOLD = 10000
+
+
+def discounted_total(amount):
+    if amount >= DISCOUNT_THRESHOLD:
+        return amount * 9 // 10
+    return amount
+
+
+def loyalty_price(amount, years):
+    if years >= 5:
+        return amount * 95 // 100
+    return amount
+";
+
+const FLAT_SIBLING_ONLY_TESTS: &str = "from pricing import discounted_total
+
+
+def test_no_discount_below_threshold():
+    assert discounted_total(5000) == 5000
+
+
+def test_discounts_far_above_threshold():
+    assert discounted_total(20000) == 18000
+";
+
+fn flat_pricing_owners() -> Vec<PythonOwner> {
+    extract_owners(Path::new("pricing.py"), FLAT_PRICING_SOURCE)
+}
+
+fn flat_owner<'a>(owners: &'a [PythonOwner], name: &str) -> Result<&'a PythonOwner, String> {
+    owners
+        .iter()
+        .find(|owner| owner.qualified_name == name)
+        .ok_or_else(|| format!("fixture must parse owner `{name}`"))
+}
+
+fn classify_flat_loyalty_line(tests: &[PythonTest]) -> Result<Finding, String> {
+    let owners = flat_pricing_owners();
+    classify_change(
+        Path::new("pricing.py"),
+        11,
+        "    if years >= 5:",
+        &owners,
+        tests,
+    )
+    .ok_or_else(|| "expected a loyalty_price finding".to_string())
+}
+
+fn candidate_relations(owner: &PythonOwner, tests: &[PythonTest]) -> Vec<(String, &'static str)> {
+    related_test_candidates(owner, tests)
+        .iter()
+        .map(|candidate| (candidate.test.name.clone(), candidate.relation.as_str()))
+        .collect()
+}
+
+#[test]
+fn flat_layout_same_stem_tests_that_only_call_a_sibling_owner_are_not_related() -> Result<(), String>
+{
+    let owners = flat_pricing_owners();
+    let loyalty = flat_owner(&owners, "loyalty_price")?;
+    assert_eq!(loyalty.start_line, 10, "fixture must place loyalty_price");
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), FLAT_SIBLING_ONLY_TESTS);
+    assert_eq!(tests.len(), 2, "fixture must parse both sibling tests");
+    assert!(
+        tests
+            .iter()
+            .all(|test| test.body_text.contains("discounted_total(")
+                && same_stem_related(test, loyalty)),
+        "both parsed tests must call the sibling owner from a same-stem file"
+    );
+
+    let finding = classify_flat_loyalty_line(&tests)?;
+
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert!(finding.related_tests.is_empty());
+    assert_eq!(
+        finding.ripr.reach.summary,
+        "0 related Python test(s) found for owner `loyalty_price`"
+    );
+    assert!(
+        finding.missing.iter().any(|line| line
+            == "No Python test references `loyalty_price(`; add a pytest or unittest test that calls the changed owner."),
+        "no_static_path must name the missing owner reference: {:?}",
+        finding.missing
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation:")),
+        "no heuristic relation may be disclosed: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn flat_layout_same_stem_tests_still_relate_the_sibling_owner_they_call() -> Result<(), String> {
+    let owners = flat_pricing_owners();
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), FLAT_SIBLING_ONLY_TESTS);
+    assert_eq!(
+        candidate_relations(flat_owner(&owners, "discounted_total")?, &tests),
+        vec![
+            (
+                "test_discounts_far_above_threshold".to_string(),
+                "syntactic_call"
+            ),
+            (
+                "test_no_discount_below_threshold".to_string(),
+                "syntactic_call"
+            ),
+        ]
+    );
+    let finding = classify_change(
+        Path::new("pricing.py"),
+        5,
+        "    if amount >= DISCOUNT_THRESHOLD:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "expected a discounted_total finding".to_string())?;
+    assert_eq!(finding.ripr.reach.state, StageState::Yes);
+    assert_eq!(finding.related_tests.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn flat_layout_test_that_calls_the_owner_is_related_and_sibling_only_tests_are_not()
+-> Result<(), String> {
+    let source = format!(
+        "{}\n\ndef test_loyal_customers_get_five_percent_off():\n    assert loyalty_price(1000, 5) == 950\n",
+        FLAT_SIBLING_ONLY_TESTS.replace(
+            "from pricing import discounted_total",
+            "from pricing import discounted_total, loyalty_price"
+        )
+    );
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), &source);
+    assert_eq!(tests.len(), 3);
+
+    let finding = classify_flat_loyalty_line(&tests)?;
+
+    assert_eq!(finding.ripr.reach.state, StageState::Yes);
+    let names: Vec<&str> = finding
+        .related_tests
+        .iter()
+        .map(|test| test.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["test_loyal_customers_get_five_percent_off"]);
+    Ok(())
+}
+
+#[test]
+fn non_call_owner_references_keep_a_weak_same_stem_link() -> Result<(), String> {
+    let owners = flat_pricing_owners();
+    let loyalty = flat_owner(&owners, "loyalty_price")?;
+    let cases = [
+        (
+            "bare name",
+            "from pricing import loyalty_price\n\n\ndef test_prices_every_tier():\n    handler = loyalty_price\n    assert handler is not None\n",
+        ),
+        (
+            "renamed import local",
+            "from pricing import loyalty_price as lp\n\n\ndef test_prices_every_tier():\n    assert callable(lp)\n",
+        ),
+        (
+            "module member",
+            "import pricing\n\n\ndef test_prices_every_tier():\n    assert callable(pricing.loyalty_price)\n",
+        ),
+        (
+            "aliased module member",
+            "import pricing as p\n\n\ndef test_prices_every_tier():\n    handler = p.loyalty_price\n    assert handler is not None\n",
+        ),
+    ];
+    for (label, source) in cases {
+        let tests = extract_tests(Path::new("tests/test_pricing.py"), source);
+        assert_eq!(tests.len(), 1, "{label}: fixture must parse one test");
+        assert_eq!(
+            candidate_relations(loyalty, &tests),
+            vec![("test_prices_every_tier".to_string(), "same_stem")],
+            "{label}: a non-call reference keeps the heuristic link"
+        );
+        let finding = classify_flat_loyalty_line(&tests)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+        assert_eq!(finding.ripr.reach.state, StageState::Weak, "{label}");
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line == "related_test_relation: same_stem (test_prices_every_tier)"),
+            "{label}: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn owner_names_in_titles_fixtures_comments_strings_and_foreign_members_are_not_references()
+-> Result<(), String> {
+    let owners = flat_pricing_owners();
+    let loyalty = flat_owner(&owners, "loyalty_price")?;
+    let source = r#"import billing as b
+import pricing
+from billing import loyalty_price as other_lp
+from pricing import discounted_total
+
+
+def test_loyalty_price_is_documented(loyalty_price_config):
+    # loyalty_price(1000, 5) is covered elsewhere
+    label = "loyalty_price"
+    note = """
+    loyalty_price
+    """
+    order = make_order(loyalty_price=5)
+    total = order.loyalty_price
+    foreign = b.loyalty_price
+    renamed = other_lp
+    assert discounted_total(5000) == 5000  # loyalty_price
+
+
+def test_loyalty_price_shadowed_by_local():
+    loyalty_price = 3
+    assert loyalty_price == 3
+
+
+def test_loyalty_price_shadowed_by_fixture(loyalty_price):
+    assert loyalty_price == 3
+"#;
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), source);
+    assert_eq!(tests.len(), 3, "fixture must parse all three tests");
+    assert!(
+        tests.iter().all(|test| same_stem_related(test, loyalty)
+            && normalize_similarity_key(&test.name).contains("loyalty_price")),
+        "every parsed test must satisfy the stem and title heuristics"
+    );
+    assert!(
+        tests[0]
+            .fixtures
+            .iter()
+            .any(|fixture| fixture == "loyalty_price_config"),
+        "the first test must carry the owner-named fixture"
+    );
+
+    assert_eq!(
+        candidate_relations(loyalty, &tests),
+        Vec::<(String, &'static str)>::new(),
+        "titles, fixture names, comments, strings, docstrings, keyword arguments, \
+         foreign members, foreign renamed imports and shadowing locals are not references"
+    );
+    Ok(())
+}
+
+#[test]
+fn walrus_loop_and_as_targets_shadow_the_owner_name() -> Result<(), String> {
+    // A local bound by `:=`, `for ... in` or `as` shadows the owner, so a bare
+    // use of that name is not an owner reference (RIPR-SPEC-0028).
+    let owners = flat_pricing_owners();
+    let loyalty = flat_owner(&owners, "loyalty_price")?;
+    let source = r#"from pricing import discounted_total
+
+
+def test_loyalty_price_walrus():
+    if (loyalty_price := discounted_total(5000)) > 0:
+        assert loyalty_price == 5000
+
+
+def test_loyalty_price_loop():
+    for loyalty_price in [5000, 20000]:
+        assert discounted_total(loyalty_price) > 0
+
+
+def test_loyalty_price_context(tmp_path):
+    with open(tmp_path / "x", "w") as loyalty_price:
+        assert loyalty_price is not None
+"#;
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), source);
+    assert_eq!(tests.len(), 3, "fixture must parse all three tests");
+    assert!(
+        tests.iter().all(|test| same_stem_related(test, loyalty)),
+        "every parsed test must satisfy the stem heuristic"
+    );
+    assert_eq!(
+        candidate_relations(loyalty, &tests),
+        Vec::<(String, &'static str)>::new(),
+        "walrus, loop and `as` targets shadow the owner name"
+    );
+
+    // Control: the same bare use without a shadowing binding is a reference.
+    let control = extract_tests(
+        Path::new("tests/test_pricing.py"),
+        "from pricing import loyalty_price\n\n\ndef test_handler():\n    handler = loyalty_price\n    assert callable(handler)\n",
+    );
+    assert_eq!(control.len(), 1);
+    assert_eq!(
+        candidate_relations(loyalty, &control),
+        vec![("test_handler".to_string(), "same_stem")]
+    );
+    Ok(())
+}
+
+#[test]
+fn method_owners_need_an_attribute_reference_and_dunders_a_class_reference() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/account.py"),
+        "class Account:\n    def __init__(self, balance):\n        self._balance = balance\n\n    @property\n    def balance(self):\n        return max(0, self._balance)\n\n    def close(self):\n        return 0\n",
+    );
+    let init = flat_owner(&owners, "Account.__init__")?;
+    let balance = flat_owner(&owners, "Account.balance")?;
+    let close = flat_owner(&owners, "Account.close")?;
+    let tests = extract_tests(
+        Path::new("tests/test_account.py"),
+        "from src.account import Account\n\n\ndef test_account_init():\n    account = Account(100)\n    assert account._balance == 100\n\n\ndef test_balance_property():\n    value = Account(1).balance\n    assert value >= 0\n",
+    );
+    assert_eq!(tests.len(), 2);
+
+    assert_eq!(
+        candidate_relations(balance, &tests),
+        vec![("test_balance_property".to_string(), "same_stem")],
+        "`._balance` is not `.balance`; only the property read references the owner"
+    );
+    assert_eq!(
+        candidate_relations(close, &tests),
+        Vec::<(String, &'static str)>::new(),
+        "no test references `.close`"
+    );
+    assert_eq!(
+        candidate_relations(init, &tests).len(),
+        2,
+        "constructing `Account` invokes `__init__` implicitly"
+    );
+    Ok(())
+}
+
+#[test]
+fn module_owner_needs_a_local_imported_from_the_owner_module() -> Result<(), String> {
+    let owners = extract_owners(Path::new("src/constants.py"), "BASE_DISCOUNT = 12\n");
+    let module = flat_owner(&owners, "<module>")?;
+    let tests = extract_tests(
+        Path::new("tests/test_constants.py"),
+        "from src.constants import BASE_DISCOUNT\n\n\ndef test_base_discount():\n    assert BASE_DISCOUNT == 12\n\n\ndef test_unrelated_arithmetic():\n    assert 1 + 1 == 2\n",
+    );
+    assert_eq!(tests.len(), 2);
+    assert_eq!(
+        candidate_relations(module, &tests),
+        vec![("test_base_discount".to_string(), "same_stem")]
+    );
     Ok(())
 }

@@ -328,6 +328,18 @@ Updated:
 ## Pending — python_dynamic_route_registration_limit (2)
 
 Reason:
+RIPR-SPEC-0028: a same-stem Python test that never references the owner is not related; reach moves from weak to no and the class stays static_unknown
+
+Command:
+`cargo xtask goldens bless python_dynamic_route_registration_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_dynamic_route_registration_limit (3)
+
+Reason:
 RIPR-SPEC-0084: CheckInput default base is now None (was origin/main); --diff fixture envelopes honestly omit the inapplicable top-level base and record base_revision null. Only base/base_revision changed; findings, counts, and input_identity byte-identical.
 
 Command:

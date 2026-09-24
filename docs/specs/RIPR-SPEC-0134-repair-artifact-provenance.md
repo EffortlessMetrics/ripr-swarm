@@ -40,18 +40,26 @@ mode, base revision, worktree state, bounded analysis-input identity,
 snapshot identity, creation command/profile, and `content_sha256`.
 
 The analysis-input identity is portable semantic/configuration identity
-(#2823): an explicitly versioned `input:v3:fnv1a64:<16 lowercase hex>`
+(#2823): an explicitly versioned `input:v4:fnv1a64:<16 lowercase hex>`
 covering the
 identity version, mode, profile (bound to mode by this producer), base, named
-workspace inputs (manifest and lockfile content identities), the
+workspace inputs (manifest content identities and the content identities of
+the Cargo lockfiles Git tracks), the
 repo-exposure producer-consumed configuration boundary (exactly the three
 oracle-strength fields — the Rust-only seam inventory consumes nothing else
 from `ripr.toml`), and analyzer version — never the
 concrete checkout root or a host-specific path spelling. Equivalent checkouts
 of the same commit under different roots share one input identity; the
 concrete root remains separate envelope evidence (`repository.root`) that the
-verifier compares with exact canonical-path equality. Only the current
-`input:v3:` identity version with the exact digest shape validates as current
+verifier compares with exact canonical-path equality. Version 4 (#3906)
+narrows the lockfile input to Git-tracked lockfiles: an untracked or ignored
+`Cargo.lock` is build state that Cargo writes when it resolves dependencies
+(the first `cargo test` of a library that does not commit one), and the static
+seam inventory never reads lockfile content, so creating or rewriting it keeps
+the identity. A tracked lockfile, a newly tracked one, and every manifest still
+move it. When Git cannot list the tracked lockfiles, every lockfile counts,
+which can only make a pair less comparable. Only the current
+`input:v4:` identity version with the exact digest shape validates as current
 evidence; any other version is rejected as an unsupported input identity
 version, any malformed digest shape as a malformed input identity digest, and
 a previous-version migration boundary stays deferred until a real migration
@@ -222,7 +230,9 @@ an unsupported schema fails before movement calculation.
   (`pair_currentness_label`, #3027) and the portable input-identity contract (#2823):
   identity portability across equivalent checkout roots, concrete-root
   rejection at an equivalent clone, revision-only snapshot movement, semantic
-  input drift (mode, base, config, manifest, lockfile), the scoped
+  input drift (mode, base, config, manifest, tracked lockfile, newly tracked
+  lockfile), untracked-lockfile stability (created, rewritten, or removed
+  without Git tracking it), the scoped
   producer-consumed config boundary (unconsumed typescript/perl/languages
   settings stay comparable), rerun byte-stability, the root-bound v1 removal
   experiment, and previous-version plus malformed-digest identity rejection.
