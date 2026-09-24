@@ -140,7 +140,10 @@ the explicit `--base` when one was given, the resolved default base
 (diff-file/stdin inputs and repo-scope runs). Base-matching consumers (for
 example `review-comments --check-output`, which requires the envelope `base`
 to equal its own `--base`) may rely on a present `base`; an absent `base`
-means the run cannot be attributed to a base.
+means the run cannot be attributed to a base. The typed
+`analysis_outcome.outcome.identity.base_revision` names the same value: a
+scope-less run records the resolved default there too, so the envelope and the
+identity agree and the analysis-outcome validator accepts the artifact.
 
 ```json
 {
@@ -2318,12 +2321,12 @@ additive top-level `artifact` envelope before it is suitable for
     "format": "repo-exposure-json",
     "mode": "draft",
     "base_revision": null,
-    "input_identity": "input:v3:fnv1a64:<16-hex-fingerprint>",
+    "input_identity": "input:v4:fnv1a64:<16-hex-fingerprint>",
     "command": "ripr check --format repo-exposure-json",
     "profile": "draft",
     "worktree": "clean"
   },
-  "snapshot_identity": "snapshot:input:v3:fnv1a64:<16-hex-fingerprint>;revision:<full-head-sha>",
+  "snapshot_identity": "snapshot:input:v4:fnv1a64:<16-hex-fingerprint>;revision:<full-head-sha>",
   "content_sha256": "sha256:<64-hex-digest>"
 }
 ```
@@ -2335,9 +2338,11 @@ commitment, not a signature or runtime proof. `repository.head` and
 such an artifact is disclosed but is not accepted by `agent verify`.
 `analysis.input_identity` is the portable semantic/configuration identity of
 the analysis input. It carries an explicit algorithm version and digest shape
-(`input:v3:fnv1a64:<16 lowercase hex>`) and covers the identity version,
+(`input:v4:fnv1a64:<16 lowercase hex>`) and covers the identity version,
 mode, profile (this producer binds profile to mode and states both), base
-semantics, analysis format, manifest and lockfile content identities, the
+semantics, analysis format, manifest content identities and the content
+identities of the Cargo lockfiles Git tracks (an untracked or ignored
+`Cargo.lock` is build state the seam inventory never reads), the
 repo-exposure producer-consumed configuration boundary (the three
 oracle-strength fields `oracles.snapshot_strength`,
 `oracles.mock_expectation_strength`, and `oracles.broad_error_strength` — the
@@ -2354,7 +2359,7 @@ rejected at another. The snapshot identity
 (`snapshot:<input_identity>;revision:<head>`) binds that portable input
 identity to the concrete repository head, so two clean artifacts from
 different commits have distinct snapshot identities even when their input
-identity is unchanged. Only the current `input:v3:` identity version with the
+identity is unchanged. Only the current `input:v4:` identity version with the
 exact `fnv1a64:<16 lowercase hex>` digest shape validates as current
 evidence; a wrong version is rejected as an unsupported input identity
 version and a wrong digest shape as a malformed input identity digest. `agent verify`
@@ -6913,7 +6918,9 @@ Field contract:
   receipt records them; it does not run them.
 - `summary.remaining_gap` / `summary.next_recommendation` - static advisory
   guidance derived from the verify bucket. It does not claim runtime
-  confirmation.
+  confirmation. When `status` is not `advisory`, `next_recommendation` instead
+  states that the receipt is not review evidence, with the status, the
+  analysis-outcome reason, and the recovery.
 - `summary.receipt_state` - canonical receipt lifecycle state for the selected
   receipt. It is one of `receipt_missing`, `receipt_found`, `receipt_stale`,
   `receipt_gap_mismatch`, `receipt_movement_improved`,
@@ -6923,6 +6930,10 @@ Field contract:
   `resolved`, or `unknown`; `summary` is a short static movement statement;
   `recommended_action` is the bounded next step; and `safe_to_merge` is always
   `false` because the static receipt is review evidence, not a merge policy.
+  Only an `advisory` receipt is review evidence: for an `incomplete` or
+  `invalid` receipt, `recommended_action` carries the same not-review-evidence
+  statement as `next_recommendation` and never recommends including the
+  receipt in review, while `kind` and `summary` still describe the movement.
 
 ## Assurance axes (design contract)
 
@@ -11889,6 +11900,7 @@ JSON shape:
       "modified_unix_ms": 1778179200000
     }
   ],
+  "repair_attempts": [],
   "missing_commands": [
     {
       "step": "agent_packet",
@@ -11910,10 +11922,10 @@ JSON shape:
 Field contract:
 
 - `schema_version` - currently `"0.1"`.
-- `status` - `"complete"` when every required artifact is present and there
-  are no warnings; `"warning"` when every artifact is present but a
-  stale-looking condition exists; `"incomplete"` when any required artifact is
-  missing.
+- `status` - `"complete"` when every required artifact is present, no next
+  command is selected, and there are no warnings; `"warning"` when every
+  artifact is present but a stale-looking condition exists; `"incomplete"`
+  when any required artifact is missing or a next command is selected.
 - `root` - the `--root` argument normalized to forward slashes for reporting.
 - `seam` - recovered seam identity when available. The current recovery order
   is receipt, verify, packet, then brief. It is `null` when no existing
@@ -11924,8 +11936,26 @@ Field contract:
 - `missing_commands[]` - one command for each missing artifact in workflow
   order: before snapshot, packet, brief, after snapshot, verify, receipt. If no
   seam can be recovered, packet, brief, and receipt commands use `<seam-id>`.
-- `next_command` - the first entry from `missing_commands`, or `null` when no
-  required artifact is missing.
+- `repair_attempts[]` - every repair attempt under
+  `target/ripr/repair-attempts/`, validated by the attempt authority and
+  ordered by attempt ID (not by age): `attempt_id`, `seam_id`, `state` (the
+  manifest state), `head_current` (whether the attempt's `HEAD` is the current
+  one; `null` when `HEAD` cannot be read), `disposition` (`resumable`,
+  `prepared_at_other_head`, `head_unknown`, `not_published`, `finished`, or
+  `ended`), `manifest`, and `command` (the command that would move this attempt
+  or its seam forward, or `null`).
+- `next_command` - selected in the order RIPR-SPEC-0011 documents (#3906): the
+  one current awaiting repair attempt's recorded after command
+  (`repair_attempt_after`); otherwise a new attempt for the one seam whose
+  attempts ended without a receipt (`repair_attempt_before`); otherwise the
+  first `missing_commands` entry, except that an unknown seam routes to
+  `ripr pilot --root <root>` (`select_seam`) and a missing workflow directory
+  routes to a new repair attempt. It is `null` when nothing is missing, and
+  also when status cannot choose honestly: an unreadable attempt manifest,
+  several current awaiting attempts, several open seams, or an unreadable
+  `HEAD`. A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
+  `multiple_open_repair_seams`, `repair_attempt_head_unknown`) then names the
+  choices.
 - `warnings[]` - stale-looking or unreadable-artifact hints. Timestamp warnings
   are emitted when `agent verify` is older than a before/after snapshot or
   `agent receipt` is older than `agent verify`. Hash mismatch warnings remain a
@@ -13913,7 +13943,7 @@ command that analyzes it (#3906). With no Rust seams the state is `required`:
       "route": "unavailable_in_this_binary",
       "command": null,
       "guidance_category": null,
-      "guidance": "Perl analysis is not available from this ripr binary. Rebuild ripr with Cargo feature `lang-perl` to analyze Perl files."
+      "guidance": "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it."
     }
   ]
 }

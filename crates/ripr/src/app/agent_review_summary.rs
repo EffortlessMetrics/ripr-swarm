@@ -316,7 +316,7 @@ mod tests {
 
         assert_eq!(value["status"], "incomplete");
         assert_eq!(value["static_movement"]["state"], "missing_artifact");
-        assert_eq!(value["next_command"]["step"], "before_snapshot");
+        assert_eq!(value["next_command"]["step"], "select_seam");
         assert_eq!(
             value["static_movement"]["next_action"]["recommended_action"],
             "Run the next command listed by agent status."
@@ -745,7 +745,7 @@ mod tests {
 
         assert!(rendered.contains("Target seam: unknown"));
         assert!(rendered.contains("Next command:"));
-        assert!(rendered.contains("ripr check --root . --mode draft --format repo-exposure-json"));
+        assert!(rendered.contains("ripr pilot --root ."));
         assert!(rendered.contains("No generated tests."));
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -866,7 +866,12 @@ mod tests {
     fn agent_review_summary_markdown_next_command_offers_powershell_variant() -> Result<(), String>
     {
         let root = unique_agent_review_summary_test_dir("markdown-next-command-powershell");
-        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        // A known seam and an existing workflow directory keep the legacy
+        // redirect route selected, which is the translation this pins.
+        write_file(
+            &root.join(WORKFLOW_AGENT_PACKET_ARTIFACT),
+            r#"{"packets":[{"seam_id":"seam-a"}]}"#,
+        )?;
 
         let report = build_agent_review_summary_report(&root, Path::new("."));
         let rendered = render_agent_review_summary_markdown(&report);
