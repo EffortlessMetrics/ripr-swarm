@@ -1788,6 +1788,7 @@ mod tests {
                 "target/ripr",
             )?],
             ignored_build_output: None,
+            untracked_build_lockfile: None,
         };
         // Positive control: with intact values the bounded value stage passes
         // and verification proceeds to the telemetry manifest, which does not

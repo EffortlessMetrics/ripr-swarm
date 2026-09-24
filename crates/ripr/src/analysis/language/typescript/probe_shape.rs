@@ -145,6 +145,21 @@ pub(crate) fn classify_probe_shape_detail(line_text: &str) -> TypeScriptProbeSha
     TypeScriptProbeShape::ambiguous_fallback()
 }
 
+/// Returns `true` for an added TypeScript/JavaScript line that carries no
+/// behavior of its own: blank, comment-only, or punctuation-only (`}`, `});`,
+/// `)`, `],`). Mirrors the Rust `should_ignore_changed_line` filter; such a
+/// line would otherwise become an ambiguous-fallback probe.
+pub(crate) fn should_ignore_typescript_changed_line(line_text: &str) -> bool {
+    let text = line_text.trim();
+    text.is_empty()
+        || text.starts_with("//")
+        || text.starts_with("/*")
+        || text.starts_with("*/")
+        || text.chars().all(|ch| {
+            matches!(ch, '{' | '}' | '(' | ')' | '[' | ']' | ';' | ',') || ch.is_whitespace()
+        })
+}
+
 #[cfg(test)]
 pub(crate) fn classify_probe_shape(line_text: &str) -> (ProbeFamily, DeltaKind) {
     let detail = classify_probe_shape_detail(line_text);

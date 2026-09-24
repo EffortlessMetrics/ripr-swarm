@@ -363,14 +363,39 @@ fn activate_evidence(
             field_assignment_value_unresolved_for_test(seam, indexed, index, owner_name)
         });
 
-    let boundary_equality_observed = owner_fn.is_some_and(|owner_fn| {
-        seam.kind() == SeamKind::PredicateBoundary
+    // A boundary operand naming a constant (`amount >= DISCOUNT_THRESHOLD`)
+    // is compared through the shared named-constant lookup: a visible
+    // same-file integer value matches observed values, and a test argument
+    // naming the constant itself matches by identity.
+    let boundary_constant =
+        owner_fn.and_then(|owner_fn| boundary_constant_operand(seam, index, owner_fn));
+    let boundary_constant_observed = boundary_constant.as_ref().is_some_and(|constant| {
+        constant.lookup.value().is_some_and(|value| {
+            observed
+                .iter()
+                .any(|fact| comparable_value(&fact.value) == comparable_value(value))
+        }) || (constant.lookup.is_declared_once()
             && related
                 .iter()
-                .any(|indexed| boundary_equality_overlap_score(seam, indexed, index, owner_fn) > 0)
+                .any(|indexed| test_passes_boundary_constant(indexed, owner_fn, index, constant)))
     });
-    let boundary_activation_operands_unresolved =
-        observed_argument_selection
+    let boundary_equality_observed = boundary_constant_observed
+        || owner_fn.is_some_and(|owner_fn| {
+            seam.kind() == SeamKind::PredicateBoundary
+                && related.iter().any(|indexed| {
+                    boundary_equality_overlap_score(seam, indexed, index, owner_fn) > 0
+                })
+        });
+    // A constant whose value ripr cannot see and whose declaration it
+    // cannot pin to the owner's file can never be matched by a test, so
+    // it routes to the unresolved-operand limitation instead of an
+    // actionable "add the missing discriminator" packet.
+    let boundary_constant_unresolved = !boundary_equality_observed
+        && boundary_constant
+            .as_ref()
+            .is_some_and(|constant| !constant.lookup.is_declared_once());
+    let boundary_activation_operands_unresolved = boundary_constant_unresolved
+        || observed_argument_selection
             .as_ref()
             .is_some_and(|selection| {
                 matches!(
@@ -385,6 +410,7 @@ fn activate_evidence(
         &observed,
         boundary_activation_operands_unresolved,
         boundary_equality_observed,
+        boundary_constant.as_ref(),
     );
     let direct_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
@@ -410,7 +436,7 @@ fn activate_evidence(
 
     let state = if related.is_empty() {
         StageState::No
-    } else if ambiguous_constructor_field_owner {
+    } else if ambiguous_constructor_field_owner || boundary_constant_unresolved {
         StageState::Unknown
     } else if !observed.is_empty()
         || direct_value_insensitive_owner_call
@@ -424,9 +450,10 @@ fn activate_evidence(
     };
     let stage = StageEvidence::new(
         state,
-        if !observed.is_empty()
-            || direct_value_insensitive_owner_call
-            || helper_value_insensitive_owner_call
+        if !boundary_constant_unresolved
+            && (!observed.is_empty()
+                || direct_value_insensitive_owner_call
+                || helper_value_insensitive_owner_call)
         {
             Confidence::Medium
         } else {
@@ -435,6 +462,19 @@ fn activate_evidence(
         if ambiguous_constructor_field_owner {
             format!(
                 "constructor_field_owner_ambiguous: exact field observer found, but same-crate caller linkage to owner `{owner_name}` is ambiguous"
+            )
+        } else if boundary_constant_unresolved && !related.is_empty() {
+            let constant = boundary_constant.as_ref().map_or(("", ""), |constant| {
+                (constant.name.as_str(), constant.lookup.limitation())
+            });
+            format!(
+                "Boundary constant `{}` has no statically visible value for seam `{}` ({}); ripr cannot tell whether a related test hits the equality boundary, so it does not emit an actionable repair packet",
+                constant.0,
+                seam.expression()
+                    .lines()
+                    .next()
+                    .unwrap_or(seam.expression()),
+                constant.1
             )
         } else if !observed.is_empty() {
             format!(
@@ -1203,6 +1243,7 @@ fn missing_discriminators_for(
     observed: &[ValueFact],
     boundary_activation_operands_unresolved: bool,
     boundary_equality_observed: bool,
+    boundary_constant: Option<&BoundaryConstantOperand>,
 ) -> Vec<MissingDiscriminatorFact> {
     match seam.kind() {
         SeamKind::PredicateBoundary => {
@@ -1244,11 +1285,22 @@ fn missing_discriminators_for(
             if equality_seen {
                 Vec::new()
             } else {
+                let reason = match boundary_constant {
+                    Some(constant) if let Some(value) = constant.lookup.value() => format!(
+                        "observed values do not include the equality-boundary case for this predicate ({boundary_token} = {value})"
+                    ),
+                    Some(constant) => format!(
+                        "observed values do not include the equality-boundary case for this predicate; ripr cannot see the value of constant {boundary_token} statically ({}), so pass {boundary_token} itself as the boundary input",
+                        constant.lookup.limitation()
+                    ),
+                    None => {
+                        "observed values do not include the equality-boundary case for this predicate"
+                            .to_string()
+                    }
+                };
                 vec![MissingDiscriminatorFact {
                     value: format!("{boundary_token} (equality boundary)"),
-                    reason:
-                        "observed values do not include the equality-boundary case for this predicate"
-                            .to_string(),
+                    reason,
                     flow_sink: None,
                 }]
             }
@@ -1260,6 +1312,75 @@ fn missing_discriminators_for(
         | SeamKind::MatchArm
         | SeamKind::CallPresence => Vec::new(),
     }
+}
+
+/// A predicate-boundary seam's constant operand: the right-hand operand
+/// names a constant (per the shared lookup in `value_resolution`) while the
+/// left-hand operand is an owner parameter (or a projection of one).
+struct BoundaryConstantOperand {
+    name: String,
+    lookup: super::value_resolution::NamedConstant,
+    argument_index: usize,
+}
+
+fn boundary_constant_operand(
+    seam: &RepoSeam,
+    index: &RustIndex,
+    owner_fn: &FunctionSummary,
+) -> Option<BoundaryConstantOperand> {
+    if seam.kind() != SeamKind::PredicateBoundary {
+        return None;
+    }
+    let (left, right) = comparison_operands(seam.expression())?;
+    let name = super::value_resolution::constant_operand_name(&right)?;
+    let parameters = function_parameters(owner_fn);
+    if boundary_operand_argument(owner_fn, &parameters, &right).is_some() {
+        return None;
+    }
+    let left_operand = boundary_operand_argument(owner_fn, &parameters, &left)?;
+    let lookup = index.files.get(&owner_fn.file).map_or(
+        super::value_resolution::NamedConstant::Undeclared,
+        |facts| super::value_resolution::named_constant(&facts.source, name),
+    );
+    Some(BoundaryConstantOperand {
+        name: name.to_string(),
+        lookup,
+        argument_index: left_operand.index,
+    })
+}
+
+/// A direct owner call whose compared argument names the boundary
+/// constant itself (`discounted_total(DISCOUNT_THRESHOLD)`), in a test whose
+/// own file does not declare a constant of the same name.
+fn test_passes_boundary_constant(
+    indexed: &CompactTest<'_>,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    constant: &BoundaryConstantOperand,
+) -> bool {
+    let Some(owner_fn) = owner_fn else {
+        return false;
+    };
+    let owner_name = owner_fn.name.as_str();
+    if super::value_resolution::test_file_may_shadow_constant(
+        &owner_fn.file,
+        &indexed.test.file,
+        index
+            .files
+            .get(&indexed.test.file)
+            .map(|facts| facts.source.as_str()),
+        &constant.name,
+    ) {
+        return false;
+    }
+    indexed.test.calls.iter().any(|call| {
+        call.name == owner_name
+            && call_arguments(&call.text, owner_name)
+                .and_then(|arguments| arguments.get(constant.argument_index).cloned())
+                .is_some_and(|argument| {
+                    super::value_resolution::argument_names_constant(&argument, &constant.name)
+                })
+    })
 }
 
 fn boundary_predicate_uses_equal_op(expression: &str) -> bool {

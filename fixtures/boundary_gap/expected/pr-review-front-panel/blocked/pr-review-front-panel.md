@@ -32,7 +32,7 @@ Policy:
 - Acknowledgement label: ripr-waive
 
 Repair:
-- Agent handoff: `ripr agent start --root fixtures/boundary_gap/input --seam-id 67fc764ba37d77bd --out target/ripr/workflow`
+- Agent handoff: `ripr agent packet --root fixtures/boundary_gap/input --seam-id 67fc764ba37d77bd --json`
 - Verify: `ripr agent verify --root fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
 - Receipt: receipt_missing
 

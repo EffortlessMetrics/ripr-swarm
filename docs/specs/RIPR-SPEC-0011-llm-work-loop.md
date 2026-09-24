@@ -39,7 +39,8 @@ The status report should:
 - report each required artifact as present or missing;
 - recover `seam_id` from receipt, verify, packet, or brief JSON when possible;
 - emit a next command for every missing artifact;
-- surface the first missing command as `next_command`;
+- select `next_command` by the repair-attempt-first order below (#3906), which
+  falls back to the first missing command only when no repair attempt applies;
 - warn when timestamps suggest `agent verify` is older than a before/after
   snapshot or `agent receipt` is older than `agent verify`;
 - keep all language advisory and static.
@@ -323,6 +324,97 @@ The agent review summary uses schema version `0.1`:
 }
 ```
 
+## Amendment (#3906): next command selection
+
+The legacy rule "first missing artifact" sent a user with a prepared repair
+attempt back into the manual snapshot loop, sent a fresh workspace to a Bash
+redirect into `target/ripr/workflow/` before that directory existed, and sent
+a failed attempt to `ripr agent receipt`. `ripr agent status` now also reads
+`target/ripr/repair-attempts/*/attempt.json` through the attempt authority
+(`app::repair_attempt::inventory_repair_attempts`, the same validation the
+after phase applies) and selects `next_command` in this order:
+
+1. **Unreadable inventory.** If any attempt manifest fails validation, select
+   nothing and warn `repair_attempt_unreadable`, naming the attempt.
+2. **Resume.** Exactly one attempt in `awaiting_edit` whose after phase would
+   evaluate the current `HEAD` as the attempt's: its recorded `next_command`
+   (`--attempt <id> --phase after`), step `repair_attempt_after`. Status asks
+   the attempt authority's head rule
+   (`app::repair_attempt::after_phase_head_admission`), the same one the after
+   phase applies: the prepared head, or for an ordinary attempt a commit that
+   descends from it (a focused test committed between the phases). A
+   trust-bound attempt needs the exact prepared head.
+3. **Ambiguous.** More than one such attempt: select nothing and warn
+   `ambiguous_repair_attempts`, listing each attempt's command. Status never
+   picks the newest (docs/REPAIR_ATTEMPT.md).
+4. **Head unknown.** `HEAD` cannot be read, so rules 2 and 3 match no
+   attempt. If any attempt is `awaiting_edit`, select nothing and warn
+   `repair_attempt_head_unknown` rather than restarting its seam.
+5. **Restart.** Group attempts by seam. A seam with a `ready_to_finish`
+   attempt is finished. A seam whose attempts all ended (`failed`, `stale`,
+   `incomparable`), were prepared at another `HEAD`, or never left `prepared`
+   is open. (Refined below: a `ready_to_finish` attempt finishes its seam only
+   through the receipt issued for it.) An ordinary attempt "prepared at
+   another `HEAD`" is one whose `HEAD` no longer descends from its prepared
+   head; its reason repeats the after phase's recovery (`git reset --soft
+   <prepared-head>` then the attempt's after command) before the new-attempt
+   route. Exactly one open seam: `ripr agent repair --root <root> --seam-id
+   <seam> --phase before`, step `repair_attempt_before`. Several: select
+   nothing and warn `multiple_open_repair_seams`, listing each start command.
+6. **Legacy loop.** Otherwise the first missing artifact's command, with two
+   refusals. With no known seam the next command is `ripr pilot --root
+   <root>` (step `select_seam`), never a `<seam-id>` placeholder. When the
+   first missing artifact's directory does not exist and the seam is known,
+   the next command starts a repair attempt, which writes the workflow
+   artifacts itself, instead of redirecting into the missing directory.
+
+`status` is `incomplete` whenever a next command is selected. The JSON report
+adds `repair_attempts` (`attempt_id`, `seam_id`, `state`, `head_current`,
+`disposition`, `manifest`, `command`); `missing_commands` keeps its legacy
+meaning. `ripr agent review-summary` carries the same `next_command`.
+
+### Refinement: the attempt's outcome, not only its state
+
+`ready_to_finish` means the edit cage admitted the edit; it does not mean the
+gap closed. Status reads the workflow receipt against each `ready_to_finish`
+attempt, matching the receipt's `repair_attempt` binding (attempt ID, after
+`HEAD`, delta and packet digests) to the attempt's after verdict, and
+interprets it through the receipt owner (`output::agent_receipt`):
+
+- `advisory` with movement `improved`: `finished`. Status words it as static
+  grip improved (receipt advisory), not as a closed gap. The loop is
+  `complete` only when the current `HEAD` is the head the attempt's after
+  phase recorded (which may descend from its prepared head); otherwise a
+  `repair_receipt_stale` warning names both heads.
+- movement `unchanged`, `changed`, or `regressed`, whatever the receipt
+  status: `gap_open`. The seam is open, and rule 5 starts a new attempt whose
+  reason names the receipt status, movement, staleness, and the receipt's own
+  next action.
+- anything else (an `invalid` or `incomplete` improved receipt, a new or
+  resolved seam, or no receipt issued for the attempt): `unconfirmed`. The seam
+  is not restarted and a `repair_receipt_unconfirmed` warning says why.
+- the workflow receipt is bound to another attempt: the workflow keeps one
+  receipt, so a later attempt's after phase superseded this attempt's.
+  `receipt.superseded_by` names that attempt; the reading is `unconfirmed`,
+  because the earlier outcome can no longer be read, and the warning names the
+  new-attempt command for the seam in case its gap is still open.
+
+An after phase that refuses after selecting its attempt records the refusal on
+the attempt (`last_after_refusal`, owned by `app::repair_attempt`): the final
+error followed by the cause and recovery the after phase printed (for example
+the changed analysis inputs), bounded by the attempt authority. Rule 2 still
+resumes that attempt, but its reason names the refusal before repeating the
+command. The next after phase that reaches the durable finish clears it.
+
+Rerunning the after phase of an attempt that is no longer awaiting its edit is
+refused with the attempt's documented state, whether it finished or ended, the
+workflow receipt path, and the next step (`ripr agent status`, or a new
+`--phase before` while the gap is open).
+
+Recorded resume commands keep the `--root` spelling the before phase was given,
+because the manifest is the authority for that command (including the
+`--edit-authorized` suffix of trust-bound Python attempts).
+
 ## Required Evidence
 
 The first LLM work-loop slice requires:
@@ -332,8 +424,8 @@ The first LLM work-loop slice requires:
   packet, agent verify, and agent receipt;
 - recoverable seam identity when an existing artifact names one;
 - one missing-input command for every absent artifact;
-- `next_command` set to the first missing command, or `null` when no required
-  artifact is missing;
+- `next_command` selected by the #3906 order below, or `null` when nothing is
+  missing or when status cannot choose honestly;
 - stale-looking warnings for timestamp drift between verify and snapshots, and
   between receipt and verify;
 - output schema, traceability, capability, and campaign entries that point to
@@ -445,6 +537,14 @@ The LLM work loop must not:
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_recovers_seam_id_from_verify_packet_or_brief`
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_warns_when_verify_or_receipt_look_stale`
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_quotes_paths_with_spaces`
+- `crates/ripr/src/app/agent_status.rs::tests::agent_status_refuses_to_choose_between_open_seams`
+- `crates/ripr/src/app/agent_status.rs::tests::agent_status_does_not_restart_a_seam_that_finished`
+- `crates/ripr/src/app/agent_status.rs::tests::agent_status_never_redirects_into_a_missing_workflow_directory`
+- `crates/ripr/tests/cli_smoke.rs::agent_status_routes_a_fresh_workspace_to_pilot`
+- `crates/ripr/tests/cli_smoke.rs::agent_status_resumes_the_current_awaiting_repair_attempt`
+- `crates/ripr/tests/cli_smoke.rs::agent_status_resumes_only_the_current_attempt_and_refuses_to_guess`
+- `crates/ripr/tests/cli_smoke.rs::agent_status_restarts_a_failed_attempt_and_completes_a_finished_one`
+- `crates/ripr/tests/cli_smoke.rs::agent_status_selects_nothing_past_an_unreadable_attempt`
 - `crates/ripr/src/app/agent_workflow.rs::tests::workflow_manifest_extracts_seam_and_commands`
 - `crates/ripr/src/app/agent_workflow.rs::tests::workflow_manifest_errors_when_brief_does_not_return_seam`
 - `crates/ripr/src/cli/agent.rs::tests::agent_status_parses_root_and_json`
@@ -485,7 +585,9 @@ The LLM work loop must not:
 ## Implementation Mapping
 
 - `crates/ripr/src/app/agent_status.rs` builds and renders the report from
-  existing artifact files.
+  existing artifact files and the repair-attempt inventory.
+- `crates/ripr/src/app/repair_attempt.rs::inventory_repair_attempts` lists and
+  validates attempt manifests read-only for status.
 - `crates/ripr/src/app/agent_review_summary.rs` joins existing agent status,
   workflow, receipt, cockpit, repo exposure, optional LSP cockpit, and local
   CI artifact file state into review-summary JSON and Markdown.

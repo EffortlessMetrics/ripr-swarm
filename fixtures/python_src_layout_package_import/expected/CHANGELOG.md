@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_src_layout_package_import (3)
+
+Reason:
+RIPR-SPEC-0028: the fixture's only test call (bulk_discount(101)) agrees on both sides of the change and never sits on the quantity==100 boundary, so exposure honestly drops from exposed to weakly_exposed under the boundary rule.
+
+Command:
+`cargo xtask goldens bless python_src_layout_package_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

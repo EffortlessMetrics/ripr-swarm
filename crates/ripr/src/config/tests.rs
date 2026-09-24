@@ -260,17 +260,35 @@ enabled = ["rust", "typescript"]
 
 #[cfg(not(feature = "lang-perl"))]
 #[test]
-fn languages_section_rejects_unavailable_perl_adapter() {
+fn languages_section_rejects_unavailable_perl_adapter() -> Result<(), String> {
     let result = parse_config(
         r#"
 [languages]
 enabled = ["rust", "perl"]
 "#,
     );
+    let Err(message) = result.as_ref() else {
+        return Err(format!("expected missing lang-perl error, got {result:?}"));
+    };
     assert!(
-        matches!(result, Err(ref message) if message.contains("lang-perl")),
-        "expected missing lang-perl error, got {result:?}"
+        message.contains("lang-perl"),
+        "expected missing lang-perl error, got {message}"
     );
+    // The error must say how to get a working setup, not only what is
+    // missing: a `lang-perl` build (with its install command) AND the
+    // unpublished Perl fact exporter. Rebuilding alone is not enough.
+    for required in [
+        "cargo install ripr --features lang-perl",
+        "`perl-ripr-facts`",
+        "not yet published",
+        "no released ripr setup analyzes Perl yet",
+    ] {
+        assert!(
+            message.contains(required),
+            "config error must name `{required}`; got: {message}"
+        );
+    }
+    Ok(())
 }
 
 #[test]

@@ -440,7 +440,7 @@
       "receipt_state": "closed_advisory_outcome_receipt",
       "outcome": "resolved",
       "why_not_actionable": "complete repair packet; package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable as advisory preview evidence",
-      "repair_route": "add or strengthen the focused assertion `expect(result).toBe(50)` in the related test",
+      "repair_route": "add a focused assertion for the missing discriminator `amount == threshold` in the related test, shaped like `expect(result).toBe(expected)`",
       "operator_note": "This records the current complete TypeScript preview packet loop: the packet is delegatable as advisory evidence, the verify command is concrete, and the closed receipt proves static gap movement without support-tier promotion.",
       "must_not_change": [
         "src/discount.ts",
