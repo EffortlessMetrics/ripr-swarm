@@ -281,7 +281,12 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
     git(&repo, &["config", "--local", "user.name", "Capture Exec"])?;
     git(
         &repo,
-        &["config", "--local", "user.email", "capture-exec@example.com"],
+        &[
+            "config",
+            "--local",
+            "user.email",
+            "capture-exec@example.com",
+        ],
     )?;
     git(&repo, &["config", "--local", "commit.gpgsign", "false"])?;
     fs::write(repo.join("probe.txt"), "before\n")?;
@@ -296,10 +301,9 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
 
     // Positive: the step resolves main, captures the edit, and retains a
     // receipt whose identities and byte count match the run.
-    let script = body.join("\n").replace(
-        "origin/${{ github.base_ref }}",
-        "main",
-    );
+    let script = body
+        .join("\n")
+        .replace("origin/${{ github.base_ref }}", "main");
     let run = Command::new("sh")
         .args(["-c", &script])
         .current_dir(&repo)
@@ -326,10 +330,9 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
 
     // Negative: an unresolvable base fails closed with the named error
     // instead of handing RIPR an absent patch.
-    let missing = body.join("\n").replace(
-        "origin/${{ github.base_ref }}",
-        "nonexistent-base-branch",
-    );
+    let missing = body
+        .join("\n")
+        .replace("origin/${{ github.base_ref }}", "nonexistent-base-branch");
     let run = Command::new("sh")
         .args(["-c", &missing])
         .current_dir(&repo)
