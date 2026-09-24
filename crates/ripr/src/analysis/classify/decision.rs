@@ -37,7 +37,8 @@ pub(in crate::analysis) fn classify(
     if observe.state == StageState::No {
         return ExposureClass::ReachableUnrevealed;
     }
-    if discriminate.state == StageState::Yes
+    if reach.state == StageState::Yes
+        && discriminate.state == StageState::Yes
         && infect.state == StageState::Yes
         && propagate.state == StageState::Yes
     {
@@ -617,6 +618,21 @@ mod tests {
     // pin the contract that Exposed requires all of discriminate+infect+
     // propagate == Yes, and that any stage not-Yes downgrades to WeaklyExposed
     // (never Exposed). A regression here is the cardinal sin per AGENTS.md.
+
+    // Reach through file or name proximity alone is `Weak`; a neighbour's
+    // strong assertion must not make the changed owner `Exposed`.
+    #[test]
+    fn classify_does_not_emit_exposed_when_reach_is_weak() {
+        let class = classify(
+            &stage(StageState::Weak),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &probe(ProbeFamily::ReturnValue, "(cents + 49) / 100"),
+        );
+        assert_eq!(class, ExposureClass::WeaklyExposed);
+    }
 
     #[test]
     fn classify_emits_exposed_only_when_all_discriminate_infect_propagate_are_yes() {

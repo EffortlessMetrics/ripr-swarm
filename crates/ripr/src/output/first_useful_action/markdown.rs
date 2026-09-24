@@ -41,6 +41,11 @@ pub(crate) fn render_first_useful_action_markdown(report: &FirstUsefulActionRepo
         ));
     }
 
+    if let Some(repair) = &report.commands.repair {
+        out.push_str("## Start Repair\n\n");
+        out.push_str(&format!("`{repair}`\n\n"));
+    }
+
     if let Some(verify) = &report.commands.verify {
         out.push_str("## Verify\n\n");
         out.push_str(&format!("`{verify}`\n\n"));
@@ -132,6 +137,9 @@ fn render_one_screen_recommendation_markdown(report: &FirstUsefulActionReport, o
         "- Missing discriminator: {missing_discriminator}\n"
     ));
     out.push_str(&format!("- Focused proof intent: {focused_proof_intent}\n"));
+    if let Some(repair) = &report.commands.repair {
+        out.push_str(&format!("- Repair start: `{repair}`\n"));
+    }
     out.push_str(&format!("- Verify command: `{verify_command}`\n"));
     out.push_str(&format!("- Receipt command: `{receipt_command}`\n"));
     if !artifacts.is_empty() {

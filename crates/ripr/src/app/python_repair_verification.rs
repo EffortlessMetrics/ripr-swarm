@@ -2176,6 +2176,7 @@ mod python_repair_verification_semantics {
             forbidden_paths: Vec::new(),
             expected_operational_writes: Vec::new(),
             ignored_build_output: None,
+            untracked_build_lockfile: None,
         })
     }
 

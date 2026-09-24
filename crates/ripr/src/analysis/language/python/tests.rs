@@ -1558,16 +1558,22 @@ const SRC_LAYOUT_DISCOUNTS_SOURCE: &str =
 const SRC_LAYOUT_DISCOUNTS_CHANGED_LINE: &str = "    if quantity > 100:";
 
 /// Classifies the `bulk_discount` boundary change for an owner at `owner_file`
-/// against one strong exact-value test that imports it via `import_line`.
+/// against one strong exact-value test that imports it via `import_line` and
+/// calls `bulk_discount(call_value)`, asserting that call's real outcome under
+/// the unchanged `quantity > 100` source as `expected`. RIPR-SPEC-0028: the
+/// caller decides whether that input sits on the changed `quantity == 100`
+/// boundary — the only input where the old and new predicates disagree.
 fn classify_src_layout_bulk_discount(
     owner_file: &str,
     import_line: &str,
+    call_value: u64,
+    expected: &str,
 ) -> Result<crate::domain::Finding, String> {
     let owners = extract_owners(Path::new(owner_file), SRC_LAYOUT_DISCOUNTS_SOURCE);
     let tests = extract_tests(
         Path::new("tests/test_discounts.py"),
         &format!(
-            "{import_line}\n\n\ndef test_bulk_discount_large_order():\n    assert bulk_discount(101) == 0.15\n"
+            "{import_line}\n\n\ndef test_bulk_discount_threshold():\n    assert bulk_discount({call_value}) == {expected}\n"
         ),
     );
     assert_eq!(
@@ -1592,9 +1598,15 @@ fn src_layout_owner_imported_by_package_name_credits_exposed() -> Result<(), Str
     // That is a real import of the owner's module and must carry free-function
     // module identity (before the fix it was `weakly_exposed` /
     // `strong_oracle_observes_different_sink`).
+    //
+    // The oracle call sits on the changed `quantity == 100` boundary (100 is
+    // the input where `>` and `>=` disagree, RIPR-SPEC-0028), so the strong
+    // exact-value oracle pins the changed predicate instead of only reaching it.
     let finding = classify_src_layout_bulk_discount(
         "src/pricing/discounts.py",
         "from pricing.discounts import bulk_discount",
+        100,
+        "0.0",
     )?;
     assert_eq!(
         finding.class,
@@ -1609,9 +1621,12 @@ fn src_layout_owner_imported_by_package_name_credits_exposed() -> Result<(), Str
 fn src_layout_owner_imported_with_src_prefix_still_credits_exposed() -> Result<(), String> {
     // Keep the repository-relative form: projects that put the repository root
     // on `sys.path` really do write `from src.pricing.discounts import ...`.
+    // Boundary-pinned oracle call as above (RIPR-SPEC-0028).
     let finding = classify_src_layout_bulk_discount(
         "src/pricing/discounts.py",
         "from src.pricing.discounts import bulk_discount",
+        100,
+        "0.0",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
     assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
@@ -1622,12 +1637,52 @@ fn src_layout_owner_imported_with_src_prefix_still_credits_exposed() -> Result<(
 fn nested_src_layout_owner_imported_by_package_name_credits_exposed() -> Result<(), String> {
     // Monorepo src layout: `packages/billing/src/pricing/discounts.py` is
     // imported as `pricing.discounts` when `packages/billing/src` is the root.
+    // Boundary-pinned oracle call as above (RIPR-SPEC-0028).
     let finding = classify_src_layout_bulk_discount(
         "packages/billing/src/pricing/discounts.py",
         "from pricing.discounts import bulk_discount",
+        100,
+        "0.0",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
     assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    Ok(())
+}
+
+#[test]
+fn src_layout_owner_called_off_boundary_does_not_credit_exposed() -> Result<(), String> {
+    // RIPR-SPEC-0028 boundary rule, and the control for the tests above: reach
+    // plus a strong oracle is not `exposed` unless the oracle observes the
+    // changed sink. `quantity > 100` only changes behavior at
+    // `quantity == 100`, and a call at 101 takes the same branch before and
+    // after the change, so the direct src-layout import still carries module
+    // identity but the finding fails closed to `weakly_exposed` and names the
+    // missing boundary instead of crediting an oracle that cannot see it.
+    let finding = classify_src_layout_bulk_discount(
+        "src/pricing/discounts.py",
+        "from pricing.discounts import bulk_discount",
+        101,
+        "0.15",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a strong oracle that never calls the changed predicate boundary does not discriminate it"
+    );
+    assert_eq!(
+        finding.oracle_alignment.as_deref(),
+        Some("direct"),
+        "the off-boundary downgrade must not be misread as a lost import identity"
+    );
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|missing| missing.value == "quantity == 100"),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
     Ok(())
 }
 
@@ -1644,7 +1699,12 @@ fn src_layout_same_named_function_from_other_module_does_not_credit_exposed() ->
         "from discounts import bulk_discount",
         "from other.pricing.discounts import bulk_discount",
     ] {
-        let finding = classify_src_layout_bulk_discount("src/pricing/discounts.py", import_line)?;
+        let finding = classify_src_layout_bulk_discount(
+            "src/pricing/discounts.py",
+            import_line,
+            101,
+            "0.15",
+        )?;
         assert_ne!(
             finding.class,
             ExposureClass::Exposed,
@@ -1668,6 +1728,8 @@ fn src_directory_below_repo_root_is_not_stripped_for_non_src_owner() -> Result<(
     let finding = classify_src_layout_bulk_discount(
         "app/pricing/discounts.py",
         "from pricing.discounts import bulk_discount",
+        101,
+        "0.15",
     )?;
     assert_ne!(finding.class, ExposureClass::Exposed);
     assert_eq!(
@@ -1833,6 +1895,17 @@ fn empty_delta_predicate_change_still_credits_outcome_oracle() -> Result<(), Str
         finding.class,
         ExposureClass::Exposed,
         "a control-flow operator change observed by an outcome oracle stays exposed"
+    );
+    // RIPR-SPEC-0028 boundary rule: the construct-call passes a dict, not a
+    // literal owner argument, so the boundary gate cannot see the activating
+    // input and keeps the oracle verdict with a named limitation.
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("boundary_activation_unresolved: ")),
+        "{:?}",
+        finding.evidence
     );
     Ok(())
 }
