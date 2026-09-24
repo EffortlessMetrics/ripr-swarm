@@ -12802,6 +12802,91 @@ fn check_worktree_base_head_analyzes_uncommitted_tracked_edit() -> Result<(), St
     Ok(())
 }
 
+/// RIPR-SPEC-0112: `--diff` analyzes the supplied patch, not committed
+/// history, so an uncommitted tracked edit in the same checkout was not
+/// "excluded" from it and must not be disclosed as unanalyzed. The fixture is
+/// first shown to trigger the disclosure on a `--base` run, so the negative
+/// result below is about `--diff`, not about a clean checkout.
+#[test]
+fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> Result<(), String> {
+    let root = unique_temp_workspace("unanalyzed-wt-diff-file");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|err| format!("write base lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"spec-0112-diff-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b + 1 }\n",
+    )
+    .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+    let patch = root.join("change.patch");
+    std::fs::write(
+        &patch,
+        "diff --git a/src/lib.rs b/src/lib.rs\n\
+--- a/src/lib.rs\n\
++++ b/src/lib.rs\n\
+@@ -1 +1 @@\n\
+-pub fn add(a: i32, b: i32) -> i32 { a + b }\n\
++pub fn add(a: i32, b: i32) -> i32 { a + b + 1 }\n",
+    )
+    .map_err(|err| format!("write patch: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+    let patch_str = patch.to_string_lossy().into_owned();
+
+    // Fixture construction: this checkout does trigger the disclosure on a
+    // committed-history run.
+    let base_run = run_ripr(&["check", "--root", &root_str, "--base", "HEAD", "--json"]);
+    assert_success(&base_run);
+    let base_json = String::from_utf8_lossy(&base_run.stdout).into_owned();
+    if !base_json.contains("\"unanalyzed_working_tree\": true") {
+        return Err(format!(
+            "fixture precondition: a --base run on this dirty checkout must disclose it:\n{base_json}"
+        ));
+    }
+    // Same for the human note, so the negative below cannot pass because the
+    // note's wording changed.
+    let base_human_run = run_ripr(&["check", "--root", &root_str, "--base", "HEAD"]);
+    assert_success(&base_human_run);
+    let base_human = String::from_utf8_lossy(&base_human_run.stdout).into_owned();
+    if !base_human.contains("uncommitted changes to tracked source were not analyzed") {
+        return Err(format!(
+            "fixture precondition: a --base run on this dirty checkout must print the note:\n{base_human}"
+        ));
+    }
+
+    let json_run = run_ripr(&["check", "--root", &root_str, "--diff", &patch_str, "--json"]);
+    assert_success(&json_run);
+    let json = String::from_utf8_lossy(&json_run.stdout).into_owned();
+    if json.contains("unanalyzed_working_tree") {
+        return Err(format!(
+            "a --diff run must not emit unanalyzed_working_tree:\n{json}"
+        ));
+    }
+    let human_run = run_ripr(&["check", "--root", &root_str, "--diff", &patch_str]);
+    assert_success(&human_run);
+    let human = String::from_utf8_lossy(&human_run.stdout).into_owned();
+    if human.contains("uncommitted changes to tracked source were not analyzed") {
+        return Err(format!(
+            "a --diff run must not print the unanalyzed working tree note:\n{human}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// RIPR-SPEC-0116: an empty `--worktree` result is honest when the working tree
 /// has no tracked changes against the requested base.
 #[test]
