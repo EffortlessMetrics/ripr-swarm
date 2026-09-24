@@ -100,47 +100,20 @@ pub fn parse_git_status_records(output: &[u8]) -> Result<Vec<StatusRecord>, Path
         if status_field.is_empty() {
             return Err(PathRecordError::EmptyPath { record });
         }
-        let status = decode_record_field(status_field, record)?;
+        let status = decode_record_str(status_field, record)?.to_string();
         // A rename/copy record is `STATUS\0old\0new\0`: the paired target
         // follows as the next NUL-delimited field. A missing pair fails
         // instead of attributing the change to half a record.
         if status.starts_with('R') || status.starts_with('C') {
-            let origin_field = fields
-                .next()
-                .ok_or_else(|| PathRecordError::TruncatedRecord {
-                    record,
-                    status: status.clone(),
-                })?;
-            if origin_field.is_empty() {
-                return Err(PathRecordError::EmptyPath { record });
-            }
-            let origin = decode_record_field(origin_field, record)?;
-            let target_field = fields
-                .next()
-                .ok_or_else(|| PathRecordError::TruncatedRecord {
-                    record,
-                    status: status.clone(),
-                })?;
-            if target_field.is_empty() {
-                return Err(PathRecordError::EmptyPath { record });
-            }
-            let target = decode_record_field(target_field, record)?;
+            let origin = next_record_str(&mut fields, record, &status)?;
+            let target = next_record_str(&mut fields, record, &status)?;
             records.push(StatusRecord {
                 status,
                 path: PathBuf::from(target),
                 renamed_from: Some(PathBuf::from(origin)),
             });
         } else {
-            let path_field = fields
-                .next()
-                .ok_or_else(|| PathRecordError::TruncatedRecord {
-                    record,
-                    status: status.clone(),
-                })?;
-            if path_field.is_empty() {
-                return Err(PathRecordError::EmptyPath { record });
-            }
-            let path = decode_record_field(path_field, record)?;
+            let path = next_record_str(&mut fields, record, &status)?;
             records.push(StatusRecord {
                 status,
                 path: PathBuf::from(path),
@@ -150,6 +123,28 @@ pub fn parse_git_status_records(output: &[u8]) -> Result<Vec<StatusRecord>, Path
         record += 1;
     }
     Ok(records)
+}
+
+/// Fetch and decode the next field of status record `record`.
+///
+/// A missing field fails as [`PathRecordError::TruncatedRecord`] and an
+/// empty one as [`PathRecordError::EmptyPath`]: callers never observe half
+/// a record.
+fn next_record_str<'output>(
+    fields: &mut impl Iterator<Item = &'output [u8]>,
+    record: usize,
+    status: &str,
+) -> Result<&'output str, PathRecordError> {
+    let field = fields
+        .next()
+        .ok_or_else(|| PathRecordError::TruncatedRecord {
+            record,
+            status: status.to_string(),
+        })?;
+    if field.is_empty() {
+        return Err(PathRecordError::EmptyPath { record });
+    }
+    decode_record_str(field, record)
 }
 
 /// Split `-z` output into record fields.
@@ -172,19 +167,18 @@ fn nul_fields(output: &[u8]) -> Vec<&[u8]> {
 /// Decode one NUL-delimited record field as a verbatim UTF-8 path fragment.
 ///
 /// Tab, space, and other ASCII control bytes are kept as-is: `-z` output is
-/// never quoted, so any byte except NUL can be path content.
-fn decode_record_field(field: &[u8], record: usize) -> Result<String, PathRecordError> {
-    std::str::from_utf8(field)
-        .map(str::to_string)
-        .map_err(|err| PathRecordError::NonUtf8Path {
-            record,
-            offset: err.valid_up_to(),
-        })
+/// never quoted, so any byte except NUL can be path content. Returns a
+/// borrow: callers that need ownership convert once at the boundary.
+fn decode_record_str(field: &[u8], record: usize) -> Result<&str, PathRecordError> {
+    std::str::from_utf8(field).map_err(|err| PathRecordError::NonUtf8Path {
+        record,
+        offset: err.valid_up_to(),
+    })
 }
 
 /// Decode one `--name-only -z` record field into a path.
 fn decode_record_path(field: &[u8], record: usize) -> Result<PathBuf, PathRecordError> {
-    decode_record_field(field, record).map(PathBuf::from)
+    decode_record_str(field, record).map(PathBuf::from)
 }
 
 #[cfg(test)]
