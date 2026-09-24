@@ -6726,6 +6726,43 @@ language = "rust"
         );
     }
 
+    /// #3906: the TypeScript and Perl preview receipt commands are copied
+    /// verbatim into a shell, so every flag they carry must be one the
+    /// `ripr outcome` parser accepts. The placeholders stand in for the
+    /// operator's before and after snapshot paths.
+    #[test]
+    fn preview_receipt_commands_parse_as_ripr_outcome() -> Result<(), String> {
+        let commands = [
+            crate::output::typescript_packet_projection::typescript_receipt_command(
+                "gap:typescript:typescript_preview:a1b2c3d4",
+            ),
+            crate::output::perl_gap_record_projection::perl_receipt_command(
+                "gap:perl:lib/My/App.pm:discount",
+            ),
+        ];
+        for command in commands {
+            let words: Vec<String> = command.split_whitespace().map(str::to_string).collect();
+            let rest = words
+                .strip_prefix(&["ripr".to_string(), "outcome".to_string()])
+                .ok_or_else(|| format!("not a ripr outcome command: {command}"))?;
+            let options = parse_outcome_options(rest)
+                .map_err(|err| format!("`{command}` is rejected by ripr outcome: {err}"))?;
+            if options.before != Path::new("<baseline>") || options.after != Path::new("<repair>") {
+                return Err(format!("unexpected snapshot placeholders in `{command}`"));
+            }
+            if !options
+                .out
+                .as_deref()
+                .is_some_and(|out| out.starts_with("target/ripr/receipts"))
+            {
+                return Err(format!(
+                    "receipt must write under target/ripr/receipts: `{command}`"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn outcome_help_returns_ok() {
         assert_eq!(outcome(&args(&["--help"])), Ok(()));

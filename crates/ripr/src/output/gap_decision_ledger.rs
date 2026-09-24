@@ -4082,7 +4082,7 @@ mod tests {
                     "line": 2,
                     "owner": "applyDiscount",
                     "verify_command": "jest tests/discount.test.ts",
-                    "receipt_command": "ripr outcome --before <baseline> --after <repair> --verify-cmd \"jest tests/discount.test.ts\" --out target/ripr/receipts/gap_typescript_typescript_preview_2396aec1.targeted-test-outcome.json",
+                    "receipt_command": "ripr outcome --before <baseline> --after <repair> --out target/ripr/receipts/gap_typescript_typescript_preview_2396aec1.targeted-test-outcome.json",
                     "allowed_edit_surface": ["tests/discount.test.ts"],
                     "forbidden_files": ["src/discount.ts"],
                     "must_not_change": [
