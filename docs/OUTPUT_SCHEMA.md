@@ -6900,7 +6900,10 @@ Field contract:
   `null` for one-sided new/resolved gaps.
 - `seam.grip_class` - one-sided grip class for `new` or `resolved` gaps, or
   `null` for matched seams.
-- `test_changed` - optional focused test name supplied by the caller.
+- `test_changed` - optional focused test the edit changed. `ripr agent receipt`
+  takes it from `--test-changed`. The after phase of `ripr agent repair` sets it
+  to the attempt's selected test file when the edit cage is compliant and
+  recorded that file changing, and leaves it null otherwise.
 - `verification.commands_run` - optional commands supplied by the caller. The
   receipt records them; it does not run them.
 - `summary.remaining_gap` / `summary.next_recommendation` - static advisory
