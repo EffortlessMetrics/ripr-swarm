@@ -73,7 +73,8 @@ impl LanguageId {
     /// Single text owner for every surface that reports an unavailable
     /// adapter (the check note, JSON/diff-report `why`, the typed outcome
     /// recovery, the pipeline run reason, the `languages.enabled` config
-    /// error, and doctor). Perl names both prerequisites because enabling
+    /// error, doctor, and pilot's unavailable notice, which delegates here).
+    /// Perl names both prerequisites because enabling
     /// `perl` in `ripr.toml` is not enough on its own: the adapter only
     /// consumes packets from an external fact exporter, and the canonical
     /// exporter is not yet published. Bounded well under the 512-character
@@ -88,6 +89,24 @@ impl LanguageId {
                 other.required_feature(),
                 other.as_str()
             ),
+        }
+    }
+
+    /// Plain notice for a language whose adapter is not compiled into this
+    /// binary, or `None` when it is.
+    ///
+    /// Routes a user onward (currently `ripr pilot`) by restating the
+    /// [`LanguageId::unavailable_adapter_recovery`] wording, so every surface
+    /// names the same prerequisites.
+    pub(crate) fn unavailable_adapter_notice(self) -> Option<String> {
+        if self.is_available() {
+            return None;
+        }
+        let recovery = self.unavailable_adapter_recovery();
+        if recovery.ends_with('.') {
+            Some(recovery)
+        } else {
+            Some(format!("{recovery}."))
         }
     }
 
@@ -423,6 +442,42 @@ mod tests {
         assert_eq!(LanguageId::JavaScript.required_feature(), "lang-typescript");
         assert_eq!(LanguageId::Python.required_feature(), "lang-python");
         assert_eq!(LanguageId::Perl.required_feature(), "lang-perl");
+    }
+
+    #[test]
+    fn unavailable_adapter_notice_restates_recovery_owner_only_when_missing() {
+        for language in [
+            LanguageId::Rust,
+            LanguageId::TypeScript,
+            LanguageId::JavaScript,
+            LanguageId::Python,
+            LanguageId::Perl,
+        ] {
+            assert_eq!(
+                language.unavailable_adapter_notice().is_some(),
+                !language.is_available(),
+                "{language:?}"
+            );
+            if let Some(notice) = language.unavailable_adapter_notice() {
+                let recovery = language.unavailable_adapter_recovery();
+                assert_eq!(
+                    notice,
+                    format!("{recovery}."),
+                    "the pilot notice must restate the recovery owner's wording"
+                );
+            }
+        }
+        if !cfg!(feature = "lang-perl") {
+            let perl = LanguageId::Perl.unavailable_adapter_notice();
+            assert!(
+                perl.as_deref().is_some_and(|text| {
+                    text.contains("lang-perl")
+                        && text.contains(PERL_FACT_EXPORTER)
+                        && text.contains("not yet published")
+                }),
+                "the pilot notice must name both Perl prerequisites: {perl:?}"
+            );
+        }
     }
 
     #[test]
