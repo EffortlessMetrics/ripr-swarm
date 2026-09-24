@@ -154,6 +154,31 @@ invalidated direct field assignment must stop as
 `field_assignment_value_unresolved` instead of receiving a repair
 recommendation that the analyzer cannot credit.
 
+Boundary-literal infection example:
+
+```rust
+// changed owner
+if weight_grams > 2_000 { 400 } else { 150 }
+
+// related test
+assert_eq!(fragile_fee(parcel_weight("crate")), 400);
+assert_eq!(tax_bps("EU"), 2000);
+```
+
+A literal that matches the changed boundary counts as infection evidence only
+when it flows into the changed owner's inputs: an argument of a direct call to
+the owner, a number or boolean bound by the test's single immutable
+`let name = <literal>;` declaration and passed to the owner (read through the
+shared let-binding scan in `analysis/value_resolution.rs`), a table-row cell,
+or a builder-method argument. The activation authority
+(`analysis/classify/activation.rs`) separates these inputs from assertion
+arguments, and the infection stage reads that separation instead of scanning
+every literal in the test. An assertion's expected value (the `2000` above) is
+an oracle, not an input, so it must not produce `infection yes`; RIPR reports
+`infection weak` and says the boundary literal appears only outside the
+owner's inputs. A `mut`, shadowed, string, or computed binding is not an
+exact input value.
+
 ## Test Mapping
 
 Fixture coverage:
@@ -162,6 +187,13 @@ Fixture coverage:
 - `fixtures/weak_error_oracle` (baseline)
 - `fixtures/smoke_assertion_only`
 - `fixtures/no_static_path`
+- `fixtures/infection_expected_value_literal`
+- `predicate_infection_ignores_boundary_literal_used_only_as_expected_value`
+- `predicate_infection_credits_the_same_literal_when_it_is_an_owner_input`
+- `predicate_infection_credits_table_row_inputs_but_not_enum_variants`
+- `let_bound_owner_argument_is_an_owner_input`
+- `let_bound_owner_argument_fails_closed_on_mut_shadowed_or_computed_bindings`
+- `owner_input_values_exclude_assertion_expected_values`
 - unit coverage for local flow sink families: predicate-to-return,
   predicate-to-error, match-arm result, output field, event/outbound call,
   state write, persistence write, log message, configuration change, and

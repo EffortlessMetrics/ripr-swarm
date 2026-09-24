@@ -76,7 +76,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             continue;
         };
         for (idx, argument) in arguments.iter().enumerate() {
-            for value in scalar_values(argument) {
+            for value in owner_argument_values(test, argument) {
                 let value = parameters
                     .get(idx)
                     .map(|parameter| format!("{parameter} = {value}"))
@@ -812,7 +812,7 @@ fn owner_call_parameter_values(
                 .enumerate()
                 .filter_map(|(idx, argument)| {
                     let parameter = parameters.get(idx)?;
-                    let value = scalar_values(argument).into_iter().next()?;
+                    let value = owner_argument_values(test, argument).into_iter().next()?;
                     Some(ParameterValue {
                         parameter: parameter.clone(),
                         value,
@@ -1143,6 +1143,67 @@ fn list_or_unknown(values: &[String]) -> String {
     } else {
         values.join(", ")
     }
+}
+
+/// The values a related test feeds into the changed owner's inputs:
+/// arguments of a direct owner call (literal or let-bound, per
+/// [`owner_argument_values`]), table-row cells, and builder-method
+/// arguments. Assertion arguments are oracle values (the expected side of
+/// `assert_eq!(other(x), 2000)`), not inputs, and are excluded, as are the
+/// derived `left == right` boundary facts. A `parameter = value` fact
+/// yields its bare value.
+pub(in crate::analysis) fn owner_input_values(activation: &ActivationEvidence) -> Vec<&str> {
+    activation
+        .observed_values
+        .iter()
+        .filter(|fact| {
+            matches!(
+                fact.context,
+                ValueContext::FunctionArgument
+                    | ValueContext::TableRow
+                    | ValueContext::BuilderMethod
+            ) && !fact.value.contains(" == ")
+        })
+        .map(|fact| {
+            fact.value
+                .split_once(" = ")
+                .filter(|(parameter, _)| is_plain_identifier(parameter))
+                .map_or(fact.value.as_str(), |(_, value)| value)
+        })
+        .collect()
+}
+
+/// The scalar values one owner-call argument carries. A literal argument
+/// yields its literals; a bare identifier yields the scalar it is bound to
+/// by a `let IDENT = LITERAL;` in the same test body, read through the
+/// shared value-extraction authority
+/// ([`crate::analysis::value_resolution::test_let_bound_literal`]) rather
+/// than a second let scanner. Only a bound number or boolean counts: the
+/// shared scan strips string contents, so a string binding is not an exact
+/// value here. Anything else (a computed expression, a non-literal
+/// initializer) yields nothing.
+fn owner_argument_values(test: &TestSummary, argument: &str) -> Vec<String> {
+    let direct = scalar_values(argument);
+    if !direct.is_empty() {
+        return direct;
+    }
+    let name = argument.trim();
+    if !is_plain_identifier(name) {
+        return Vec::new();
+    }
+    crate::analysis::value_resolution::test_let_bound_literal(&test.body, name)
+        .filter(|value| !value.starts_with(['"', '\'']))
+        .filter(|value| scalar_values(value).as_slice() == std::slice::from_ref(value))
+        .into_iter()
+        .collect()
+}
+
+fn is_plain_identifier(text: &str) -> bool {
+    !text.is_empty()
+        && !text.starts_with(|ch: char| ch.is_ascii_digit())
+        && text
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 pub(in crate::analysis) fn has_observed_boundary_equality(activation: &ActivationEvidence) -> bool {
@@ -1673,6 +1734,103 @@ mod tests {
                 .contains("observed amount values: unknown"),
             "inline commented match aliases must not resolve boundary operands; got {:?}",
             activation.missing_discriminators
+        );
+    }
+
+    fn test_with_body_call(body: &str, call_line: usize, call: &str) -> TestSummary {
+        TestSummary {
+            name: "score_boundary".to_string(),
+            file: PathBuf::from("tests/score.rs"),
+            start_line: 10,
+            end_line: 10 + body.lines().count(),
+            body: body.to_string(),
+            calls: vec![CallFact {
+                name: "score".to_string(),
+                line: call_line,
+                text: call.to_string(),
+            }],
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        }
+    }
+
+    fn boundary_activation(test: &TestSummary) -> ActivationEvidence {
+        let owner = function("pub fn score(amount: i32) -> bool {\n    amount > 10\n}");
+        activation_evidence(
+            &probe(ProbeFamily::Predicate, "amount > 10"),
+            Some(&owner),
+            &[test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        )
+    }
+
+    #[test]
+    fn let_bound_owner_argument_is_an_owner_input() {
+        // `let amount = 10; score(amount)`: the let-bound literal flows
+        // into the owner, so it is an input row and reaches the boundary.
+        let test = test_with_body_call(
+            "fn score_boundary() {\n    let amount = 10;\n    assert!(score(amount));\n}",
+            12,
+            "assert!(score(amount));",
+        );
+        let activation = boundary_activation(&test);
+
+        assert!(has_observed_boundary_equality(&activation));
+        assert!(activation.missing_discriminators.is_empty());
+        assert_eq!(owner_input_values(&activation), vec!["10"]);
+    }
+
+    #[test]
+    fn let_bound_owner_argument_fails_closed_on_mut_shadowed_or_computed_bindings() {
+        for body in [
+            "fn score_boundary() {\n    let mut amount = 10;\n    assert!(score(amount));\n}",
+            "fn score_boundary() {\n    let amount = 10;\n    let amount = amount + 1;\n    assert!(score(amount));\n}",
+            "fn score_boundary() {\n    let amount = base() + 10;\n    assert!(score(amount));\n}",
+            "fn score_boundary() {\n    let amount = \"10\";\n    assert!(score(amount));\n}",
+        ] {
+            let call_line = 10
+                + body
+                    .lines()
+                    .position(|line| line.contains("score(amount)"))
+                    .unwrap_or_default();
+            let test = test_with_body_call(body, call_line, "assert!(score(amount));");
+            let activation = boundary_activation(&test);
+
+            assert!(
+                !has_observed_boundary_equality(&activation),
+                "`{body}` must not bind an exact owner input"
+            );
+            assert!(
+                owner_input_values(&activation).is_empty(),
+                "`{body}` must not yield an owner input; got {:?}",
+                activation.observed_values
+            );
+        }
+    }
+
+    #[test]
+    fn owner_input_values_exclude_assertion_expected_values() {
+        // The owner call's argument is an input; the expected value of an
+        // assertion on another function is an oracle value.
+        let mut test = test_with_call("score_boundary", "assert!(score(5));");
+        test.body = "assert!(score(5));\nassert_eq!(tax_bps(\"EU\"), 10);".to_string();
+        test.assertions = vec![oracle_fact(
+            "assert_eq!(tax_bps(\"EU\"), 10);",
+            OracleKind::ExactValue,
+        )];
+        let activation = boundary_activation(&test);
+
+        assert_eq!(owner_input_values(&activation), vec!["5"]);
+        assert!(
+            activation.observed_values.iter().any(|fact| {
+                fact.value == "10" && fact.context == ValueContext::AssertionArgument
+            })
         );
     }
 

@@ -1,5 +1,5 @@
 use super::super::rust_index::{TestSummary, extract_literals};
-use super::activation::has_observed_boundary_equality;
+use super::activation::{has_observed_boundary_equality, owner_input_values};
 use crate::domain::*;
 
 pub(in crate::analysis) fn infection_evidence(
@@ -13,6 +13,29 @@ pub(in crate::analysis) fn infection_evidence(
             let test_literals = related_tests
                 .iter()
                 .flat_map(|test| test.literals.iter().map(|literal| literal.value.clone()))
+                .collect::<Vec<_>>();
+            // Only a literal that flows into the changed owner's inputs can
+            // activate the boundary. The activation authority separates
+            // owner-call arguments (and table/builder inputs) from assertion
+            // arguments; an expected value such as the `2000` in
+            // `assert_eq!(tax_bps("EU"), 2000)` is an oracle, not an input.
+            let mut input_literals = owner_input_values(activation)
+                .into_iter()
+                .flat_map(extract_literals)
+                .collect::<Vec<_>>();
+            input_literals.sort();
+            input_literals.dedup();
+            let boundary_input_literals = probe_literals
+                .iter()
+                .filter(|literal| input_literals.contains(literal))
+                .cloned()
+                .collect::<Vec<_>>();
+            let boundary_oracle_only_literals = probe_literals
+                .iter()
+                .filter(|literal| {
+                    !input_literals.contains(literal) && test_literals.contains(literal)
+                })
+                .cloned()
                 .collect::<Vec<_>>();
             if related_tests.is_empty() {
                 StageEvidence::new(
@@ -42,16 +65,22 @@ pub(in crate::analysis) fn infection_evidence(
                     Confidence::Low,
                     "Predicate changed, but no literal boundary was visible in the changed expression",
                 )
-            } else if probe_literals
-                .iter()
-                .any(|literal| test_literals.iter().any(|t| t == literal))
-            {
+            } else if !boundary_input_literals.is_empty() {
                 StageEvidence::new(
                     StageState::Yes,
                     Confidence::Medium,
                     format!(
                         "Detected test input literal matching changed boundary: {}",
-                        probe_literals.join(", ")
+                        boundary_input_literals.join(", ")
+                    ),
+                )
+            } else if !boundary_oracle_only_literals.is_empty() {
+                StageEvidence::new(
+                    StageState::Weak,
+                    Confidence::Medium,
+                    format!(
+                        "Related tests contain the changed boundary literal [{}] only outside the changed owner's inputs (for example as an expected value); no test input at the changed boundary was detected",
+                        boundary_oracle_only_literals.join(", ")
                     ),
                 )
             } else if !test_literals.is_empty() {
@@ -122,7 +151,8 @@ mod tests {
     fn predicate_infection_uses_matching_test_literal() {
         let probe = probe(ProbeFamily::Predicate, "value > 10");
         let test = test_with_literals(&["10"]);
-        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
+        let activation = activation_with(&[("value = 10", ValueContext::FunctionArgument)]);
+        let evidence = infection_evidence(&probe, &[&test], &activation);
 
         assert_eq!(evidence.state, StageState::Yes);
         assert_eq!(
@@ -135,12 +165,67 @@ mod tests {
     fn predicate_infection_matches_decimal_exponent_case() {
         let probe = probe(ProbeFamily::Predicate, "ratio < 4E-2");
         let test = test_with_literals(&["4e-2"]);
-        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
+        let activation = activation_with(&[("ratio = 4e-2", ValueContext::FunctionArgument)]);
+        let evidence = infection_evidence(&probe, &[&test], &activation);
 
         assert_eq!(evidence.state, StageState::Yes);
         assert_eq!(
             evidence.summary,
             "Detected test input literal matching changed boundary: 4e-2"
+        );
+    }
+
+    #[test]
+    fn predicate_infection_ignores_boundary_literal_used_only_as_expected_value() {
+        // `assert_eq!(tax_bps("EU"), 2000)` in a related test that never
+        // passes 2000 into the changed owner: the literal is the oracle's
+        // expected value, not an input, so it cannot activate the boundary.
+        let probe = probe(ProbeFamily::Predicate, "weight_grams > 2_000");
+        let test = test_with_literals(&["2000"]);
+        let activation = activation_with(&[("2000", ValueContext::AssertionArgument)]);
+        let evidence = infection_evidence(&probe, &[&test], &activation);
+
+        assert_eq!(evidence.state, StageState::Weak);
+        assert_eq!(
+            evidence.summary,
+            "Related tests contain the changed boundary literal [2000] only outside the changed owner's inputs (for example as an expected value); no test input at the changed boundary was detected"
+        );
+    }
+
+    #[test]
+    fn predicate_infection_credits_the_same_literal_when_it_is_an_owner_input() {
+        // Alternate of the expected-value case: the same boundary literal
+        // passed as the owner's argument activates the boundary.
+        let probe = probe(ProbeFamily::Predicate, "weight_grams > 2_000");
+        let test = test_with_literals(&["2000", "400"]);
+        let activation = activation_with(&[
+            ("400", ValueContext::AssertionArgument),
+            ("weight_grams = 2_000", ValueContext::FunctionArgument),
+        ]);
+        let evidence = infection_evidence(&probe, &[&test], &activation);
+
+        assert_eq!(evidence.state, StageState::Yes);
+        assert_eq!(
+            evidence.summary,
+            "Detected test input literal matching changed boundary: 2000"
+        );
+    }
+
+    #[test]
+    fn predicate_infection_credits_table_row_inputs_but_not_enum_variants() {
+        let probe = probe(ProbeFamily::Predicate, "amount > 10");
+        let test = test_with_literals(&["10", "11"]);
+        let table = activation_with(&[("10", ValueContext::TableRow)]);
+        assert_eq!(
+            infection_evidence(&probe, &[&test], &table).state,
+            StageState::Yes
+        );
+
+        // A non-input context (an enum variant) never counts as an input.
+        let enum_only = activation_with(&[("10", ValueContext::EnumVariant)]);
+        assert_eq!(
+            infection_evidence(&probe, &[&test], &enum_only).state,
+            StageState::Weak
         );
     }
 
@@ -235,6 +320,21 @@ mod tests {
         let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
 
         assert_eq!(evidence.state, StageState::Yes);
+    }
+
+    fn activation_with(facts: &[(&str, ValueContext)]) -> ActivationEvidence {
+        ActivationEvidence {
+            observed_values: facts
+                .iter()
+                .map(|(value, context)| ValueFact {
+                    line: 1,
+                    text: String::new(),
+                    value: (*value).to_string(),
+                    context: context.clone(),
+                })
+                .collect(),
+            missing_discriminators: Vec::new(),
+        }
     }
 
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
