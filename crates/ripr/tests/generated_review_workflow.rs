@@ -3,6 +3,11 @@ use std::fs;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "common/mod.rs"]
+mod common;
+
+use common::fixture_git::{fixture_git_ok, fixture_git_output};
+
 #[test]
 fn generated_workflow_batches_compact_review_comments() -> Result<(), Box<dyn Error>> {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
@@ -88,6 +93,7 @@ fn generated_capture_step_uses_pinned_diff_contract() -> Result<(), Box<dyn Erro
         "core.quotePath",
         "rev-parse",
         "sha256sum",
+        "mktemp",
     ] {
         assert!(
             step.contains(pin),
@@ -150,45 +156,45 @@ fn pinned_capture_flags_retain_edit_hidden_by_textconv() -> Result<(), Box<dyn E
         std::process::id()
     ));
     fs::create_dir_all(root.join("src"))?;
-    git(&root, &["init", "--initial-branch=main"])?;
-    git(
+    fixture_git_ok(&root, &["init", "--initial-branch=main"])?;
+    fixture_git_ok(
         &root,
         &["config", "--local", "user.name", "Capture Contract"],
     )?;
-    git(
+    fixture_git_ok(
         &root,
         &["config", "--local", "user.email", "capture@example.com"],
     )?;
-    git(&root, &["config", "--local", "commit.gpgsign", "false"])?;
+    fixture_git_ok(&root, &["config", "--local", "commit.gpgsign", "false"])?;
     fs::write(root.join(".gitattributes"), "src/lib.rs diff=audit\n")?;
     fs::write(
         root.join("src/lib.rs"),
         "pub const A: u32 = 1;\npub const B: u32 = 2;\npub const C: u32 = 3;\npub const VALUE: u32 = 1;\npub const D: u32 = 4;\npub const E: u32 = 5;\npub const F: u32 = 6;\n",
     )?;
-    git(&root, &["add", "."])?;
-    git(&root, &["commit", "--quiet", "-m", "base"])?;
-    git(&root, &["tag", "capture-base"])?;
+    fixture_git_ok(&root, &["add", "."])?;
+    fixture_git_ok(&root, &["commit", "--quiet", "-m", "base"])?;
+    fixture_git_ok(&root, &["tag", "capture-base"])?;
     fs::write(
         root.join("src/lib.rs"),
         "pub const A: u32 = 1;\npub const B: u32 = 2;\npub const C: u32 = 3;\npub const VALUE: u32 = 2;\npub const D: u32 = 4;\npub const E: u32 = 5;\npub const F: u32 = 6;\n",
     )?;
-    git(&root, &["add", "src/lib.rs"])?;
-    git(&root, &["commit", "--quiet", "-m", "edit"])?;
+    fixture_git_ok(&root, &["add", "src/lib.rs"])?;
+    fixture_git_ok(&root, &["commit", "--quiet", "-m", "edit"])?;
     // Git itself is the constant-output helper on Unix and Windows; no
     // shell script or executable bit needed.
-    git(
+    fixture_git_ok(
         &root,
         &["config", "--local", "diff.audit.textconv", "git --version"],
     )?;
     let range = "capture-base...HEAD";
-    let hidden = git(&root, &["diff", "--binary", range])?;
+    let hidden = fixture_git_output(&root, &["diff", "--binary", range])?;
     assert!(
         hidden.trim().is_empty(),
         "the constant textconv must hide the source edit"
     );
     // Repaired recipe: the presentation pins the generated "Capture pull
     // request diff" step now carries (init.rs template + docs/CI.md).
-    let retained = git(
+    let retained = fixture_git_output(
         &root,
         &[
             "-c",
@@ -230,14 +236,16 @@ fn pinned_capture_flags_retain_edit_hidden_by_textconv() -> Result<(), Box<dyn E
 #[test]
 fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
     // Runner tools: the generated workflow targets ubuntu-latest, where
-    // sh, coreutils, and jq exist. On minimal local Unix environments
-    // without sha256sum or jq, skip loudly instead of failing the suite.
+    // bash, coreutils, and jq exist. On minimal local Unix environments
+    // without them, skip loudly instead of failing the suite.
     let tools = run_sh(
-        "command -v sha256sum >/dev/null && command -v jq >/dev/null",
+        "command -v bash >/dev/null && command -v sha256sum >/dev/null && command -v jq >/dev/null",
         std::env::temp_dir().as_path(),
     )?;
     if !tools.status.success() {
-        eprintln!("skipping generated_capture_step_runs_end_to_end: sha256sum or jq not available");
+        eprintln!(
+            "skipping generated_capture_step_runs_end_to_end: bash, sha256sum, or jq not available"
+        );
         return Ok(());
     }
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
@@ -276,9 +284,9 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
         std::process::id()
     ));
     fs::create_dir_all(&repo)?;
-    git(&repo, &["init", "--initial-branch=main"])?;
-    git(&repo, &["config", "--local", "user.name", "Capture Exec"])?;
-    git(
+    fixture_git_ok(&repo, &["init", "--initial-branch=main"])?;
+    fixture_git_ok(&repo, &["config", "--local", "user.name", "Capture Exec"])?;
+    fixture_git_ok(
         &repo,
         &[
             "config",
@@ -287,16 +295,16 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
             "capture-exec@example.com",
         ],
     )?;
-    git(&repo, &["config", "--local", "commit.gpgsign", "false"])?;
+    fixture_git_ok(&repo, &["config", "--local", "commit.gpgsign", "false"])?;
     fs::write(repo.join("probe.txt"), "before\n")?;
-    git(&repo, &["add", "."])?;
-    git(&repo, &["commit", "--quiet", "-m", "base"])?;
-    git(&repo, &["checkout", "--quiet", "-b", "feature"])?;
+    fixture_git_ok(&repo, &["add", "."])?;
+    fixture_git_ok(&repo, &["commit", "--quiet", "-m", "base"])?;
+    fixture_git_ok(&repo, &["checkout", "--quiet", "-b", "feature"])?;
     fs::write(repo.join("probe.txt"), "after\n")?;
-    git(&repo, &["add", "probe.txt"])?;
-    git(&repo, &["commit", "--quiet", "-m", "edit"])?;
-    let base_sha = git(&repo, &["rev-parse", "--verify", "main^{commit}"])?;
-    let head_sha = git(&repo, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    fixture_git_ok(&repo, &["add", "probe.txt"])?;
+    fixture_git_ok(&repo, &["commit", "--quiet", "-m", "edit"])?;
+    let base_sha = fixture_git_output(&repo, &["rev-parse", "--verify", "main^{commit}"])?;
+    let head_sha = fixture_git_output(&repo, &["rev-parse", "--verify", "HEAD^{commit}"])?;
 
     // Positive: the step resolves main, captures the edit, and retains a
     // receipt whose identities and byte count match the run.
@@ -314,14 +322,62 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
         String::from_utf8_lossy(&patch).contains("after"),
         "captured patch must contain the feature-branch edit"
     );
-    let receipt = fs::read_to_string(repo.join("target/ripr/reports/pr-diff.receipt.json"))?;
-    assert!(
-        receipt.contains(base_sha.trim()) && receipt.contains(head_sha.trim()),
-        "receipt must retain the resolved base/head SHAs; got:\n{receipt}"
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        repo.join("target/ripr/reports/pr-diff.receipt.json"),
+    )?)?;
+    let field = |name: &str| {
+        receipt
+            .get(name)
+            .ok_or(format!("receipt is missing field {name:?}"))
+    };
+    let as_str = |name: &str| {
+        field(name)?
+            .as_str()
+            .ok_or(format!("receipt field {name:?} is not a string"))
+    };
+    assert_eq!(
+        as_str("tool")?,
+        "ripr",
+        "receipt must identify its producer"
     );
-    assert!(
-        receipt.contains(&format!("\"byte_count\": {}", patch.len())),
-        "receipt byte count must match the patch; got:\n{receipt}"
+    assert_eq!(
+        as_str("kind")?,
+        "pr-diff-receipt",
+        "receipt must identify its kind"
+    );
+    assert_eq!(
+        as_str("base_ref")?,
+        "main",
+        "receipt must retain the requested base ref"
+    );
+    assert_eq!(
+        as_str("base_sha")?,
+        base_sha.trim(),
+        "receipt base_sha must equal the resolved base commit"
+    );
+    assert_eq!(
+        as_str("head_sha")?,
+        head_sha.trim(),
+        "receipt head_sha must equal the resolved head commit"
+    );
+    assert_eq!(
+        field("byte_count")?
+            .as_u64()
+            .ok_or("receipt field \"byte_count\" is not a number")?,
+        patch.len() as u64,
+        "receipt byte count must match the patch"
+    );
+    let expected_digest = {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(&patch)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    assert_eq!(
+        as_str("sha256")?,
+        expected_digest.as_str(),
+        "receipt digest must match the patch bytes"
     );
 
     // Negative: an unresolvable base fails closed with the named error
@@ -340,6 +396,34 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
         String::from_utf8_lossy(&run.stderr)
     );
 
+    // Empty range: base == HEAD is an honest zero-change run — the step
+    // succeeds with an empty patch and a zero byte count (exercises the
+    // mktemp zero-change proof path with zero NUL bytes).
+    let empty = body
+        .join("\n")
+        .replace("origin/${{ github.base_ref }}", "feature");
+    let run = run_sh(&empty, &repo)?;
+    assert!(
+        run.status.success(),
+        "capture step must accept a real zero-change range; got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let empty_patch = fs::read(repo.join("target/ripr/reports/pr.diff"))?;
+    assert!(
+        empty_patch.is_empty(),
+        "zero-change range must capture an empty patch"
+    );
+    let empty_receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        repo.join("target/ripr/reports/pr-diff.receipt.json"),
+    )?)?;
+    assert_eq!(
+        empty_receipt
+            .get("byte_count")
+            .and_then(serde_json::Value::as_u64),
+        Some(0),
+        "zero-change receipt must record a zero byte count"
+    );
+
     fs::remove_dir_all(init_root)?;
     fs::remove_dir_all(repo)?;
     Ok(())
@@ -356,26 +440,14 @@ fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn
 }
 
 /// One spawn site for executing extracted capture-step shell (process-policy
-/// bound). The generated workflow runs on ubuntu-latest, where `sh` is the
-/// faithful runner.
+/// bound). GitHub Actions runs a `run:` step without `shell:` as `bash -e`
+/// on ubuntu-latest, so the helper mirrors that invocation instead of a
+/// bare `sh -c`, which would not enable errexit.
 fn run_sh(script: &str, cwd: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
-    Ok(Command::new("sh")
-        .args(["-c", script])
+    Ok(Command::new("bash")
+        .args(["-e", "-c", script])
         .current_dir(cwd)
         .output()?)
-}
-
-fn git(root: &std::path::Path, args: &[&str]) -> Result<String, Box<dyn Error>> {
-    let output = Command::new("git").current_dir(root).args(args).output()?;
-    if !output.status.success() {
-        return Err(format!(
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
-    }
-    String::from_utf8(output.stdout)
-        .map_err(|err| format!("git {args:?} produced non-UTF-8 output: {err}").into())
 }
 
 /// Extract the "Capture pull request diff" step block: from its `- name:`

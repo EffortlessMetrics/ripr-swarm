@@ -176,6 +176,66 @@ pub fn fixture_git_ok_with_deadline(
     }
 }
 
+/// `fixture_git_ok` for commands whose stdout the test consumes
+/// (`rev-parse`, `diff`): same deadline, single idempotent retry, and
+/// stream-drain discipline. Stdout is decoded strictly — non-UTF-8 output
+/// fails with a named error instead of recording replacement characters.
+/// `commit` is rejected: landing reconcile carries no stdout, so a commit
+/// through this helper would silently discard the reconcile contract; use
+/// `fixture_git_ok` for state-changing invocations.
+pub fn fixture_git_output(root: &Path, args: &[&str]) -> Result<String, String> {
+    if fixture_subcommand(args) == Some("commit") {
+        return Err("fixture_git_output does not support commit; use fixture_git_ok".to_string());
+    }
+    let first = match run_git_deadline(root, args, FIXTURE_GIT_DEADLINE) {
+        Ok(FixtureGitOutcome::Finished(output)) if output.status.success() => {
+            return decode_stdout(root, args, &output.stdout);
+        }
+        Ok(FixtureGitOutcome::Finished(output)) => {
+            return Err(format!(
+                "fixture git {args:?} failed in {}: {}",
+                root.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(FixtureGitOutcome::TimedOut(error)) => error,
+        Err(error) => return Err(error),
+    };
+
+    // Only provably idempotent commands are re-executed.
+    let retryable = match fixture_subcommand(args) {
+        Some(command) if RETRYABLE_FIXTURE_GIT.contains(&command) => true,
+        Some("checkout") => is_retryable_checkout(args),
+        _ => false,
+    };
+    if !retryable {
+        return Err(first);
+    }
+    match run_git_deadline(root, args, FIXTURE_GIT_DEADLINE) {
+        Ok(FixtureGitOutcome::Finished(output)) if output.status.success() => {
+            decode_stdout(root, args, &output.stdout)
+        }
+        Ok(FixtureGitOutcome::Finished(output)) => Err(format!(
+            "fixture git {args:?} failed again in {}: {}",
+            root.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )),
+        Ok(FixtureGitOutcome::TimedOut(error)) => Err(format!("retry timed out: {error}")),
+        Err(error) => Err(error),
+    }
+}
+
+/// Strict stdout decode for [`fixture_git_output`]: fixture output feeds
+/// identity comparisons, so lossy conversion would collapse distinct paths.
+fn decode_stdout(root: &Path, args: &[&str], stdout: &[u8]) -> Result<String, String> {
+    String::from_utf8(stdout.to_vec()).map_err(|error| {
+        format!(
+            "fixture git {args:?} produced non-UTF-8 output in {}: {error}",
+            root.display()
+        )
+    })
+}
+
 /// Current HEAD revision of the fixture repository, or `None` when the
 /// repository has no commits. Runner failures propagate: a failed probe
 /// is not evidence of an unborn repository.

@@ -494,10 +494,17 @@ jobs:
           head_sha="$(git rev-parse --verify "HEAD^{commit}")" || { echo "ripr: cannot resolve HEAD" >&2; exit 1; }
           git -c core.quotePath=true diff --binary --no-ext-diff --no-textconv --no-color --unified=3 --inter-hunk-context=0 "${base_sha}...${head_sha}" > target/ripr/reports/pr.diff || { echo "ripr: git diff failed for ${base_sha}...${head_sha}" >&2; exit 1; }
           byte_count="$(wc -c < target/ripr/reports/pr.diff | tr -d ' ')"
-          digest="$(sha256sum target/ripr/reports/pr.diff | cut -d' ' -f1)"
+          digest="$(sha256sum target/ripr/reports/pr.diff)" || {
+            echo "ripr: failed to compute SHA-256 for patch" >&2
+            exit 1
+          }
+          digest="${digest%% *}"
           jq -n --arg base_ref "$base_ref" --arg base_sha "$base_sha" --arg head_sha "$head_sha" --argjson byte_count "$byte_count" --arg digest "$digest" '{tool:"ripr",kind:"pr-diff-receipt",base_ref:$base_ref,base_sha:$base_sha,head_sha:$head_sha,byte_count:$byte_count,sha256:$digest}' > target/ripr/reports/pr-diff.receipt.json
           if [ "$byte_count" -eq 0 ]; then
-            changed_paths="$(git -c core.quotePath=true diff --name-only -z "${base_sha}...${head_sha}" | tr -cd '\0' | wc -c | tr -d ' ')"
+            name_list="$(mktemp)" || { echo "ripr: cannot create temp file for path inventory" >&2; exit 1; }
+            git -c core.quotePath=true diff --name-only -z "${base_sha}...${head_sha}" > "$name_list" || { echo "ripr: git diff --name-only failed for ${base_sha}...${head_sha}" >&2; exit 1; }
+            changed_paths="$(tr -cd '\0' < "$name_list" | wc -c | tr -d ' ')"
+            rm -f "$name_list"
             if [ "$changed_paths" -ne 0 ]; then
               echo "ripr: empty patch but $changed_paths changed path(s); refusing an absent result" >&2
               exit 1
