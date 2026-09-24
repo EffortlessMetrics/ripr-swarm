@@ -13752,7 +13752,8 @@ target/ripr/pilot/pilot-summary.md
   "next": {
     "inspect_packet": "target/ripr/pilot/agent-seam-packets.json",
     "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json",
-    "outcome_command": "ripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json"
+    "outcome_command": "ripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json",
+    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before"
   }
 }
 ```
@@ -13886,13 +13887,17 @@ Field contract:
   `python_repair_card` using the same advisory card fields emitted by
   `ripr check --json`.
 - `next` — advisory follow-up commands. Complete summaries include the public
-  `ripr outcome` before/after receipt command. Partial summaries include a
-  retry command with a larger explicit timeout.
+  `ripr outcome` before/after receipt command, and `repair_command`: the
+  `ripr agent repair --seam-id <id> --phase before` command for the top seam
+  when its repair-packet eligibility flip holds, otherwise `null` (#3906).
+  Partial summaries include a retry command with a larger explicit timeout.
 
 The Markdown sibling prints the same summary, puts the top recommendation first,
-and includes the inspected seam, why it matters, the focused test to write, the
-top seam's targeted test brief, and the before/after commands for complete
-runs. It remains advisory. On timeout, the Markdown sibling records the partial
+and includes the inspected seam, why it matters, the focused test to write, and
+the top seam's targeted test brief. Its Next Commands block offers one route:
+the repair transaction's `--phase before` command when `repair_command` is
+set, otherwise the before/after snapshot commands. The terminal closes the same
+way, with the repair command as step 1 of three. It remains advisory. On timeout, the Markdown sibling records the partial
 state and the retry command instead of pretending the packet is complete.
 
 ## LSP Seam Diagnostics

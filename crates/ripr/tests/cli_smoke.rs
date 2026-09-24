@@ -7420,7 +7420,14 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
     assert!(stdout.contains("config: missing, using built-in defaults"));
     assert!(stdout.contains("Top recommendation:"));
     assert!(stdout.contains("focused test:"));
-    assert!(stdout.contains("Run after adding the focused test:"));
+    // #3906: an eligible top seam gets one ordinary route, the repair
+    // transaction, not the manual before/after snapshot pair as well.
+    assert!(stdout.contains("Next, in order:"), "{stdout}");
+    assert!(
+        !stdout.contains("Run after adding the focused test:")
+            && !stdout.contains("ripr outcome --before"),
+        "legacy snapshot choreography must not be offered beside the repair route:\n{stdout}"
+    );
 
     let summary_json = std::fs::read_to_string(out_dir.join("pilot-summary.json"))
         .map_err(|e| format!("read pilot summary json: {e}"))?;
@@ -7497,6 +7504,36 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
         flag_value("--root").map(|value| value.replace('\\', "/")),
         Some(root.display().to_string().replace('\\', "/")),
         "the repair command must name the analyzed root: {repair_line}"
+    );
+
+    // The closing block, the JSON `next.repair_command`, and the Markdown
+    // Next Commands block all carry that same command (#3906).
+    assert!(
+        stdout.contains(&format!("  1. {repair_line}\n")),
+        "step 1 must be the repair command printed above:\n{stdout}"
+    );
+    let summary: serde_json::Value =
+        serde_json::from_str(&summary_json).map_err(|e| format!("parse pilot summary: {e}"))?;
+    assert_eq!(
+        summary
+            .pointer("/next/repair_command")
+            .and_then(serde_json::Value::as_str),
+        Some(repair_line),
+        "pilot-summary.json next.repair_command"
+    );
+    let summary_md = std::fs::read_to_string(out_dir.join("pilot-summary.md"))
+        .map_err(|e| format!("read pilot summary md: {e}"))?;
+    let next_section = summary_md
+        .split("## Next Commands")
+        .nth(1)
+        .ok_or_else(|| format!("pilot-summary.md has no Next Commands:\n{summary_md}"))?;
+    assert!(
+        next_section.contains(&format!("```bash\n{repair_line}\n```")),
+        "Markdown next command must be the repair command:\n{next_section}"
+    );
+    assert!(
+        !next_section.contains("ripr outcome"),
+        "Markdown must not offer the snapshot pair beside the repair route:\n{next_section}"
     );
 
     let _ = std::fs::remove_dir_all(&out_dir);
