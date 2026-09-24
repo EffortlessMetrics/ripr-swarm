@@ -2079,6 +2079,41 @@ fn assert_no_repair_loop_command(rendered: &str) {
     );
 }
 
+/// F60-12: the one-screen `Changed behavior` line names the changed
+/// expression the card carries, and the selection's `why` gets its own line
+/// instead of being printed under that label.
+#[test]
+fn one_screen_changed_behavior_names_the_expression_not_the_why() -> Result<(), String> {
+    let comments = exact_line_comments()?;
+    // Fixture construction: the card really names the changed expression.
+    assert_eq!(
+        comments
+            .pointer("/comments/0/seam/expression")
+            .and_then(serde_json::Value::as_str),
+        Some("amount >= discount_threshold")
+    );
+    let report = build_first_useful_action_report(guidance_only_input(&comments)?);
+    let markdown = render_first_useful_action_markdown(&report);
+    let changed = markdown
+        .lines()
+        .find(|line| line.starts_with("- Changed behavior: "))
+        .ok_or_else(|| format!("missing Changed behavior line:\n{markdown}"))?;
+    assert_eq!(
+        changed,
+        "- Changed behavior: `amount >= discount_threshold`"
+    );
+    let why = markdown
+        .lines()
+        .find(|line| line.starts_with("- Why: "))
+        .ok_or_else(|| format!("missing Why line:\n{markdown}"))?;
+    assert!(!why.contains("amount >= discount_threshold"), "{why}");
+    assert!(
+        !markdown.contains("Changed behavior: Changed behavior"),
+        "{markdown}"
+    );
+    Ok(())
+}
+
 #[test]
 fn first_useful_action_matches_repair_start_fixture() -> Result<(), String> {
     let repo_root = repo_root()?;

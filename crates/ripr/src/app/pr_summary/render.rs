@@ -2,7 +2,7 @@ use super::io::file_state;
 use super::model::JsonInput;
 use super::util::{md_escape, string_field, summary_bool, summary_string_or_null, summary_u64};
 use crate::output::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
-use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, powershell_command};
+use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, inline_code_or_text, powershell_command};
 use serde_json::Value;
 use std::path::Path;
 
@@ -92,16 +92,25 @@ fn render_start_here_top_gap(out: &mut String, start_here_value: Option<&Value>)
         value_string(start_here_value, &["selected", "kind"])
     ));
     out.push_str(&format!(
-        "- changed behavior: `{}`\n",
-        value_string(start_here_value, &["selected", "changed_behavior"])
+        "- changed behavior: {}\n",
+        inline_code_or_text(&value_string(
+            start_here_value,
+            &["selected", "changed_behavior"]
+        ))
     ));
     out.push_str(&format!(
-        "- missing discriminator: `{}`\n",
-        value_string(start_here_value, &["selected", "missing_discriminator"])
+        "- missing discriminator: {}\n",
+        inline_code_or_text(&value_string(
+            start_here_value,
+            &["selected", "missing_discriminator"]
+        ))
     ));
     out.push_str(&format!(
-        "- focused proof intent: `{}`\n",
-        value_string(start_here_value, &["selected", "focused_proof_intent"])
+        "- focused proof intent: {}\n",
+        inline_code_or_text(&value_string(
+            start_here_value,
+            &["selected", "focused_proof_intent"]
+        ))
     ));
     out.push_str(&format!(
         "- repair route: `{}`\n",
@@ -186,16 +195,16 @@ fn render_start_here_missing(out: &mut String, start_here_value: Option<&Value>)
 
 fn render_start_here_no_action(out: &mut String, start_here_value: Option<&Value>) {
     out.push_str(&format!(
-        "- reason: `{}`\n",
-        value_string(start_here_value, &["selected", "reason"])
+        "- reason: {}\n",
+        inline_code_or_text(&value_string(start_here_value, &["selected", "reason"]))
     ));
     out.push_str("- no-action is not runtime, coverage, mutation, gate, or merge adequacy.\n");
 }
 
 fn render_start_here_blocked(out: &mut String, start_here_value: Option<&Value>) {
     out.push_str(&format!(
-        "- blocked reason: `{}`\n",
-        value_string(start_here_value, &["selected", "message"])
+        "- blocked reason: {}\n",
+        inline_code_or_text(&value_string(start_here_value, &["selected", "message"]))
     ));
     out.push_str(&format!(
         "- next command: `{}`\n",
@@ -560,6 +569,40 @@ mod tests {
         MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
         VERIFY_AFTER_EDIT_LABEL,
     };
+
+    /// F60-12: prose that already carries code spans is not wrapped in one
+    /// more pair of backticks, which would invert every span inside it; a
+    /// bare value keeps its code span.
+    #[test]
+    fn start_here_top_gap_keeps_prose_code_spans_intact() -> Result<(), String> {
+        let intent = "Add the focused proof in `tests/pricing.rs`: `assert_eq!(total(10), 9)`.";
+        let start_here = serde_json::json!({
+            "selected": {
+                "state": "top_gap",
+                "changed_behavior": "amount >= DISCOUNT_THRESHOLD",
+                "focused_proof_intent": intent
+            }
+        });
+        // Fixture construction: the intent really carries nested spans.
+        if intent.matches('`').count() != 4 {
+            return Err("fixture intent must carry two code spans".to_string());
+        }
+        let mut out = String::new();
+        render_start_here_top_gap(&mut out, Some(&start_here));
+        let expected_intent = format!("- focused proof intent: {intent}\n");
+        if !out.contains(&expected_intent) {
+            return Err(format!("intent must render as prose:\n{out}"));
+        }
+        if out.contains(&format!("`{intent}`")) {
+            return Err(format!(
+                "intent must not be wrapped in another span:\n{out}"
+            ));
+        }
+        if !out.contains("- changed behavior: `amount >= DISCOUNT_THRESHOLD`\n") {
+            return Err(format!("a bare expression keeps its code span:\n{out}"));
+        }
+        Ok(())
+    }
 
     /// #3906: the legacy start-here section shows the carried repair start
     /// before verify, and nothing when start-here carries none.

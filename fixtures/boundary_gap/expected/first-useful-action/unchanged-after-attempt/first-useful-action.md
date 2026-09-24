@@ -10,7 +10,8 @@ Revise the focused test for unchanged static movement.
 
 ## One-Screen Recommendation
 
-- Changed behavior: The supplied receipt records unchanged static movement after a focused-test attempt.
+- Changed behavior: not named by the selected evidence
+- Why: The supplied receipt records unchanged static movement after a focused-test attempt.
 - Current evidence strength: `Static evidence found related test context, but the current check is weak because the discriminator is missing.`
 - Missing discriminator: discount_threshold (equality boundary)
 - Focused proof intent: Assert the exact discounted_total output at amount == discount_threshold.

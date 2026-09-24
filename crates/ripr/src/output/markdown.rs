@@ -20,6 +20,18 @@ pub(crate) fn render_string_section(out: &mut String, title: &str, values: &[Str
     }
 }
 
+/// Render an artifact value inline: as a code span when it is a bare value,
+/// and as-is when it already carries its own code spans (F60-12). Wrapping
+/// text such as ``Add the proof in `tests/a.rs`: `assert_eq!(..)`.`` in one
+/// more pair of backticks inverts every span inside it.
+pub(crate) fn inline_code_or_text(value: &str) -> String {
+    if value.contains('`') {
+        value.to_string()
+    } else {
+        format!("`{value}`")
+    }
+}
+
 pub(crate) fn markdown_text(value: &str) -> String {
     value.replace('\\', "\\\\")
 }
@@ -228,6 +240,12 @@ mod tests {
         let mut out = String::new();
         render_string_section(&mut out, "Example", &["a\\b".to_string()]);
         assert_eq!(out, "\n## Example\n\n- a\\\\b\n");
+    }
+
+    #[test]
+    fn inline_code_or_text_wraps_bare_values_and_keeps_formatted_prose() {
+        assert_eq!(inline_code_or_text("a >= b"), "`a >= b`");
+        assert_eq!(inline_code_or_text("Add `x` to `y`."), "Add `x` to `y`.");
     }
 
     #[test]
