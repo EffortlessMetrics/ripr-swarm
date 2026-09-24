@@ -103,6 +103,29 @@ pub(crate) struct RepairAttemptManifest {
     pub(crate) non_claims: Vec<String>,
     #[serde(default)]
     pub(crate) after: Option<RepairAttemptAfter>,
+    /// The refusal of this attempt's most recent after phase, when that phase
+    /// refused after selecting the attempt. It is an observation, not a state:
+    /// it never changes `state` or `after`, the before commitment excludes it,
+    /// and the next after phase that reaches the durable finish clears it.
+    /// Absent (not `null`) when no refusal is recorded, so manifests without
+    /// one keep their exact bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) last_after_refusal: Option<RepairAttemptAfterRefusal>,
+}
+
+/// Why the last after phase of an attempt refused, recorded by the attempt
+/// authority so `ripr agent status` can report the outcome instead of
+/// repeating the refused command as if nothing had happened.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RepairAttemptAfterRefusal {
+    /// The refusal message the after phase exited with, bounded to
+    /// `REPAIR_ATTEMPT_REFUSAL_MAX_BYTES`.
+    pub(crate) reason: String,
+    /// The repository HEAD when the refusal was recorded, or `None` when it
+    /// could not be read.
+    pub(crate) repository_head: Option<String>,
+    pub(crate) recorded_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -495,6 +518,7 @@ fn complete_repair_attempt(
                     "this manifest does not authorize mutation execution or merge".to_string(),
                 ],
                 after: None,
+                last_after_refusal: None,
             };
             let manifest_path = write_repair_attempt_manifest(canonical_root, &manifest)?;
             Ok(BeginRepairAttemptResult {
@@ -526,6 +550,56 @@ pub(crate) fn load_repair_attempt_manifest(
         .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
     let (_, manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
     Ok(manifest)
+}
+
+/// One entry of the read-only attempt inventory: a fully validated manifest,
+/// or the directory name and the reason its manifest was refused.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RepairAttemptInventoryEntry {
+    Valid(Box<RepairAttemptManifest>),
+    Invalid { directory: String, error: String },
+}
+
+/// Lists every attempt under `target/ripr/repair-attempts` without changing
+/// any of them, ordered by directory name. Each manifest goes through the same
+/// validation as the after phase, so a consumer never sees an attempt the
+/// after phase would refuse. Ordering is by identity, not creation time:
+/// consumers must not read "newest" into it (docs/REPAIR_ATTEMPT.md).
+/// A missing attempts directory is an empty inventory.
+pub(crate) fn inventory_repair_attempts(
+    root: &Path,
+) -> Result<Vec<RepairAttemptInventoryEntry>, String> {
+    let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+    if !manifests_root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&manifests_root)
+        .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
+    {
+        let entry = entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
+        let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
+        if !path.is_file() {
+            continue;
+        }
+        let directory = entry.file_name().to_string_lossy().into_owned();
+        entries.push(match read_repair_attempt_manifest_at(&root, &path) {
+            Ok(manifest) => RepairAttemptInventoryEntry::Valid(Box::new(manifest)),
+            Err(error) => RepairAttemptInventoryEntry::Invalid { directory, error },
+        });
+    }
+    entries.sort_by(|left, right| inventory_key(left).cmp(inventory_key(right)));
+    Ok(entries)
+}
+
+fn inventory_key(entry: &RepairAttemptInventoryEntry) -> &str {
+    match entry {
+        RepairAttemptInventoryEntry::Valid(manifest) => manifest.repair_attempt_id.as_str(),
+        RepairAttemptInventoryEntry::Invalid { directory, .. } => directory,
+    }
 }
 
 /// Finds one staged artifact by role, if the attempt carries it.
@@ -615,6 +689,7 @@ fn manifest_before_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, St
     let mut before = manifest.clone();
     before.state = RepairAttemptState::AwaitingEdit;
     before.after = None;
+    before.last_after_refusal = None;
     serde_json::to_vec_pretty(&before)
         .map_err(|error| format!("serialize repair attempt commitment failed: {error}"))
 }
@@ -827,6 +902,7 @@ pub(crate) fn resolve_awaiting_repair_attempt(
     attempt_id: Option<&str>,
     seam_id: Option<&str>,
 ) -> Result<ResolvedRepairAttempt, String> {
+    let root_argument = root;
     let root = root
         .canonicalize()
         .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
@@ -846,10 +922,9 @@ pub(crate) fn resolve_awaiting_repair_attempt(
         }
     };
     if manifest.state != RepairAttemptState::AwaitingEdit {
-        return Err(format!(
-            "repair attempt {} is {:?}; after phase requires awaiting_edit",
-            manifest.repair_attempt_id.as_str(),
-            manifest.state
+        return Err(after_phase_not_awaiting_error(
+            &display_path(root_argument),
+            &manifest,
         ));
     }
     let before_snapshot_path =
@@ -869,7 +944,7 @@ pub(crate) fn resolve_awaiting_repair_attempt(
 /// publication stays retryable. `finish_repair_attempt` commits the terminal
 /// after state before the compatibility apply record is rendered, so a record
 /// write failure would otherwise strand the attempt: the identical retry is
-/// rejected (`after phase requires awaiting_edit`) and the record can never
+/// rejected (the attempt reads as already finished) and the record can never
 /// be recreated. The restore is the inverse transition owned by this
 /// authority: it requires the committed after state and rewrites exactly
 /// `state = awaiting_edit, after = None`, which the immutable before
@@ -915,15 +990,15 @@ pub(crate) fn finish_repair_attempt(
     packet_path: &Path,
     movement: HeadMovement,
 ) -> Result<RepairAttemptAfter, String> {
+    let root_argument = root;
     let root = root
         .canonicalize()
         .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
     let (manifest_path, mut manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
     if manifest.state != RepairAttemptState::AwaitingEdit {
-        return Err(format!(
-            "repair attempt {} is {:?}; after phase requires awaiting_edit",
-            attempt_id.as_str(),
-            manifest.state
+        return Err(after_phase_not_awaiting_error(
+            &display_path(root_argument),
+            &manifest,
         ));
     }
     let packet_artifact = find_manifest_artifact(&manifest, "agent_packet")?;
@@ -992,6 +1067,9 @@ pub(crate) fn finish_repair_attempt(
         verdict,
     };
     manifest.after = Some(after.clone());
+    // This after phase reached the durable finish, so an earlier refusal no
+    // longer describes the attempt's last after phase.
+    manifest.last_after_refusal = None;
     manifest.state = if after.current {
         match after.verdict.status {
             crate::edit_cage::EditCageVerdictStatus::Compliant => RepairAttemptState::ReadyToFinish,
@@ -1008,6 +1086,53 @@ pub(crate) fn finish_repair_attempt(
     bytes.push(b'\n');
     replace_manifest_bytes(&manifest_path, &bytes)?;
     Ok(after)
+}
+
+/// Records why the most recent after phase of an attempt refused. The attempt
+/// authority owns the write: the manifest is re-validated (before commitment
+/// and artifact digests) before and after the field changes, and only
+/// `last_after_refusal` moves, so the refusal can never alter the attempt's
+/// state, its after verdict, or its receipt binding. A later after phase that
+/// reaches `finish_repair_attempt` clears it.
+pub(crate) fn record_repair_attempt_after_refusal(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+    reason: &str,
+) -> Result<(), String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let (manifest_path, mut manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    let reason = bounded_refusal_reason(reason);
+    if reason.is_empty() {
+        return Err("an after-phase refusal needs a non-empty reason".to_string());
+    }
+    manifest.last_after_refusal = Some(RepairAttemptAfterRefusal {
+        reason,
+        repository_head: crate::agent::artifact::current_git_head(&root).ok(),
+        recorded_unix_ms: current_unix_ms()?,
+    });
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize repair attempt refusal failed: {error}"))?;
+    bytes.push(b'\n');
+    replace_manifest_bytes(&manifest_path, &bytes)?;
+    read_repair_attempt_manifest_at(&root, &manifest_path).map(|_| ())
+}
+
+/// Upper bound on a recorded after-phase refusal message.
+const REPAIR_ATTEMPT_REFUSAL_MAX_BYTES: usize = 4096;
+
+fn bounded_refusal_reason(reason: &str) -> String {
+    let reason = reason.trim();
+    if reason.len() <= REPAIR_ATTEMPT_REFUSAL_MAX_BYTES {
+        return reason.to_string();
+    }
+    let mut end = REPAIR_ATTEMPT_REFUSAL_MAX_BYTES;
+    while !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{} [truncated]", &reason[..end])
 }
 
 /// Where the repository HEAD stands relative to an attempt's prepared head.
@@ -1034,6 +1159,185 @@ pub(crate) fn attempt_head_lineage(
         Ok(AttemptHeadLineage::Descendant { current_head })
     } else {
         Ok(AttemptHeadLineage::Diverged { current_head })
+    }
+}
+
+/// How an after phase would treat the current repository HEAD for one
+/// attempt. The after phase and `ripr agent status` both read it, so status
+/// resumes exactly the attempts whose after phase would evaluate the current
+/// HEAD, and reports the same refusal and recovery for the rest.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AfterPhaseHeadAdmission {
+    /// The after phase evaluates the current HEAD as the attempt's with
+    /// `movement`: the prepared head, or, for an ordinary attempt, a commit
+    /// that descends from it (a committed focused test).
+    Current { movement: HeadMovement },
+    /// A trust-bound attempt whose HEAD is no longer its prepared head: the
+    /// after phase still runs, but the finish records the attempt `stale`.
+    FinishesStale { current_head: String },
+    /// An ordinary attempt whose HEAD does not descend from its prepared head
+    /// (an amend, rebase, reset, or checkout): the after phase refuses before
+    /// finishing, so the attempt keeps awaiting the edit and restoring the
+    /// prepared head makes it usable again.
+    RefusedDiverged { current_head: String },
+}
+
+/// The head movement an attempt's after phase applies. A trust-bound attempt
+/// (one that retains a Python repair-trust binding) pins its selection to the
+/// exact prepared head; an ordinary attempt admits commits made on top of it.
+pub(crate) fn after_phase_head_movement(manifest: &RepairAttemptManifest) -> HeadMovement {
+    if find_manifest_artifact_by_role(
+        manifest,
+        crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+    )
+    .is_some()
+    {
+        HeadMovement::RequireBaselineHead
+    } else {
+        HeadMovement::AdmitDescendantCommits
+    }
+}
+
+/// The after phase's head rule for one attempt at the current HEAD. The
+/// lineage is asked of Git only for an ordinary attempt: a trust-bound
+/// attempt compares the exact head.
+pub(crate) fn after_phase_head_admission(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Result<AfterPhaseHeadAdmission, String> {
+    let movement = after_phase_head_movement(manifest);
+    if movement == HeadMovement::RequireBaselineHead {
+        let current_head = crate::agent::artifact::current_git_head(root)?;
+        return Ok(if current_head == manifest.repository_head {
+            AfterPhaseHeadAdmission::Current { movement }
+        } else {
+            AfterPhaseHeadAdmission::FinishesStale { current_head }
+        });
+    }
+    Ok(
+        match attempt_head_lineage(root, &manifest.repository_head)? {
+            AttemptHeadLineage::Prepared | AttemptHeadLineage::Descendant { .. } => {
+                AfterPhaseHeadAdmission::Current { movement }
+            }
+            AttemptHeadLineage::Diverged { current_head } => {
+                AfterPhaseHeadAdmission::RefusedDiverged { current_head }
+            }
+        },
+    )
+}
+
+/// [`after_phase_head_admission`] for an attempt selected by identity.
+pub(crate) fn after_phase_head_admission_by_id(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<AfterPhaseHeadAdmission, String> {
+    let manifest = load_repair_attempt_manifest(root, attempt_id)?;
+    after_phase_head_admission(root, &manifest)
+}
+
+/// Recovery for an ordinary attempt whose HEAD no longer descends from its
+/// prepared head. The after phase prints it when it refuses, and `ripr agent
+/// status` repeats it for the same state, so both name the same cause and the
+/// same two routes: restore the prepared head, or prepare a new attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DivergedHeadRecovery {
+    /// Which HEAD moved where, and which history changes are accepted.
+    pub(crate) cause: String,
+    /// Restore the prepared head, then rerun the attempt's after phase.
+    pub(crate) reset: String,
+    /// Prepare a new attempt at the current HEAD instead.
+    pub(crate) restart: String,
+}
+
+impl DivergedHeadRecovery {
+    /// The after phase's narration, in order.
+    pub(crate) fn lines(&self) -> Vec<String> {
+        vec![
+            self.cause.clone(),
+            "the attempt was not finished and is still awaiting the focused test edit.".to_string(),
+            self.reset.clone(),
+            self.restart.clone(),
+        ]
+    }
+}
+
+pub(crate) fn diverged_head_recovery(
+    root_display: &str,
+    attempt_id: &str,
+    seam_id: &str,
+    prepared_head: &str,
+    current_head: &str,
+) -> DivergedHeadRecovery {
+    let root_arg = shell_arg(root_display);
+    let attempt_arg = shell_arg(attempt_id);
+    let seam_arg = shell_arg(seam_id);
+    DivergedHeadRecovery {
+        cause: format!(
+            "HEAD {} does not descend from {}, the head attempt `{attempt_id}` was prepared at (for example after `git commit --amend`, a rebase, a reset, or a checkout); commits made on top of that head are accepted, other history changes are not.",
+            short_head(current_head),
+            short_head(prepared_head),
+        ),
+        reset: format!(
+            "to recover when only your own test commit was rewritten: `git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged; then rerun `ripr agent repair --root {root_arg} --attempt {attempt_arg} --phase after`."
+        ),
+        restart: format!(
+            "otherwise, prepare a new attempt at the current HEAD: set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the edit, then run the new --attempt command it prints."
+        ),
+    }
+}
+
+fn short_head(head: &str) -> &str {
+    head.get(..12).unwrap_or(head)
+}
+
+/// The refusal an after phase gives for an attempt that is no longer awaiting
+/// its edit. It names the state in its documented spelling, says whether the
+/// attempt already finished, where its receipt was written, and what to run
+/// next, instead of a bare state name.
+fn after_phase_not_awaiting_error(root_display: &str, manifest: &RepairAttemptManifest) -> String {
+    let root_arg = shell_arg(root_display);
+    let attempt_id = manifest.repair_attempt_id.as_str();
+    let seam_id = &manifest.seam_id;
+    let status = format!("ripr agent status --root {root_arg}");
+    let restart = format!(
+        "ripr agent repair --root {root_arg} --seam-id {} --phase before",
+        shell_arg(seam_id)
+    );
+    let after_head = manifest
+        .after
+        .as_ref()
+        .map_or("an unrecorded HEAD", |after| {
+            short_head(&after.repository_head)
+        });
+    match manifest.state {
+        RepairAttemptState::ReadyToFinish => format!(
+            "repair attempt {attempt_id} (seam `{seam_id}`) already finished: its after phase ran at HEAD {after_head} and the edit cage admitted the edit (state `ready_to_finish`), so there is no after phase left to run. Its receipt, when that after phase issued one, is `{receipt}` until a later attempt's after phase replaces that file. Next: `{status}` reads the attempt's outcome; if the receipt leaves the gap open, start a new attempt with `{restart}`",
+            receipt = crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT,
+        ),
+        RepairAttemptState::Stale
+        | RepairAttemptState::Incomparable
+        | RepairAttemptState::Failed => format!(
+            "repair attempt {attempt_id} (seam `{seam_id}`) already ended `{state}` at its after phase (HEAD {after_head}); an ended attempt cannot run again or produce a receipt. Next: `{status}` says why it ended; while the gap is still open, start a new attempt with `{restart}`",
+            state = repair_attempt_state_label(&manifest.state),
+        ),
+        RepairAttemptState::Prepared => format!(
+            "repair attempt {attempt_id} (seam `{seam_id}`) was prepared but never published, so it has no after phase to run. Next: start a new attempt with `{restart}`"
+        ),
+        RepairAttemptState::AwaitingEdit => {
+            format!("repair attempt {attempt_id} (seam `{seam_id}`) is awaiting its edit")
+        }
+    }
+}
+
+/// The documented (serialized) spelling of an attempt state.
+pub(crate) fn repair_attempt_state_label(state: &RepairAttemptState) -> &'static str {
+    match state {
+        RepairAttemptState::Prepared => "prepared",
+        RepairAttemptState::AwaitingEdit => "awaiting_edit",
+        RepairAttemptState::ReadyToFinish => "ready_to_finish",
+        RepairAttemptState::Stale => "stale",
+        RepairAttemptState::Incomparable => "incomparable",
+        RepairAttemptState::Failed => "failed",
     }
 }
 
@@ -1325,6 +1629,13 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     );
     if has_after != state_requires_after {
         return Err("repair attempt state/after boundary is inconsistent".to_string());
+    }
+    if manifest
+        .last_after_refusal
+        .as_ref()
+        .is_some_and(|refusal| refusal.reason.trim().is_empty())
+    {
+        return Err("repair attempt after-phase refusal has an empty reason".to_string());
     }
     if manifest.artifacts.iter().any(|artifact| {
         artifact.role.is_empty() || artifact.path.is_empty() || !is_sha256_digest(&artifact.sha256)
@@ -1619,6 +1930,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: vec!["not merge authority".to_string()],
             after: None,
+            last_after_refusal: None,
         })
     }
 
@@ -2408,6 +2720,159 @@ mod tests {
                     "restoring an awaiting attempt was not refused: {other:?}"
                 ));
             }
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// A recorded after-phase refusal is an observation on the attempt: the
+    /// manifest still validates against its before commitment, the attempt
+    /// stays resumable, the reason is bounded, and the next after phase that
+    /// reaches the durable finish clears it.
+    #[test]
+    fn recorded_after_refusal_keeps_the_attempt_resumable_until_finish() -> Result<(), String> {
+        let root = test_repo_root("refusal")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "refusal")?;
+        let attempt_id = prepared.manifest.repair_attempt_id.clone();
+        let (manifest_path, _) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        let before_bytes = std::fs::read(&manifest_path)
+            .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
+        if String::from_utf8_lossy(&before_bytes).contains("last_after_refusal") {
+            return Err("a manifest without a refusal must not carry the field".to_string());
+        }
+
+        let long_reason = format!("agent verify refused: {}", "x".repeat(10_000));
+        record_repair_attempt_after_refusal(&root, &attempt_id, &long_reason)?;
+        let (_, refused) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        let refusal = refused
+            .last_after_refusal
+            .clone()
+            .ok_or_else(|| "the refusal was not recorded".to_string())?;
+        if refused.state != RepairAttemptState::AwaitingEdit || refused.after.is_some() {
+            return Err(format!(
+                "recording a refusal moved the attempt: {:?}",
+                refused.state
+            ));
+        }
+        if !refusal.reason.starts_with("agent verify refused: ")
+            || !refusal.reason.ends_with(" [truncated]")
+            || refusal.reason.len() > REPAIR_ATTEMPT_REFUSAL_MAX_BYTES + " [truncated]".len()
+        {
+            return Err(format!(
+                "the refusal reason is not bounded: {} bytes",
+                refusal.reason.len()
+            ));
+        }
+        if refusal.repository_head.as_deref() != Some(refused.repository_head.as_str()) {
+            return Err(format!(
+                "the refusal did not record the current HEAD: {:?}",
+                refusal.repository_head
+            ));
+        }
+        // The inventory status reads sees the same refusal, and the after
+        // phase can still select the attempt.
+        let inventory = inventory_repair_attempts(&root)?;
+        match inventory.as_slice() {
+            [RepairAttemptInventoryEntry::Valid(manifest)]
+                if manifest.last_after_refusal.as_ref() == Some(&refusal) => {}
+            other => return Err(format!("inventory lost the refusal: {other:?}")),
+        }
+        let resolved = resolve_awaiting_repair_attempt(&root, Some(attempt_id.as_str()), None)?;
+
+        if record_repair_attempt_after_refusal(&root, &attempt_id, "  ").is_ok() {
+            return Err("an empty refusal reason must be refused".to_string());
+        }
+
+        // The sample attempt is an ordinary (not trust-bound) attempt, so its
+        // after phase admits commits on top of the prepared head.
+        finish_repair_attempt(
+            &root,
+            &attempt_id,
+            &resolved.packet_path,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        let (_, finished) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        if finished.last_after_refusal.is_some() {
+            return Err("finish must clear the earlier refusal".to_string());
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// One head rule for the after phase and `ripr agent status`: an
+    /// ordinary attempt is current at its prepared head and at a commit on
+    /// top of it, and refused (still awaiting the edit) once history is
+    /// rewritten; a trust-bound attempt is current only at the exact
+    /// prepared head and otherwise finishes stale.
+    #[test]
+    fn after_phase_head_admission_follows_the_attempt_lineage() -> Result<(), String> {
+        let root = test_repo_root("head-admission")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "admission")?;
+        let manifest = prepared.manifest;
+        let current = || AfterPhaseHeadAdmission::Current {
+            movement: HeadMovement::AdmitDescendantCommits,
+        };
+        if after_phase_head_admission(&root, &manifest)? != current() {
+            return Err("an ordinary attempt at its prepared head is current".to_string());
+        }
+        let mut trust_bound = manifest.clone();
+        trust_bound.artifacts.push(RepairAttemptArtifact {
+            role: crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE.to_string(),
+            path: "unused".to_string(),
+            sha256: "unused".to_string(),
+            bytes: 0,
+        });
+        if after_phase_head_admission(&root, &trust_bound)?
+            != (AfterPhaseHeadAdmission::Current {
+                movement: HeadMovement::RequireBaselineHead,
+            })
+        {
+            return Err("a trust-bound attempt at its prepared head is current".to_string());
+        }
+
+        run_git(
+            &root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "--allow-empty",
+                "-qm",
+                "focused test",
+            ],
+        )?;
+        let descendant = crate::agent::artifact::current_git_head(&root)?;
+        if after_phase_head_admission(&root, &manifest)? != current() {
+            return Err("an ordinary attempt admits a descendant commit".to_string());
+        }
+        if after_phase_head_admission(&root, &trust_bound)?
+            != (AfterPhaseHeadAdmission::FinishesStale {
+                current_head: descendant,
+            })
+        {
+            return Err("a trust-bound attempt pins the exact prepared head".to_string());
+        }
+
+        // Rewrite the prepared commit itself (as `git commit --amend` right
+        // after the before phase would).
+        run_git(&root, &["reset", "-q", "--soft", &manifest.repository_head])?;
+        run_git(
+            &root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "--amend",
+                "--allow-empty",
+                "-qm",
+                "rewritten",
+            ],
+        )?;
+        let rewritten = crate::agent::artifact::current_git_head(&root)?;
+        match after_phase_head_admission(&root, &manifest)? {
+            AfterPhaseHeadAdmission::RefusedDiverged { current_head }
+                if current_head == rewritten => {}
+            other => return Err(format!("rewritten history must refuse: {other:?}")),
         }
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
