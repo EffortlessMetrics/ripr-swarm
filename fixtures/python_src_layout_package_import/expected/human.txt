@@ -41,4 +41,4 @@ Hidden:
   Machine data: rerun with --format json
 
 
-Note: 2 Python(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 2 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

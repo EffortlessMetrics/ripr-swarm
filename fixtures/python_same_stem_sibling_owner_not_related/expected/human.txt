@@ -16,7 +16,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: no_static_path (warning, confidence 0.40)
-  Why no_static_path: the changed behavior could not be traced to an observable output
+  Why no_static_path: no related test was found that reaches this change
   Canonical gap: gap:python:pricing.py:loyalty_price:predicate_boundary:predicate:def_loyalty_price_amount_years
   Changed behavior: def loyalty_price(amount, years):
   Missing discriminator: No Python test references `loyalty_price(`; add a pytest or unittest test that calls the changed owner.
@@ -35,4 +35,4 @@ Hidden:
   Machine data: rerun with --format json
 
 
-Note: 1 Python(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

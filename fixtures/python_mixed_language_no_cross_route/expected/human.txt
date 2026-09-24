@@ -16,7 +16,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: no_static_path (warning, confidence 0.40)
-  Why no_static_path: the changed behavior could not be traced to an observable output
+  Why no_static_path: no related test was found that reaches this change
   Canonical gap: gap:python:src/pricing.py:calculate_total:return_value:return_value:amount+7
   Changed behavior: return amount + 7
   Missing discriminator: No Python test references `calculate_total(`; add a pytest or unittest test that calls the changed owner.
@@ -40,4 +40,4 @@ Note: ripr found no static test path for any of the 1 changed expression(s) in t
   integration tests that ripr's static model does not yet trace; if none does, add co-located tests
   that observe the changed behavior.
 
-Note: 1 Python(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
