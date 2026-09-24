@@ -51,6 +51,30 @@ input.
 | `executeCommand` arguments | 8 entries; 64 KiB total (size estimate) | Every RIPR command takes zero or one argument object; bounds all downstream identifiers (gap/seam/snapshot ids) transitively. |
 | JSON nesting depth | 128 | Enforced by serde_json's default recursion limit; the `unbounded_depth` feature is not enabled anywhere in the workspace. Over-deep bodies are bounded codec errors. |
 
+## Typed-size traversal work
+
+The 64 KiB typed limits use the existing decoded-value estimate, not exact
+serialized JSON bytes. Scalars retain their 16-byte allowance, strings and
+keys contribute their UTF-8 byte lengths, and containers contribute their
+entry counts. The limits are inclusive, and command arguments share one
+budget rather than receiving a fresh budget per argument.
+
+The validator stops at the first charge that cannot fit (#3844). Container
+cardinality is checked before its children; an oversized object key skips
+its value; a rejected argument skips all later arguments. It neither
+serializes nor clones the payload. The existing depth guard is unchanged.
+
+The payload-bound unit tests include a legacy-accounting parity oracle,
+exact-limit and aggregate-limit controls, and test-only visit counters for
+oversized containers, rejected array tails, object keys, and later command
+arguments. These are deterministic work controls, not wall-clock thresholds,
+and run in the existing Rust test lane without a new workflow.
+
+This bounds avoidable typed-validation traversal only. JSON decoding,
+already-allocated payload memory, value destruction, and transport delivery
+remain separate costs; no end-to-end latency or peak-memory improvement is
+claimed by these controls alone. Measured LSP envelopes remain #1578's scope.
+
 ## Composition with existing budget machinery
 
 These bounds compose with, and do not duplicate, the existing authorities:

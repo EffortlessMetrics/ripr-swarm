@@ -349,3 +349,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_repair_packet_complete (3)
+
+Reason:
+RIPR-SPEC-0087: repair action leads with the missing discriminator and the target shape uses an expected placeholder instead of re-using the borrowed toBeGreaterThan(50) literal under toBe; readiness and class unchanged
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_complete --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

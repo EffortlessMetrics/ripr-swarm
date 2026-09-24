@@ -1749,14 +1749,32 @@ fn gate_markdown_projects_complete_repair_route_for_ci_summary() -> Result<(), S
         "  - Add: Write one focused Rust test",
         "test intent",
     )?;
+    // #3906 (F60-14): this corpus card carries a repair start, so the
+    // after phase follows it and verify and receipt are the manual
+    // alternative under the shared labels, not peer steps.
     require_contains(
         &rendered,
-        "  - Verify: `ripr agent verify",
+        &format!(
+            "  - {}: {}\n",
+            crate::output::first_pr::REPAIR_AFTER_PHASE_LABEL,
+            crate::output::first_pr::REPAIR_AFTER_PHASE_STEP
+        ),
+        "repair after phase",
+    )?;
+    require_contains(
+        &rendered,
+        &format!(
+            "  - {}: `ripr agent verify",
+            crate::output::first_pr::MANUAL_VERIFY_LABEL
+        ),
         "verify command",
     )?;
     require_contains(
         &rendered,
-        "  - Receipt: `ripr agent receipt",
+        &format!(
+            "  - {}: `ripr agent receipt",
+            crate::output::first_pr::MANUAL_RECEIPT_LABEL
+        ),
         "receipt command",
     )
 }

@@ -1,8 +1,8 @@
 use super::pr_causal_delta::write_canonical_delta;
 use super::write_parented_file;
 use crate::run::{
-    capture_output_with_timeout, run_output_owned, run_output_owned_with_timeout,
-    tool_build_timeout,
+    capture_output_with_timeout, capture_process_output, run_output_owned,
+    run_output_owned_with_timeout, tool_build_timeout,
 };
 use serde_json::{Map, Value, json};
 use std::env;
@@ -288,23 +288,54 @@ fn verify_revision(repo: &Path, rev: &str) -> Result<(), String> {
 }
 
 fn changed_files(repo: &Path, options: &PrEvidenceOptions) -> Result<Vec<String>, String> {
+    // Raw NUL-delimited inventory (#4004, #4006): `-z` output is never
+    // C-quoted, so exotic names survive byte-exact; parsing rules come from
+    // the shared authority below, not from line splitting here. The
+    // `--diff-filter=ACMR` scope is the retained packet contract.
     let range = format!("{}...{}", options.base, options.head);
-    let output = run_git_output(
-        repo,
-        &["diff", "--name-only", "--diff-filter=ACMR", range.as_str()],
-    )?;
-    Ok(output
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_string)
-        .collect())
+    let git_args = vec![
+        "-C".to_string(),
+        repo.display().to_string(),
+        "diff".to_string(),
+        "--name-only".to_string(),
+        "-z".to_string(),
+        "--diff-filter=ACMR".to_string(),
+        range,
+    ];
+    let output = capture_process_output("git", &git_args, &[])
+        .map_err(|error| format!("git diff --name-only -z inventory: {}", error.message))?;
+    decode_changed_files(&output)
+}
+
+/// Decode raw `--name-only -z` bytes through the shared NUL path-record
+/// authority (#4006). Strict: non-UTF-8, empty, or truncated records fail
+/// loudly instead of collapsing through lossy conversion.
+fn decode_changed_files(output: &[u8]) -> Result<Vec<String>, String> {
+    ripr::analysis::parse_git_path_records(output)
+        .map_err(|err| format!("PR evidence changed-file inventory: {err}"))
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| {
+                    path.to_str().map(str::to_string).ok_or_else(|| {
+                        format!(
+                            "PR evidence changed-file inventory: decoded path {} is not valid UTF-8",
+                            path.display()
+                        )
+                    })
+                })
+                .collect()
+        })
 }
 
 fn write_diff(repo: &Path, options: &PrEvidenceOptions) -> Result<(), String> {
     let out = repo.join(PR_DIFF);
-    let range = format!("{}...{}", options.base, options.head);
-    let diff = run_git_output(repo, &["diff", "--binary", "--no-ext-diff", range.as_str()])?;
+    // Route the packet diff through the shared pinned Git assembly (#3930,
+    // #4004): ambient textconv, color, external-diff, and context config must
+    // not change what the packet analyzes. The assembly pins `-c
+    // core.quotePath=true`, `--no-ext-diff`, `--no-textconv`, `--no-color`,
+    // `--binary`, and three-context presentation.
+    let diff = ripr::analysis::load_pr_evidence_diff_range(repo, &options.base, &options.head)?;
     write_parented_file(&out, PR_DIFF, diff)
 }
 
@@ -1225,6 +1256,202 @@ mod tests {
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
     }
+
+    #[test]
+    fn pinned_diff_keeps_edit_under_hostile_color_config() -> Result<(), String> {
+        // Discriminates the pinned `--no-color` assembly: repo-local
+        // `color.diff=always` must not move packet bytes.
+        let repo = temp_repo("ripr-pr-color")?;
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr-pr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR PR Test"])?;
+        run_git(&repo, &["config", "color.diff", "always"])?;
+        let body = (1..=9).map(|n| format!("line {n}\n")).collect::<String>();
+        write_repo_file(&repo, "notes.txt", &body)?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        let changed = body.replace("line 5\n", "line FIVE\n");
+        write_repo_file(&repo, "notes.txt", &changed)?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "edit"])?;
+
+        let options = PrEvidenceOptions {
+            base: "HEAD~1".to_string(),
+            head: "HEAD".to_string(),
+            ..options()
+        };
+        write_pr_evidence_from_check_json(&repo, &options, MINIMAL_CHECK_JSON)?;
+        check_pr_evidence(&repo, &options)?;
+
+        let diff =
+            fs::read(repo.join(PR_DIFF)).map_err(|err| format!("read {}: {err}", PR_DIFF))?;
+        if diff.contains(&0x1b) {
+            return Err("hostile color.diff config leaked ANSI escapes into pr.diff".to_string());
+        }
+        let text = String::from_utf8(diff).map_err(|err| format!("pr.diff not UTF-8: {err}"))?;
+        if !text.contains("+line FIVE") {
+            return Err("pr.diff lost the edited line".to_string());
+        }
+        // Three-context presentation pin: an unchanged line three away from
+        // the edit must survive, distinguishing the packet view from a
+        // zero-context diff.
+        if !text.contains(" line 2") || !text.contains(" line 8") {
+            return Err("pr.diff lost three-context presentation lines".to_string());
+        }
+
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn pinned_diff_survives_textconv_driver() -> Result<(), String> {
+        // Discriminates the pinned `--no-textconv` assembly: a repository
+        // textconv driver that censors content must not hide the edit.
+        let repo = temp_repo("ripr-pr-textconv")?;
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr-pr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR PR Test"])?;
+        write_repo_file(&repo, ".gitattributes", "*.txt diff=riprcensor\n")?;
+        run_git(
+            &repo,
+            &["config", "diff.riprcensor.textconv", "echo CENSORED"],
+        )?;
+        write_repo_file(&repo, "secret.txt", "alpha\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        write_repo_file(&repo, "secret.txt", "alpha\nbravo\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "edit"])?;
+
+        let options = PrEvidenceOptions {
+            base: "HEAD~1".to_string(),
+            head: "HEAD".to_string(),
+            ..options()
+        };
+        write_pr_evidence_from_check_json(&repo, &options, MINIMAL_CHECK_JSON)?;
+        check_pr_evidence(&repo, &options)?;
+
+        let diff =
+            fs::read(repo.join(PR_DIFF)).map_err(|err| format!("read {}: {err}", PR_DIFF))?;
+        let text = String::from_utf8(diff).map_err(|err| format!("pr.diff not UTF-8: {err}"))?;
+        if !text.contains("+bravo") {
+            return Err("textconv driver hid the edited line from pr.diff".to_string());
+        }
+
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn written_diff_matches_pinned_authority() -> Result<(), String> {
+        // Parity/currentness pin (#4004 item 5): the bytes the xtask route
+        // writes must stay identical to the shared authority's output for the
+        // same repository and range. A deliberate divergence in either route
+        // fails here.
+        let repo = temp_repo("ripr-pr-parity")?;
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr-pr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR PR Test"])?;
+        write_repo_file(&repo, "src/lib.rs", "pub fn value() -> u8 { 1 }\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        write_repo_file(&repo, "src/lib.rs", "pub fn value() -> u8 { 2 }\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "edit"])?;
+
+        let options = PrEvidenceOptions {
+            base: "HEAD~1".to_string(),
+            head: "HEAD".to_string(),
+            ..options()
+        };
+        write_pr_evidence_from_check_json(&repo, &options, MINIMAL_CHECK_JSON)?;
+
+        let written =
+            fs::read(repo.join(PR_DIFF)).map_err(|err| format!("read {}: {err}", PR_DIFF))?;
+        let authority = ripr::analysis::load_pr_evidence_diff_range(&repo, "HEAD~1", "HEAD")
+            .map_err(|err| format!("pinned authority: {err}"))?;
+        if written != authority.as_bytes() {
+            return Err("xtask pr.diff diverged from the pinned diff authority".to_string());
+        }
+
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn nul_inventory_survives_exotic_names() -> Result<(), String> {
+        // Discriminates NUL-delimited inventory: space, non-ASCII, and rename
+        // records must decode exact; the old line parser C-quoted or split
+        // them. Asserts through the real `changed_files` production path.
+        let repo = temp_repo("ripr-pr-names")?;
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr-pr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR PR Test"])?;
+        write_repo_file(&repo, "base.txt", "base\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        write_repo_file(&repo, "sp ace.txt", "spaces\n")?;
+        write_repo_file(&repo, "uni-\u{e9}.txt", "unicode\n")?;
+        fs::remove_file(repo.join("base.txt")).map_err(|err| format!("remove base.txt: {err}"))?;
+        write_repo_file(&repo, "renamed.txt", "base\n")?;
+        run_git(&repo, &["add", "-A"])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "exotic"])?;
+
+        let options = PrEvidenceOptions {
+            base: "HEAD~1".to_string(),
+            head: "HEAD".to_string(),
+            ..options()
+        };
+        let mut files = changed_files(&repo, &options)?;
+        files.sort();
+        let expected = vec![
+            "renamed.txt".to_string(),
+            "sp ace.txt".to_string(),
+            "uni-\u{e9}.txt".to_string(),
+        ];
+        if files != expected {
+            return Err(format!(
+                "exotic inventory mismatch: got {files:?}, want {expected:?}"
+            ));
+        }
+        write_pr_evidence_from_check_json(&repo, &options, MINIMAL_CHECK_JSON)?;
+        check_pr_evidence(&repo, &options)?;
+
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn strict_inventory_rejects_non_utf8() -> Result<(), String> {
+        // The strict-failure side of the NUL authority at the xtask decode
+        // boundary: non-UTF-8 records fail loudly instead of collapsing
+        // through lossy conversion. Live non-UTF-8 git names are impractical
+        // on Windows runners, so this pins the mapping directly; the
+        // end-to-end byte path is covered by `nul_inventory_survives_exotic_names`.
+        let err = match decode_changed_files(b"ok.txt\0\xffbad\0") {
+            Err(err) => err,
+            Ok(files) => {
+                return Err(format!("non-UTF-8 inventory must fail, decoded {files:?}"));
+            }
+        };
+        if !err.contains("not valid UTF-8") {
+            return Err(format!("unexpected strict-decode error: {err}"));
+        }
+        Ok(())
+    }
+
+    const MINIMAL_CHECK_JSON: &str = r#"{
+      "schema_version": "0.2",
+      "tool": "ripr",
+      "mode": "draft",
+      "root": ".",
+      "summary": {
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0
+      },
+      "findings": []
+    }"#;
 
     #[test]
     fn stale_check_artifact_is_removed_before_revision_setup_failure() -> Result<(), String> {

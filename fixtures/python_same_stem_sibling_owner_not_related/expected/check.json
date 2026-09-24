@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/python_same_stem_sibling_owner_not_related/input",
-  "summary": {"changed_rust_files":0,"probes":5,"findings":5,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":4,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
+  "summary": {"changed_rust_files":0,"probes":5,"findings":5,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":4,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:40a3b28740f0d5ddc5a1ebefae1fcf945a02ca49b5aeebad093fd82de838085b","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":8,"candidate_line_count":5,"probe_count":5,"finding_count":5},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -23,9 +23,9 @@
         "normalized_discriminator": "amount>=discount_threshold"
 
       },
-      "classification": "exposed",
+      "classification": "weakly_exposed",
       "severity": "warning",
-      "confidence": 0.60,
+      "confidence": 0.40,
       "probe": {
         "id": "probe:pricing.py:python_preview:2267e505",
         "family": "predicate",
@@ -37,26 +37,48 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"low","summary":"2 related Python test(s) found for owner `discounted_total`"},
-        "infect": {"state":"yes","confidence":"low","summary":"Changed Python predicate can alter branch selection: `if amount >= DISCOUNT_THRESHOLD:`"},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary."},
         "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
-        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
-      "evidence_path": ["reach yes: 2 related Python test(s) found for owner `discounted_total`", "infection yes: Changed Python predicate can alter branch selection: `if amount >= DISCOUNT_THRESHOLD:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: if amount >= DISCOUNT_THRESHOLD: (line 5)", "related test tests/test_pricing.py:8 test_discounts_far_above_threshold uses strong exact value oracle: assert discounted_total(20000) == 18000", "related test tests/test_pricing.py:4 test_no_discount_below_threshold uses strong exact value oracle: assert discounted_total(5000) == 5000"],
+      "evidence_path": ["reach yes: 2 related Python test(s) found for owner `discounted_total`", "infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if amount >= DISCOUNT_THRESHOLD: (line 5)", "related test tests/test_pricing.py:8 test_discounts_far_above_threshold uses strong exact value oracle: assert discounted_total(20000) == 18000", "related test tests/test_pricing.py:4 test_no_discount_below_threshold uses strong exact value oracle: assert discounted_total(5000) == 5000", "observed function argument value amount = 5000 at line 5", "observed function argument value amount = 20000 at line 9"],
       "flow_sinks": [
         {"kind":"unknown","text":"if amount >= DISCOUNT_THRESHOLD:","line":5}
       ],
-      "evidence": ["owner: discounted_total", "owner_kind: function", "test_framework: pytest (test_discounts_far_above_threshold)", "test_verify_command: pytest tests/test_pricing.py::test_discounts_far_above_threshold (test_discounts_far_above_threshold)", "related_test_relation: syntactic_call (test_discounts_far_above_threshold)", "test_oracle: exact_value strong (test_discounts_far_above_threshold)", "test_framework: pytest (test_no_discount_below_threshold)", "test_verify_command: pytest tests/test_pricing.py::test_no_discount_below_threshold (test_no_discount_below_threshold)", "related_test_relation: syntactic_call (test_no_discount_below_threshold)", "test_oracle: exact_value strong (test_no_discount_below_threshold)"],
-      "missing": ["Related Python test reaches `discounted_total` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "evidence": ["owner: discounted_total", "owner_kind: function", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_pricing.py", "suggested_test_name: test_discounts_far_above_threshold", "suggested_test_node_id: tests/test_pricing.py::test_discounts_far_above_threshold", "suggested_verify_command: pytest tests/test_pricing.py::test_discounts_far_above_threshold", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_discounts_far_above_threshold)", "test_verify_command: pytest tests/test_pricing.py::test_discounts_far_above_threshold (test_discounts_far_above_threshold)", "related_test_relation: syntactic_call (test_discounts_far_above_threshold)", "test_oracle: exact_value strong (test_discounts_far_above_threshold)", "test_framework: pytest (test_no_discount_below_threshold)", "test_verify_command: pytest tests/test_pricing.py::test_no_discount_below_threshold (test_no_discount_below_threshold)", "related_test_relation: syntactic_call (test_no_discount_below_threshold)", "test_oracle: exact_value strong (test_no_discount_below_threshold)"],
+      "missing": ["A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary. No strong related test call places amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000, 5000; observed DISCOUNT_THRESHOLD values: unresolved."],
       "assertion_texts": {
+        "5": "assert discounted_total(5000) == 5000",
+        "9": "assert discounted_total(20000) == 18000"
       },
       "activation": {
         "observed_values": [
+          {
+            "line": 5,
+            "value": "amount = 5000",
+            "context": "function_argument"
+          },
+          {
+            "line": 9,
+            "value": "amount = 20000",
+            "context": "function_argument"
+          }
         ],
         "missing_discriminators": [
         ]
       },
       "observed_values": [
+        {
+          "line": 5,
+          "value": "amount = 5000",
+          "context": "function_argument"
+        },
+        {
+          "line": 9,
+          "value": "amount = 20000",
+          "context": "function_argument"
+        }
       ],
       "missing_discriminators": [
       ],
@@ -79,11 +101,18 @@
           "oracle": "assert discounted_total(5000) == 5000"
         }
       ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_pricing.py",
+        "suggested_test_name": "test_discounts_far_above_threshold",
+        "suggested_test_node_id": "tests/test_pricing.py::test_discounts_far_above_threshold",
+        "verify_command": "pytest tests/test_pricing.py::test_discounts_far_above_threshold",
+        "verify_command_confidence": "high"
+       },
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
-      "suggested_next_action": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",

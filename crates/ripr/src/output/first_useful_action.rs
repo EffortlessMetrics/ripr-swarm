@@ -708,6 +708,89 @@ fn missing_assistant_proof_report(
     ))
 }
 
+/// A fresh PR whose review card already carries the repair start (#3906).
+///
+/// Before any repair has run there is no assistant proof, and asking for one
+/// would request post-repair artifacts first. When the first review card
+/// (inline comments, then summary-only) that names
+/// `llm_guidance.repair_command` exists, lead with that command. The card
+/// emits it only past `repair_packet_eligibility(..).eligible()`; this report
+/// carries the string and every selected field from that same card, and never
+/// builds a repair command from a bare seam id. Without a carried command the
+/// existing missing-proof route stands.
+fn repair_start_report(
+    input: &FirstUsefulActionInput,
+    parsed: &ParsedSources,
+    inputs: &ActionInputs,
+    generated_at: &str,
+) -> Option<FirstUsefulActionReport> {
+    if parsed.assistant_proof.is_some() {
+        return None;
+    }
+    let (card, repair) = first_card_with_repair_command(parsed.pr_guidance.as_ref())?;
+    let selected = selected_from_guidance_item(input, Some(card), "pr_guidance")?;
+    let why = match (
+        string_path(card, &["seam", "expression"]),
+        selected.missing_discriminator.as_deref(),
+    ) {
+        (Some(expression), Some(missing)) => format!(
+            "Changed behavior `{expression}` lacks a discriminator for `{missing}`; the review card names its repair start."
+        ),
+        _ => {
+            "The review card names a repair start for this seam; no repair has run yet.".to_string()
+        }
+    };
+    Some(base_report(
+        input,
+        inputs,
+        generated_at,
+        "actionable",
+        "developer",
+        "write_focused_test",
+        Some(selected),
+        "Start the focused-test repair for this seam",
+        &why,
+        vec![
+            "The review card carries a repair start, so the seam passed the repair-packet check where the card was produced.",
+            "No assistant proof exists yet, so the repair has not started.",
+            "No waiver, acknowledgement, or suppression applies.",
+        ],
+        target_from_guidance_item(card),
+        ActionCommands {
+            repair: Some(repair),
+            verify: string_path(card, &["llm_guidance", "verify_command"]),
+            receipt: string_path(card, &["receipt_command"])
+                .or_else(|| string_path(card, &["llm_guidance", "receipt_command"])),
+            ..ActionCommands::default()
+        },
+        evidence(input, "unknown"),
+        None,
+        Vec::new(),
+        vec![
+            "Static evidence only.",
+            "Carries the repair start from the review card; does not re-derive eligibility.",
+            "Does not run mutation testing.",
+            "Does not edit source or generate tests.",
+            "Does not make CI blocking by default.",
+        ],
+    ))
+}
+
+/// The first review card, inline comments before summary-only, that carries a
+/// non-empty `llm_guidance.repair_command`, with that command.
+fn first_card_with_repair_command(pr_guidance: Option<&Value>) -> Option<(&Value, String)> {
+    let guidance = pr_guidance?;
+    ["comments", "summary_only"]
+        .into_iter()
+        .filter_map(|bucket| guidance.get(bucket).and_then(Value::as_array))
+        .flatten()
+        .find_map(|card| {
+            string_path(card, &["llm_guidance", "repair_command"])
+                .filter(|command| !command.trim().is_empty())
+                .map(|command| (card, command))
+        })
+}
+
 fn actionable_report(
     input: &FirstUsefulActionInput,
     parsed: &ParsedSources,
@@ -1209,6 +1292,14 @@ fn selected_from_guidance(
     let item = first_guidance_item(Some(guidance))
         .or_else(|| first_summary_only_item(Some(guidance)))
         .or_else(|| first_suppressed_item(Some(guidance)));
+    selected_from_guidance_item(input, item, source)
+}
+
+fn selected_from_guidance_item(
+    input: &FirstUsefulActionInput,
+    item: Option<&Value>,
+    source: &str,
+) -> Option<ActionSelected> {
     Some(
         ActionSelected {
             source: source.to_string(),
@@ -1386,6 +1477,31 @@ fn target_from_sources(parsed: &ParsedSources) -> Option<ActionTarget> {
     })
 }
 
+fn target_from_guidance_item(card: &Value) -> Option<ActionTarget> {
+    let file = string_path(card, &["suggested_test", "recommended_file"])
+        .and_then(|text| text.split("::").next().map(ToOwned::to_owned));
+    let related_test = string_path(card, &["suggested_test", "near_test"]);
+    let suggested_test_name = string_path(card, &["suggested_test", "recommended_name"]);
+    let suggested_assertion = string_from_sources(&[
+        (Some(card), &["suggested_test", "assertion_shape"]),
+        (Some(card), &["suggested_test", "intent"]),
+    ])
+    .map(|text| normalize_suggested_assertion(&text));
+    if file.is_none()
+        && related_test.is_none()
+        && suggested_test_name.is_none()
+        && suggested_assertion.is_none()
+    {
+        return None;
+    }
+    Some(ActionTarget {
+        file,
+        related_test,
+        suggested_test_name,
+        suggested_assertion,
+    })
+}
+
 fn seam_commands(input: &FirstUsefulActionInput, parsed: &ParsedSources) -> ActionCommands {
     let seam_id = selected_seam_id(parsed);
     let Some(seam_id) = seam_id else {
@@ -1428,6 +1544,7 @@ fn seam_commands(input: &FirstUsefulActionInput, parsed: &ParsedSources) -> Acti
                 None,
             )),
         }),
+        repair: None,
         assistant_proof: None,
         status: None,
     }

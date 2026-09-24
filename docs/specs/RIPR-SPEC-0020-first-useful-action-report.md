@@ -266,6 +266,12 @@ Field contract:
   and assertion shape when supplied by existing artifacts.
 - `commands.*` records copyable commands from existing command templates or
   supplied artifacts. Missing commands become `null` and warnings.
+- `commands.repair` (#3906) is present only when the first review card that
+  carries `llm_guidance.repair_command` exists and no assistant proof exists
+  yet. The report leads with that command verbatim (status `actionable`,
+  action `write_focused_test`), takes every `selected` field from the same
+  card, and never builds a repair command from a bare seam id; without it the
+  missing-assistant-proof route stands.
 - `evidence.*` records supporting artifact paths and static movement when
   supplied. Static movement is not runtime mutation confirmation.
 - `fallback` records the reason for non-actionable statuses and the next safe
