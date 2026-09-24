@@ -9,7 +9,7 @@ use crate::agent::loop_commands::{
     agent_status_command, agent_status_markdown_command, agent_verify_command,
     check_analysis_outcome_command, check_repo_exposure_command, display_path,
 };
-use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, powershell_command};
+use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
 use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -212,13 +212,14 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         rendered.push_str("```bash\n");
         rendered.push_str(&next.command);
         rendered.push_str("\n```\n");
-        match powershell_command(&next.command) {
-            Some(line) => {
+        match powershell_form(&next.command) {
+            PowershellForm::Translated(line) => {
                 rendered.push_str("\n```powershell\n");
                 rendered.push_str(&line);
                 rendered.push_str("\n```\n");
             }
-            None => rendered.push_str(&format!(
+            PowershellForm::SameAsBash => {}
+            PowershellForm::Unavailable => rendered.push_str(&format!(
                 "{}: `{}`\n",
                 crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE,
                 next.command
@@ -714,7 +715,7 @@ mod tests {
         );
         let powershell_form = format!(
             "```powershell\n{}\n```\n",
-            powershell_command(&next)
+            crate::output::markdown::powershell_command(&next)
                 .ok_or_else(|| "redirect commands gain a powershell variant".to_string())?
         );
         assert!(

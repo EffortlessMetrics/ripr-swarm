@@ -7,7 +7,7 @@ use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
 };
 use crate::output::json::escape as json_escape;
-use crate::output::markdown::powershell_command;
+use crate::output::markdown::{PowershellForm, powershell_form};
 use crate::output::path::{display_path, display_path_text};
 use crate::output::pilot::commands::{PilotCommands, repair_start_command};
 use crate::output::pilot::ranking::{actionable_total, top_actionable_seams};
@@ -292,15 +292,22 @@ pub(crate) fn render_pilot_summary_md(
     out.push_str("```\n");
     let mut unavailable: Vec<&String> = Vec::new();
     let mut translations: Vec<String> = Vec::new();
+    let mut any_translated = false;
     for command in next_commands {
-        match powershell_command(command) {
-            Some(line) => translations.push(line),
-            None => unavailable.push(command),
+        match powershell_form(command) {
+            PowershellForm::Translated(line) => {
+                any_translated = true;
+                translations.push(line);
+            }
+            PowershellForm::SameAsBash => translations.push(command.clone()),
+            PowershellForm::Unavailable => unavailable.push(command),
         }
     }
     // Only fence translations that exist; a compound command under-emits to a
-    // disclosure naming the bash form instead of an invalid translation.
-    if !translations.is_empty() {
+    // disclosure naming the bash form instead of an invalid translation. The
+    // fence is the whole sequence, so it carries unchanged lines too, and is
+    // omitted when every line runs unchanged in PowerShell.
+    if any_translated {
         out.push_str("\n```powershell\n");
         for line in &translations {
             out.push_str(line);
