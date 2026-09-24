@@ -5972,9 +5972,17 @@ fn doctor_reports_missing_config_defaults() -> Result<(), String> {
     assert!(stdout.contains("LSP seam diagnostics default: true"));
     assert!(stdout.contains("Suppressions path: .ripr/suppressions.toml"));
     assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
-    assert!(stdout.contains("(not yet generated; run the safe next action below)"));
+    assert!(stdout.contains("`ripr first-pr` composes it once analysis evidence exists"));
     assert!(!stdout.contains("(present; open it first)"));
-    assert!(stdout.contains("Safe next action: run `ripr first-pr --root"));
+    // On a workspace with no artifacts, `first-pr` has nothing to compose: it
+    // returns `missing_artifacts` and answers with a `ripr check` regeneration
+    // command. So the safe next action must route to the analysis command this
+    // screen already recommends, not to the compose command.
+    assert!(stdout.contains("Safe next action: run the recommended first command below"));
+    assert!(
+        !stdout.contains("Safe next action: run `ripr first-pr"),
+        "a fresh workspace must not be sent to the compose command:\n{stdout}"
+    );
     assert!(stdout.contains("Recovery states: missing artifact, stale evidence, wrong root"));
     assert!(stdout.contains("Proof rail: verify command, receipt command, and receipt path"));
 
@@ -5997,6 +6005,9 @@ fn doctor_reports_present_start_here_packet() -> Result<(), String> {
     assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
     assert!(stdout.contains("(present; open it first)"));
     assert!(!stdout.contains("not yet generated"));
+    // With a packet on disk `first-pr` has something to refresh, so naming it
+    // here is a real route rather than a dead end.
+    assert!(stdout.contains("Safe next action: open that packet"));
 
     let _ = std::fs::remove_dir_all(&workspace);
     Ok(())
@@ -6012,8 +6023,9 @@ fn doctor_reports_directory_squatting_packet_path_as_not_generated() -> Result<(
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("(not yet generated; run the safe next action below)"));
+    assert!(stdout.contains("`ripr first-pr` composes it once analysis evidence exists"));
     assert!(!stdout.contains("(present; open it first)"));
+    assert!(stdout.contains("Safe next action: run the recommended first command below"));
 
     let _ = std::fs::remove_dir_all(&workspace);
     Ok(())
@@ -6453,7 +6465,7 @@ fn doctor_reports_language_tiers_and_limitations() -> Result<(), String> {
     // worktree-state-aware (see doctor_recommends_worktree_check_on_dirty_worktree);
     // here we only require the diff-first command to be present.
     assert!(
-        stdout.contains("ripr check --base origin/main"),
+        stdout.contains("Recommended first command: ripr check"),
         "expected the diff-first recommended command in stdout:\n{stdout}"
     );
 
@@ -6614,8 +6626,17 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
     assert_success(&clean);
     let clean_out = String::from_utf8_lossy(&clean.stdout);
     assert!(
-        clean_out.contains("Recommended first command: ripr check --base origin/main"),
+        clean_out
+            .lines()
+            .any(|line| line.trim_end() == "- Recommended first command: ripr check"),
         "clean worktree must recommend the diff-first command directly:\n{clean_out}"
+    );
+    // The base is resolved, not asserted: `origin/main` does not exist in a
+    // repository whose default branch is not `main`, and this fixture has no
+    // remote at all.
+    assert!(
+        !clean_out.contains("Recommended first command: ripr check --base origin/main"),
+        "the recommendation must not hardcode a base this repository may not have:\n{clean_out}"
     );
 
     // DIRTY worktree: route the user to the explicit live-worktree diff.
@@ -6636,7 +6657,9 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
         "dirty worktree must disclose the tracked-edit scope:\n{dirty_out}"
     );
     assert!(
-        !dirty_out.contains("Recommended first command: ripr check --base origin/main"),
+        !dirty_out
+            .lines()
+            .any(|line| line.trim_end() == "- Recommended first command: ripr check"),
         "dirty worktree must NOT give the unconditional clean recommendation:\n{dirty_out}"
     );
 
