@@ -11914,8 +11914,13 @@ Field contract:
 - `schema_version` - currently `"0.1"`.
 - `status` - `"complete"` when every required artifact is present, no next
   command is selected, and there are no warnings; `"warning"` when every
-  artifact is present but a stale-looking condition exists; `"incomplete"`
-  when any required artifact is missing or a next command is selected.
+  artifact is present but a stale-looking condition exists or a finished
+  repair attempt's receipt does not report static grip improved at the current
+  `HEAD`; `"incomplete"` when any required artifact is missing or a next
+  command is selected. A finished attempt counts toward `"complete"` only when
+  the receipt issued for it is `advisory` with static movement `improved` and
+  the current `HEAD` is the head its after phase recorded (a commit made on top
+  of the prepared head, such as a committed focused test, counts).
 - `root` - the `--root` argument normalized to forward slashes for reporting.
 - `seam` - recovered seam identity when available. The current recovery order
   is receipt, verify, packet, then brief. It is `null` when no existing
@@ -11929,15 +11934,49 @@ Field contract:
 - `repair_attempts[]` - every repair attempt under
   `target/ripr/repair-attempts/`, validated by the attempt authority and
   ordered by attempt ID (not by age): `attempt_id`, `seam_id`, `state` (the
-  manifest state), `head_current` (whether the attempt's `HEAD` is the current
-  one; `null` when `HEAD` cannot be read), `disposition` (`resumable`,
-  `prepared_at_other_head`, `head_unknown`, `not_published`, `finished`, or
-  `ended`), `manifest`, and `command` (the command that would move this attempt
-  or its seam forward, or `null`).
+  manifest state), `head_current` (for an attempt awaiting its edit, whether
+  its after phase would evaluate the current `HEAD` as the attempt's, by the
+  attempt authority's rule: the prepared head, or for an ordinary attempt a
+  commit that descends from it; for an attempt with an after verdict, whether
+  `HEAD` is still the head that verdict recorded; `null` when `HEAD` cannot be
+  read or related to the prepared head), `disposition` (`resumable`,
+  `prepared_at_other_head`, `head_unknown`, `not_published`, `finished`,
+  `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
+  that would move this attempt or its seam forward, or `null`),
+  `receipt`, and `last_after_refusal`. A `ready_to_finish` attempt reads
+  `finished` only when its receipt is `advisory` with movement `improved`;
+  `gap_open` when its receipt shows movement `unchanged`, `changed`, or
+  `regressed` (the seam is restarted); otherwise `unconfirmed` (no restart; a
+  `repair_receipt_unconfirmed` warning says why). An attempt awaiting its
+  edit reads `prepared_at_other_head` when its after phase would not evaluate
+  the current `HEAD`: a trust-bound attempt whose `HEAD` moved, or an ordinary
+  attempt whose `HEAD` no longer descends from its prepared head, in which case
+  the restart reason repeats the after phase's recovery (`git reset --soft
+  <prepared-head>`, then the attempt's after command).
+  - `receipt` - `null` unless the attempt is `ready_to_finish`. Otherwise an
+    object read from `target/ripr/reports/agent-receipt.json`: `path`,
+    `issued_for_attempt` (whether that receipt's `repair_attempt` binding
+    matches this attempt's after verdict: attempt ID, after `HEAD`, delta and
+    packet digests), `superseded_by` (the attempt ID the receipt is bound to
+    when that is another attempt: the workflow keeps one receipt, so a later
+    attempt's after phase replaced this attempt's receipt; otherwise `null`),
+    and, when it is issued for this attempt, the receipt's `status`,
+    `movement`, `receipt_state`, `recommended_action`, and
+    `analysis_outcome_error`, plus `shows_gap_closed` (`true` only for an
+    `advisory` receipt with movement `improved`; it records improved static
+    grip, not a runtime or mutation result). Unbound receipts leave these
+    `null` and `shows_gap_closed` `false`.
+  - `last_after_refusal` - `null`, or `{reason, recorded_unix_ms}` when the
+    attempt's most recent after phase refused after selecting the attempt (the
+    attempt manifest's `last_after_refusal`: the final error followed by the
+    cause and recovery the after phase printed, such as the changed analysis
+    inputs, bounded to 4096 bytes).
 - `next_command` - selected in the order RIPR-SPEC-0011 documents (#3906): the
   one current awaiting repair attempt's recorded after command
-  (`repair_attempt_after`); otherwise a new attempt for the one seam whose
-  attempts ended without a receipt (`repair_attempt_before`); otherwise the
+  (`repair_attempt_after`; when that attempt recorded a refused after phase,
+  `reason` names the refusal before repeating the command); otherwise a new
+  attempt for the one seam whose attempts ended without a receipt or finished
+  with a receipt that leaves the gap open (`repair_attempt_before`); otherwise the
   first `missing_commands` entry, except that an unknown seam routes to
   `ripr pilot --root <root>` (`select_seam`) and a missing workflow directory
   routes to a new repair attempt. It is `null` when nothing is missing, and
@@ -11948,7 +11987,17 @@ Field contract:
   choices.
 - `warnings[]` - stale-looking or unreadable-artifact hints. Timestamp warnings
   are emitted when `agent verify` is older than a before/after snapshot or
-  `agent receipt` is older than `agent verify`. Hash mismatch warnings remain a
+  `agent receipt` is older than `agent verify`. For a seam with no attempt
+  awaiting its edit and no finished attempt current at `HEAD`,
+  `repair_receipt_stale` names a finished attempt whose receipt evidence was
+  recorded at a `HEAD` other than the current one (its message says the
+  receipt reports static grip improved at the recorded head), and
+  `repair_receipt_unconfirmed` names a `ready_to_finish` attempt whose receipt
+  does not report improved grip (an `invalid` or `incomplete` receipt, a
+  movement that is neither `improved` nor open, no receipt issued for it, or a
+  receipt superseded by a later attempt's, in which case the message names
+  that attempt and the new-attempt command for the seam if its gap is still
+  open). Hash mismatch warnings remain a
   later reviewer-summary/status enhancement now that receipt provenance records
   artifact SHA-256 values.
 
