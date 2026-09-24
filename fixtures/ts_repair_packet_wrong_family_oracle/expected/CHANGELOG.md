@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_wrong_family_oracle (3)
+
+Reason:
+RIPR-SPEC-0027 merge interaction (#3953): a guard without a comparison is weakly_exposed with no invented discriminator (line 3 predicate exposed -> weakly_exposed) and brace-only changed lines carry no behavior (line 5 probe removed); the fixture's error-path finding is unchanged - weakly_exposed, no wrong-family oracle borrow, repair packet stays not ready
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
