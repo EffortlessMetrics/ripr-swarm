@@ -6,13 +6,8 @@ Summary: 0 probe(s), 0 exposed, 0 weak, 0 unrevealed, 0 no path, 0 unknown
 
 Analysis outcome: partial_with_limitations (analysis incomplete).
   Zero findings is not a clean result because the analyzed scope is incomplete.
-  Limitation: language_adapter_unavailable at language_adapter; affected items: 1; recovery: enable_language — Enable the perl preview adapter and re-run the analysis.
+  Limitation: language_adapter_unavailable at language_adapter; affected items: 1; recovery: enable_language — Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it.
 
 No diff-derived static exposure probes found.
 
-Note: this diff contains 1 Perl file. The Perl adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.
-
-To enable, add to ripr.toml:
-
-[languages]
-enabled = ["rust", "perl"]
+Note: this diff contains 1 Perl file. The Perl adapter is not compiled into this ripr binary, so these files were not analyzed — this is NOT a clean Rust-grade result. Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it.

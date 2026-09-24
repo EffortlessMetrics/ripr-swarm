@@ -212,7 +212,9 @@ discriminator, a test location, and a verify command. `exposed`,
 static-limited findings get no card, so `repair cards: 0` is normal for such a
 diff. TypeScript is an opt-in
 `preview`. `ripr` is advisory static analysis — not a merge gate and not a
-mutation runner. Perl repair routing is `preview`/advisory; its next
+mutation runner. Perl repair routing is `preview`/advisory and not yet usable
+from a released install: it needs a `lang-perl` ripr build plus the
+`perl-ripr-facts` fact exporter, which is not yet published. Its next
 checkpoint is `dogfood/perl-real-repo-evals-v2` before any usable-alpha
 claim. This README is
 a front door, not the metric source of truth: see

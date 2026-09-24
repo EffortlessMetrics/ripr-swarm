@@ -465,12 +465,25 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
                 "\nNote: {} {} analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.\n",
                 advisory.file_count, file_label,
             ));
+        } else if let Some(recovery) = advisory.unavailable_adapter_recovery() {
+            // The adapter is not compiled into this binary: a `ripr.toml`
+            // edit cannot enable it (config load rejects it), so name the
+            // real prerequisites instead of the TOML block.
+            out.push_str(&format!(
+                "\nNote: this diff contains {} {}. The {} adapter is not compiled into this ripr binary, so these files were not analyzed — this is NOT a clean Rust-grade result. {recovery}.\n",
+                advisory.file_count, file_label, language,
+            ));
         } else if !advisory.enabled {
             let language_lowercase = advisory.language.to_lowercase();
             out.push_str(&format!(
                 "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\nenabled = [\"rust\", \"{language_lowercase}\"]\n",
                 advisory.file_count, file_label, language,
             ));
+            if let Some(prerequisite) = crate::domain::LanguageId::from_wire(&advisory.language)
+                .and_then(crate::domain::LanguageId::enable_prerequisite)
+            {
+                out.push_str(&format!("\n{prerequisite}.\n"));
+            }
         } else if let Some(run) = advisory.non_success_run(&output.language_runs) {
             out.push_str(&format!(
                 "\nNote: the {language} preview adapter did not complete successfully ({}), so {} {} were not analyzed — this is NOT a clean Rust-grade result.\n",
@@ -2478,22 +2491,48 @@ mod tests {
             "expected not-enabled disclosure; got:\n{rendered}"
         );
         assert!(
-            rendered.contains("not enabled, so these files were not analyzed"),
+            rendered.contains("so these files were not analyzed"),
             "expected not-analyzed wording; got:\n{rendered}"
         );
         assert!(
             rendered.contains("NOT a clean Rust-grade result"),
             "expected honesty note; got:\n{rendered}"
         );
-        assert!(
-            rendered.contains("Enable it in ripr.toml"),
-            "expected enable hint; got:\n{rendered}"
-        );
-        // Must include the copy-paste TOML block.
-        assert!(
-            rendered.contains("[languages]\nenabled = [\"rust\", \"perl\"]"),
-            "expected copy-paste TOML block; got:\n{rendered}"
-        );
+        if cfg!(feature = "lang-perl") {
+            // Adapter compiled in: the ripr.toml edit is real, but it is not
+            // sufficient on its own — a fact packet/exporter is still needed.
+            assert!(
+                rendered.contains("[languages]\nenabled = [\"rust\", \"perl\"]"),
+                "expected copy-paste TOML block; got:\n{rendered}"
+            );
+            assert!(
+                rendered.contains("Perl also needs a fact packet"),
+                "expected exporter prerequisite; got:\n{rendered}"
+            );
+        } else {
+            // Adapter NOT compiled in: following a ripr.toml hint makes
+            // `ripr check` exit 2 (config rejects `perl`), so the note must
+            // not offer it and must name both real prerequisites.
+            assert!(
+                rendered.contains("not compiled into this ripr binary"),
+                "expected not-compiled disclosure; got:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains("Enable it in ripr.toml")
+                    && !rendered.contains("enabled = [\"rust\", \"perl\"]"),
+                "must not advise a ripr.toml edit this binary rejects; got:\n{rendered}"
+            );
+            for required in [
+                "cargo install ripr --features lang-perl",
+                "`perl-ripr-facts`",
+                "not yet published",
+            ] {
+                assert!(
+                    rendered.contains(required),
+                    "expected `{required}` in recovery; got:\n{rendered}"
+                );
+            }
+        }
         // Must NOT use the enabled wording.
         assert!(
             !rendered.contains("analyzed under preview support"),
