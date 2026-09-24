@@ -13875,7 +13875,7 @@ command that analyzes it (#3906). With no Rust seams the state is `required`:
       "route": "unavailable_in_this_binary",
       "command": null,
       "guidance_category": null,
-      "guidance": "Perl analysis is not available from this ripr binary. Rebuild ripr with Cargo feature `lang-perl` to analyze Perl files."
+      "guidance": "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it."
     }
   ]
 }
