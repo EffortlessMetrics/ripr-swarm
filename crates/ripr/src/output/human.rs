@@ -196,7 +196,9 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
         out.push_str(&format!(
             "; recovery: {} — {}.\n",
             limitation.recovery.kind.as_str(),
-            limitation.recovery.detail
+            // The recovery detail is often a full sentence; the line supplies
+            // its own terminal period.
+            limitation.recovery.detail.trim_end_matches('.')
         ));
     }
     out.push('\n');
@@ -441,11 +443,11 @@ pub(super) fn wrap_human_prose(
 ///   the adapter is a single edit.
 fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
     for advisory in &output.preview_language_advisories {
-        let language = capitalize_first(&advisory.language);
-        let file_label = if advisory.language == "perl" && advisory.file_count == 1 {
+        let language = language_display_name(&advisory.language);
+        let file_label = if advisory.file_count == 1 {
             format!("{language} file")
         } else {
-            format!("{language}(s)")
+            format!("{language} files")
         };
         if advisory.analyzed(&output.language_runs) {
             out.push_str(&format!(
@@ -476,7 +478,7 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
 /// every language ran to completion.
 fn render_language_runs(out: &mut String, output: &CheckOutput) {
     for run in &output.language_runs {
-        let language = capitalize_first(&run.language);
+        let language = language_display_name(&run.language);
         let completion = if run.status == crate::analysis::LanguageRunStatus::Partial {
             "returned a partial result"
         } else {
@@ -498,6 +500,14 @@ fn render_language_runs(out: &mut String, output: &CheckOutput) {
             )),
         }
     }
+}
+
+/// Prose name for a language wire string (`typescript` -> `TypeScript`),
+/// owned by [`crate::domain::LanguageId::display_name`].
+fn language_display_name(wire: &str) -> String {
+    crate::domain::LanguageId::display_name_for_wire(wire)
+        .map(str::to_string)
+        .unwrap_or_else(|| capitalize_first(wire))
 }
 
 fn capitalize_first(s: &str) -> String {
@@ -2306,7 +2316,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("2 Typescript(s) analyzed under preview support"),
+            rendered.contains("2 TypeScript files analyzed under preview support"),
             "expected preview disclosure in output; got:\n{rendered}"
         );
         assert!(
@@ -2347,7 +2357,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("3 Python(s) analyzed under preview support"),
+            rendered.contains("3 Python files analyzed under preview support"),
             "expected python preview disclosure; got:\n{rendered}"
         );
         assert!(
@@ -2417,7 +2427,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("7 Typescript(s) analyzed under preview support"),
+            rendered.contains("7 TypeScript files analyzed under preview support"),
             "expected file_count=7 in disclosure; got:\n{rendered}"
         );
     }
@@ -3077,5 +3087,57 @@ mod tests {
             rendered.contains("ripr found no static test path"),
             "expected absence-of-path statement"
         );
+    }
+
+    #[test]
+    fn preview_disclosure_counts_files_with_language_display_names() {
+        let advisory = |language: &str, file_count: usize, enabled: bool| PreviewLanguageAdvisory {
+            language: language.to_string(),
+            file_count,
+            sample_paths: Vec::new(),
+            enabled,
+        };
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: vec![
+                advisory("typescript", 1, true),
+                advisory("python", 1, true),
+                advisory("javascript", 2, true),
+                advisory("typescript", 1, false),
+            ],
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered = render(&output);
+
+        for expected in [
+            "Note: 1 TypeScript file analyzed under preview support",
+            "Note: 1 Python file analyzed under preview support",
+            "Note: 2 JavaScript files analyzed under preview support",
+            "Note: this diff contains 1 TypeScript file. The TypeScript adapter is preview",
+        ] {
+            assert!(
+                rendered.contains(expected),
+                "expected `{expected}`; got:\n{rendered}"
+            );
+        }
+        for forbidden in ["(s) analyzed", "Typescript", "Javascript", "Python(s)"] {
+            assert!(
+                !rendered.contains(forbidden),
+                "must not render `{forbidden}`; got:\n{rendered}"
+            );
+        }
     }
 }

@@ -121,14 +121,18 @@ When any advisory is present, a `Note:` line is appended after the findings
 Enabled case:
 
 ```
-Note: 1 Typescript(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
 ```
 
 Not-enabled (default) case:
 
 ```
-Note: this diff contains 1 Typescript(s). The Typescript adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.
+Note: this diff contains 1 TypeScript file. The TypeScript adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.
 ```
+
+The note names the language by its display name (`TypeScript`,
+`JavaScript`, `Python`, `Perl`, owned by `LanguageId::display_name`) and
+counts files as `1 <Language> file` or `N <Language> files`.
 
 The note is omitted entirely for pure-Rust diffs. The note does not change
 exit code or pass/fail status.
@@ -209,11 +213,11 @@ enabled adapter with a matching non-success `language_runs` entry carries
 
 1. **Default case (#1111 repro)**: diff contains `.ts` file, NO `ripr.toml`
    (only Rust enabled) → human output includes
-   `Note: this diff contains 1 Typescript(s). The Typescript adapter is preview and not enabled, so these files were not analyzed`,
+   `Note: this diff contains 1 TypeScript file. The TypeScript adapter is preview and not enabled, so these files were not analyzed`,
    and JSON `preview_languages[0].enabled == false`, `analyzed == false`.
 2. Enabled-success case: diff contains `.ts` file, `ripr.toml` has
    `enabled = ["typescript"]` → human output includes
-   `Note: 1 Typescript(s) analyzed under preview support`, JSON
+   `Note: 1 TypeScript file analyzed under preview support`, JSON
    `preview_languages[0].enabled == true`, `analyzed == true`.
 3. Enabled-failure case: diff contains `.pm` file, Perl is enabled, and the
    supplied facts packet fails ingestion → `language_runs` records `invalid`,
