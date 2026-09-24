@@ -11,9 +11,6 @@ Packet summary:
 - Warnings: 1
 - Failures: 0
 
-Start here:
-- PR review front panel: target/ripr/reports/pr-review-front-panel.md
-
 PR review story:
 - First useful action: target/ripr/reports/first-useful-action.md
 - Review guidance: target/ripr/review/comments.md
