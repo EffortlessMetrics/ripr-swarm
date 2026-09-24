@@ -61,7 +61,7 @@ pub(super) fn check_initialization_options(options: Option<&Value>) -> Result<()
     let Some(options) = options else {
         return Ok(());
     };
-    if json_value_size(options) > MAX_INITIALIZATION_OPTIONS_BYTES {
+    if !JsonSizeBudget::new(MAX_INITIALIZATION_OPTIONS_BYTES).admits(options, 0) {
         return Err(LspError::invalid_params(format!(
             "ripr lsp payload bound: initialization_options exceeds {MAX_INITIALIZATION_OPTIONS_BYTES} bytes"
         )));
@@ -96,10 +96,8 @@ pub(super) fn check_execute_command_arguments(arguments: &[LSPAny]) -> Result<()
             "ripr lsp payload bound: executeCommand arguments exceed {MAX_EXECUTE_COMMAND_ARGUMENTS} entries"
         )));
     }
-    let size = arguments.iter().fold(0_usize, |total, value| {
-        total.saturating_add(json_value_size(value))
-    });
-    if size > MAX_EXECUTE_COMMAND_ARGUMENT_BYTES {
+    let mut budget = JsonSizeBudget::new(MAX_EXECUTE_COMMAND_ARGUMENT_BYTES);
+    if !budget.admits_values(arguments, 0) {
         return Err(LspError::invalid_params(format!(
             "ripr lsp payload bound: executeCommand arguments exceed {MAX_EXECUTE_COMMAND_ARGUMENT_BYTES} bytes"
         )));
@@ -107,28 +105,56 @@ pub(super) fn check_execute_command_arguments(arguments: &[LSPAny]) -> Result<()
     Ok(())
 }
 
-/// Allocation-free serialized-size estimate for a decoded JSON value.
-/// Saturating on overflow and depth: the estimate only feeds `>` comparisons
-/// against the bounds above, so saturation is fail-closed.
-fn json_value_size(value: &Value) -> usize {
-    json_value_size_at(value, 0)
+/// Allocation-free predicate for the existing decoded-JSON size estimate.
+/// The accounting is unchanged: scalar allowance, UTF-8 string/key bytes,
+/// and container entry counts. This is not an exact wire-size calculation.
+/// Stop at the first over-budget charge rather than walking a rejected tail.
+struct JsonSizeBudget {
+    remaining: usize,
+    #[cfg(test)]
+    visited_values: usize,
 }
 
-fn json_value_size_at(value: &Value, depth: usize) -> usize {
-    if depth > MAX_SIZE_ESTIMATE_DEPTH {
-        return usize::MAX;
+impl JsonSizeBudget {
+    fn new(limit: usize) -> Self {
+        Self {
+            remaining: limit,
+            #[cfg(test)]
+            visited_values: 0,
+        }
     }
-    match value {
-        Value::Null | Value::Bool(_) | Value::Number(_) => 16,
-        Value::String(text) => text.len(),
-        Value::Array(items) => items.iter().fold(items.len(), |total, item| {
-            total.saturating_add(json_value_size_at(item, depth + 1))
-        }),
-        Value::Object(entries) => entries.iter().fold(entries.len(), |total, (key, item)| {
-            total
-                .saturating_add(key.len())
-                .saturating_add(json_value_size_at(item, depth + 1))
-        }),
+
+    fn charge(&mut self, size: usize) -> bool {
+        let Some(remaining) = self.remaining.checked_sub(size) else {
+            return false;
+        };
+        self.remaining = remaining;
+        true
+    }
+
+    fn admits_values(&mut self, values: &[Value], depth: usize) -> bool {
+        values.iter().all(|value| self.admits(value, depth))
+    }
+
+    fn admits(&mut self, value: &Value, depth: usize) -> bool {
+        #[cfg(test)]
+        {
+            self.visited_values += 1;
+        }
+        if depth > MAX_SIZE_ESTIMATE_DEPTH {
+            return false;
+        }
+        match value {
+            Value::Null | Value::Bool(_) | Value::Number(_) => self.charge(16),
+            Value::String(text) => self.charge(text.len()),
+            Value::Array(items) => self.charge(items.len()) && self.admits_values(items, depth + 1),
+            Value::Object(entries) => {
+                self.charge(entries.len())
+                    && entries
+                        .iter()
+                        .all(|(key, item)| self.charge(key.len()) && self.admits(item, depth + 1))
+            }
+        }
     }
 }
 
@@ -211,15 +237,204 @@ mod tests {
     }
 
     #[test]
-    fn size_estimate_is_saturating_and_bounded() -> Result<(), String> {
-        assert_eq!(json_value_size(&Value::Null), 16);
-        assert_eq!(json_value_size(&serde_json::json!("abcd")), 4);
+    fn size_estimate_is_saturating_and_bounded() {
+        let mut scalar = JsonSizeBudget::new(16);
+        assert!(scalar.admits(&Value::Null, 0));
+        assert_eq!(scalar.remaining, 0);
+        let mut text = JsonSizeBudget::new(4);
+        assert!(text.admits(&serde_json::json!("abcd"), 0));
+        assert_eq!(text.remaining, 0);
         let nested = serde_json::json!({"a": ["x", {"b": 1}]});
-        let estimate = json_value_size(&nested);
-        assert!(
-            estimate >= 1 + 1 + 1 + 16,
-            "estimate must count entries: {estimate}"
+        let mut exact = JsonSizeBudget::new(23);
+        assert!(exact.admits(&nested, 0));
+        assert_eq!(exact.remaining, 0);
+        assert!(!JsonSizeBudget::new(22).admits(&nested, 0));
+        assert!(!JsonSizeBudget::new(64).charge(usize::MAX));
+    }
+
+    #[test]
+    fn exact_payload_bounds_are_inclusive_and_shared() -> Result<(), String> {
+        let exact = Value::String("x".repeat(MAX_INITIALIZATION_OPTIONS_BYTES));
+        check_initialization_options(Some(&exact))
+            .map_err(|err| format!("exact initialization bound must pass: {err}"))?;
+        let oversized = Value::String("x".repeat(MAX_INITIALIZATION_OPTIONS_BYTES + 1));
+        let error = check_initialization_options(Some(&oversized))
+            .err()
+            .ok_or("over-budget initialization must fail")?;
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert_eq!(
+            error.message,
+            "ripr lsp payload bound: initialization_options exceeds 65536 bytes"
         );
+
+        let half = MAX_EXECUTE_COMMAND_ARGUMENT_BYTES / 2;
+        let mut arguments = vec![
+            Value::String("x".repeat(half)),
+            Value::String("y".repeat(MAX_EXECUTE_COMMAND_ARGUMENT_BYTES - half)),
+        ];
+        check_execute_command_arguments(&arguments)
+            .map_err(|err| format!("exact shared argument bound must pass: {err}"))?;
+        arguments.push(Value::String("z".to_string()));
+        let error = check_execute_command_arguments(&arguments)
+            .err()
+            .ok_or("aggregate over-budget arguments must fail")?;
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert_eq!(
+            error.message,
+            "ripr lsp payload bound: executeCommand arguments exceed 65536 bytes"
+        );
+        check_execute_command_arguments(&[])
+            .map_err(|err| format!("empty arguments must pass: {err}"))?;
         Ok(())
+    }
+
+    // Independent, deliberately exhaustive reference for the pre-change
+    // accounting. Keep this out of production: its full traversal is the
+    // work regression that the visit-count controls below discriminate.
+    fn legacy_size_at(value: &Value, depth: usize) -> usize {
+        if depth > MAX_SIZE_ESTIMATE_DEPTH {
+            return usize::MAX;
+        }
+        match value {
+            Value::Null | Value::Bool(_) | Value::Number(_) => 16,
+            Value::String(text) => text.len(),
+            Value::Array(items) => items.iter().fold(items.len(), |total, item| {
+                total.saturating_add(legacy_size_at(item, depth + 1))
+            }),
+            Value::Object(entries) => entries.iter().fold(entries.len(), |total, (key, item)| {
+                total
+                    .saturating_add(key.len())
+                    .saturating_add(legacy_size_at(item, depth + 1))
+            }),
+        }
+    }
+
+    fn nested_value(depth: usize) -> Value {
+        (0..depth).fold(Value::String("x".to_string()), |value, _| {
+            Value::Array(vec![value])
+        })
+    }
+
+    #[test]
+    fn budget_matches_legacy_acceptance_across_value_shapes() {
+        let scalars = vec![
+            Value::Null,
+            Value::Bool(true),
+            serde_json::json!(-1),
+            serde_json::json!(u64::MAX),
+            serde_json::json!(1.25),
+            Value::String(String::new()),
+            Value::String("é\\\n\"".to_string()),
+        ];
+        let mut cases = scalars.clone();
+        cases.push(Value::Array(Vec::new()));
+        cases.push(serde_json::json!({}));
+        for value in scalars {
+            cases.push(Value::Array(vec![value.clone(), Value::Null]));
+            cases.push(serde_json::json!({"key": value}));
+        }
+        cases.push(Value::String("x".repeat(MAX_INITIALIZATION_OPTIONS_BYTES)));
+        cases.push(Value::String(
+            "x".repeat(MAX_INITIALIZATION_OPTIONS_BYTES + 1),
+        ));
+        cases.push(nested_value(MAX_SIZE_ESTIMATE_DEPTH));
+        cases.push(nested_value(MAX_SIZE_ESTIMATE_DEPTH + 1));
+        for (index, value) in cases.iter().enumerate() {
+            let estimate = legacy_size_at(value, 0);
+            for limit in [
+                0,
+                1,
+                3,
+                4,
+                15,
+                16,
+                17,
+                23,
+                24,
+                63,
+                64,
+                1024,
+                MAX_INITIALIZATION_OPTIONS_BYTES - 1,
+                MAX_INITIALIZATION_OPTIONS_BYTES,
+            ] {
+                assert_eq!(
+                    JsonSizeBudget::new(limit).admits(value, 0),
+                    estimate <= limit,
+                    "acceptance drift in case {index} at budget {limit}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn oversized_container_skips_all_children() {
+        let value = Value::Array(vec![Value::Null; MAX_INITIALIZATION_OPTIONS_BYTES + 1]);
+        let mut budget = JsonSizeBudget::new(MAX_INITIALIZATION_OPTIONS_BYTES);
+        assert!(!budget.admits(&value, 0));
+        assert_eq!(
+            budget.visited_values, 1,
+            "container length decides rejection"
+        );
+    }
+
+    #[test]
+    fn first_oversized_array_value_skips_the_tail() {
+        for tail_len in [0, 1, 16, 4096] {
+            let mut items = vec![Value::String(
+                "x".repeat(MAX_INITIALIZATION_OPTIONS_BYTES + 1),
+            )];
+            items.extend(std::iter::repeat_n(Value::Null, tail_len));
+            let mut budget = JsonSizeBudget::new(MAX_INITIALIZATION_OPTIONS_BYTES);
+            assert!(!budget.admits(&Value::Array(items), 0));
+            assert_eq!(
+                budget.visited_values, 2,
+                "must visit only the container and rejecting child, not {tail_len} later values"
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_object_key_skips_its_value() {
+        let value = Value::Object(
+            [(
+                "k".repeat(MAX_INITIALIZATION_OPTIONS_BYTES),
+                Value::Array(vec![Value::Null; 4096]),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        let mut budget = JsonSizeBudget::new(MAX_INITIALIZATION_OPTIONS_BYTES);
+        assert!(!budget.admits(&value, 0));
+        assert_eq!(
+            budget.visited_values, 1,
+            "over-budget key skips its subtree"
+        );
+    }
+
+    #[test]
+    fn first_oversized_argument_skips_later_arguments() {
+        let mut arguments = vec![Value::String(
+            "x".repeat(MAX_EXECUTE_COMMAND_ARGUMENT_BYTES + 1),
+        )];
+        arguments.extend(std::iter::repeat_n(
+            Value::Array(vec![Value::Null; 4096]),
+            MAX_EXECUTE_COMMAND_ARGUMENTS - 1,
+        ));
+        let mut budget = JsonSizeBudget::new(MAX_EXECUTE_COMMAND_ARGUMENT_BYTES);
+        assert!(!budget.admits_values(&arguments, 0));
+        assert_eq!(
+            budget.visited_values, 1,
+            "later argument trees are not visited"
+        );
+    }
+
+    #[test]
+    fn depth_guard_preserves_the_exact_boundary() {
+        let at_limit = nested_value(MAX_SIZE_ESTIMATE_DEPTH);
+        assert!(JsonSizeBudget::new(MAX_INITIALIZATION_OPTIONS_BYTES).admits(&at_limit, 0));
+        let over_limit = nested_value(MAX_SIZE_ESTIMATE_DEPTH + 1);
+        let mut budget = JsonSizeBudget::new(MAX_INITIALIZATION_OPTIONS_BYTES);
+        assert!(!budget.admits(&over_limit, 0));
+        assert_eq!(budget.visited_values, MAX_SIZE_ESTIMATE_DEPTH + 2);
     }
 }
