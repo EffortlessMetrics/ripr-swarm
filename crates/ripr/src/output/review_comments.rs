@@ -17,7 +17,8 @@ use crate::output::agent_seam_packets::missing_discriminator_records_for as miss
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY, CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE,
     EvidenceRecordStaticLimitation, actionability_for, canonical_receipt_command_for,
-    cross_language_test_target_unresolved, gap_state_for, static_limitations_for,
+    canonical_repair_command_for, cross_language_test_target_unresolved, gap_state_for,
+    static_limitations_for,
 };
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
 #[cfg(test)]
@@ -948,6 +949,17 @@ fn review_recommendation_json(
     // Project actionable-only fields.
     if let (Some(cmd), Some(object)) = (receipt_command, recommendation.as_object_mut()) {
         object.insert("receipt_command".to_string(), json!(cmd));
+    }
+    // The repair transaction's start (#3906), only past the fail-closed
+    // repair-packet flip. The evidence record owns the decision; the card
+    // projects it.
+    if let (Some(cmd), Some(guidance)) = (
+        canonical_repair_command_for(entry, gap_state),
+        recommendation
+            .get_mut("llm_guidance")
+            .and_then(Value::as_object_mut),
+    ) {
+        guidance.insert("repair_command".to_string(), json!(cmd));
     }
     // Project limitation-only fields.
     if let (Some(why), Some(object)) = (why_not_actionable, recommendation.as_object_mut()) {
@@ -1926,6 +1938,59 @@ mod tests {
             value["comments"][0]["llm_guidance"]["verify_command"],
             "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
         );
+        Ok(())
+    }
+
+    /// #3906: a card offers `agent repair` only for an actionable seam past
+    /// the fail-closed repair-packet flip. The second seam adds a TypeScript
+    /// observer beside the same Rust test, so the flip refuses it: a known
+    /// seam with a non-actionable route, which must get no repair start.
+    #[test]
+    fn review_cards_offer_the_repair_start_only_past_the_repair_packet_flip() -> Result<(), String>
+    {
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let eligible = classified(88);
+        let mut ineligible = classified(88);
+        let mut observer = ineligible.evidence.related_tests[0].clone();
+        observer.file = PathBuf::from("tests/pricing.test.ts");
+        ineligible.evidence.related_tests.push(observer);
+
+        for (entry, want_repair) in [(eligible, true), (ineligible, false)] {
+            let seam_id = entry.seam.id().as_str().to_string();
+            if crate::analysis::repair_route::repair_packet_eligibility(&entry).eligible()
+                != want_repair
+            {
+                return Err(format!(
+                    "{seam_id}: fixture eligibility must be {want_repair}"
+                ));
+            }
+            let value = render_value(&working_set, std::slice::from_ref(&entry))?;
+            let card = &value["comments"][0];
+            // Preconditions: both seams render a card with a known seam id;
+            // only the eligible one is actionable.
+            let expected_state = if want_repair {
+                "actionable"
+            } else {
+                "static_limitation"
+            };
+            if card["seam_id"] != seam_id.as_str() || card["gap_state"] != expected_state {
+                return Err(format!("{seam_id}: card must be {expected_state}: {card}"));
+            }
+            let repair = card["llm_guidance"].get("repair_command");
+            let expected = format!("ripr agent repair --root . --seam-id {seam_id} --phase before");
+            match (want_repair, repair) {
+                (true, Some(Value::String(command))) if *command == expected => {}
+                (false, None) => {}
+                _ => {
+                    return Err(format!(
+                        "{seam_id}: repair_command {repair:?}, want present={want_repair}"
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 

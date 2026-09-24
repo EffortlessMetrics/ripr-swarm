@@ -1268,6 +1268,11 @@
             "null"
           ],
           "minLength": 1
+        },
+        "repair_command": {
+          "description": "Present only on an actionable card whose seam passed the fail-closed repair-packet flip (#3906): the `ripr agent repair ... --phase before` command that starts the repair transaction.",
+          "type": "string",
+          "minLength": 1
         }
       }
     },
