@@ -180,6 +180,38 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         "summary still says there is no safe next action"
     );
 
+    // The annotation GitHub places on the changed line carries the same
+    // repair start, and nothing that points into this runner's checkout
+    // (F60-7): the reader is on another machine.
+    let annotations = runs
+        .iter()
+        .find(|run| run.name == "Emit RIPR PR guidance annotations")
+        .ok_or("the annotation step did not run")?;
+    let warnings = annotations
+        .output
+        .lines()
+        .filter(|line| line.starts_with("::warning "))
+        .collect::<Vec<_>>();
+    assert!(
+        !warnings.is_empty(),
+        "no annotation was emitted:\n{}",
+        annotations.output
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|line| line.ends_with(&format!(" Start the repair: {repair_command}"))),
+        "no annotation names the repair start:\n{}",
+        warnings.join("\n")
+    );
+    let checkout = root.display().to_string();
+    for line in &warnings {
+        assert!(
+            !line.contains(&checkout) && !line.contains("agent brief"),
+            "annotation points into the runner checkout or at the brief: {line}"
+        );
+    }
+
     // Every at-a-glance block whose artifact carries the same repair start
     // leads with it and its after phase (#3906, F60-14). Precondition: each
     // artifact really carries the command, so the block is held to it.
@@ -441,7 +473,9 @@ fn far_above_threshold_discounts() {
     }
 
     /// A one-crate repo whose PR moves `>` to `>=` on a named threshold that
-    /// the tests never exercise at the boundary: a repair-ready gap.
+    /// the tests never exercise at the boundary: a repair-ready gap. The PR
+    /// targets `trunk`, not `main`, so a step that falls back to a
+    /// hardcoded `origin/main` fails here instead of passing by accident.
     pub(super) fn write_pr_fixture(root: &Path) -> TestResult<()> {
         fs::create_dir_all(root.join("src"))?;
         fs::create_dir_all(root.join("tests"))?;
@@ -451,10 +485,10 @@ fn far_above_threshold_discounts() {
         )?;
         fs::write(root.join("src/lib.rs"), LIB_BASE)?;
         fs::write(root.join("tests/pricing.rs"), TESTS)?;
-        git(root, &["init", "-q", "-b", "main"])?;
+        git(root, &["init", "-q", "-b", "trunk"])?;
         git(root, &["add", "-A"])?;
         git(root, &["commit", "-q", "-m", "initial pricing crate"])?;
-        git(root, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+        git(root, &["update-ref", "refs/remotes/origin/trunk", "HEAD"])?;
         git(root, &["checkout", "-q", "-b", "feature"])?;
         fs::write(
             root.join("src/lib.rs"),
@@ -617,7 +651,10 @@ fn far_above_threshold_discounts() {
 
     fn github_expression(expression: &str, head_sha: &str) -> Option<String> {
         let value = match expression {
-            "github.base_ref" => "main",
+            "github.base_ref" => "trunk",
+            // A pull_request event carries base_ref, so the default-branch
+            // fallback never applies in this replay.
+            "github.base_ref || github.event.repository.default_branch" => "trunk",
             "github.event_name" => "pull_request",
             "github.repository" => "ripr-test/pricing",
             "github.event.number" | "github.event.pull_request.number" => "1",
@@ -737,7 +774,7 @@ fn far_above_threshold_discounts() {
             ),
             ("GITHUB_EVENT_PATH".to_string(), event.display().to_string()),
             ("GITHUB_EVENT_NAME".to_string(), "pull_request".to_string()),
-            ("GITHUB_BASE_REF".to_string(), "main".to_string()),
+            ("GITHUB_BASE_REF".to_string(), "trunk".to_string()),
             ("GITHUB_HEAD_REF".to_string(), "feature".to_string()),
             (
                 "GITHUB_REPOSITORY".to_string(),
