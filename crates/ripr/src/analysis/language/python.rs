@@ -41,6 +41,7 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
+mod boundary;
 mod classify;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
@@ -148,6 +149,20 @@ struct PythonOwner {
     cli_receiver_names: Vec<String>,
     route_paths: Vec<String>,
     dynamic_route_decorators: Vec<String>,
+    /// Declared parameters of a function/method owner, in declaration order.
+    /// Empty for class and module owners. Used only to bind literal test-call
+    /// arguments to predicate boundary operands (`boundary.rs`).
+    parameters: Vec<PythonParameter>,
+}
+
+/// One declared parameter of a Python function owner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PythonParameter {
+    name: String,
+    /// Source text of the default value, when one is declared.
+    default: Option<String>,
+    /// Keyword-only parameters (after `*` / `*args`) never bind positionally.
+    keyword_only: bool,
 }
 
 impl PythonOwner {

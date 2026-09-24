@@ -20,10 +20,10 @@
   },
   "analysis_outcome": null,
   "next_command": {
-    "step": "before_snapshot",
-    "artifact": "target/ripr/workflow/before.repo-exposure.json",
-    "reason": "before snapshot artifact is missing",
-    "command": "ripr check --root repo/root --mode draft --format repo-exposure-json > <cwd>/repo/root/target/ripr/workflow/before.repo-exposure.json"
+    "step": "select_seam",
+    "artifact": "target/ripr/pilot",
+    "reason": "no repair seam is known yet; `ripr pilot` inspects the workspace and selects the seam to repair",
+    "command": "ripr pilot --root repo/root"
   },
   "surfaces": [
     {

@@ -141,6 +141,33 @@ Test-name and fixture-name proximity may provide a suggested repair location,
 but these links must be marked uncertain, must keep weak reachability, and must
 not promote unrelated assertions to strong revealability.
 
+A Python test is related to an owner only when the test references the owner.
+Same-stem file, test-name, and fixture-name proximity only rank a test that
+already references the owner without a recognized call shape; they never
+relate a test that only exercises a sibling owner in the same module, so a new
+owner that no test references reads `no_static_path`. A reference is outside
+comments, strings, and docstrings:
+
+- function or class owner: the bare owner name (`handler = loyalty_price`),
+  unless the test binds a local of that name (a parameter or fixture, an
+  assignment, a walrus `:=`, a `for` loop target, an `as` target, a nested
+  `def` or `class`) or the name is a keyword-argument or
+  assignment target; a renamed import local
+  (`from pricing import loyalty_price as lp`, then `lp`) whose source module is
+  the owner module; or a module-qualified member through an import of the
+  owner module (`import pricing` then `pricing.loyalty_price`, or
+  `import pricing as p` then `p.loyalty_price`);
+- method or class-method owner: an attribute reference `.name`, consistent
+  with the direct rule that relates any `.name(` call for these owners; a
+  dunder method (`__init__`, `__eq__`, ...) is also referenced by a reference
+  to its class, which invokes it implicitly;
+- module-level owner: a local bound by an import of, or from, the owner
+  module.
+
+A title, a fixture name, a file stem, or an object-member use such as
+`order.loyalty_price` on a receiver that is not the owner module is not a
+reference to a free-function owner.
+
 ## Probe Facts
 
 Probes the adapter must generate (syntax-first):
@@ -233,6 +260,27 @@ spine as other languages:
   downgrades to `weakly_exposed` with a typed reason. Reach plus a strong oracle
   alone must not credit `exposed`, or the classification degrades into coverage.
 
+A changed relational predicate (`<`, `<=`, `>`, `>=`) additionally follows the
+Rust activation boundary rule. When a strong related test calls the owner with
+at least one literal argument, `exposed` requires one of those calls to bind
+both comparison operands to equal values: each operand is a literal or an owner
+parameter bound to a literal argument or literal default (positional, keyword,
+import-alias, and method calls after `self`). Literal owner arguments, and the
+boundary equality when observed, are recorded in `observed_values`. Otherwise
+the finding fails closed to `weakly_exposed` and the infection stage reads
+`weak`. When every non-literal operand is bound by some call, the boundary is
+named as the missing discriminator (`amount == threshold`, with the observed
+operand values in its reason). An operand ripr cannot bind (an attribute such
+as `item.on_hand`, a computed `len(name)`, a comprehension local, or a line
+with several comparisons) never counts as observed, and such a boundary is not
+named as a typed repair target: the test input may already sit on it at runtime
+(`reserve(Item("a", 3), 3)`), so the finding states the unresolved operand
+instead of producing a repair card. When no strong related call binds a literal
+argument (test locals, `*args`, a construct-call passing a dict), static
+evidence cannot see the activating input either way: the oracle verdict stands
+and an `exposed` finding carries a `boundary_activation_unresolved` evidence
+line naming that limitation.
+
 Static-limit findings must fail closed. They keep any observed reachability and
 oracle facts, but their infection and propagation stages remain `unknown`, the
 finding class is `static_unknown`, a typed stop reason is emitted, and no
@@ -296,6 +344,8 @@ can show:
   framework-shaped verify commands
 - fixtures proving test-name and fixture-name proximity are related-test
   heuristics but remain explicitly uncertain
+- a fixture proving a same-stem test that only calls a sibling owner is not
+  related to an owner it never references
 - fixtures proving Python preview findings carry stable canonical gap IDs
   across human, JSON, GitHub annotation, and SARIF output while static-limit
   findings remain limitation evidence rather than repair gaps

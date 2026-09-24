@@ -24,16 +24,16 @@
         "owner": "python:app/checkout.py::checkout"
        },
       "ripr": {
-        "reach": {"state":"weak","confidence":"low","summary":"1 heuristic Python test link(s) found for owner `checkout`; relation is uncertain"},
+        "reach": {"state":"no","confidence":"low","summary":"0 related Python test(s) found for owner `checkout`"},
         "infect": {"state":"unknown","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python infection claim."},
         "propagate": {"state":"unknown","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python propagation claim."},
-        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
-        "discriminate": {"state":"unknown","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python discriminator claim."}
+        "observe": {"state":"no","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 0)"},
+        "discriminate": {"state":"no","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python discriminator claim."}
        },
-      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `checkout`; relation is uncertain", "infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim.", "propagation unknown: Static limit `decorator_indirection` prevents a safe Python propagation claim.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator unknown: Static limit `decorator_indirection` prevents a safe Python discriminator claim.", "related test tests/test_checkout.py:1 test_expired_coupon_response_smoke uses unknown unknown oracle"],
+      "evidence_path": ["reach no: 0 related Python test(s) found for owner `checkout`", "infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim.", "propagation unknown: Static limit `decorator_indirection` prevents a safe Python propagation claim.", "observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)", "discriminator no: Static limit `decorator_indirection` prevents a safe Python discriminator claim."],
       "flow_sinks": [
       ],
-      "evidence": ["owner: checkout", "owner_kind: function", "owner_decorators: api.post", "static_limit decorator_indirection: dynamic_route_registration `api.post`", "test_framework: pytest (test_expired_coupon_response_smoke)", "test_fixtures: client (test_expired_coupon_response_smoke)", "test_verify_command: pytest tests/test_checkout.py::test_expired_coupon_response_smoke (test_expired_coupon_response_smoke)", "related_test_relation: same_stem (test_expired_coupon_response_smoke)", "related_test_uncertain: same_stem (test_expired_coupon_response_smoke)"],
+      "evidence": ["owner: checkout", "owner_kind: function", "owner_decorators: api.post", "static_limit decorator_indirection: dynamic_route_registration `api.post`"],
       "missing": ["Static limit `dynamic_route_registration`: owner `checkout` uses dynamic route registration `api.post`; syntax-first preview evidence cannot safely match client calls to a concrete route path."],
       "assertion_texts": {
       },
@@ -47,20 +47,12 @@
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 1,
+      "related_tests_total": 0,
       "related_tests": [
-        {
-          "name": "test_expired_coupon_response_smoke",
-          "file": "tests/test_checkout.py",
-          "line": 1,
-          "oracle_strength": "unknown",
-          "oracle_kind": "unknown",
-          "oracle": ""
-        }
       ],
       "stop_reasons": ["static_probe_unknown"],
       "oracle_kind": "unknown",
-      "oracle_strength": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "",
       "suggested_next_action": "",
       "language": "python",
