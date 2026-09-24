@@ -31,6 +31,30 @@ pub(in crate::analysis) fn reach_evidence(
         .filter(|(_, reason)| *reason == RelationReason::SeamCalleeCall)
         .map(|(test, _)| *test)
         .collect();
+    // A test that only shares the changed file or a name token with the
+    // owner is a suggested location, not evidence that it runs the owner.
+    // Treating it as reach let an uncalled function inherit a neighbour's
+    // strong assertion and report `exposed`.
+    let proximity_only = !owner_anchored.is_empty()
+        && related_tests
+            .iter()
+            .filter(|(_, reason)| *reason != RelationReason::SeamCalleeCall)
+            .all(|(_, reason)| is_proximity_only(*reason));
+    if proximity_only {
+        let names = owner_anchored
+            .iter()
+            .take(3)
+            .map(|t| t.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            format!(
+                "No test is seen calling {target}; tests share only its file or a name token: {names}"
+            ),
+        );
+    }
     let summary = if owner_anchored.is_empty() {
         let names = callee_only
             .iter()
@@ -51,6 +75,17 @@ pub(in crate::analysis) fn reach_evidence(
         format!("Related tests appear to reach {target}: {names}")
     };
     StageEvidence::new(StageState::Yes, Confidence::Medium, summary)
+}
+
+/// Relations that come from file or name proximity alone, with no captured
+/// call, helper chain, or assertion affinity tying the test to the owner.
+fn is_proximity_only(reason: RelationReason) -> bool {
+    matches!(
+        reason,
+        RelationReason::SameTestFile
+            | RelationReason::SameModule
+            | RelationReason::WeakTokenSubstring
+    )
 }
 
 #[cfg(test)]
@@ -94,6 +129,44 @@ mod tests {
             evidence.summary,
             "Related tests appear to reach discounted_total: below_threshold, at_threshold, above_threshold"
         );
+    }
+
+    #[test]
+    fn given_only_proximity_relations_when_building_reach_evidence_then_reach_is_weak() {
+        let owner = function("untested_rounding");
+        let neighbour = test("discount_applies_at_100");
+        let token_match = test("rounding_table_loads");
+        let module_peer = test("module_smoke");
+        let related = vec![
+            (&neighbour, RelationReason::SameTestFile),
+            (&token_match, RelationReason::WeakTokenSubstring),
+            (&module_peer, RelationReason::SameModule),
+        ];
+
+        let evidence = reach_evidence(&related, Some(&owner));
+
+        assert_eq!(evidence.state, StageState::Weak);
+        assert_eq!(evidence.confidence, Confidence::Low);
+        assert_eq!(
+            evidence.summary,
+            "No test is seen calling untested_rounding; tests share only its file or a name token: discount_applies_at_100, rounding_table_loads, module_smoke"
+        );
+    }
+
+    #[test]
+    fn given_one_calling_test_among_proximity_relations_when_building_reach_evidence_then_reach_is_yes()
+     {
+        let owner = function("discount");
+        let neighbour = test("tags_nonempty");
+        let caller = test("discount_applies_at_100");
+        let related = vec![
+            (&neighbour, RelationReason::SameTestFile),
+            (&caller, RelationReason::DirectOwnerCall),
+        ];
+
+        let evidence = reach_evidence(&related, Some(&owner));
+
+        assert_eq!(evidence.state, StageState::Yes);
     }
 
     // #3714 round-2 review (devin hDRL2): callee-only relations must not

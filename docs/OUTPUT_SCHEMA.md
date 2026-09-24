@@ -8798,7 +8798,8 @@ JSON shape:
       "suggested_test": "Add an equality-boundary assertion.",
       "related_test": "tests/pricing.rs::applies_discount_above_threshold",
       "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
-      "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow",
+      "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
+      "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
       "static_limitations": []
     }
   ],
@@ -8847,6 +8848,12 @@ Field contract:
   test, assertion shape, verification command, and static limitations while
   preserving legacy top-level fields as fallback. The report must not invent
   missing commands or generated tests.
+- `repair_routes[].repair_command` - present only when the delta item's
+  `evidence_record.canonical_item.repair_command` carries the repair start
+  (#3906), which that record names only past the fail-closed repair-packet
+  flip. `repair_routes[].agent_command` is that carried command or `null`;
+  RIPR Zero status never builds an `agent start` or `agent repair` command
+  from a seam id, and gap-record routes name none.
 - `warnings[]` - stale baseline metadata, missing inputs, unsupported schemas,
   ambiguous identities, and trend gaps.
 - `limits_note` - advisory boundary text for generated CI summaries.
@@ -10125,7 +10132,8 @@ JSON shape:
     "suggested_test": "Add an equality-boundary assertion.",
     "related_test": "tests/pricing.rs::applies_discount_above_threshold",
     "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
-    "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow"
+    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
+    "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before"
   },
   "history": {
     "source": ".ripr/pr-evidence-ledger.jsonl",
@@ -10179,6 +10187,16 @@ Field contract:
   artifacts. Missing fields are `null` plus warnings, not invented.
   `top_repair_route.gap_id` and `top_repair_route.canonical_gap_id` are copied
   from the selected source artifact when available.
+- `top_repair_route.repair_command` - present only when the selected source
+  carries the repair start (#3906): a review card's
+  `llm_guidance.repair_command`, a gate route's `repair_route.repair_command`,
+  or a RIPR Zero route's `repair_command`. Those producers name it only past
+  the fail-closed repair-packet flip; the ledger carries it and never derives
+  it. `top_repair_route.agent_command` is that command when present, else a
+  carried read-only inspection command, else `null`; the ledger never builds
+  an `agent start` or `agent repair` command from a bare seam id. Markdown
+  shows the carried command as `Repair start`. `top_repair_route.receipt_command`
+  for a review card is read from the card root.
 - `history.*` - present only when prior ledger history or previous ledger
   summary is supplied.
 - `warnings[]` - missing inputs, unavailable coverage, unsupported schemas,
@@ -10611,6 +10629,15 @@ Field contract:
   name, and assertion shape when supplied by existing artifacts.
 - `commands.*` records copyable commands from existing command templates or
   supplied artifacts. Missing commands become `null` and warnings.
+- `commands.repair` is present only when the first review card (inline
+  comments, then summary-only) carries `llm_guidance.repair_command` and no
+  assistant proof exists yet (#3906). The card names that command only past
+  the fail-closed repair-packet flip; first-action carries it verbatim, takes
+  every `selected` field from the same card, and never builds a repair
+  command from a bare seam id. Without it, a PR with review cards but no
+  assistant proof keeps the `missing_required_artifact` route. Markdown shows
+  the command under `Start Repair` and as `Repair start` in the one-screen
+  recommendation.
 - `evidence.*` records supporting artifact paths and static movement when
   supplied. Static movement is not runtime mutation confirmation.
 - `fallback` records the reason for non-actionable statuses and the next safe
@@ -10940,10 +10967,11 @@ JSON shape:
     "focused_proof_intent": "Add an equality-boundary assertion.",
     "related_test": "tests/pricing.rs::applies_discount_above_threshold",
     "suggested_test": "Add an equality-boundary assertion.",
+    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
     "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
     "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json",
     "static_evidence_boundary": "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.",
-    "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow",
+    "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
     "receipt": {
       "artifact": "target/ripr/reports/agent-receipt.json",
       "status": "present"
@@ -11057,6 +11085,14 @@ Field contract:
   gate, baseline, and assistant-health inputs may normalize existing typed
   class/status fields, but must not infer the value from Markdown prose or code
   inspection.
+- `top_issue.repair_command` is present only when an input carries the repair
+  start (#3906): first-action `commands.repair`, a review card's
+  `llm_guidance.repair_command`, or an acknowledged gate route's
+  `repair_route.repair_command`. `top_issue.agent_command` is that command
+  when present, else a carried read-only inspection command (first-action
+  `commands.context_packet`, a card's `llm_guidance.command`, or a gate
+  route's `inspection_command`), else `null`. The panel never builds an
+  `agent start` or `agent repair` command from a bare seam id.
 - `movement.*` preserves before/after static movement when supplied. It is not
   runtime mutation confirmation.
 - `debt_delta.*` carries PR-local movement from baseline, RIPR Zero, gate, or
@@ -11615,6 +11651,23 @@ Field contract:
 - `selected.static_limit_kind` and `selected.static_limit_detail` are optional;
   surfaces must show them before suggested action language when they are
   present.
+- `selected.repair_command` is present only when the top gap was selected from
+  a review card (#3906): when the gap ledger yields no top gap, first-pr reads
+  `inputs.review_comments` and selects the first card in `comments[]`, then
+  `summary_only[]`, that is actionable and carries
+  `llm_guidance.repair_command` (`ripr agent repair ... --phase before`).
+  The command is that card's value carried unchanged; first-pr never builds it
+  from a seam, gap, or probe id. Every other selected field then comes from
+  that same card, never mixed with a ledger record: `source_artifact` is the
+  review-comments path, `repair.route` is `AgentRepairTransaction`,
+  `verify_command` and `receipt_command` are the card's
+  (`receipt_command_source = "review_comments.receipt_command"`), and
+  `receipt_path` and `agent_packet_command` are `null` because the card is not
+  a gap-ledger record. The card is used only when the review-comments report
+  is `tool = "ripr"`, `status = "advisory"`, and names the same root, base,
+  and head as the first-pr invocation. Ledger-selected top gaps never carry
+  `repair_command`. `commands` does not repeat the repair start, so editor
+  projections that allowlist `commands` values are unaffected.
 - `selected.verify_command`, `selected.receipt_command`,
   `selected.receipt_path`, `selected.receipt_command_source`, and
   `selected.receipt_state` are the static movement proof path. When the source
@@ -11632,7 +11685,12 @@ Field contract:
   missing git worktree, missing base ref, missing head ref, or invalid diff
   range.
 - `empty_diff` and `no_action` require `status = "no_action"` and must not
-  produce a repair interruption.
+  produce a repair interruption. When the gap ledger selected nothing,
+  `selected.reason` also says why no review card supplied a repair start
+  (missing, unreadable, stale, or no card carrying `repair_command`) and, when
+  the cards are missing or were rendered from the gap ledger, names the
+  seam-level `ripr review-comments --root <root> --base <base> --head <head>
+  --out <review_comments>` route.
 - `preflight` is present for the public `ripr first-pr` command path. It
   records read-only front-door checks for root, Git worktree, base/head refs,
   diff presence, supported project marker, `ripr.toml` defaulting, output
@@ -13924,7 +13982,7 @@ command that analyzes it (#3906). With no Rust seams the state is `required`:
       "route": "unavailable_in_this_binary",
       "command": null,
       "guidance_category": null,
-      "guidance": "Perl analysis is not available from this ripr binary. Rebuild ripr with Cargo feature `lang-perl` to analyze Perl files."
+      "guidance": "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it."
     }
   ]
 }
@@ -15755,7 +15813,12 @@ JSON shape (schema version `0.1`):
 ```
 
 When `top_repair` is absent, `top_repair_state` appears in its place
-and `top_repair` is `null`. When `limitations` is empty or
+and `top_repair` is `null`. `top_repair.repair_command` is present only when
+start-here carried `selected.repair_command` (a review-card selection, #3906);
+it is copied unchanged, never derived, and pr-summary does not read review
+comments itself. When present it is also the first entry in
+`local_reproduction_commands`, and the Markdown panel shows a `start repair`
+line before `verify`. When `limitations` is empty or
 `"not_available"`, `top_limitation` is omitted entirely; the Markdown
 panel distinguishes the two, rendering `- none` for the first and
 `- not_available` for the second. When delta fields are computed (baseline supplied),
@@ -15783,7 +15846,8 @@ Field sources:
 | `top_repair` | start-here | `selected` (when `state == "top_gap"`) |
 | `top_repair_state` | start-here | `selected.state` (when not `"top_gap"`) |
 | `top_limitation` | first entry in `limitations[]` | derived |
-| `local_reproduction_commands` | diff-report + start-here | base/head + `selected.verify_command` |
+| `top_repair.repair_command` | start-here | `selected.repair_command` (present only when start-here carried it) |
+| `local_reproduction_commands` | diff-report + start-here | `selected.repair_command` first when present, then base/head + `selected.verify_command` |
 
 The `receipt_status` object is additive — existing consumers reading `missing_receipts`
 at the top level continue to work unchanged (`schema_version` stays `"0.1"`; additive
