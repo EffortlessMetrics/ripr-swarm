@@ -308,7 +308,7 @@ impl CallArgShape {
 
 /// Splits a call's argument-list text into top-level argument segments, respecting
 /// quotes and nested brackets: `a, g(b, c), d=1` -> `["a", " g(b, c)", " d=1"]`.
-fn split_top_level_args(args: &str) -> Vec<&str> {
+pub(super) fn split_top_level_args(args: &str) -> Vec<&str> {
     let mut segments = Vec::new();
     let mut quote: Option<char> = None;
     let mut escaped = false;
@@ -348,7 +348,7 @@ fn split_top_level_args(args: &str) -> Vec<&str> {
 /// `Some("rate")`), or None when the segment is positional. Guards against
 /// comparison operators (`x == 1`, `a != b`, `n <= 3`) so a positional boolean
 /// expression is not misread as a keyword binding.
-fn call_segment_keyword_name(segment: &str) -> Option<&str> {
+pub(super) fn call_segment_keyword_name(segment: &str) -> Option<&str> {
     let chars: Vec<(usize, char)> = segment.char_indices().collect();
     let mut quote: Option<char> = None;
     let mut escaped = false;
@@ -462,6 +462,22 @@ fn matching_call_paren(text: &str, open_idx: usize) -> Option<usize> {
 /// (`render(...)` but not `obj.render(...)` and not `renderer(...)`). Balanced-paren
 /// aware; skips calls whose parentheses are unbalanced in the captured body text.
 pub(super) fn free_function_call_arglists<'a>(body: &'a str, name: &str) -> Vec<&'a str> {
+    call_arglists_with_offsets(body, name, false)
+        .into_iter()
+        .map(|(_, arglist)| arglist)
+        .collect()
+}
+
+/// Every call to `name` in `body` with the byte offset of its name. With
+/// `method_call` false only direct free calls count (`render(...)`, never
+/// `obj.render(...)`); with `method_call` true only attribute calls count
+/// (`obj.render(...)`, never a bare `render(...)`). Never matches a longer
+/// identifier (`renderer(...)`) or a mention inside a comment or string.
+pub(super) fn call_arglists_with_offsets<'a>(
+    body: &'a str,
+    name: &str,
+    method_call: bool,
+) -> Vec<(usize, &'a str)> {
     let mut arglists = Vec::new();
     if name.is_empty() {
         return arglists;
@@ -471,10 +487,12 @@ pub(super) fn free_function_call_arglists<'a>(body: &'a str, name: &str) -> Vec<
         let name_start = search_from + rel;
         let name_end = name_start + name.len();
         search_from = name_end;
-        // Word boundary before the name: not part of a longer identifier, and not a
-        // method/attribute access (`obj.render`).
-        if let Some(prev) = body[..name_start].chars().next_back()
-            && (prev == '_' || prev == '.' || prev.is_alphanumeric())
+        // Word boundary before the name: not part of a longer identifier. A
+        // preceding `.` is an attribute access, which is the only accepted
+        // form for a method call and a rejected form for a free call.
+        let prev = body[..name_start].chars().next_back();
+        if prev.is_some_and(|prev| prev == '_' || prev.is_alphanumeric())
+            || (prev == Some('.')) != method_call
         {
             continue;
         }
@@ -501,7 +519,7 @@ pub(super) fn free_function_call_arglists<'a>(body: &'a str, name: &str) -> Vec<
         let Some(close_idx) = matching_call_paren(body, open_idx) else {
             continue;
         };
-        arglists.push(&body[open_idx + 1..close_idx]);
+        arglists.push((name_start, &body[open_idx + 1..close_idx]));
         search_from = close_idx + 1;
     }
     arglists
