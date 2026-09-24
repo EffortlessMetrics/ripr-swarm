@@ -355,6 +355,10 @@ server can provide seam-aware code actions:
   for the selected test gap through `ripr.collectContext`.
 - `Write targeted test: copy brief`: copies a plain-language work order for
   adding one focused test from the same seam packet guidance.
+- `Start repair: copy repair command`: copies
+  `ripr agent repair --root . --seam-id <id> --phase before` through
+  `ripr.copyAgentRepairCommand`, the start of a retained repair attempt for
+  the selected seam. It leads the agent-loop actions.
 - `Agent handoff: copy packet command`: copies the `ripr agent packet` command
   for the selected seam.
 - `Agent handoff: copy brief command`: copies the `ripr agent brief --seam-id`
@@ -374,7 +378,15 @@ server can provide seam-aware code actions:
 - `Refresh Analysis - Saved Workspace Check`: asks the LSP server to refresh
   diagnostics with `ripr.refresh`.
 
-The targeted-test, assertion, and related-test actions are conditional.
+The repair-start, targeted-test, assertion, and related-test actions are
+conditional. `Start repair: copy repair command` is shown only when
+`ripr agent repair` would accept the seam: it passes the fail-closed
+repair-packet flip (RIPR-SPEC-0087 §8) and its recommended test file is a test
+surface. Any other seam (for example, one whose oracle path is cross-language
+unresolved, or one whose only related test is an inline `#[cfg(test)]` module
+in the source file) gets no repair start in the action list, hover, or
+evidence-context packet, and the remaining handoff, verify, and receipt
+actions stay as they were.
 `Write targeted test: copy brief` is shown only when the seam has related-test
 context or a concrete assertion suggestion.
 `Write targeted test: copy suggested assertion` is shown only when the seam has

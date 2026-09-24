@@ -312,6 +312,10 @@
         "title": "ripr: Write Targeted Test - Copy Brief"
       },
       {
+        "command": "ripr.copyAgentRepairCommand",
+        "title": "ripr: Start Repair - Copy Repair Command"
+      },
+      {
         "command": "ripr.copyAgentPacketCommand",
         "title": "ripr: Agent Handoff - Copy Packet Command"
       },
