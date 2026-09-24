@@ -2879,6 +2879,14 @@ fn fnv1a_64(bytes: &[u8]) -> u64 {
     hash
 }
 
+/// Best-effort temp-dir teardown for tests. The `io::Result` is matched
+/// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore,
+/// not `let _ =`. Sibling `#[cfg(test)]` modules share this one helper.
+#[cfg(test)]
+fn ignore_remove_dir_all(path: &std::path::Path) {
+    if let Ok(()) = std::fs::remove_dir_all(path) {}
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3002,7 +3010,7 @@ mod tests {
         // a warm hit cannot replay conditional-failure matches and
         // message-sliced pins as live evidence.
         let dir = isolated_dir("gen-guarded-fix-facts");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let file = Path::new("src/guarded.rs");
         let content = "fn t() {
@@ -3047,7 +3055,7 @@ mod tests {
                 ));
             }
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -3100,7 +3108,7 @@ mod tests {
     #[test]
     fn given_no_cache_when_load_runs_then_miss_is_returned() -> Result<(), String> {
         let dir = isolated_dir("cold");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir);
         let key = empty_state().cache_key();
         match cache.load_classified_seams(&key) {
@@ -3113,7 +3121,7 @@ mod tests {
     fn given_unchanged_inputs_when_cache_is_warm_then_classified_seams_are_reused()
     -> Result<(), String> {
         let dir = isolated_dir("warm");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key = empty_state().cache_key();
         let seams = vec![sample_classified()];
@@ -3154,7 +3162,7 @@ mod tests {
             }
             other => Err(format!("expected Hit on warm cache, got {other:?}")),
         };
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         result
     }
 
@@ -3162,7 +3170,7 @@ mod tests {
     fn given_fallback_cache_entry_when_warm_load_runs_then_provenance_is_replayed()
     -> Result<(), String> {
         let dir = isolated_dir("fallback-provenance");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key = empty_state().cache_key();
         let fallback_files = vec![PathBuf::from("src/z.rs"), PathBuf::from("src/a.rs")];
@@ -3190,7 +3198,7 @@ mod tests {
                 "expected fallback provenance cache hit, got {other:?}"
             )),
         };
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         result
     }
 
@@ -3198,7 +3206,7 @@ mod tests {
     fn given_large_classified_entry_when_cache_store_runs_then_shards_are_written()
     -> Result<(), String> {
         let dir = isolated_dir("large-shard");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key = empty_state().cache_key();
         let seams = vec![sample_classified(); 2];
@@ -3235,14 +3243,14 @@ mod tests {
             other => return Err(format!("expected sharded cache hit, got {other:?}")),
         }
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
     #[test]
     fn classified_cache_store_limit_rejects_zero_direct_limit() -> Result<(), String> {
         let dir = isolated_dir("zero-limit");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key = empty_state().cache_key();
         let err =
@@ -3261,7 +3269,7 @@ mod tests {
             "zero direct cache limit should produce positive-limit diagnostic: {err}"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -3308,7 +3316,7 @@ mod tests {
     #[test]
     fn classified_cache_store_limit_can_be_raised_for_large_entries() -> Result<(), String> {
         let dir = isolated_dir("classified-raised-limit");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key = empty_state().cache_key();
         let seams = vec![sample_classified(); 2];
@@ -3326,7 +3334,7 @@ mod tests {
             }
         }
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -3376,7 +3384,7 @@ mod tests {
     #[test]
     fn compact_cache_store_limit_controls_shard_size() -> Result<(), String> {
         let dir = isolated_dir("compact-large-shard");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key = empty_state().cache_key();
         let seams = vec![sample_classified(); 2];
@@ -3395,7 +3403,7 @@ mod tests {
             other => return Err(format!("expected compact sharded cache hit: {other:?}")),
         }
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -3403,7 +3411,7 @@ mod tests {
     fn given_missing_sharded_cache_file_when_loading_then_corrupt_ignored_is_reported()
     -> Result<(), String> {
         let dir = isolated_dir("missing-shard");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key = empty_state().cache_key();
         let seams = vec![sample_classified(); 2];
@@ -3428,14 +3436,14 @@ mod tests {
             }
         }
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
     #[test]
     fn compact_cache_store_limit_can_be_raised_for_large_entries() -> Result<(), String> {
         let dir = isolated_dir("compact-raised-limit");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key = empty_state().cache_key();
         let seams = vec![sample_classified(); 2];
@@ -3453,7 +3461,7 @@ mod tests {
             }
         }
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -3461,7 +3469,7 @@ mod tests {
     fn given_changed_file_content_hash_when_cache_is_loaded_then_old_entry_is_treated_as_miss()
     -> Result<(), String> {
         let dir = isolated_dir("changed");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let path = PathBuf::from("src/foo.rs");
         let original_files = [(path.clone(), b"fn foo() {}\n".to_vec())];
@@ -3501,14 +3509,14 @@ mod tests {
                 "expected Miss after file content change, got {other:?}"
             )),
         };
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         result
     }
 
     #[test]
     fn python_project_marker_presence_changes_cache_identity() -> Result<(), String> {
         let root = isolated_dir("python-project-marker-inputs");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
         let cache_key = || {
             WorkspaceState {
@@ -3550,14 +3558,14 @@ mod tests {
             );
         }
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn python_source_dir_presence_changes_cache_identity() -> Result<(), String> {
         let root = isolated_dir("python-source-dir-inputs");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
         let cache_key = || {
             WorkspaceState {
@@ -3626,14 +3634,14 @@ mod tests {
             "generated and excluded-directory sources never change detection"
         );
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn workspace_manifest_and_lockfile_changes_change_cache_identity() -> Result<(), String> {
         let root = isolated_dir("workspace-inputs");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
         std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n")
             .map_err(|err| format!("write manifest: {err}"))?;
@@ -3673,7 +3681,7 @@ mod tests {
         );
         assert_ne!(baseline.lockfile_hash, updated.lockfile_hash);
         assert_ne!(baseline.filename(), updated.filename());
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
@@ -3753,7 +3761,7 @@ mod tests {
     fn graph_provenance_reports_local_package_and_feature_facts_without_network()
     -> Result<(), String> {
         let root = isolated_dir("graph-provenance");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         std::fs::create_dir_all(root.join("crates/app"))
             .map_err(|err| format!("create workspace: {err}"))?;
         std::fs::write(
@@ -3788,14 +3796,14 @@ mod tests {
         assert_ne!(first.feature_graph_hash, second.feature_graph_hash);
         assert_eq!(first.package_graph_hash, second.package_graph_hash);
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn graph_provenance_names_unavailable_or_malformed_manifests() -> Result<(), String> {
         let root = isolated_dir("graph-provenance-limited");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
         let missing = workspace_graph_provenance(&root);
         assert_eq!(missing.package_graph_status, "unavailable");
@@ -3809,7 +3817,7 @@ mod tests {
         assert!(malformed.package_graph_detail.is_some());
         assert!(malformed.feature_graph_detail.is_some());
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
@@ -3846,7 +3854,7 @@ mod tests {
     #[test]
     fn path_dependency_edges_capture_package_dev_and_build_sections() -> Result<(), String> {
         let root = isolated_dir("path-dep-sections");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -3886,14 +3894,14 @@ mod tests {
         }
         assert!(provenance.path_dependency_limitations.is_empty());
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn path_dependency_edges_resolve_workspace_inherited_dependencies() -> Result<(), String> {
         let root = isolated_dir("path-dep-workspace-inherit");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -3942,7 +3950,7 @@ mod tests {
         // inheritance, not a path edge.
         assert!(edges.iter().all(|edge| edge.dependency_name != "registry"));
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
@@ -3965,7 +3973,7 @@ mod tests {
     #[test]
     fn path_dependency_edges_capture_target_specific_sections() -> Result<(), String> {
         let root = isolated_dir("path-dep-target-specific");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -3999,7 +4007,7 @@ mod tests {
             assert_eq!(edge.resolution, PathDependencyResolution::Resolved);
         }
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
@@ -4007,7 +4015,7 @@ mod tests {
     fn path_dependency_edges_keep_governed_forms_distinct_and_deterministic() -> Result<(), String>
     {
         let root = isolated_dir("path-dep-governed-forms");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -4049,14 +4057,14 @@ mod tests {
         assert_eq!(edges[1].section, PathDependencySection::DevDependencies);
         assert_eq!(edges[1].source, PathDependencySource::WorkspaceInherited);
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn path_dependency_edges_normalize_separators_spaces_and_non_ascii() -> Result<(), String> {
         let root = isolated_dir("path-dep-portable-identity");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(&root, "Cargo.toml", "[workspace]\nmembers = []\n")?;
         write_manifest(
             &root,
@@ -4101,7 +4109,7 @@ mod tests {
         assert_eq!(edges[0].declared_path.as_deref(), Some("../shared"));
         assert_eq!(edges[1].declared_path.as_deref(), Some("..\\shared"));
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
@@ -4111,7 +4119,7 @@ mod tests {
         // producer classifies it TargetMissing so it never becomes a
         // manifest node downstream (#3613 review).
         let root = isolated_dir("path-dep-manifest-less-target");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(&root, "Cargo.toml", "[workspace]\nmembers = []\n")?;
         write_manifest(
             &root,
@@ -4130,7 +4138,7 @@ mod tests {
             "a directory without Cargo.toml must not count as resolved: {edges:?}"
         );
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
@@ -4148,7 +4156,7 @@ mod tests {
     #[test]
     fn path_dependency_edges_keep_absolute_paths_explicit() -> Result<(), String> {
         let root = isolated_dir("path-dep-absolute");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -4200,14 +4208,14 @@ mod tests {
             Some(windows_path.as_str())
         );
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn path_dependency_edges_mark_outside_workspace_and_missing_targets() -> Result<(), String> {
         let root = isolated_dir("path-dep-resolution-status");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -4234,14 +4242,14 @@ mod tests {
             PathDependencyResolution::ResolvedOutsideWorkspace
         );
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn path_dependency_edges_preserve_cycles() -> Result<(), String> {
         let root = isolated_dir("path-dep-cycle");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -4270,7 +4278,7 @@ mod tests {
             edge.resolution == PathDependencyResolution::Resolved && edge.resolved_path.is_some()
         }));
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
@@ -4280,7 +4288,7 @@ mod tests {
     {
         use std::os::unix::ffi::OsStrExt;
         let root = isolated_dir("path-dep-non-utf8");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(&root, "Cargo.toml", "[workspace]\nmembers = []\n")?;
         let bad_dir = root.join(std::ffi::OsStr::from_bytes(b"bad\xffdir"));
         std::fs::create_dir_all(&bad_dir).map_err(|err| format!("create bad dir: {err}"))?;
@@ -4315,14 +4323,14 @@ mod tests {
         assert!(limitation.manifest.is_empty());
         assert!(limitation.detail.contains("non-UTF-8"));
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn package_graph_hash_excludes_path_dependency_edges() -> Result<(), String> {
         let root = isolated_dir("path-dep-hash-exclusion");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -4376,14 +4384,14 @@ mod tests {
         assert_eq!(second.package_graph_hash, third.package_graph_hash);
         assert_eq!(third.path_dependency_edges.len(), 2);
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn path_dependency_edges_ignore_registry_string_and_table_forms() -> Result<(), String> {
         let root = isolated_dir("path-dep-registry-forms");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -4404,14 +4412,14 @@ mod tests {
         );
         assert!(provenance.path_dependency_limitations.is_empty());
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn path_dependency_edges_workspace_inherited_boundary_statuses() -> Result<(), String> {
         let root = isolated_dir("path-dep-inherited-boundaries");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -4456,14 +4464,14 @@ mod tests {
         }
         assert!(provenance.path_dependency_limitations.is_empty());
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn path_dependency_edges_workspace_true_without_workspace_authority() -> Result<(), String> {
         let root = isolated_dir("path-dep-no-authority");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         // No `[workspace]` table anywhere: the ancestor walk must terminate at
         // the scan root instead of fabricating an authority.
         write_manifest(
@@ -4485,14 +4493,14 @@ mod tests {
         assert_eq!(edges[0].resolved_path, None);
         assert!(provenance.path_dependency_limitations.is_empty());
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn path_dependency_edges_treat_path_plus_workspace_as_invalid() -> Result<(), String> {
         let root = isolated_dir("path-dep-invalid-declaration");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -4533,14 +4541,14 @@ mod tests {
         assert_eq!(edges[1].dependency_name, "other");
         assert!(provenance.path_dependency_limitations.is_empty());
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
     #[test]
     fn path_dependency_edges_flag_unfollowed_workspace_redirect() -> Result<(), String> {
         let root = isolated_dir("path-dep-workspace-redirect");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         // The nearest ancestor workspace root has no `[workspace.dependencies]`
         // entry for `shared`; the redirect target does. Not following the
         // redirect must be a typed limitation, not a silent miss.
@@ -4588,7 +4596,7 @@ mod tests {
         );
         assert!(limitations[0].detail.contains("../../other-root"));
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
@@ -4596,7 +4604,7 @@ mod tests {
     fn path_dependency_edges_cover_target_dev_dependencies_and_skip_malformed_target_tables()
     -> Result<(), String> {
         let root = isolated_dir("path-dep-target-boundaries");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -4631,7 +4639,7 @@ mod tests {
         assert_eq!(edges[0].resolution, PathDependencyResolution::Resolved);
         assert!(provenance.path_dependency_limitations.is_empty());
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
@@ -4664,7 +4672,7 @@ mod tests {
         }
 
         let root = isolated_dir("path-dep-cargo-differential");
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         write_manifest(
             &root,
             "Cargo.toml",
@@ -4804,7 +4812,7 @@ mod tests {
         }
         assert!(provenance.path_dependency_limitations.is_empty());
 
-        let _ = std::fs::remove_dir_all(&root);
+        ignore_remove_dir_all(&root);
         Ok(())
     }
 
@@ -4924,7 +4932,7 @@ mod tests {
     fn given_corrupt_cache_entry_when_loading_then_corrupt_ignored_is_reported_without_failing()
     -> Result<(), String> {
         let dir = isolated_dir("corrupt");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key = empty_state().cache_key();
@@ -4945,7 +4953,7 @@ mod tests {
                 "expected CorruptIgnored on bad json, got {other:?}"
             )),
         };
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         result
     }
 
@@ -4953,7 +4961,7 @@ mod tests {
     fn given_envelope_key_mismatch_when_loading_then_miss_is_returned_without_failing()
     -> Result<(), String> {
         let dir = isolated_dir("keymismatch");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key_a = WorkspaceState {
             cfg_features: Some("a"),
@@ -4986,7 +4994,7 @@ mod tests {
                 "expected Miss when envelope key mismatches request, got {other:?}"
             )),
         };
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         result
     }
 
@@ -4994,7 +5002,7 @@ mod tests {
     fn given_file_facts_cached_when_loading_same_file_bytes_then_hit_is_returned()
     -> Result<(), String> {
         let dir = isolated_dir("file-facts-warm");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let path = PathBuf::from("src/lib.rs");
         let key = RepoFileFactCacheKey::new(&path, b"pub fn cached() {}\n");
@@ -5018,7 +5026,7 @@ mod tests {
             }
             other => Err(format!("expected file fact cache hit, got {other:?}")),
         };
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         result
     }
 
@@ -5026,7 +5034,7 @@ mod tests {
     fn given_file_content_changes_when_file_facts_load_then_miss_is_returned() -> Result<(), String>
     {
         let dir = isolated_dir("file-facts-invalidates");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let path = PathBuf::from("src/lib.rs");
         let original_key = RepoFileFactCacheKey::new(&path, b"pub fn cached() -> i32 { 1 }\n");
@@ -5050,7 +5058,7 @@ mod tests {
                 "expected Miss after file content change, got {other:?}"
             )),
         };
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         result
     }
 
@@ -5077,7 +5085,7 @@ mod tests {
         // Deterministic cross-platform store failure: the cache dir sits
         // under a regular file, so directory creation cannot succeed.
         let dir = isolated_dir("store-failure-row");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|err| format!("fixture setup failed: {err}"))?;
         let blocker = dir.join("blocker");
         std::fs::write(&blocker, b"not a directory")
@@ -5111,7 +5119,7 @@ mod tests {
             "row must carry the error text: {row:?}"
         );
         assert!(stats.status_label().ends_with("store_errors_1"));
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -5217,7 +5225,7 @@ mod tests {
     #[test]
     fn cache_envelope_with_limit_info_round_trips() -> Result<(), String> {
         let dir = isolated_dir("envelope-limit-info");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key = empty_state().cache_key();
         let seams = vec![sample_classified()];
@@ -5272,7 +5280,7 @@ mod tests {
             }
             other => Err(format!("expected Hit with limit_info, got {other:?}")),
         };
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         result
     }
 
@@ -5281,7 +5289,7 @@ mod tests {
         // Simulate a pre-Slice-B cache file (no `seam_limit_info` field):
         // it should deserialize cleanly with seam_limit_info = None.
         let dir = isolated_dir("envelope-compat");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key = empty_state().cache_key();
         let seams = vec![sample_classified()];
@@ -5320,14 +5328,14 @@ mod tests {
             }
             other => Err(format!("expected Hit on compat cache entry, got {other:?}")),
         };
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         result
     }
 
     #[test]
     fn complete_run_stores_none_limit_info_in_envelope() -> Result<(), String> {
         let dir = isolated_dir("envelope-complete");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let key = empty_state().cache_key();
         let seams = vec![sample_classified()];
@@ -5349,7 +5357,7 @@ mod tests {
             )),
             other => Err(format!("expected Hit on complete cache, got {other:?}")),
         };
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         result
     }
 
@@ -5392,7 +5400,7 @@ mod tests {
     #[test]
     fn corpus_fingerprint_is_stable_for_unchanged_files() -> Result<(), String> {
         let dir = isolated_dir("fingerprint-stable");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let a = write_corpus_file(&dir, "src/a.rs", "pub fn a() -> i32 { 1 }\n")?;
         let b = write_corpus_file(&dir, "src/b.rs", "pub fn b() -> i32 { 2 }\n")?;
 
@@ -5413,7 +5421,7 @@ mod tests {
             "#3848: with no content-change witness no signature may be produced at all"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -5426,7 +5434,7 @@ mod tests {
     #[test]
     fn corpus_fingerprint_changes_with_size_or_mtime_or_path_set() -> Result<(), String> {
         let dir = isolated_dir("fingerprint-drift");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let a = write_corpus_file(&dir, "src/a.rs", "pub fn a() -> i32 { 1 }\n")?;
         let baseline = corpus_fingerprint(&dir, std::slice::from_ref(&a))
             .ok_or("baseline fingerprint should compute")?;
@@ -5486,7 +5494,7 @@ mod tests {
             "adding a file must change the fingerprint"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -5498,7 +5506,7 @@ mod tests {
     #[test]
     fn corpus_fingerprint_unix_ctime_invalidates_mtime_preserving_rewrite() -> Result<(), String> {
         let dir = isolated_dir("fingerprint-ctime");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let a = write_corpus_file(&dir, "src/a.rs", "pub fn a() -> i32 { 1 }\n")?;
         let baseline = corpus_fingerprint(&dir, std::slice::from_ref(&a))
             .ok_or("baseline fingerprint should compute")?;
@@ -5528,7 +5536,7 @@ mod tests {
             "unix ctime must invalidate the fingerprint on a same-size rewrite with restored mtime"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -5545,7 +5553,7 @@ mod tests {
     #[test]
     fn corpus_fingerprint_is_none_without_a_content_change_witness() -> Result<(), String> {
         let dir = isolated_dir("fingerprint-no-witness");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let a = write_corpus_file(&dir, "src/a.rs", "pub fn a() -> i32 { 1 }\n")?;
 
         // The corpus is ordinary and fully stat-able: every `None` below is
@@ -5594,14 +5602,14 @@ mod tests {
             "#3848: the same-length mtime-restoring edit must not reproduce a reusable signature"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
     #[test]
     fn corpus_fingerprint_returns_none_when_a_file_cannot_be_statted() -> Result<(), String> {
         let dir = isolated_dir("fingerprint-missing");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
         let missing = PathBuf::from("src/missing.rs");
         assert_eq!(
@@ -5609,14 +5617,14 @@ mod tests {
             None,
             "an un-stat-able file must degrade to None, not a fabricated fingerprint"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
     #[test]
     fn fingerprint_cache_roundtrip_returns_stored_hash() -> Result<(), String> {
         let dir = isolated_dir("fingerprint-roundtrip");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let root = Path::new("/repo");
         let cache = RepoCorpusFingerprintCache::at_dir(dir.clone());
         cache
@@ -5639,14 +5647,14 @@ mod tests {
             "an entry from a different workspace root must miss"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
     #[test]
     fn fingerprint_cache_store_is_atomic_and_leaves_no_temp_file() -> Result<(), String> {
         let dir = isolated_dir("fingerprint-atomic");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let root = Path::new("/repo");
         let cache = RepoCorpusFingerprintCache::at_dir(dir.clone());
         cache
@@ -5673,14 +5681,14 @@ mod tests {
             "the atomic overwrite must surface the latest mapping"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
     #[test]
     fn fingerprint_cache_lookup_ignores_corrupt_entry() -> Result<(), String> {
         let dir = isolated_dir("fingerprint-corrupt");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
         std::fs::write(dir.join("0123456789abcdef.json"), b"{not valid json")
             .map_err(|err| format!("write corrupt entry: {err}"))?;
@@ -5690,14 +5698,14 @@ mod tests {
             None,
             "a corrupt entry must degrade to a conservative miss"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
     #[test]
     fn fingerprint_rebuilt_key_is_byte_identical_to_freshly_computed_key() -> Result<(), String> {
         let dir = isolated_dir("fingerprint-key-parity");
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         let a = write_corpus_file(&dir, "src/a.rs", "pub fn a() -> i32 { 1 }\n")?;
         let b = write_corpus_file(&dir, "tests/b.rs", "#[test] fn t() {}\n")?;
         let files: Vec<(PathBuf, Vec<u8>)> = [a.clone(), b.clone()]
@@ -5748,7 +5756,7 @@ mod tests {
         );
         assert_eq!(fresh_key.filename(), rebuilt_key.filename());
 
-        let _ = std::fs::remove_dir_all(&dir);
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 }
@@ -5781,7 +5789,7 @@ mod generation_transition_tests {
         // generation cannot return it — even if the file were copied into
         // the current directory, the embedded key identity mismatches.
         let dir = isolated_dir("gen-file-fact");
-        let _ = std::fs::remove_dir_all(&dir);
+        super::ignore_remove_dir_all(&dir);
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let file = Path::new("src/labels.rs");
         let content = cfg_test_helper_source().as_bytes().to_vec();
@@ -5839,7 +5847,7 @@ mod generation_transition_tests {
                 ));
             }
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        super::ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -5856,7 +5864,7 @@ mod generation_transition_tests {
         // key, or warm workspaces would replay pre-#3727 shadow
         // classification indefinitely.
         let dir = isolated_dir("gen-shadow-facts-classified");
-        let _ = std::fs::remove_dir_all(&dir);
+        super::ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let previous_key = RepoSeamCacheKey {
             schema_version: "1.11".to_string(),
@@ -5902,7 +5910,7 @@ mod generation_transition_tests {
                 ));
             }
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        super::ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -5914,7 +5922,7 @@ mod generation_transition_tests {
         // generation (pre-masking) must miss the current generation's key
         // with identical identity fields.
         let dir = isolated_dir("gen-masked-facts");
-        let _ = std::fs::remove_dir_all(&dir);
+        super::ignore_remove_dir_all(&dir);
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let file = Path::new("src/commented.rs");
         let content = "fn check() {\n    /* other_call(9); */\n    live_call(3);\n}\n"
@@ -5950,7 +5958,7 @@ mod generation_transition_tests {
                 ));
             }
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        super::ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -5960,7 +5968,7 @@ mod generation_transition_tests {
         // indexer, warm-load the same identity, and prove the #3273/#3286
         // semantics survive as a genuine cache hit.
         let dir = isolated_dir("gen-cold-warm");
-        let _ = std::fs::remove_dir_all(&dir);
+        super::ignore_remove_dir_all(&dir);
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let file = Path::new("src/labels.rs");
         let source = cfg_test_helper_source();
@@ -5998,7 +6006,7 @@ mod generation_transition_tests {
                 .any(|test| test.name == "helper_reaches_device_labels"),
             "warm hit keeps the real test as an executable selector"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        super::ignore_remove_dir_all(&dir);
         Ok(())
     }
 
@@ -6022,7 +6030,13 @@ mod generation_transition_tests {
             full.sharded_dir
         );
         let mut outer = full.sharded_dir.ancestors();
-        let _ = outer.next();
+        // `ancestors()` yields the path itself first. Use that step so the
+        // `#[must_use]` `Option` is not discarded with `let _ =`.
+        let skipped_self = outer.next();
+        assert!(
+            skipped_self.is_some(),
+            "ancestors() yields the sharded dir itself before its parents"
+        );
         assert!(
             outer
                 .next()
@@ -6054,7 +6068,8 @@ mod generation_transition_tests {
         let digest = <sha2::Sha256 as sha2::Digest>::digest(content);
         let mut hex = String::with_capacity(digest.len() * 2);
         for byte in digest {
-            let _ = write!(hex, "{byte:02x}");
+            let wrote = write!(hex, "{byte:02x}");
+            assert!(wrote.is_ok(), "writing hex into a String is infallible");
         }
         hex
     }

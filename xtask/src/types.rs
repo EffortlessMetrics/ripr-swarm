@@ -172,6 +172,18 @@ pub(crate) struct MarkdownLink {
     pub(crate) target: String,
 }
 
+/// The repository-local halves of a Markdown link target.
+///
+/// A link may name a document, a heading inside the document that contains the
+/// link, or both, so each half is optional and at least one is always present.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LocalMarkdownTarget {
+    /// The document the link names, or `None` when it points into its own.
+    pub(crate) path: Option<String>,
+    /// The `#fragment` the link names, or `None` when it names no heading.
+    pub(crate) fragment: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TestOracleClass {
     Strong,

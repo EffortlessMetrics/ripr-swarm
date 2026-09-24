@@ -64,6 +64,14 @@ pub(crate) const POWERSHELL_UNAVAILABLE_DISCLOSURE: &str =
 ///   block — so in a composed fence a failed snapshot stops the sequence
 ///   before its outcome command — while leaving an interactive session open
 ///   where `exit` would close it (PR #3625 follow-up review).
+/// - The captured text is normalized back to LF before the write:
+///   `Out-String` reflows producer stdout to CRLF line endings, which
+///   rewrote every byte of a pasted snapshot and broke `agent verify`
+///   content commitments (issue #3966). Producers emit LF-only stdout, so
+///   collapsing CRLF pairs restores the exact producer bytes the
+///   commitment was computed over; the write then preserves them with
+///   BOM-free UTF-8. A producer emitting raw CR bytes would need a
+///   different transport — none exists on main.
 ///
 /// cmd.exe has no translation: it has no quoting form that keeps an argv token
 /// literal, so a generated command is deliberately not offered for it. This
@@ -82,7 +90,7 @@ pub(crate) fn powershell_command(command: &str) -> Option<String> {
         let invocation = command[..index].trim_end();
         let output = powershell_literal(command[index + 1..].trim());
         return Some(format!(
-            "$ripr = (({invocation}) | Out-String); if ($LASTEXITCODE -eq 0) {{ [System.IO.File]::WriteAllText({output}, $ripr, [System.Text.UTF8Encoding]::new($false)) }} else {{ throw \"ripr exited with code $LASTEXITCODE\" }}"
+            "$ripr = (({invocation}) | Out-String); if ($LASTEXITCODE -eq 0) {{ [System.IO.File]::WriteAllText({output}, $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) }} else {{ throw \"ripr exited with code $LASTEXITCODE\" }}"
         ));
     }
     Some(command)
@@ -238,7 +246,7 @@ mod tests {
         );
         assert_eq!(
             powershell_command("ripr check --root 'café' > 'résumé.json'"),
-            Some("$ripr = ((ripr check --root 'café') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$ripr = ((ripr check --root 'café') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -258,7 +266,7 @@ mod tests {
     fn powershell_command_finds_real_redirect_after_double_quoted_argument() {
         assert_eq!(
             powershell_command("ripr check --root \"café > owner's repo\" > 'résumé.json'"),
-            Some("$ripr = ((ripr check --root \"café > owner's repo\") | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$ripr = ((ripr check --root \"café > owner's repo\") | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -266,7 +274,7 @@ mod tests {
     fn powershell_command_keeps_double_quote_literal_inside_single_quotes() {
         assert_eq!(
             powershell_command("cargo test 'a \" > b' > evidence.txt"),
-            Some("$ripr = ((cargo test 'a \" > b') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('evidence.txt', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$ripr = ((cargo test 'a \" > b') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('evidence.txt', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -312,7 +320,7 @@ mod tests {
             powershell_command(
                 "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json"
             ),
-            Some("$ripr = ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/pilot/after.repo-exposure.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$ripr = ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/pilot/after.repo-exposure.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -323,11 +331,11 @@ mod tests {
     fn powershell_command_redirect_target_escapes_embedded_quotes() {
         assert_eq!(
             powershell_command("ripr check --root . > it's.json"),
-            Some("$ripr = ((ripr check --root .) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('it''s.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$ripr = ((ripr check --root .) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('it''s.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
         assert_eq!(
             powershell_command("ripr check --root . > 'it'\\''s.json'"),
-            Some("$ripr = ((ripr check --root .) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('it''s.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$ripr = ((ripr check --root .) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('it''s.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -352,7 +360,7 @@ mod tests {
         // branch throws with the invocation's exit status instead of exiting.
         assert!(
             line.contains(
-                "if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }"
+                "if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) }"
             ),
             "write must be guarded by the success branch:\n{line}"
         );
@@ -369,6 +377,25 @@ mod tests {
                 || line.contains("if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText("),
             "no unguarded WriteAllText may appear:\n{line}"
         );
+        Ok(())
+    }
+
+    /// The redirect write must restore LF bytes before writing (issue #3966):
+    /// `Out-String` reflows captured producer stdout to CRLF, which rewrote
+    /// every byte of a pasted snapshot and broke `agent verify` content
+    /// commitments, while the bash `>` form preserves bytes. Producers emit
+    /// LF-only stdout, so collapsing CRLF pairs restores the exact producer
+    /// bytes. String-pinned here; the executed proof lives in the #3937
+    /// native PowerShell packet (V1 row on the fixed template).
+    #[test]
+    fn powershell_command_redirect_write_restores_lf_bytes() -> Result<(), String> {
+        let line = powershell_command("ripr check --root . --json > out.json")
+            .ok_or_else(|| "simple redirect must translate".to_string())?;
+        if !line.contains("$ripr.Replace(\"`r`n\", \"`n\")") {
+            return Err(format!(
+                "redirect write must collapse Out-String CRLF reflow back to LF:\n{line}"
+            ));
+        }
         Ok(())
     }
 
@@ -456,7 +483,7 @@ mod tests {
     fn powershell_command_keeps_redirect_after_quoted_newline() {
         assert_eq!(
             powershell_command("ripr check --root 'café\nrepo' > 'résumé.json'"),
-            Some("$ripr = ((ripr check --root 'café\nrepo') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$ripr = ((ripr check --root 'café\nrepo') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 }
