@@ -18,7 +18,7 @@
       "id": "review_comments",
       "label": "PR repair cards",
       "path": "target/ripr/review/comments.json",
-      "regeneration_command": "ripr review-comments --root fixtures/first_successful_pr/blocked-ledger --base origin/main --head HEAD --gap-ledger inputs/reports/gap-decision-ledger.json --out target/ripr/review/comments.json",
+      "regeneration_command": "ripr review-comments --root fixtures/first_successful_pr/blocked-ledger --base origin/main --head HEAD --out target/ripr/review/comments.json",
       "status": "missing"
     },
     {
