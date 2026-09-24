@@ -164,19 +164,27 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
 /// concise generic action.
 fn actionable_repair_route(packet: Option<&GapRecord>) -> String {
     if let Some(route) = packet.and_then(|record| record.repair_route.as_ref()) {
-        if let Some(shape) = route.assertion_shape.as_deref().filter(|s| !s.is_empty()) {
-            return format!(
-                "add or strengthen the focused assertion `{shape}` in the related test"
-            );
-        }
+        // The missing discriminator names what the new assertion must pin,
+        // so it leads. The previous wording ("add or strengthen the focused
+        // assertion `<shape>`") read as an instruction to keep an assertion
+        // that, by construction of a weakly-exposed packet, does not pin it.
+        // The projected shape is only built when a discriminator exists.
         if let Some(disc) = route
             .missing_discriminator
             .as_deref()
             .filter(|d| !d.is_empty())
         {
-            return format!(
-                "add a focused assertion for the missing discriminator `{disc}` in the related test"
-            );
+            return match route.assertion_shape.as_deref().filter(|s| !s.is_empty()) {
+                Some(shape) => format!(
+                    "add a focused assertion for the missing discriminator `{disc}` in the related test, shaped like `{shape}`"
+                ),
+                None => format!(
+                    "add a focused assertion for the missing discriminator `{disc}` in the related test"
+                ),
+            };
+        }
+        if let Some(shape) = route.assertion_shape.as_deref().filter(|s| !s.is_empty()) {
+            return format!("add the focused assertion `{shape}` in the related test");
         }
     }
     "add or strengthen a focused assertion in the related test to cover the changed behavior"
@@ -383,6 +391,27 @@ mod tests {
         );
     }
 
+    /// The discriminator leads: the borrowed assertion shape is only the
+    /// call pattern, and the old "add or strengthen `<shape>`" wording told
+    /// users to keep an assertion that does not pin the change.
+    #[test]
+    fn actionable_repair_route_leads_with_the_missing_discriminator() {
+        let record = GapRecord {
+            repair_route: Some(GapRepairRoute {
+                assertion_shape: Some("expect(parseLimit('x')).toThrow(expected)".to_string()),
+                missing_discriminator: Some(
+                    "throws TypeError matching 'invalid limit'".to_string(),
+                ),
+                ..GapRepairRoute::default()
+            }),
+            ..GapRecord::default()
+        };
+        assert_eq!(
+            actionable_repair_route(Some(&record)),
+            "add a focused assertion for the missing discriminator `throws TypeError matching 'invalid limit'` in the related test, shaped like `expect(parseLimit('x')).toThrow(expected)`"
+        );
+    }
+
     #[test]
     fn actionable_repair_route_falls_back_to_discriminator_then_generic() {
         let record = GapRecord {
@@ -524,7 +553,9 @@ mod tests {
         assert!(
             projected
                 .iter()
-                .any(|line| line.starts_with("repair_action: add or strengthen")),
+                .any(|line| line.starts_with(
+                    "repair_action: add a focused assertion for the missing discriminator `amount == threshold`"
+                )),
             "{projected:?}"
         );
         assert!(

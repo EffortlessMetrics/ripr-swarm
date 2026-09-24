@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod incremental_edit_tests;
+
 use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
 use super::model::{RustIndex, WorkspaceRootAuthority};
 use crate::analysis::cancellation;
@@ -44,10 +47,27 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
 ) -> Result<CachedRustIndex, String> {
     let cache = RepoFileFactCache::at(root);
-    let known_cached_file_paths: HashSet<PathBuf> = cache.known_file_paths();
+    build_index_with_file_fact_cache(root, files, adapter, fallback, &cache, || {
+        cache.known_file_paths()
+    })
+}
+
+fn build_index_with_file_fact_cache(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    adapter: &(dyn RustSyntaxAdapter + Send + Sync),
+    fallback: &(dyn RustSyntaxAdapter + Send + Sync),
+    cache: &RepoFileFactCache,
+    mut load_known_file_paths: impl FnMut() -> HashSet<PathBuf>,
+) -> Result<CachedRustIndex, String> {
+    // Only genuine misses need historical paths for invalidation attribution.
+    // All-hit, corrupt-only, empty, and already-cancelled builds must not walk
+    // and decode the entire cache directory just to discard the inventory.
+    // Initialize once during lookup, before this build parses or stores facts.
+    let mut known_cached_file_paths: Option<HashSet<PathBuf>> = None;
     let mut stats = FileFactCacheStats::default();
 
-    // Phase 1 (sequential, cheap): cache lookups decide which files need a
+    // Phase 1 (sequential): cache lookups decide which files need a
     // fresh parse. Hit/miss/invalidation stats and the corrupt-entry stderr
     // ordering stay byte-identical to the sequential loop.
     enum Pending {
@@ -65,7 +85,10 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
             }
             CacheLoad::Miss => {
                 stats.misses += 1;
-                if known_cached_file_paths.contains(file) {
+                if known_cached_file_paths
+                    .get_or_insert_with(&mut load_known_file_paths)
+                    .contains(file)
+                {
                     stats.invalidated_files.insert(file.clone());
                 }
                 pending.push(Pending::Parse { key });
@@ -266,6 +289,7 @@ fn insert_file_summary(index: &mut RustIndex, file: PathBuf, summary: super::Fil
 mod tests {
     use super::*;
     use crate::analysis::syntax::{SyntaxNodeFact, TextRange};
+    use std::cell::Cell;
     use std::error::Error;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -583,6 +607,260 @@ pub fn check(x: i32) -> bool {
                 .get(&file)
                 .is_some_and(|facts| facts.source.contains("{ 2 }"))
         );
+        Ok(())
+    }
+
+    struct CacheInventoryFixture {
+        root: PathBuf,
+        cache: RepoFileFactCache,
+    }
+
+    impl CacheInventoryFixture {
+        fn new(name: &str) -> Result<Self, Box<dyn Error>> {
+            let root = temp_dir(name)?;
+            let fixture = Self {
+                cache: RepoFileFactCache::at_dir(root.join("cache")),
+                root,
+            };
+            fs::create_dir_all(fixture.root.join("src"))?;
+            write_manifest(&fixture.root)?;
+            Ok(fixture)
+        }
+    }
+
+    impl Drop for CacheInventoryFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn cache_inventory_skips_warm_build_and_preserves_index() -> Result<(), Box<dyn Error>> {
+        let fixture = CacheInventoryFixture::new("cache_inventory_warm")?;
+        let file = PathBuf::from("src/lib.rs");
+        let first = [(file.clone(), b"pub fn value() -> i32 { 1 }\n".to_vec())];
+        let current = [(file, b"pub fn value() -> i32 { 2 }\n".to_vec())];
+        let inventory_reads = Cell::new(0);
+        let inventory = || {
+            inventory_reads.set(inventory_reads.get() + 1);
+            fixture.cache.known_file_paths()
+        };
+        let _ = build_index_with_file_fact_cache(
+            &fixture.root,
+            &first,
+            &RaRustSyntaxAdapter,
+            &LexicalRustSyntaxAdapter,
+            &fixture.cache,
+            inventory,
+        )?;
+        let cold = build_index_with_file_fact_cache(
+            &fixture.root,
+            &current,
+            &RaRustSyntaxAdapter,
+            &LexicalRustSyntaxAdapter,
+            &fixture.cache,
+            inventory,
+        )?;
+        assert_eq!(cold.file_fact_cache.misses, 1);
+        assert_eq!(cold.file_fact_cache.stores, 1);
+        let entries = fs::read_dir(fixture.root.join("cache"))?.collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(entries.len(), 2);
+
+        inventory_reads.set(0);
+        let warm = build_index_with_file_fact_cache(
+            &fixture.root,
+            &current,
+            &RaRustSyntaxAdapter,
+            &LexicalRustSyntaxAdapter,
+            &fixture.cache,
+            inventory,
+        )?;
+        assert_eq!(
+            inventory_reads.get(),
+            0,
+            "all-hit builds must not scan history"
+        );
+        assert_eq!(warm.file_fact_cache.hits, 1);
+        assert_eq!(warm.file_fact_cache.misses, 0);
+        assert_eq!(warm.file_fact_cache.corrupt_ignored, 0);
+        assert_eq!(warm.file_fact_cache.stores, 0);
+        assert_eq!(warm.file_fact_cache.store_errors, 0);
+        assert!(warm.file_fact_cache.invalidated_files.is_empty());
+        assert_eq!(warm.index.files, cold.index.files);
+        assert_eq!(warm.index.functions, cold.index.functions);
+        assert_eq!(warm.index.tests, cold.index.tests);
+        Ok(())
+    }
+
+    #[test]
+    fn cache_inventory_takes_one_pre_store_snapshot_for_misses() -> Result<(), Box<dyn Error>> {
+        let fixture = CacheInventoryFixture::new("cache_inventory_misses")?;
+        let a = PathBuf::from("src/a.rs");
+        let b = PathBuf::from("src/b.rs");
+        let unchanged = PathBuf::from("src/unchanged.rs");
+        let new_file = PathBuf::from("src/new.rs");
+        let first = [
+            (a.clone(), b"pub fn a() -> i32 { 1 }\n".to_vec()),
+            (b.clone(), b"pub fn b() -> i32 { 1 }\n".to_vec()),
+            (unchanged.clone(), b"pub fn unchanged() {}\n".to_vec()),
+        ];
+        let _ = build_index_with_file_fact_cache(
+            &fixture.root,
+            &first,
+            &RaRustSyntaxAdapter,
+            &LexicalRustSyntaxAdapter,
+            &fixture.cache,
+            || fixture.cache.known_file_paths(),
+        )?;
+        let current = [
+            (new_file.clone(), b"pub fn new_file() {}\n".to_vec()),
+            (a.clone(), b"pub fn a() -> i32 { 2 }\n".to_vec()),
+            (b.clone(), b"pub fn b() -> i32 { 2 }\n".to_vec()),
+            (unchanged, b"pub fn unchanged() {}\n".to_vec()),
+        ];
+        let inventory_reads = Cell::new(0);
+        let changed = build_index_with_file_fact_cache(
+            &fixture.root,
+            &current,
+            &RaRustSyntaxAdapter,
+            &LexicalRustSyntaxAdapter,
+            &fixture.cache,
+            || {
+                inventory_reads.set(inventory_reads.get() + 1);
+                let paths = fixture.cache.known_file_paths();
+                assert!(
+                    !paths.contains(&new_file),
+                    "the snapshot must precede stores from this build"
+                );
+                paths
+            },
+        )?;
+        assert_eq!(inventory_reads.get(), 1, "misses must share one snapshot");
+        assert_eq!(changed.file_fact_cache.hits, 1);
+        assert_eq!(changed.file_fact_cache.misses, 3);
+        assert_eq!(changed.file_fact_cache.stores, 3);
+        assert_eq!(changed.file_fact_cache.corrupt_ignored, 0);
+        assert_eq!(changed.file_fact_cache.store_errors, 0);
+        assert_eq!(
+            changed.file_fact_cache.invalidated_files,
+            [a, b].into_iter().collect()
+        );
+        assert!(
+            !changed
+                .file_fact_cache
+                .invalidated_files
+                .contains(&new_file)
+        );
+        assert_eq!(changed.index.files.len(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn cache_inventory_skips_corrupt_only_build() -> Result<(), Box<dyn Error>> {
+        let fixture = CacheInventoryFixture::new("cache_inventory_corrupt")?;
+        let file = PathBuf::from("src/lib.rs");
+        let bytes = b"pub fn cached() -> i32 { 1 }\n".to_vec();
+        let key = RepoFileFactCacheKey::new(&file, &bytes);
+        let files = [(file, bytes)];
+        let cold = build_index_with_file_fact_cache(
+            &fixture.root,
+            &files,
+            &RaRustSyntaxAdapter,
+            &LexicalRustSyntaxAdapter,
+            &fixture.cache,
+            || fixture.cache.known_file_paths(),
+        )?;
+        let entry = fs::read_dir(fixture.root.join("cache"))?
+            .next()
+            .ok_or("missing seeded cache entry")??
+            .path();
+        fs::write(entry, b"not a valid cache envelope")?;
+        assert!(matches!(
+            fixture.cache.load_file_facts(&key),
+            CacheLoad::CorruptIgnored { .. }
+        ));
+        let inventory_reads = Cell::new(0);
+        let recovered = build_index_with_file_fact_cache(
+            &fixture.root,
+            &files,
+            &RaRustSyntaxAdapter,
+            &LexicalRustSyntaxAdapter,
+            &fixture.cache,
+            || {
+                inventory_reads.set(inventory_reads.get() + 1);
+                fixture.cache.known_file_paths()
+            },
+        )?;
+        assert_eq!(inventory_reads.get(), 0);
+        assert_eq!(recovered.file_fact_cache.hits, 0);
+        assert_eq!(recovered.file_fact_cache.misses, 0);
+        assert_eq!(recovered.file_fact_cache.corrupt_ignored, 1);
+        assert_eq!(recovered.file_fact_cache.stores, 1);
+        assert_eq!(recovered.file_fact_cache.store_errors, 0);
+        assert!(recovered.file_fact_cache.invalidated_files.is_empty());
+        assert_eq!(recovered.index.files, cold.index.files);
+        assert_eq!(recovered.index.functions, cold.index.functions);
+        assert_eq!(recovered.index.tests, cold.index.tests);
+        assert!(matches!(
+            fixture.cache.load_file_facts(&key),
+            CacheLoad::Hit(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn cache_inventory_skips_empty_build() -> Result<(), Box<dyn Error>> {
+        let fixture = CacheInventoryFixture::new("cache_inventory_empty")?;
+        let inventory_reads = Cell::new(0);
+        let empty = build_index_with_file_fact_cache(
+            &fixture.root,
+            &[],
+            &RaRustSyntaxAdapter,
+            &LexicalRustSyntaxAdapter,
+            &fixture.cache,
+            || {
+                inventory_reads.set(inventory_reads.get() + 1);
+                fixture.cache.known_file_paths()
+            },
+        )?;
+        assert_eq!(inventory_reads.get(), 0);
+        assert!(empty.index.files.is_empty());
+        assert_eq!(empty.file_fact_cache.hits, 0);
+        assert_eq!(empty.file_fact_cache.misses, 0);
+        assert_eq!(empty.file_fact_cache.stores, 0);
+        assert!(empty.file_fact_cache.invalidated_files.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn cache_inventory_observes_cancellation_before_directory_scan() -> Result<(), Box<dyn Error>> {
+        use crate::analysis::cancellation::{
+            AnalysisAbortKind, AnalysisCancellationToken, with_token,
+        };
+
+        let fixture = CacheInventoryFixture::new("cache_inventory_cancelled")?;
+        let files = [(
+            PathBuf::from("src/lib.rs"),
+            b"pub fn cancelled() {}\n".to_vec(),
+        )];
+        let inventory_reads = Cell::new(0);
+        let token = AnalysisCancellationToken::new();
+        token.cancel(AnalysisAbortKind::Cancelled);
+        let result = with_token(&token, || {
+            build_index_with_file_fact_cache(
+                &fixture.root,
+                &files,
+                &RaRustSyntaxAdapter,
+                &LexicalRustSyntaxAdapter,
+                &fixture.cache,
+                || {
+                    inventory_reads.set(inventory_reads.get() + 1);
+                    fixture.cache.known_file_paths()
+                },
+            )
+        });
+        assert!(matches!(result, Err(ref error) if error.contains("analysis cancelled")));
+        assert_eq!(inventory_reads.get(), 0);
         Ok(())
     }
 

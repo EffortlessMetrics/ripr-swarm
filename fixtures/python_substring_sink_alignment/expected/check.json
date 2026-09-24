@@ -42,16 +42,22 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `pack`", "infection yes: Changed Python predicate can alter branch selection: `if len(buffer) <= limit:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if len(buffer) <= limit: (line 3)", "related test tests/test_pack.py:4 test_pack_returns_buffered_output uses strong exact value oracle: assert buffered_output == [1, 2]", "missing discriminator buffer == limit: changed Python equality-boundary at line 3 lacks a concrete repair discriminator"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `pack`", "infection yes: Changed Python predicate can alter branch selection: `if len(buffer) <= limit:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if len(buffer) <= limit: (line 3)", "related test tests/test_pack.py:4 test_pack_returns_buffered_output uses strong exact value oracle: assert buffered_output == [1, 2]", "observed function argument value limit = 5 at line 5", "missing discriminator buffer == limit: changed Python equality-boundary at line 3 lacks a concrete repair discriminator"],
       "flow_sinks": [
         {"kind":"unknown","text":"if len(buffer) <= limit:","line":3}
       ],
       "evidence": ["owner: pack", "owner_kind: function", "missing_discriminator: buffer == limit", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_pack.py", "suggested_test_name: test_pack_returns_buffered_output", "suggested_test_node_id: tests/test_pack.py::test_pack_returns_buffered_output", "suggested_verify_command: pytest tests/test_pack.py::test_pack_returns_buffered_output", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_pack_returns_buffered_output)", "test_verify_command: pytest tests/test_pack.py::test_pack_returns_buffered_output (test_pack_returns_buffered_output)", "related_test_relation: syntactic_call (test_pack_returns_buffered_output)", "test_oracle: exact_value strong (test_pack_returns_buffered_output)"],
       "missing": ["A strong Python oracle reaches `pack`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output."],
       "assertion_texts": {
+        "5": "buffered_output = pack([1, 2], 5)"
       },
       "activation": {
         "observed_values": [
+          {
+            "line": 5,
+            "value": "limit = 5",
+            "context": "function_argument"
+          }
         ],
         "missing_discriminators": [
           {
@@ -62,6 +68,11 @@
         ]
       },
       "observed_values": [
+        {
+          "line": 5,
+          "value": "limit = 5",
+          "context": "function_argument"
+        }
       ],
       "missing_discriminators": [
         {
