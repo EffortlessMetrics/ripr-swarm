@@ -13138,8 +13138,14 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
         );
         // #3952: no base is requested by default; resolution happens
         // downstream of the status projection.
-        assert_eq!(current_input["requested_base"], serde_json::Value::Null);
-        assert_eq!(current_input["resolved_base"], serde_json::Value::Null);
+        assert_eq!(
+            current_input.get("requested_base"),
+            Some(&serde_json::Value::Null)
+        );
+        assert_eq!(
+            current_input.get("resolved_base"),
+            Some(&serde_json::Value::Null)
+        );
         assert_eq!(current_input["mode"], "draft");
         assert_eq!(current_input["profile"], "actionable");
         assert_eq!(
