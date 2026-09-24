@@ -1329,6 +1329,22 @@ mod tests {
         assert_eq!(next.step, "select_seam");
         assert_eq!(next.command, "ripr pilot --root .");
 
+        // Status repeats the pilot value as its next command, so only a repair
+        // start may pass. Any other string, even another ripr command, leaves
+        // status on `select_seam`, exactly as `null` does. `ripr pilot` never
+        // writes such a value, so no end-to-end run reaches this case.
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            r#"{"next": {"repair_command": "ripr check --root ."}}"#,
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        let next = report
+            .next_command
+            .as_ref()
+            .ok_or_else(|| "expected a next command".to_string())?;
+        assert_eq!(next.step, "select_seam");
+        assert_eq!(next.command, "ripr pilot --root .");
+
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
