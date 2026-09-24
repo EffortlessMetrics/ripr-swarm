@@ -355,7 +355,7 @@ pub fn load_diff_range(root: &Path, base: &str, head: &str) -> Result<String, St
 /// byte-identical `PR_DIFF`. The packet artifact records evidence, so the
 /// decode stays strict like the pre-#3930 helper: non-UTF-8 stdout is a
 /// named error, never silently recorded with replacement characters. Like
-/// [`load_diff_range`], no deadline is threaded.
+/// `load_diff_range`, no deadline is threaded.
 pub fn load_pr_evidence_diff_range(root: &Path, base: &str, head: &str) -> Result<String, String> {
     let bytes = run_git_diff_bytes(root, &format!("{base}...{head}"), &["--binary"], "3", None)?;
     String::from_utf8(bytes).map_err(|err| format!("packet diff is not valid UTF-8: {err}"))
