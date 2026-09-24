@@ -12038,6 +12038,16 @@ fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> 
             "fixture precondition: a --base run on this dirty checkout must disclose it:\n{base_json}"
         ));
     }
+    // Same for the human note, so the negative below cannot pass because the
+    // note's wording changed.
+    let base_human_run = run_ripr(&["check", "--root", &root_str, "--base", "HEAD"]);
+    assert_success(&base_human_run);
+    let base_human = String::from_utf8_lossy(&base_human_run.stdout).into_owned();
+    if !base_human.contains("uncommitted changes to tracked source were not analyzed") {
+        return Err(format!(
+            "fixture precondition: a --base run on this dirty checkout must print the note:\n{base_human}"
+        ));
+    }
 
     let json_run = run_ripr(&["check", "--root", &root_str, "--diff", &patch_str, "--json"]);
     assert_success(&json_run);
