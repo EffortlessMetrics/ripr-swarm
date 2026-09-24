@@ -1208,13 +1208,18 @@ fn suggested_test_intent(shape: &agent_seam_packets::AssertionShape) -> &'static
     }
 }
 
+/// The closing sentence of an actionable card's LLM prompt. A human surface
+/// that leads with the card's carried repair start (#3906) drops it, since
+/// the repair's after phase runs verify; the JSON prompt keeps it unchanged.
+pub(crate) const LLM_PROMPT_VERIFY_SENTENCE: &str = "Verify with ripr agent verify.";
+
 fn llm_prompt(recommended_file: &str, near_test: Option<&str>, missing: Option<&str>) -> String {
     let target = missing.unwrap_or("the missing discriminator named by the seam packet");
     let near = near_test
         .map(|test| format!(" near {test}"))
         .unwrap_or_default();
     format!(
-        "Write one focused Rust test for {target}. Place it in {recommended_file}{near}. Do not change production code. Preserve existing fixture style. Verify with ripr agent verify."
+        "Write one focused Rust test for {target}. Place it in {recommended_file}{near}. Do not change production code. Preserve existing fixture style. {LLM_PROMPT_VERIFY_SENTENCE}"
     )
 }
 

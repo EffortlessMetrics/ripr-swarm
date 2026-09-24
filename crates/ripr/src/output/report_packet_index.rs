@@ -1,3 +1,4 @@
+use super::assistant_loop_health::ASSISTANT_PROOF_COMMAND;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -314,7 +315,7 @@ fn push_entry(out: &mut String, entry: &IndexEntry) {
     } else {
         out.push_str(&format!("- {}: missing\n", entry.label));
         if let Some(next_command) = &entry.next_command {
-            out.push_str(&format!("  - next: `{next_command}`\n"));
+            push_next_command(out, &entry.id, next_command);
         }
     }
     if entry.authority {
@@ -378,7 +379,7 @@ pub(crate) fn render_report_packet_index_markdown(report: &ReportPacketIndexRepo
         for missing in &report.missing_expected {
             out.push_str(&format!("- {}: {}\n", missing.label, missing.reason));
             if let Some(next_command) = &missing.next_command {
-                out.push_str(&format!("  - next: `{next_command}`\n"));
+                push_next_command(&mut out, &missing.id, next_command);
             }
         }
         out.push('\n');
@@ -389,6 +390,19 @@ pub(crate) fn render_report_packet_index_markdown(report: &ReportPacketIndexRepo
         out.push_str(&format!("- {limit}\n"));
     }
     out
+}
+
+/// Render one missing artifact's regeneration command, naming the step it
+/// waits on when it cannot run yet (#3906). The assistant proof joins the
+/// after snapshot and the agent receipt, which only the repair's after phase
+/// writes, so before a repair its command is a post-repair step.
+fn push_next_command(out: &mut String, id: &str, next_command: &str) {
+    match id {
+        "assistant_proof" => out.push_str(&format!(
+            "  - next, after the repair's after phase writes the agent receipt: `{next_command}`\n"
+        )),
+        _ => out.push_str(&format!("  - next: `{next_command}`\n")),
+    }
 }
 
 fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
@@ -422,7 +436,7 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             description: "First-screen PR review story.",
             default_status: "available",
             next_command: Some(
-                "ripr pr-review front-panel --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md",
+                "ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md",
             ),
         },
         ArtifactSpec {
@@ -462,9 +476,7 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             authority: false,
             description: "Joined repair proof packet.",
             default_status: "available",
-            next_command: Some(
-                "ripr assistant-loop proof --out target/ripr/reports/test-oracle-assistant-proof.json --out-md target/ripr/reports/test-oracle-assistant-proof.md",
-            ),
+            next_command: Some(ASSISTANT_PROOF_COMMAND),
         },
         ArtifactSpec {
             id: "assistant_loop_health",
@@ -1693,6 +1705,28 @@ mod tests {
             has_assistant_proof_missing,
             "expected assistant_proof in missing_expected"
         );
+
+        // #3906 (F60-2b): the printed regeneration command carries the
+        // explicit inputs the proof requires (a bare `--out` form exits 2),
+        // and says it waits on the repair's receipt.
+        let markdown = render_report_packet_index_markdown(&report);
+        let labelled = format!(
+            "  - next, after the repair's after phase writes the agent receipt: `{ASSISTANT_PROOF_COMMAND}`\n"
+        );
+        assert_eq!(markdown.matches(labelled.as_str()).count(), 2, "{markdown}");
+        assert!(
+            !markdown.contains("  - next: `ripr assistant-loop proof"),
+            "{markdown}"
+        );
+        for input in [
+            "--pr-guidance ",
+            "--agent-packet ",
+            "--before ",
+            "--after ",
+            "--receipt ",
+        ] {
+            assert!(ASSISTANT_PROOF_COMMAND.contains(input), "{input}");
+        }
         Ok(())
     }
 
