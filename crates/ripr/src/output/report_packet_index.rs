@@ -98,6 +98,34 @@ struct IndexEntry {
     next_command: Option<String>,
 }
 
+/// An [`IndexEntry`] paired with the group the [`ArtifactSpec`] that produced
+/// it declared.
+///
+/// Carrying the group alongside the entry is what keeps one grouping
+/// authority: every entry is built from a spec, so the group travels with it
+/// and there is no id-to-group lookup that could fail and file an artifact
+/// somewhere its spec never asked for.
+#[derive(Clone, Debug)]
+struct GroupedEntry {
+    group: &'static str,
+    entry: IndexEntry,
+}
+
+/// The groups `docs/OUTPUT_SCHEMA.md` documents, in the order the index
+/// renders them. `group_entries` renders these and nothing else, so
+/// `every_declared_group_is_rendered` pins every declared group to this list.
+const GROUP_ORDER: [&str; 9] = [
+    START_HERE_GROUP,
+    "pr_review_story",
+    "repair_agent_handoff",
+    "evidence_movement",
+    "policy_gates",
+    "calibration",
+    "validation_receipts",
+    "sarif_badges",
+    "local_context",
+];
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct MissingExpected {
     id: String,
@@ -138,14 +166,20 @@ pub(crate) fn build_report_packet_index_report(
     let mut entries = Vec::new();
     for spec in &specs {
         if artifact_available(spec) {
-            entries.push(entry_from_spec(spec, true, status_for_spec(spec)));
+            entries.push(GroupedEntry {
+                group: spec.group,
+                entry: entry_from_spec(spec, true, status_for_spec(spec)),
+            });
         }
     }
 
     let missing_expected = missing_expected_surfaces(&specs);
     for missing in &missing_expected {
         if let Some(spec) = specs.iter().find(|spec| spec.id == missing.id) {
-            entries.push(entry_from_spec(spec, false, "missing".to_string()));
+            entries.push(GroupedEntry {
+                group: spec.group,
+                entry: entry_from_spec(spec, false, "missing".to_string()),
+            });
         }
     }
 
@@ -160,16 +194,19 @@ pub(crate) fn build_report_packet_index_report(
 
     let failures = entries
         .iter()
-        .filter(|entry| matches!(entry.status.as_str(), "fail" | "blocked"))
+        .filter(|grouped| matches!(grouped.entry.status.as_str(), "fail" | "blocked"))
         .count();
     let status = if entries.is_empty() {
         "incomplete"
     } else if failures > 0 {
         "fail"
     } else if !missing_expected.is_empty()
-        || entries
-            .iter()
-            .any(|entry| matches!(entry.status.as_str(), "warn" | "incomplete" | "unreadable"))
+        || entries.iter().any(|grouped| {
+            matches!(
+                grouped.entry.status.as_str(),
+                "warn" | "incomplete" | "unreadable"
+            )
+        })
     {
         "warn"
     } else {
@@ -179,17 +216,17 @@ pub(crate) fn build_report_packet_index_report(
 
     let start_here = entries
         .iter()
-        .find(|entry| entry.id == "first_pr_start_here" && entry.available)
+        .find(|grouped| grouped.entry.id == "first_pr_start_here" && grouped.entry.available)
         .or_else(|| {
-            entries
-                .iter()
-                .find(|entry| entry.id == "pr_review_front_panel" && entry.available)
+            entries.iter().find(|grouped| {
+                grouped.entry.id == "pr_review_front_panel" && grouped.entry.available
+            })
         })
-        .map(|entry| entry.path.clone());
+        .map(|grouped| grouped.entry.path.clone());
     let gate_authority = entries
         .iter()
-        .find(|entry| entry.id == "gate_decision" && entry.available)
-        .map(|entry| entry.path.clone());
+        .find(|grouped| grouped.entry.id == "gate_decision" && grouped.entry.available)
+        .map(|grouped| grouped.entry.path.clone());
     let groups = group_entries(entries);
     let entry_count = groups.iter().map(|group| group.entries.len()).sum();
     let available = groups
@@ -264,14 +301,43 @@ pub(crate) fn render_report_packet_index_json(
     .map_err(|err| format!("render report-packet index JSON failed: {err}"))
 }
 
+/// The group key that holds the artifacts a reviewer opens first. It is the
+/// group `docs/OUTPUT_SCHEMA.md` documents as `groups[0]`, and the one the
+/// Markdown hoists into its `Start here:` block.
+const START_HERE_GROUP: &str = "start_here";
+
+/// Render one artifact entry the same way wherever it appears, so an entry
+/// hoisted into `Start here:` keeps the `missing` state and the regeneration
+/// command it would have carried inside its group.
+fn push_entry(out: &mut String, entry: &IndexEntry) {
+    if entry.available {
+        out.push_str(&format!("- {}: {}\n", entry.label, entry.path));
+    } else {
+        out.push_str(&format!("- {}: missing\n", entry.label));
+        if let Some(next_command) = &entry.next_command {
+            push_next_command(out, &entry.id, next_command);
+        }
+    }
+    if entry.authority {
+        out.push_str("- authority: gate decision controls configured pass/fail, not this index\n");
+    }
+}
+
 pub(crate) fn render_report_packet_index_markdown(report: &ReportPacketIndexReport) -> String {
     let mut out = String::new();
     out.push_str("# RIPR Report Packet Index\n\n");
     out.push_str(&format!("Status: {}\n\n", report.status));
 
-    if let Some(start_here) = &report.summary.start_here {
+    let first_screens = report
+        .groups
+        .iter()
+        .find(|group| group.group == START_HERE_GROUP);
+    let first_screens_hoisted = report.summary.start_here.is_some();
+    if first_screens_hoisted {
         out.push_str("Start here:\n");
-        out.push_str(&format!("- PR review front panel: {start_here}\n"));
+        for entry in first_screens.iter().flat_map(|group| group.entries.iter()) {
+            push_entry(&mut out, entry);
+        }
         if let Some(gate_authority) = &report.summary.gate_authority {
             out.push_str(&format!("- Gate authority: {gate_authority}\n"));
         }
@@ -293,21 +359,17 @@ pub(crate) fn render_report_packet_index_markdown(report: &ReportPacketIndexRepo
     out.push_str(&format!("- Failures: {}\n\n", report.summary.failures));
 
     for group in &report.groups {
+        // Skip the first-screen group only when the `Start here:` block above
+        // already rendered it. Rendering it again would put a second
+        // `Start here:` heading in the same document, naming a different file;
+        // skipping it when nothing was hoisted would drop a missing artifact's
+        // regeneration command from the listing.
+        if group.group == START_HERE_GROUP && first_screens_hoisted {
+            continue;
+        }
         out.push_str(&format!("{}:\n", group.label));
         for entry in &group.entries {
-            if entry.available {
-                out.push_str(&format!("- {}: {}\n", entry.label, entry.path));
-            } else {
-                out.push_str(&format!("- {}: missing\n", entry.label));
-                if let Some(next_command) = &entry.next_command {
-                    push_next_command(&mut out, &entry.id, next_command);
-                }
-            }
-            if entry.authority {
-                out.push_str(
-                    "- authority: gate decision controls configured pass/fail, not this index\n",
-                );
-            }
+            push_entry(&mut out, entry);
         }
         out.push('\n');
     }
@@ -763,24 +825,21 @@ fn is_available(specs: &[ArtifactSpec], id: &str) -> bool {
         .is_some_and(artifact_available)
 }
 
-fn group_entries(entries: Vec<IndexEntry>) -> Vec<IndexGroup> {
-    let order = [
-        "start_here",
-        "pr_review_story",
-        "repair_agent_handoff",
-        "evidence_movement",
-        "policy_gates",
-        "calibration",
-        "validation_receipts",
-        "sarif_badges",
-        "local_context",
-    ];
+/// Group the entries by the group each artifact declares in [`ArtifactSpec`].
+///
+/// The declared field is the only grouping authority, and each entry carries
+/// it from the spec that produced it, so this function never looks a group up
+/// by id and has no fallback to reach when a lookup misses. A second
+/// id-to-group table drifted from the declared field and silently filed
+/// `first_pr_start_here` under `local_context`, against
+/// `docs/OUTPUT_SCHEMA.md`, which documents it as a `start_here` entry.
+fn group_entries(entries: Vec<GroupedEntry>) -> Vec<IndexGroup> {
     let mut groups = Vec::new();
-    for group_name in order {
+    for group_name in GROUP_ORDER {
         let group_entries = entries
             .iter()
-            .filter(|entry| group_for_entry(entry.id.as_str()) == group_name)
-            .cloned()
+            .filter(|grouped| grouped.group == group_name)
+            .map(|grouped| grouped.entry.clone())
             .collect::<Vec<_>>();
         if group_entries.is_empty() {
             continue;
@@ -793,24 +852,6 @@ fn group_entries(entries: Vec<IndexEntry>) -> Vec<IndexGroup> {
         });
     }
     groups
-}
-
-fn group_for_entry(id: &str) -> &'static str {
-    match id {
-        "pr_review_front_panel" => "start_here",
-        "first_useful_action" | "review_comments" => "pr_review_story",
-        "assistant_proof" | "assistant_loop_health" => "repair_agent_handoff",
-        "pr_evidence_ledger" | "baseline_debt_delta" | "ripr_zero_status" => "evidence_movement",
-        "gate_decision" => "policy_gates",
-        "recommendation_calibration"
-        | "mutation_calibration"
-        | "bun_ub_calibration"
-        | "bun_ub_preview_summary"
-        | "coverage_grip_frontier" => "calibration",
-        "agent_receipt" | "pr_summary" | "check_pr" => "validation_receipts",
-        "sarif" | "badge" => "sarif_badges",
-        _ => "local_context",
-    }
 }
 
 fn group_label(group: &str) -> &'static str {
@@ -1310,41 +1351,201 @@ mod tests {
         Ok(())
     }
 
-    // ── group_for_entry: all groups ──────────────────────────────────────────
+    // ── grouping authority and the Start here block ──────────────────────────
 
+    /// Every artifact declares its group on its own [`ArtifactSpec`], and that
+    /// declaration is the only grouping authority.
+    ///
+    /// A second id-to-group table used to decide this, and it had no arm for
+    /// `first_pr_start_here`, so the canonical first-screen packet fell through
+    /// to `local_context` against `docs/OUTPUT_SCHEMA.md`. This asserts the
+    /// declared group reaches the rendered report, not that a lookup table
+    /// agrees with a copy of itself.
     #[test]
-    fn group_for_entry_covers_all_known_ids() -> Result<(), String> {
-        let cases: &[(&str, &str)] = &[
-            ("pr_review_front_panel", "start_here"),
-            ("first_useful_action", "pr_review_story"),
-            ("review_comments", "pr_review_story"),
-            ("assistant_proof", "repair_agent_handoff"),
-            ("assistant_loop_health", "repair_agent_handoff"),
-            ("pr_evidence_ledger", "evidence_movement"),
-            ("baseline_debt_delta", "evidence_movement"),
-            ("ripr_zero_status", "evidence_movement"),
-            ("gate_decision", "policy_gates"),
-            ("recommendation_calibration", "calibration"),
-            ("mutation_calibration", "calibration"),
-            ("bun_ub_calibration", "calibration"),
-            ("bun_ub_preview_summary", "calibration"),
-            ("coverage_grip_frontier", "calibration"),
-            ("agent_receipt", "validation_receipts"),
-            ("pr_summary", "validation_receipts"),
-            ("check_pr", "validation_receipts"),
-            ("sarif", "sarif_badges"),
-            ("badge", "sarif_badges"),
-            ("unknown_artifact", "local_context"),
-        ];
-        for (id, expected_group) in cases {
-            let actual = group_for_entry(id);
-            if actual != *expected_group {
+    fn declared_group_decides_where_an_artifact_is_filed() -> Result<(), String> {
+        let root = temp_root("declared-group")?;
+        let input = input_for_root(&root);
+        let specs = artifact_specs(&input);
+
+        // `GROUP_ORDER` itself, not a copy of it: `group_entries` renders those
+        // groups and nothing else, so a declared group missing from that list
+        // would drop its artifacts from the index and from `summary.entries`.
+        for spec in &specs {
+            if !GROUP_ORDER.contains(&spec.group) {
+                let _ = std::fs::remove_dir_all(&root);
                 return Err(format!(
-                    "group_for_entry({id:?}) = {actual:?}, want {expected_group:?}"
+                    "artifact {:?} declares group {:?}, which no group section renders",
+                    spec.id, spec.group
                 ));
             }
         }
-        Ok(())
+
+        let mut failures: Vec<String> = Vec::new();
+        match specs.iter().find(|spec| spec.id == "first_pr_start_here") {
+            Some(spec) if spec.group == START_HERE_GROUP => {}
+            Some(spec) => failures.push(format!(
+                "first_pr_start_here declares group {:?}, want {START_HERE_GROUP:?}",
+                spec.group
+            )),
+            None => failures.push("first_pr_start_here is not an indexed artifact".to_string()),
+        }
+
+        // The declaration has to reach the rendered report, not just sit on the
+        // spec, so generate the packet and read back where the entry was filed.
+        write(&input.reports_dir.join("start-here.md"), "# start here\n")?;
+        write(&input.reports_dir.join("start-here.json"), "{}\n")?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let filed_under = report
+            .groups
+            .iter()
+            .find(|group| {
+                group
+                    .entries
+                    .iter()
+                    .any(|entry| entry.id == "first_pr_start_here")
+            })
+            .map(|group| group.group.clone());
+        if filed_under.as_deref() != Some(START_HERE_GROUP) {
+            failures.push(format!(
+                "generated index files first_pr_start_here under {filed_under:?}, want {START_HERE_GROUP:?}"
+            ));
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
+    /// The rendered Markdown carries exactly one `Start here:` heading, and it
+    /// names each first-screen artifact with that artifact's own label.
+    ///
+    /// Both halves matter. The heading used to appear twice, once from the
+    /// hoisted block and once from the group section, naming different files.
+    /// The hoisted line also hardcoded `PR review front panel` whatever path it
+    /// printed, so with a first-PR packet present it labelled `start-here.md`
+    /// as the front panel.
+    #[test]
+    fn markdown_has_one_start_here_block_naming_each_first_screen() -> Result<(), String> {
+        let root = temp_root("one-start-here")?;
+        let input = input_for_root(&root);
+        write(&input.reports_dir.join("start-here.md"), "# start here\n")?;
+        write(&input.reports_dir.join("start-here.json"), "{}\n")?;
+        write(
+            &input.reports_dir.join("pr-review-front-panel.md"),
+            "# front panel\n",
+        )?;
+        write(
+            &input.reports_dir.join("pr-review-front-panel.json"),
+            "{}\n",
+        )?;
+
+        let report = build_report_packet_index_report(input);
+        let markdown = render_report_packet_index_markdown(&report);
+        let _ = std::fs::remove_dir_all(&root);
+
+        let mut failures: Vec<String> = Vec::new();
+        let headings = markdown
+            .lines()
+            .filter(|line| line.trim_end() == "Start here:")
+            .count();
+        if headings != 1 {
+            failures.push(format!("{headings} `Start here:` headings, want 1"));
+        }
+        for expected in [
+            "- First PR start here: target/ripr/reports/start-here.md",
+            "- PR review front panel: target/ripr/reports/pr-review-front-panel.md",
+        ] {
+            if !markdown.contains(expected) {
+                failures.push(format!("missing line {expected:?}"));
+            }
+        }
+        if markdown.contains("- PR review front panel: target/ripr/reports/start-here.md") {
+            failures
+                .push("start-here.md is still labelled as the PR review front panel".to_string());
+        }
+        if markdown.contains("Local context:") {
+            failures.push("a first-screen artifact is still filed under Local context".to_string());
+        }
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
+    /// A hoisted first-screen artifact keeps the `missing` state and the
+    /// regeneration command it would have carried inside its group, so
+    /// suppressing the group section loses nothing.
+    ///
+    /// The front panel is pushed as a missing expected surface once any review
+    /// story artifact exists, so this is the reachable missing case; the
+    /// first-PR packet is never pushed as missing and has no entry when absent.
+    #[test]
+    fn a_hoisted_first_screen_keeps_its_regeneration_command() -> Result<(), String> {
+        let root = temp_root("hoisted-missing")?;
+        let input = input_for_root(&root);
+        write(&input.reports_dir.join("start-here.md"), "# start here\n")?;
+        write(&input.reports_dir.join("start-here.json"), "{}\n")?;
+        write(&input.review_dir.join("comments.md"), "# comments\n")?;
+        write(&input.review_dir.join("comments.json"), "{}\n")?;
+
+        let report = build_report_packet_index_report(input);
+        let markdown = render_report_packet_index_markdown(&report);
+        let _ = std::fs::remove_dir_all(&root);
+
+        let mut failures: Vec<String> = Vec::new();
+        let headings = markdown
+            .lines()
+            .filter(|line| line.trim_end() == "Start here:")
+            .count();
+        if headings != 1 {
+            failures.push(format!("{headings} `Start here:` headings, want 1"));
+        }
+        if !markdown.contains("- PR review front panel: missing") {
+            failures.push("the missing front panel is not reported".to_string());
+        }
+        if !markdown.contains("  - next: `ripr pr-review front-panel") {
+            failures.push("the missing front panel lost its next command".to_string());
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
+    /// When nothing was hoisted, the first-screen group still renders, so a
+    /// missing artifact's regeneration command stays in the listing.
+    #[test]
+    fn the_first_screen_group_survives_when_nothing_is_hoisted() -> Result<(), String> {
+        let root = temp_root("nothing-hoisted")?;
+        let input = input_for_root(&root);
+        write(&input.review_dir.join("comments.md"), "# comments\n")?;
+        write(&input.review_dir.join("comments.json"), "{}\n")?;
+
+        let report = build_report_packet_index_report(input);
+        let markdown = render_report_packet_index_markdown(&report);
+        let _ = std::fs::remove_dir_all(&root);
+
+        let mut failures: Vec<String> = Vec::new();
+        if report.summary.start_here.is_some() {
+            failures.push("this case was meant to hoist nothing".to_string());
+        }
+        if !markdown.contains("Start here:\n- PR review front panel: missing") {
+            failures.push("the first-screen group did not render".to_string());
+        }
+        if !markdown.contains("  - next: `ripr pr-review front-panel") {
+            failures.push("the missing front panel lost its next command".to_string());
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
     }
 
     // ── group_label and group_summary: all variants ──────────────────────────

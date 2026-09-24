@@ -465,10 +465,14 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
     out.push('\n');
 
     out.push_str("## Limitations\n\n");
-    if s.limitations.is_empty() {
-        out.push_str("- none\n");
+    // `none` is a finding and `not_available` is the absence of one. A run
+    // whose repo-exposure artifact was never read has established neither, and
+    // `empty_state_line` is the single owner of which of the two this is.
+    let limitations = s.limitations.entries();
+    if limitations.is_empty() {
+        out.push_str(s.limitations.empty_state_line());
     } else {
-        for lim in &s.limitations {
+        for lim in limitations {
             out.push_str(&format!("- `{}`: {}\n", lim.category, lim.repair_route));
         }
     }
@@ -535,7 +539,10 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
             lim.why_not_actionable
         ));
     } else {
-        out.push_str("- none\n");
+        // Derived from `limitations`, so it inherits that field's state and
+        // asks the same owner: with nothing read, there is no top limitation
+        // and no absence of one either.
+        out.push_str(s.limitations.empty_state_line());
     }
     out.push('\n');
 

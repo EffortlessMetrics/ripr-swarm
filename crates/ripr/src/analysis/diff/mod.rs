@@ -6,7 +6,8 @@ mod parse;
 mod path;
 
 pub use load::{
-    load_diff, load_diff_range, load_worktree_diff, resolve_base_commit,
+    load_diff, load_diff_range, load_diff_with_effective_base, load_pr_evidence_diff_range,
+    load_worktree_diff, load_worktree_diff_with_effective_base, resolve_base_commit,
     resolve_default_base_commit, working_tree_has_tracked_changes,
 };
 #[allow(

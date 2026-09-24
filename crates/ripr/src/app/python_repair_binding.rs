@@ -1787,6 +1787,7 @@ mod tests {
             expected_operational_writes: vec![crate::edit_cage::CagePathRule::subtree(
                 "target/ripr",
             )?],
+            ignored_build_output: None,
         };
         // Positive control: with intact values the bounded value stage passes
         // and verification proceeds to the telemetry manifest, which does not

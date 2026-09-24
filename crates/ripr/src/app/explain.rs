@@ -241,10 +241,12 @@ mod tests {
     fn explain_finding_public_wrapper_reports_invalid_root() {
         let result = explain_finding(Path::new("missing-ripr-root-for-explain"), "probe:missing");
 
+        // #3952: a missing root must fail as a missing root, not as an
+        // unresolvable default base.
         assert!(
             result
                 .err()
-                .is_some_and(|err| err.contains("failed to run git diff"))
+                .is_some_and(|err| err.contains("does not exist or is not a directory"))
         );
     }
 }
