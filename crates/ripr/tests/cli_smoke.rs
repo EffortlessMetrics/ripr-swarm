@@ -8435,6 +8435,409 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
     Ok(())
 }
 
+/// A committed git repository with one base commit, an `origin/main` ref at
+/// that base, and one follow-up commit that applies `change` (#3906 pilot
+/// language-route fixtures).
+fn pilot_language_fixture_repo(
+    label: &str,
+    files: &[(&str, &str)],
+    change: (&str, &str),
+) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    for (path, text) in files {
+        let path = root.join(path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("create {}: {err}", parent.display()))?;
+        }
+        std::fs::write(&path, text).map_err(|err| format!("write {}: {err}", path.display()))?;
+    }
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "ripr@example.invalid"])?;
+    run_git(&root, &["config", "user.name", "RIPR Test"])?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "base"])?;
+    run_git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+    std::fs::write(root.join(change.0), change.1)
+        .map_err(|err| format!("write changed {}: {err}", change.0))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "change"])?;
+    Ok(root)
+}
+
+/// Run `ripr pilot` and return (stdout, pilot-summary.md, pilot-summary.json,
+/// repo-exposure.json).
+fn run_pilot_language_fixture(
+    root: &Path,
+    out_dir: &Path,
+) -> Result<(String, String, serde_json::Value, serde_json::Value), String> {
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let md = std::fs::read_to_string(out_dir.join("pilot-summary.md"))
+        .map_err(|err| format!("read pilot summary md: {err}"))?;
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary json: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    let exposure: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("repo-exposure.json"))
+            .map_err(|err| format!("read repo exposure json: {err}"))?,
+    )
+    .map_err(|err| format!("parse repo exposure json: {err}"))?;
+    Ok((stdout, md, summary, exposure))
+}
+
+/// Precondition for the no-Rust-seam fixtures: pilot's Rust scan really found
+/// nothing to rank, so any route shown is the only signal about the repo.
+fn assert_pilot_found_no_rust_seams(summary: &serde_json::Value, exposure: &serde_json::Value) {
+    assert_eq!(
+        exposure["metrics"]["seams_total"],
+        serde_json::json!(0),
+        "fixture must have zero Rust seams: {exposure}"
+    );
+    assert_eq!(summary["actionable_seams_total"], serde_json::json!(0));
+    assert_eq!(summary["top_actionable_seams"], serde_json::json!([]));
+}
+
+/// The one route pilot reports for `language`, with the `required` state.
+fn required_language_route(
+    summary: &serde_json::Value,
+    language: &str,
+) -> Result<serde_json::Value, String> {
+    let routes = &summary["language_routes"];
+    if routes["state"] != "required" {
+        return Err(format!("language routes must be required: {routes}"));
+    }
+    let matching = routes["routes"]
+        .as_array()
+        .ok_or_else(|| format!("language_routes.routes is not an array: {routes}"))?
+        .iter()
+        .filter(|route| route["language"] == language)
+        .cloned()
+        .collect::<Vec<_>>();
+    match matching.as_slice() {
+        [route] if route["file_count"].as_u64().unwrap_or(0) >= 1 => Ok(route.clone()),
+        _ => Err(format!("expected one detected {language} route: {routes}")),
+    }
+}
+
+/// The empty Rust ranking must not read as a clean pass, and the Rust
+/// repo-exposure snapshot choreography (which can only report "no seams
+/// moved") must not be offered as the follow-up.
+fn assert_pilot_does_not_read_as_clean(stdout: &str, md: &str) {
+    assert!(
+        !stdout.contains("none ranked by the default pilot policy"),
+        "no-Rust-seam pilot must not print the plain no-recommendation line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("none: pilot ranks Rust seams and found none here"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Languages outside pilot's Rust seam scan:"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("ripr outcome --before") && !stdout.contains("repo-exposure-json >"),
+        "Rust snapshot follow-up must not be offered for a repo with no Rust seams:\n{stdout}"
+    );
+    assert!(
+        md.contains("## Languages Outside The Rust Seam Scan"),
+        "{md}"
+    );
+    assert!(md.contains("This is not a clean result"), "{md}");
+    assert!(!md.contains("ripr outcome --before"), "{md}");
+}
+
+#[test]
+#[cfg(feature = "lang-typescript")]
+fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Result<(), String> {
+    let base = "export function discount(amount: number, threshold: number): number {\n  if (amount > threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-lang-ts",
+        &[
+            (
+                "package.json",
+                "{\"name\":\"pilot-lang-ts\",\"version\":\"0.0.0\"}\n",
+            ),
+            ("src/pricing.ts", base),
+            (
+                "tests/pricing.test.ts",
+                "import { discount } from \"../src/pricing\";\ntest(\"discount\", () => {\n  expect(discount(125, 100)).toBeTruthy();\n});\n",
+            ),
+        ],
+        (
+            "src/pricing.ts",
+            &base.replace("amount > threshold", "amount >= threshold"),
+        ),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-lang-ts-out");
+    let (stdout, md, summary, exposure) = run_pilot_language_fixture(&root, &out_dir)?;
+
+    assert_pilot_found_no_rust_seams(&summary, &exposure);
+    let route = required_language_route(&summary, "typescript")?;
+    let command = format!("ripr check --root {}", root.display());
+    assert_eq!(route["language_status"], "preview");
+    assert_eq!(route["enabled"], false);
+    assert_eq!(route["route"], "check_diff_first");
+    assert_eq!(route["command"], serde_json::json!(command));
+    // The existing `typescript_diff_first` guidance is surfaced, not reworded.
+    assert_eq!(route["guidance_category"], "typescript_diff_first");
+    assert!(
+        route["guidance"]
+            .as_str()
+            .is_some_and(|text| text.starts_with("TypeScript is analyzed diff-first;")),
+        "{route}"
+    );
+    assert_pilot_does_not_read_as_clean(&stdout, &md);
+    assert!(
+        stdout.contains(
+            "typescript: 2 files (preview, diff-first; not enabled in ripr.toml [languages])"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "not enabled in ripr.toml [languages])\n    route: {command}\n"
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "Next, analyze the changed code in these languages:\n  {command}\n"
+        )),
+        "{stdout}"
+    );
+    assert!(md.contains("`typescript_diff_first`: TypeScript is analyzed diff-first;"));
+
+    // With the preview adapter enabled, the route no longer says "not enabled".
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+    )
+    .map_err(|err| format!("write ripr.toml: {err}"))?;
+    let (enabled_stdout, _, enabled_summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(
+        required_language_route(&enabled_summary, "typescript")?["enabled"],
+        true
+    );
+    assert!(
+        enabled_stdout.contains("typescript: 2 files (preview, diff-first)\n"),
+        "{enabled_stdout}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), String> {
+    let base = "def calculate_discount(amount, threshold):\n    if amount > threshold:\n        return amount - 10\n    return amount\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-lang-py",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"pilot-lang-py\"\nversion = \"0.0.0\"\n",
+            ),
+            ("src/pricing.py", base),
+            (
+                "tests/test_pricing.py",
+                "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n",
+            ),
+        ],
+        (
+            "src/pricing.py",
+            &base.replace("amount > threshold", "amount >= threshold"),
+        ),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-lang-py-out");
+    let (stdout, md, summary, exposure) = run_pilot_language_fixture(&root, &out_dir)?;
+
+    assert_pilot_found_no_rust_seams(&summary, &exposure);
+    // Python was detected and analyzed through the existing diff-first
+    // projection; the route adds where to rerun it.
+    assert_eq!(summary["python_first_use"]["status"], "ready");
+    let route = required_language_route(&summary, "python")?;
+    let command = format!("ripr check --root {}", root.display());
+    assert_eq!(route["enabled"], true);
+    assert_eq!(route["command"], serde_json::json!(command));
+    assert_eq!(route["guidance_category"], serde_json::Value::Null);
+    assert!(
+        stdout.contains(&format!(
+            "python: 2 files (preview, diff-first)\n    route: {command}\n"
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "Next, analyze the changed code in these languages:\n  {command}\n"
+        )),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("ripr outcome --before"),
+        "Python pilot must not end in the Rust repo-exposure outcome route:\n{stdout}"
+    );
+    assert!(md.contains(&format!("  - Route: `{command}`")), "{md}");
+    assert!(!md.contains("ripr outcome --before"), "{md}");
+
+    // The printed route must analyze the changed Python, not only parse.
+    let root_arg = root.display().to_string();
+    let routed = run_ripr(&["check", "--root", &root_arg]);
+    let routed_stdout = String::from_utf8_lossy(&routed.stdout);
+    assert!(
+        routed.status.code().is_some_and(|code| code <= 1),
+        "routed check failed: {routed:?}"
+    );
+    assert!(
+        routed_stdout.contains("src/pricing.py"),
+        "routed check must report the changed Python file:\n{routed_stdout}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(())
+}
+
+#[test]
+fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), String> {
+    let base = "package Pricing;\nsub discount {\n    my ($amount, $threshold) = @_;\n    return $amount > $threshold ? $amount - 10 : $amount;\n}\n1;\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-lang-pl",
+        &[("lib/Pricing.pm", base)],
+        (
+            "lib/Pricing.pm",
+            &base.replace("$amount > $threshold", "$amount >= $threshold"),
+        ),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-lang-pl-out");
+    let (stdout, md, summary, exposure) = run_pilot_language_fixture(&root, &out_dir)?;
+
+    assert_pilot_found_no_rust_seams(&summary, &exposure);
+    let route = required_language_route(&summary, "perl")?;
+    assert_eq!(route["file_count"], 1);
+    assert_pilot_does_not_read_as_clean(&stdout, &md);
+    if cfg!(feature = "lang-perl") {
+        assert_eq!(route["language_status"], "preview");
+        assert_eq!(
+            route["command"],
+            serde_json::json!(format!("ripr check --root {}", root.display()))
+        );
+    } else {
+        let notice = "Perl analysis is not available from this ripr binary. Rebuild ripr with Cargo feature `lang-perl` to analyze Perl files.";
+        assert_eq!(route["language_status"], "unavailable");
+        assert_eq!(route["route"], "unavailable_in_this_binary");
+        assert_eq!(route["command"], serde_json::Value::Null);
+        assert_eq!(route["guidance"], serde_json::json!(notice));
+        assert!(
+            stdout.contains(&format!(
+                "perl: 1 file (not available in this build)\n    {notice}\n"
+            )),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(
+                "No follow-up command applies: this ripr binary cannot analyze the languages listed above."
+            ),
+            "{stdout}"
+        );
+        assert!(md.contains(notice), "{md}");
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// Rust-only output is untouched by language routing, and adding TypeScript
+/// beside Rust seams leaves the human output byte-identical: the mixed repo
+/// keeps the Rust result and lists the other language in JSON only.
+#[test]
+fn pilot_keeps_rust_output_byte_identical_when_rust_seams_exist() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "pilot-lang-rs",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"pilot-lang-rs\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            (
+                "src/lib.rs",
+                "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+            ),
+        ],
+        (
+            "src/lib.rs",
+            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+        ),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-lang-rs-out");
+    let (rust_stdout, rust_md, rust_summary, rust_exposure) =
+        run_pilot_language_fixture(&root, &out_dir)?;
+
+    assert!(
+        rust_exposure["metrics"]["seams_total"]
+            .as_u64()
+            .unwrap_or(0)
+            >= 1,
+        "Rust fixture must produce Rust seams: {rust_exposure}"
+    );
+    assert_eq!(
+        rust_summary["language_routes"],
+        serde_json::json!({"state": "not_detected", "routes": []})
+    );
+    assert!(rust_stdout.contains("inspected seam: "), "{rust_stdout}");
+    assert!(
+        !rust_stdout.contains("Languages outside pilot's Rust seam scan"),
+        "{rust_stdout}"
+    );
+
+    std::fs::create_dir_all(root.join("web")).map_err(|err| format!("create web: {err}"))?;
+    std::fs::write(
+        root.join("web/pricing.ts"),
+        "export function discount(amount: number): number {\n  return amount - 10;\n}\n",
+    )
+    .map_err(|err| format!("write web/pricing.ts: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "add typescript"])?;
+    let (mixed_stdout, mixed_md, mixed_summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+
+    assert_eq!(
+        mixed_stdout, rust_stdout,
+        "mixed repo changed the Rust terminal output"
+    );
+    assert_eq!(
+        mixed_md, rust_md,
+        "mixed repo changed the Rust markdown output"
+    );
+    assert_eq!(mixed_summary["language_routes"]["state"], "supplementary");
+    let routes = mixed_summary["language_routes"]["routes"]
+        .as_array()
+        .ok_or_else(|| format!("routes is not an array: {mixed_summary}"))?;
+    assert_eq!(routes.len(), 1, "{mixed_summary}");
+    assert_eq!(routes[0]["language"], "typescript");
+    assert_eq!(routes[0]["file_count"], 1);
+    assert_eq!(
+        mixed_summary["top_actionable_seams"], rust_summary["top_actionable_seams"],
+        "mixed repo must keep the Rust ranking"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(())
+}
+
 #[test]
 #[cfg(feature = "lang-python")]
 fn check_detects_python_project_without_ripr_config() {
