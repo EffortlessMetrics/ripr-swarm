@@ -51,19 +51,45 @@ pub fn terminalize_proof<'a>(
 }
 "#;
 
-const DIFF: &str = r#"diff --git a/src/lib.rs b/src/lib.rs
-index 1111111..2222222 100644
---- a/src/lib.rs
-+++ b/src/lib.rs
-@@ -23,7 +23,7 @@ pub fn terminalize_proof<'a>(
-             let relation = match (request_identity_matches, task_identity_matches) {
-                 (true, true) => "request_and_task_identity",
--                (true, false) => "request_identity_v1",
-+                (true, false) => "request_identity_v2",
-                 (false, true) => "task_identity",
-                 (false, false) => return None,
-             };
-"#;
+/// Build the candidate diff from the actual candidate source so the hunk
+/// coordinates and context lines always describe the real on-disk file.
+/// `check` trusts hunk coordinates: a stale hand-written hunk silently
+/// re-coordinates the changed arm onto whatever parser shape covers the
+/// claimed line (here the whole method chain is one tail-expression
+/// return-value shape), which manufactures a false negative instead of the
+/// intended candidate-current match-arm witness.
+fn candidate_diff(source: &str) -> Result<String, String> {
+    let lines: Vec<&str> = source.lines().collect();
+    let position = lines
+        .iter()
+        .position(|line| line.trim() == "(true, false) => \"request_identity_v2\",")
+        .ok_or("candidate source keeps the changed request-only arm")?;
+    if position < 3 || position + 3 >= lines.len() {
+        return Err("three context lines stay inside the candidate source".to_string());
+    }
+    let context_start = position + 1 - 3;
+    let mut diff = String::from(
+        "diff --git a/src/lib.rs b/src/lib.rs\n\
+         index 1111111..2222222 100644\n\
+         --- a/src/lib.rs\n\
+         +++ b/src/lib.rs\n",
+    );
+    diff.push_str(&format!(
+        "@@ -{context_start},7 +{context_start},7 @@ pub fn terminalize_proof<'a>(\n"
+    ));
+    for line in &lines[position - 3..position] {
+        diff.push_str(&format!(" {line}\n"));
+    }
+    diff.push_str(&format!(
+        "-{}\n",
+        lines[position].replace("\"request_identity_v2\"", "\"request_identity_v1\"")
+    ));
+    diff.push_str(&format!("+{}\n", lines[position]));
+    for line in &lines[position + 1..position + 4] {
+        diff.push_str(&format!(" {line}\n"));
+    }
+    Ok(diff)
+}
 
 const REQUEST_ONLY_TEST: &str = r#"use match_arm_tuple_derived_local::{Receipt, terminalize_proof};
 use std::collections::{BTreeMap, BTreeSet};
@@ -195,20 +221,15 @@ struct TempRepo {
 }
 
 impl TempRepo {
-    fn create(source: &str, diff: &str, test_source: &str) -> Result<Self, String> {
+    fn create(source: &str, test_source: &str) -> Result<Self, String> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("clock before Unix epoch: {error}"))?
             .as_nanos();
-        Self::create_with_stamp(source, diff, test_source, stamp)
+        Self::create_with_stamp(source, test_source, stamp)
     }
 
-    fn create_with_stamp(
-        source: &str,
-        diff: &str,
-        test_source: &str,
-        stamp: u128,
-    ) -> Result<Self, String> {
+    fn create_with_stamp(source: &str, test_source: &str, stamp: u128) -> Result<Self, String> {
         let repo = loop {
             // Clock resolution is not a uniqueness guarantee between test threads.
             let sequence = NEXT_TEMP_REPO.fetch_add(1, Ordering::Relaxed);
@@ -236,7 +257,7 @@ impl TempRepo {
             .map_err(|error| format!("write source failed: {error}"))?;
         std::fs::write(repo.root.join("tests/terminal.rs"), test_source)
             .map_err(|error| format!("write test failed: {error}"))?;
-        std::fs::write(repo.root.join("diff.patch"), diff)
+        std::fs::write(repo.root.join("diff.patch"), candidate_diff(source)?)
             .map_err(|error| format!("write diff failed: {error}"))?;
         Ok(repo)
     }
@@ -340,7 +361,7 @@ fn assert_unverified(finding: &ripr::Finding, context: &str) {
 
 #[test]
 fn request_only_derived_locals_observe_the_changed_relation() -> Result<(), String> {
-    let repo = TempRepo::create(CANDIDATE_SOURCE, DIFF, REQUEST_ONLY_TEST)?;
+    let repo = TempRepo::create(CANDIDATE_SOURCE, REQUEST_ONLY_TEST)?;
     let output = repo.check()?;
     let finding = changed_request_only_arm(&output)?;
 
@@ -352,20 +373,37 @@ fn request_only_derived_locals_observe_the_changed_relation() -> Result<(), Stri
         finding.ripr,
         finding.related_tests
     );
-    assert!(finding.related_tests.iter().any(|test| {
-        test.name == "request_only_projection_observes_join"
-            && test.oracle.as_deref().is_some_and(|oracle| {
-                oracle.contains("terminalize_proof")
-                    && oracle.contains("request_identity_v2")
-                    && oracle.contains("receipt-1")
-            })
-    }));
+    // Related oracles are per-assertion; the owner tie is the relation reason,
+    // and the discriminating literals pin the projection's element identity.
+    let mut related = finding
+        .related_tests
+        .iter()
+        .filter(|test| test.name == "request_only_projection_observes_join");
+    assert!(
+        related.clone().any(|test| {
+            test.relation_reason.is_some()
+                && test
+                    .oracle
+                    .as_deref()
+                    .is_some_and(|oracle| oracle.contains("request_identity_v2"))
+        }),
+        "the changed relation literal must be observed; related={:#?}",
+        finding.related_tests
+    );
+    assert!(
+        related.any(|test| test
+            .oracle
+            .as_deref()
+            .is_some_and(|oracle| oracle.contains("receipt-1"))),
+        "the projection element identity must be observed; related={:#?}",
+        finding.related_tests
+    );
     Ok(())
 }
 
 #[test]
 fn task_only_sibling_cannot_certify_the_request_arm() -> Result<(), String> {
-    let repo = TempRepo::create(CANDIDATE_SOURCE, DIFF, TASK_ONLY_TEST)?;
+    let repo = TempRepo::create(CANDIDATE_SOURCE, TASK_ONLY_TEST)?;
     let output = repo.check()?;
     let finding = changed_request_only_arm(&output)?;
 
@@ -382,7 +420,7 @@ fn task_only_sibling_cannot_certify_the_request_arm() -> Result<(), String> {
 
 #[test]
 fn both_identity_sibling_cannot_certify_the_request_arm() -> Result<(), String> {
-    let repo = TempRepo::create(CANDIDATE_SOURCE, DIFF, BOTH_TEST)?;
+    let repo = TempRepo::create(CANDIDATE_SOURCE, BOTH_TEST)?;
     let output = repo.check()?;
     let finding = changed_request_only_arm(&output)?;
 
@@ -399,7 +437,7 @@ fn both_identity_sibling_cannot_certify_the_request_arm() -> Result<(), String> 
 
 #[test]
 fn neither_identity_exclusion_cannot_certify_the_request_arm() -> Result<(), String> {
-    let repo = TempRepo::create(CANDIDATE_SOURCE, DIFF, NEITHER_TEST)?;
+    let repo = TempRepo::create(CANDIDATE_SOURCE, NEITHER_TEST)?;
     let output = repo.check()?;
     let finding = changed_request_only_arm(&output)?;
 
@@ -434,7 +472,7 @@ fn unrelated_task_parameter_cannot_certify_the_request_arm() -> Result<(), Strin
         call,
         "        \"receipt-1\",\n        \"different-task\",\n    );",
     );
-    let repo = TempRepo::create(&source, DIFF, &test_source)?;
+    let repo = TempRepo::create(&source, &test_source)?;
     let output = repo.check()?;
     let finding = changed_request_only_arm(&output)?;
 
@@ -466,11 +504,32 @@ fn unrelated_request_set_cannot_certify_the_request_arm() -> Result<(), String> 
             "        &request_set,\n        \"different-task\",",
             "        &request_set,\n        &unrelated_request_set,\n        \"different-task\",",
         );
-    let repo = TempRepo::create(&source, DIFF, &test_source)?;
+    let repo = TempRepo::create(&source, &test_source)?;
     let output = repo.check()?;
     let finding = changed_request_only_arm(&output)?;
 
     assert_unverified(finding, "unrelated request set");
+    Ok(())
+}
+
+#[test]
+fn wrong_receipt_identity_cannot_certify_the_request_arm() -> Result<(), String> {
+    // The oracle still claims the original receipt identity while the test
+    // feeds a different receipt, so the admission must not borrow it as
+    // proof that the projection observes the actually fed receipt.
+    let fed_receipt = "    let receipts = vec![Receipt { id: \"receipt-1\".to_string() }];";
+    assert_eq!(REQUEST_ONLY_TEST.matches(fed_receipt).count(), 1);
+    let identity_assertion = "assert_eq!(terminal[0].0.id, \"receipt-1\");";
+    assert_eq!(REQUEST_ONLY_TEST.matches(identity_assertion).count(), 1);
+    let test_source = REQUEST_ONLY_TEST.replace(
+        fed_receipt,
+        "    let receipts = vec![Receipt { id: \"input-receipt\".to_string() }];",
+    );
+    let repo = TempRepo::create(CANDIDATE_SOURCE, &test_source)?;
+    let output = repo.check()?;
+    let finding = changed_request_only_arm(&output)?;
+
+    assert_unverified(finding, "wrong receipt identity");
     Ok(())
 }
 
@@ -496,7 +555,7 @@ fn unrelated_receipts_cannot_certify_the_request_arm() -> Result<(), String> {
             "    let receipts = vec![Receipt { id: \"different-input-receipt\".to_string() }];\n    let unrelated_receipts = vec![Receipt { id: \"receipt-1\".to_string() }];",
         )
         .replace(argument, "        &receipts,\n        &unrelated_receipts,\n");
-    let repo = TempRepo::create(&source, DIFF, &test_source)?;
+    let repo = TempRepo::create(&source, &test_source)?;
     let output = repo.check()?;
     let finding = changed_request_only_arm(&output)?;
 
@@ -513,7 +572,7 @@ fn shadowed_terminal_results_cannot_certify_the_request_arm() -> Result<(), Stri
         "    let (terminal,) = (vec![(&receipts[0], \"request_identity_v2\")],);",
     ] {
         let test_source = REQUEST_ONLY_TEST.replace(assertion, &format!("{shadow}\n{assertion}"));
-        let repo = TempRepo::create(CANDIDATE_SOURCE, DIFF, &test_source)?;
+        let repo = TempRepo::create(CANDIDATE_SOURCE, &test_source)?;
         let output = repo.check()?;
         let finding = changed_request_only_arm(&output)?;
         assert_unverified(finding, "shadowed terminal result");
@@ -523,7 +582,7 @@ fn shadowed_terminal_results_cannot_certify_the_request_arm() -> Result<(), Stri
 
 #[test]
 fn uninvoked_projection_assertions_cannot_certify_the_request_arm() -> Result<(), String> {
-    let repo = TempRepo::create(CANDIDATE_SOURCE, DIFF, UNINVOKED_ORACLE_TEST)?;
+    let repo = TempRepo::create(CANDIDATE_SOURCE, UNINVOKED_ORACLE_TEST)?;
     let output = repo.check()?;
     let finding = changed_request_only_arm(&output)?;
 
@@ -538,11 +597,9 @@ fn check_unsupported_mapping(
 ) -> Result<(), String> {
     let original = "match (request_identity_matches, task_identity_matches)";
     assert_eq!(CANDIDATE_SOURCE.matches(original).count(), 1);
-    assert_eq!(DIFF.matches(original).count(), 1);
     let replacement = format!("match {scrutinee}");
     let source = CANDIDATE_SOURCE.replace(original, &replacement);
-    let diff = DIFF.replace(original, &replacement);
-    let repo = TempRepo::create(&source, &diff, test_source)?;
+    let repo = TempRepo::create(&source, test_source)?;
     let output = repo.check()?;
     let finding = changed_request_only_arm(&output)?;
 
@@ -570,8 +627,8 @@ fn transformed_local_tuple_does_not_borrow_derived_values() -> Result<(), String
 
 #[test]
 fn same_timestamp_fixtures_keep_independent_contents_and_cleanup() -> Result<(), String> {
-    let first = TempRepo::create_with_stamp(CANDIDATE_SOURCE, DIFF, REQUEST_ONLY_TEST, 0)?;
-    let second = TempRepo::create_with_stamp(CANDIDATE_SOURCE, DIFF, TASK_ONLY_TEST, 0)?;
+    let first = TempRepo::create_with_stamp(CANDIDATE_SOURCE, REQUEST_ONLY_TEST, 0)?;
+    let second = TempRepo::create_with_stamp(CANDIDATE_SOURCE, TASK_ONLY_TEST, 0)?;
     assert_ne!(first.root, second.root);
     assert_eq!(
         std::fs::read_to_string(first.root.join("tests/terminal.rs"))
@@ -584,10 +641,11 @@ fn same_timestamp_fixtures_keep_independent_contents_and_cleanup() -> Result<(),
         !first_root.exists(),
         "the first owner must clean its own root"
     );
+    let diff = candidate_diff(CANDIDATE_SOURCE)?;
     for (relative, expected) in [
         ("src/lib.rs", CANDIDATE_SOURCE),
         ("tests/terminal.rs", TASK_ONLY_TEST),
-        ("diff.patch", DIFF),
+        ("diff.patch", diff.as_str()),
     ] {
         assert_eq!(
             std::fs::read_to_string(second.root.join(relative))
@@ -601,7 +659,7 @@ fn same_timestamp_fixtures_keep_independent_contents_and_cleanup() -> Result<(),
 
 #[test]
 fn fixture_paths_remain_inside_the_ephemeral_root() -> Result<(), String> {
-    let repo = TempRepo::create(CANDIDATE_SOURCE, DIFF, REQUEST_ONLY_TEST)?;
+    let repo = TempRepo::create(CANDIDATE_SOURCE, REQUEST_ONLY_TEST)?;
     for relative in [
         "Cargo.toml",
         "src/lib.rs",

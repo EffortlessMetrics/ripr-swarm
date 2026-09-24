@@ -10,7 +10,7 @@ use crate::analysis::classify::ProbeContext;
 use crate::analysis::rust_index::find_file_facts;
 use crate::domain::{Probe, RelationReason};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
-use ra_ap_syntax::{AstNode, Edition, SourceFile, ast};
+use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxNode, ast};
 
 pub(super) fn admits(context: &ProbeContext<'_>) -> bool {
     admits_inner(context).unwrap_or(false)
@@ -61,15 +61,30 @@ fn canonical_owner_roles(function: &ast::Fn) -> Option<bool> {
             .matches("receipt_request_ids.get(&receipt.id).is_some_and(")
             .count()
             == 1
-            && source
-                .matches("request_set.contains(request_id.as_str())")
-                .count()
-                == 1
+            && canonical_membership_call_count(function) == 1
             && source
                 .matches("lettask_identity_matches=receipt.id==task_id;")
                 .count()
                 == 1,
     )
+}
+
+/// The membership role belongs to the actual `request_set` parameter, so the
+/// call is matched as a whole expression. A whole-function substring would
+/// over-credit an unrelated collection such as `unrelated_request_set` that
+/// merely ends with the same spelling.
+fn canonical_membership_call_count(function: &ast::Fn) -> usize {
+    function
+        .syntax()
+        .descendants()
+        .filter_map(ast::MethodCallExpr::cast)
+        .filter(|call| {
+            call.name_ref()
+                .is_some_and(|name| name.text() == "contains")
+                && compact(&call.syntax().text().to_string())
+                    == "request_set.contains(request_id.as_str())"
+        })
+        .count()
 }
 
 /// Bind the closure's source to the owner parameter, not a nearby spelling or
@@ -180,6 +195,7 @@ fn top_level_projection_observes(
     }
     let statements = body.statements().collect::<Vec<_>>();
     let mut result_binding = None;
+    let mut fed_identity = None;
     for (position, statement) in statements.iter().enumerate() {
         let ast::Stmt::LetStmt(binding) = statement else {
             continue;
@@ -200,8 +216,13 @@ fn top_level_projection_observes(
             return None;
         }
         result_binding = Some((immutable_binding_name(binding)?, position));
+        // The retained receipt identity is read from the owner-call input, so
+        // the projection oracle must observe that exact receipt, not merely a
+        // relation literal plus cardinality.
+        fed_identity = Some(fed_receipt_identity(&call, &statements)?);
     }
     let (result_binding, owner_position) = result_binding?;
+    let fed_identity = fed_identity?;
     // Equal spelling is not binding identity. Reject shadowing, including
     // destructuring and nested patterns, rather than borrowing their assertions.
     let binding_count = function
@@ -220,6 +241,7 @@ fn top_level_projection_observes(
 
     let mut length_observed = false;
     let mut result_observed = false;
+    let mut identity_observed = false;
     for statement in statements.into_iter().skip(owner_position + 1) {
         let ast::Stmt::ExprStmt(statement) = statement else {
             continue;
@@ -243,6 +265,7 @@ fn top_level_projection_observes(
         let right_text = compact(&right.syntax().text().to_string());
         let length = format!("{result_binding}.len()");
         let result = format!("{result_binding}[0].1");
+        let identity = format!("{result_binding}[0].0.id");
         if (left_text == length && right_text == "1") || (right_text == length && left_text == "1")
         {
             length_observed = true;
@@ -252,9 +275,98 @@ fn top_level_projection_observes(
         {
             result_observed = true;
         }
+        if (left_text == identity && plain_string(&right).as_deref() == Some(fed_identity.as_str()))
+            || (right_text == identity
+                && plain_string(&left).as_deref() == Some(fed_identity.as_str()))
+        {
+            identity_observed = true;
+        }
     }
 
-    Some(length_observed && result_observed)
+    Some(length_observed && result_observed && identity_observed)
+}
+
+/// Read the receipt identity the owner call is actually fed. The first
+/// argument is either the input collection itself or one immutable local
+/// binding borrowed with `&`; the collection initializer must carry exactly
+/// one struct-literal `id` string. Anything else fails closed.
+fn fed_receipt_identity(call: &ast::CallExpr, statements: &[ast::Stmt]) -> Option<String> {
+    let first_argument = call.arg_list()?.args().next()?;
+    let argument_text = compact(&first_argument.syntax().text().to_string());
+    let initializer = if let Some(name) = argument_text.strip_prefix('&') {
+        if !valid_identifier(name) {
+            return None;
+        }
+        let mut bindings = statements.iter().filter_map(|statement| {
+            let ast::Stmt::LetStmt(binding) = statement else {
+                return None;
+            };
+            let pattern = ast::IdentPat::cast(binding.pat()?.syntax().clone())?;
+            (pattern.name()?.text() == name).then_some(binding)
+        });
+        let binding = bindings.next()?;
+        if bindings.next().is_some() {
+            return None;
+        }
+        binding.initializer()?
+    } else {
+        first_argument.clone()
+    };
+    let identities = id_literals(&initializer);
+    let [identity] = identities.as_slice() else {
+        return None;
+    };
+    Some(identity.clone())
+}
+
+/// Macro token trees are not parsed as AST, so a `vec![Receipt { id: "..." }]`
+/// initializer must be re-parsed before its field initializers carry nodes.
+fn id_literals(expression: &ast::Expr) -> Vec<String> {
+    let direct = id_literals_from_node(expression.syntax());
+    if !direct.is_empty() {
+        return direct;
+    }
+    let Some(macro_expression) = ast::MacroExpr::cast(expression.syntax().clone()) else {
+        return Vec::new();
+    };
+    let Some(token_tree) = macro_expression
+        .macro_call()
+        .and_then(|call| call.token_tree())
+    else {
+        return Vec::new();
+    };
+    let tokens = token_tree.syntax().text().to_string();
+    let Some(inner) = tokens
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    else {
+        return Vec::new();
+    };
+    let source = format!("fn __fed() {{ let __receipts = {inner}; }}");
+    let Some(root) = parsed(&source) else {
+        return Vec::new();
+    };
+    let Some(function) = named_function(&root, "__fed") else {
+        return Vec::new();
+    };
+    id_literals_from_node(function.syntax())
+}
+
+fn id_literals_from_node(node: &SyntaxNode) -> Vec<String> {
+    node.descendants()
+        .filter_map(ast::RecordExprField::cast)
+        .filter(|field| field.name_ref().is_some_and(|name| name.text() == "id"))
+        .filter_map(|field| {
+            let value = field.expr()?;
+            plain_string(&value).or_else(|| {
+                let method = ast::MethodCallExpr::cast(value.syntax().clone())?;
+                if method.name_ref()?.text() != "to_string" {
+                    return None;
+                }
+                plain_string(&method.receiver()?)
+            })
+        })
+        .collect()
 }
 
 fn assertion_operands(call: &ast::MacroCall) -> Option<(ast::Expr, ast::Expr)> {
@@ -390,7 +502,30 @@ mod tests {
     #[test]
     fn assertions_after_the_unique_owner_result_are_admitted() {
         assert!(projection_is_admitted(
-            r#"let terminal = terminalize_proof();
+            r#"let receipts = vec![Receipt { id: "receipt-1".to_string() }];
+            let terminal = terminalize_proof(&receipts);
+            assert_eq!(terminal.len(), 1);
+            assert_eq!(terminal[0].0.id, "receipt-1");
+            assert_eq!(terminal[0].1, "request_identity_v2");"#
+        ));
+    }
+
+    #[test]
+    fn identity_assertion_must_match_the_fed_receipt() {
+        assert!(!projection_is_admitted(
+            r#"let receipts = vec![Receipt { id: "input-receipt".to_string() }];
+            let terminal = terminalize_proof(&receipts);
+            assert_eq!(terminal.len(), 1);
+            assert_eq!(terminal[0].0.id, "receipt-1");
+            assert_eq!(terminal[0].1, "request_identity_v2");"#
+        ));
+    }
+
+    #[test]
+    fn cardinality_and_relation_without_identity_remain_unverified() {
+        assert!(!projection_is_admitted(
+            r#"let receipts = vec![Receipt { id: "receipt-1".to_string() }];
+            let terminal = terminalize_proof(&receipts);
             assert_eq!(terminal.len(), 1);
             assert_eq!(terminal[0].1, "request_identity_v2");"#
         ));
@@ -403,9 +538,11 @@ mod tests {
             r#"let (terminal,) = ([(0, "request_identity_v2")],);"#,
         ] {
             let body = format!(
-                r#"let terminal = terminalize_proof();
+                r#"let receipts = vec![Receipt {{ id: "receipt-1".to_string() }}];
+                let terminal = terminalize_proof(&receipts);
                 {shadow}
                 assert_eq!(terminal.len(), 1);
+                assert_eq!(terminal[0].0.id, "receipt-1");
                 assert_eq!(terminal[0].1, "request_identity_v2");"#
             );
             assert!(!projection_is_admitted(&body), "{shadow}");
