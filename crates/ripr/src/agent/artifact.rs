@@ -689,7 +689,16 @@ pub(crate) fn git_merge_base_is_ancestor(
     }
 }
 
-fn is_full_sha(value: &str) -> bool {
+/// Whether a value is a full Git object name, which is the only thing
+/// `repo_exposure_artifact_metadata` writes as `artifact.repository.head`.
+///
+/// It is `pub(crate)` so a reader of that field can accept exactly what this
+/// module would have written as a head, rather than excluding the
+/// `"unavailable"` placeholder by string equality. A reader coupled to the
+/// placeholder's spelling starts reporting a sentinel as a commit the moment
+/// this module changes it; a reader that asks "is this a Git object name"
+/// rejects that and any future sentinel without being told about it.
+pub(crate) fn is_full_sha(value: &str) -> bool {
     value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
