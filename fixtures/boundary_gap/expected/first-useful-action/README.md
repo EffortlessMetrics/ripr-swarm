@@ -31,6 +31,11 @@ Files:
 The corpus intentionally covers:
 
 - actionable PR-local weak seam;
+- fresh PR whose review card carries the repair start (`repair-start/`): the
+  report leads with the card's `llm_guidance.repair_command` verbatim instead
+  of asking for post-repair assistant proof. The card names that command only
+  past the fail-closed repair-packet flip; first-action never derives it, and
+  the same card without it keeps the missing-required-artifact route;
 - stale evidence;
 - missing required artifact;
 - baseline-only debt;
@@ -44,6 +49,7 @@ The corpus intentionally covers:
 Case directories:
 
 - `actionable/`
+- `repair-start/`
 - `stale/`
 - `missing-required-artifact/`
 - `baseline-only/`

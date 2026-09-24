@@ -836,7 +836,7 @@ Seam severities affect LSP seam diagnostics. Valid values are `off`, `info`,
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `enabled` | array of strings | `["rust"]` | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.js`, and `.jsx`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
+| `enabled` | array of strings | `["rust"]` | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.js`, and `.jsx`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. `perl` is accepted only by a ripr built with Cargo feature `lang-perl`; default builds reject it at config load. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
 
 `[languages.rust]` configures the stable Rust adapter:
 
@@ -878,6 +878,15 @@ instead of publishing phantom preview diagnostics.
 
 Perl is a fact-packet consumer. It does not parse `.pm`, `.pl`, `.t`, or `.psgi`
 source directly. Use either an explicit packet or a managed exporter:
+
+> **Availability:** no released ripr build plus exporter combination analyzes
+> Perl yet. Perl analysis needs both a ripr binary built with Cargo feature
+> `lang-perl` (`cargo install ripr --features lang-perl`; default builds reject
+> `perl` in `[languages] enabled`) and a compatible fact exporter. The canonical
+> exporter, `perl-ripr-facts`, is not yet published, and the published
+> `perllsp` binary does not accept the managed `ripr-facts` argv. `ripr doctor`
+> probes the exporter's `ripr-facts` capability and reports an incompatible
+> binary as such.
 
 ```bash
 ripr check --perl-facts target/ripr/reports/perl-facts.json

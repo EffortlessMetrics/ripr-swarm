@@ -209,6 +209,9 @@ impl LanguageAdapter for TypeScriptAdapter {
                 continue;
             }
             for added in &changed.added_lines {
+                if should_ignore_typescript_changed_line(&added.text) {
+                    continue;
+                }
                 if let Some(mut finding) = classify_change(
                     &changed.path,
                     added.line,

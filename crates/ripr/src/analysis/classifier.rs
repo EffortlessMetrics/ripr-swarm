@@ -6,17 +6,36 @@ use self::evidence::ClassifiedProbeEvidence;
 use self::finding::build_finding;
 use self::owner::resolve_owner_function;
 use super::classify::{
-    DependencyEdgeContext, ProbeContext, find_related_tests, is_assertion_shaped_owner,
+    DependencyEdgeContext, ProbeContext, RelatedTestCandidateIndex,
+    find_related_tests_with_candidate_index, is_assertion_shaped_owner,
 };
 use super::probes::parser_expression_for_probe;
 use super::rust_index::RustIndex;
 use crate::domain::*;
 
+#[cfg(test)]
 pub fn classify_probe(
     probe: &Probe,
     index: &RustIndex,
     workspace_complete: bool,
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
+) -> Finding {
+    let candidate_index = RelatedTestCandidateIndex::new(index);
+    classify_probe_with_candidate_index(
+        probe,
+        index,
+        workspace_complete,
+        dependency_edges,
+        &candidate_index,
+    )
+}
+
+pub(in crate::analysis) fn classify_probe_with_candidate_index(
+    probe: &Probe,
+    index: &RustIndex,
+    workspace_complete: bool,
+    dependency_edges: Option<&DependencyEdgeContext<'_>>,
+    candidate_index: &RelatedTestCandidateIndex,
 ) -> Finding {
     let owner_fn = resolve_owner_function(probe, index);
     // #3296: one chain resolution per probe, shared by the relation
@@ -25,13 +44,14 @@ pub fn classify_probe(
         let chain = super::classify::resolve_chain(&owner.name, index, workspace_complete, &[]);
         (!chain.hops.is_empty()).then_some(chain)
     });
-    let related_tests = find_related_tests(
+    let related_tests = find_related_tests_with_candidate_index(
         probe,
         owner_fn,
         index,
         workspace_complete,
         helper_chain.as_ref(),
         dependency_edges,
+        candidate_index,
     );
     // RIPR-SPEC-0133: detect assertion-shaped owners (oracles) here, where the
     // full index is available; the context carries the verdict so guidance can
@@ -210,7 +230,11 @@ mod tests {
 
         let finding = classify_probe(&probe, &index, true, None);
 
-        assert_eq!(finding.ripr.reach.state, StageState::Yes);
+        // The token match keeps the test visible as the likely location, but
+        // a name token is not a captured call, so reach is `Weak` and the
+        // neighbour's strong assertion cannot make the owner `Exposed`.
+        assert_eq!(finding.ripr.reach.state, StageState::Weak);
+        assert_ne!(finding.class, ExposureClass::Exposed);
         assert_eq!(finding.related_tests.len(), 1);
         assert_eq!(
             finding.related_tests[0].name,

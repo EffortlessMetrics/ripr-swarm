@@ -87,7 +87,7 @@
   ],
   "tool": "ripr",
   "top_repair_route": {
-    "agent_command": "ripr agent start --root . --seam-id new --out target/ripr/workflow",
+    "agent_command": null,
     "canonical_gap_id": null,
     "language": null,
     "language_status": null,
