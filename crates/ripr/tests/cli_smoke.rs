@@ -6032,6 +6032,57 @@ fn doctor_reports_directory_squatting_packet_path_as_not_generated() -> Result<(
 }
 
 #[test]
+fn check_rejects_missing_and_file_roots_without_leaking_the_git_invocation() -> Result<(), String> {
+    // An explicit --root that is not a directory used to reach the diff loader
+    // and print git's spawn failure with the whole argv. `check` now validates
+    // it through the same authority the other root-taking commands use.
+    let workspace = make_temp_workspace(None)?;
+
+    let missing = workspace.join("missing-root");
+    let missing_string = missing.display().to_string();
+    let missing_output = run_ripr(&["check", "--root", &missing_string, "--base", "HEAD"]);
+    assert_failure(&missing_output);
+    let missing_stderr = String::from_utf8_lossy(&missing_output.stderr).into_owned();
+    assert!(
+        missing_stderr.contains("is not a directory"),
+        "stderr:\n{missing_stderr}"
+    );
+    assert!(
+        missing_stderr.contains(&missing_string),
+        "expected the offending path to be named; stderr:\n{missing_stderr}"
+    );
+    // Discriminator: the git invocation must not reach the user.
+    assert!(
+        !missing_stderr.contains("core.quotePath") && !missing_stderr.contains("failed to run git"),
+        "git invocation leaked into stderr:\n{missing_stderr}"
+    );
+
+    let file_root = workspace.join("root-file");
+    std::fs::write(&file_root, "not a directory\n")
+        .map_err(|error| format!("write file root: {error}"))?;
+    let file_string = file_root.display().to_string();
+    let file_output = run_ripr(&["check", "--root", &file_string, "--base", "HEAD"]);
+    assert_failure(&file_output);
+    assert!(
+        String::from_utf8_lossy(&file_output.stderr).contains("is not a directory"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&file_output.stderr)
+    );
+
+    // Negative control: a real workspace root is still analyzed.
+    let workspace_string = workspace.display().to_string();
+    let ok_output = run_ripr(&["check", "--root", &workspace_string]);
+    assert!(
+        ok_output.status.success(),
+        "expected a valid explicit root to run; stderr:\n{}",
+        String::from_utf8_lossy(&ok_output.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
 fn config_validate_rejects_missing_and_file_roots() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let missing = workspace.join("missing-root");

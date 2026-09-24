@@ -7,6 +7,7 @@
 
 use crate::analysis;
 use crate::app::{self, CheckInput, OutputFormat};
+use crate::cli::commands_context::ensure_command_root;
 use crate::cli::help;
 use crate::cli::parse::{expect_value, parse_format, parse_mode};
 use crate::cli::suggest::unknown_argument;
@@ -220,7 +221,18 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
-    if !root_explicitly_provided {
+    if root_explicitly_provided {
+        // An explicit --root that is not a directory reached the diff loader
+        // and surfaced git's spawn failure, complete with the full argv:
+        // `failed to run git diff: failed to run git -C /no/such/dir ["-c",
+        // "core.quotePath=true", "diff", ...]: No such file or directory`.
+        // Validate it through the same authority `rerun`, `agent`, and
+        // `swarm` already use, so the user is told which path is wrong rather
+        // than being handed the invocation that failed on it. Only an explicit
+        // root is checked: the implicit path below legitimately walks up from
+        // the current directory.
+        ensure_command_root(&input.root, "check")?;
+    } else {
         resolve_implicit_workspace_root(&mut input)?;
     }
     // RIPR-SPEC-0084: when no --base was explicitly given AND no --diff file
