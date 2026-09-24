@@ -473,7 +473,8 @@ Policy:
 
 Repair:
 - Repair start: `ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before`
-- Verify: `ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
+- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.
+- Manual verify without a repair attempt (needs before and after snapshots taken around the test edit): `ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
 - Receipt: target/ripr/reports/agent-receipt.json
 
 Artifacts:

@@ -1,5 +1,6 @@
 use super::markdown::{push_wrapped_paragraph, str_or, with_period};
 use super::*;
+use crate::output::first_pr::{MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, VERIFY_AFTER_EDIT_LABEL};
 use crate::output::test_support::{read_file, repo_root};
 use crate::testing::cwd_placeholder::project_cwd_text;
 use std::path::Path;
@@ -2024,7 +2025,7 @@ fn markdown_verify_section_present_for_actionable() -> Result<(), String> {
     let report = build_first_useful_action_report(input);
     let md = render_first_useful_action_markdown(&report);
     assert!(
-        md.contains("## Verify"),
+        md.contains("## Verify After The Test Edit"),
         "expected Verify section in actionable markdown: {md}"
     );
     Ok(())
@@ -2087,10 +2088,15 @@ fn first_useful_action_matches_repair_start_fixture() -> Result<(), String> {
         render_first_useful_action_json(&report)?,
         read_file(&base.join("first-useful-action.json"))?.trim_end()
     );
-    assert_eq!(
-        render_first_useful_action_markdown(&report),
-        read_file(&base.join("first-useful-action.md"))?
-    );
+    let markdown = render_first_useful_action_markdown(&report);
+    // #3742 class (e): only the explicit RIPR_UPDATE_FIXTURES=1 opt-in
+    // rewrites the Markdown pin; JSON stays asserted.
+    if crate::testing::rebless::fixture_rebless_enabled() {
+        std::fs::write(base.join("first-useful-action.md"), &markdown)
+            .map_err(|err| format!("write repair-start Markdown: {err}"))?;
+        return Ok(());
+    }
+    assert_eq!(markdown, read_file(&base.join("first-useful-action.md"))?);
     Ok(())
 }
 
@@ -2125,6 +2131,19 @@ fn carried_repair_start_leads_a_fresh_pr_and_its_absence_keeps_the_missing_proof
     ));
     assert!(markdown.contains(&format!("## Start Repair\n\n`{EXACT_LINE_REPAIR}`")));
     assert!(markdown.contains(&format!("- Repair start: `{EXACT_LINE_REPAIR}`")));
+    // #3906 (F60-14): the after phase follows the start in both places, and
+    // verify and receipt are the manual alternative.
+    assert!(markdown.contains(&format!(
+        "- Repair start: `{EXACT_LINE_REPAIR}`\n- After the test edit: run the `--attempt ... --phase after` command"
+    )));
+    assert!(markdown.contains(&format!(
+        "## Start Repair\n\n`{EXACT_LINE_REPAIR}`\n\nAfter the test edit: run the `--attempt ... --phase after` command"
+    )));
+    assert!(markdown.contains(&format!("- {MANUAL_VERIFY_LABEL}: `")));
+    assert!(markdown.contains(&format!("- {MANUAL_RECEIPT_LABEL}: `")));
+    assert!(markdown.contains("## Manual Verify Without A Repair Attempt"));
+    assert!(!markdown.contains(&format!("- {VERIFY_AFTER_EDIT_LABEL}:")));
+    assert!(!markdown.contains("## Verify After The Test Edit"));
 
     let mut without_card = comments.clone();
     let card = without_card

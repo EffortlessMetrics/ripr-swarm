@@ -41,6 +41,52 @@ const REPO_EXPOSURE_LATENCY_REPORT_COMMAND: &str = "cargo xtask repo-exposure-la
 const REVIEW_CARD_REPAIR_ROUTE: &str = "AgentRepairTransaction";
 pub(crate) const STATIC_EVIDENCE_BOUNDARY: &str = "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.";
 
+// Human labels for the proof path (#3906). A low-level verify compares
+// snapshots taken around a test edit and a receipt reads that verify, so
+// neither can run before the edit; the labels say when each one runs.
+// When a repair start is present, its after phase already runs verify and
+// writes the receipt, so the low-level pair is only the manual alternative.
+// JSON fields keep their names; only the human rendering changes.
+pub(crate) const VERIFY_AFTER_EDIT_LABEL: &str = "Verify after the test edit";
+pub(crate) const RECEIPT_AFTER_VERIFY_LABEL: &str = "Receipt after verify";
+pub(crate) const REPAIR_AFTER_PHASE_LABEL: &str = "After the test edit";
+pub(crate) const REPAIR_AFTER_PHASE_STEP: &str = "run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.";
+// The manual pair names its prerequisites (F60-2(c)): the low-level verify
+// reads a before snapshot taken before the test edit and an after snapshot
+// taken after it, so on a checkout without them it fails as printed. The
+// repair's before and after phases write both snapshots themselves.
+pub(crate) const MANUAL_VERIFY_LABEL: &str = "Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)";
+pub(crate) const MANUAL_RECEIPT_LABEL: &str =
+    "Manual receipt without a repair attempt (after the manual verify)";
+
+/// The one selector for the low-level verify and receipt labels (#3906).
+///
+/// With a carried repair start, its after phase runs verify and writes the
+/// receipt, so the pair is the manual alternative; without one, both are
+/// steps that run after the focused test edit. Every human surface takes
+/// its labels from here, so the transaction reads the same everywhere.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProofPathLabels {
+    pub(crate) verify: &'static str,
+    pub(crate) receipt: &'static str,
+}
+
+impl ProofPathLabels {
+    pub(crate) fn for_repair_start(has_repair_start: bool) -> Self {
+        if has_repair_start {
+            Self {
+                verify: MANUAL_VERIFY_LABEL,
+                receipt: MANUAL_RECEIPT_LABEL,
+            }
+        } else {
+            Self {
+                verify: VERIFY_AFTER_EDIT_LABEL,
+                receipt: RECEIPT_AFTER_VERIFY_LABEL,
+            }
+        }
+    }
+}
+
 mod options;
 mod preflight;
 mod rendering;
@@ -2281,21 +2327,21 @@ mod tests {
         });
         let markdown = render_start_here_markdown(&packet);
 
-        let bash_form = "Receipt command:\n`ripr receipt write --gap 'it'\\''s' --verify-command 'cargo test' --status not_run`\n\n";
+        let bash_form = "Receipt after verify:\n`ripr receipt write --gap 'it'\\''s' --verify-command 'cargo test' --status not_run`\n\n";
         assert!(
             markdown.contains(bash_form),
             "bash receipt command drifted:\n{markdown}"
         );
-        let powershell_form = "Receipt command (PowerShell):\n`ripr receipt write --gap 'it''s' --verify-command 'cargo test' --status not_run`";
+        let powershell_form = "Receipt after verify (PowerShell):\n`ripr receipt write --gap 'it''s' --verify-command 'cargo test' --status not_run`";
         assert!(
             markdown.contains(powershell_form),
             "powershell receipt command missing or drifted:\n{markdown}"
         );
         let bash_label = markdown
-            .find("Receipt command:\n")
+            .find("Receipt after verify:\n")
             .ok_or_else(|| format!("bash receipt label must exist: {markdown}"))?;
         let powershell_label = markdown
-            .find("Receipt command (PowerShell):\n")
+            .find("Receipt after verify (PowerShell):\n")
             .ok_or_else(|| format!("powershell receipt label must exist: {markdown}"))?;
         assert!(
             bash_label < powershell_label,
@@ -2327,12 +2373,12 @@ mod tests {
         });
         let markdown = render_start_here_markdown(&packet);
 
-        let bash_verify = "Verify command:\n`cargo test 'it'\\''s'`\n\n";
+        let bash_verify = "Verify after the test edit:\n`cargo test 'it'\\''s'`\n\n";
         assert!(
             markdown.contains(bash_verify),
             "bash verify command drifted:\n{markdown}"
         );
-        let powershell_verify = "Verify command (PowerShell):\n`cargo test 'it''s'`";
+        let powershell_verify = "Verify after the test edit (PowerShell):\n`cargo test 'it''s'`";
         assert!(
             markdown.contains(powershell_verify),
             "powershell verify command missing or drifted:\n{markdown}"
@@ -3359,21 +3405,33 @@ mod tests {
             Path::new("target/ripr/reports/start-here.json"),
             Path::new("target/ripr/reports/start-here.md"),
         );
+        // #3906 (F60-14): the start leads, the after phase follows it as
+        // the next step, and the low-level verify and receipt render as the
+        // manual alternative, not as peer steps of the transaction.
+        let after_phase = format!("{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n");
         let start = position(
             &summary,
-            &format!("Start repair: `{CARD_REPAIR_COMMAND}`\n"),
+            &format!("Start repair: `{CARD_REPAIR_COMMAND}`\n{after_phase}"),
         )?;
-        assert!(start < position(&summary, "Verify command: `")?);
+        assert!(start < position(&summary, &format!("{MANUAL_VERIFY_LABEL}: `"))?);
+        assert!(start < position(&summary, &format!("{MANUAL_RECEIPT_LABEL}: `"))?);
+        assert!(!summary.contains("Verify command:"), "{summary}");
+        assert!(!summary.contains("Receipt command:"), "{summary}");
         let bullet = position(
             &markdown,
-            &format!("- Start repair: `{CARD_REPAIR_COMMAND}`\n"),
+            &format!("- Start repair: `{CARD_REPAIR_COMMAND}`\n- {after_phase}"),
         )?;
-        assert!(bullet < position(&markdown, "- Verify command: `")?);
+        assert!(bullet < position(&markdown, &format!("- {MANUAL_VERIFY_LABEL}: `"))?);
         let block = position(
             &markdown,
             &format!("Start repair:\n`{CARD_REPAIR_COMMAND}`\n"),
         )?;
-        assert!(block < position(&markdown, "Verify command:\n`")?);
+        let block_after_phase = position(&markdown, &format!("\n{after_phase}\n"))?;
+        assert!(block < block_after_phase);
+        assert!(block_after_phase < position(&markdown, &format!("{MANUAL_VERIFY_LABEL}:\n`"))?);
+        assert!(block_after_phase < position(&markdown, &format!("{MANUAL_RECEIPT_LABEL}:\n`"))?);
+        assert!(!markdown.contains("Verify command"), "{markdown}");
+        assert!(!markdown.contains("Receipt command"), "{markdown}");
 
         // pr-summary carries start-here's command unchanged and leads the
         // local reproduction commands with it.
@@ -3402,7 +3460,13 @@ mod tests {
             &summary_md,
             &format!("- start repair: `{CARD_REPAIR_COMMAND}`\n"),
         )?;
-        assert!(line < position(&summary_md, "- verify: `")?);
+        assert!(
+            line < position(
+                &summary_md,
+                &format!("- {}: `", MANUAL_VERIFY_LABEL.to_lowercase())
+            )?
+        );
+        assert!(!summary_md.contains("- verify: `"), "{summary_md}");
         Ok(())
     }
 
@@ -3663,7 +3727,7 @@ mod tests {
         );
         assert!(summary.contains("Safe next action: repair one named gap `gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold`"));
         assert!(summary.contains(
-            "Verify command: `pytest tests/test_pricing.py::test_calculate_discount_smoke`"
+            "Verify after the test edit: `pytest tests/test_pricing.py::test_calculate_discount_smoke`"
         ));
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
@@ -3937,7 +4001,7 @@ mod tests {
         assert!(summary.contains(
             "Safe next action: repair one named gap `gap:typescript:typescript_preview:2396aec1`"
         ));
-        assert!(summary.contains("Verify command: `jest tests/discount.test.ts`"));
+        assert!(summary.contains("Verify after the test edit: `jest tests/discount.test.ts`"));
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
     }

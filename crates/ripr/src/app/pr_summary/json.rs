@@ -763,10 +763,30 @@ mod tests {
         let start = md
             .find(&format!("- start repair: `{command}`\n"))
             .ok_or_else(|| format!("missing start repair line:\n{md}"))?;
+        // #3906 (F60-14): the after phase follows the start, and verify and
+        // receipt are the manual alternative, not peer steps.
+        let after = md
+            .find(&format!(
+                "- {}: {}\n",
+                crate::output::first_pr::REPAIR_AFTER_PHASE_LABEL.to_lowercase(),
+                crate::output::first_pr::REPAIR_AFTER_PHASE_STEP
+            ))
+            .ok_or_else(|| format!("missing after-phase line:\n{md}"))?;
         let verify = md
-            .find("- verify: `")
-            .ok_or_else(|| format!("missing verify line:\n{md}"))?;
-        assert!(start < verify, "{md}");
+            .find(&format!(
+                "- {}: `",
+                crate::output::first_pr::MANUAL_VERIFY_LABEL.to_lowercase()
+            ))
+            .ok_or_else(|| format!("missing manual verify line:\n{md}"))?;
+        let receipt = md
+            .find(&format!(
+                "- {}: `",
+                crate::output::first_pr::MANUAL_RECEIPT_LABEL.to_lowercase()
+            ))
+            .ok_or_else(|| format!("missing manual receipt line:\n{md}"))?;
+        assert!(start < after && after < verify && verify < receipt, "{md}");
+        assert!(!md.contains("- verify: `"), "{md}");
+        assert!(!md.contains("- receipt: `"), "{md}");
 
         // Negative: a top gap without a carried start renders none, and
         // pr-summary does not rebuild one from `seam_id`.
@@ -789,6 +809,14 @@ mod tests {
         assert!(!json.contains("agent repair"), "{json}");
         let md = crate::app::pr_summary::render_evidence_summary_md(&without);
         assert!(!md.contains("start repair"), "{md}");
+        assert!(!md.contains("without a repair attempt"), "{md}");
+        assert!(
+            md.contains(&format!(
+                "- {}: `",
+                crate::output::first_pr::VERIFY_AFTER_EDIT_LABEL.to_lowercase()
+            )),
+            "{md}"
+        );
         Ok(())
     }
 

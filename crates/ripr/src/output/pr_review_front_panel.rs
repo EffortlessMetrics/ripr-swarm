@@ -1,13 +1,31 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use super::first_pr::STATIC_EVIDENCE_BOUNDARY;
+use super::first_pr::{
+    ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, STATIC_EVIDENCE_BOUNDARY,
+};
 use super::receipt_lifecycle::{
     RECEIPT_MISSING, RECEIPT_NOT_APPLICABLE, receipt_lifecycle_state,
     receipt_lifecycle_state_from_movement, receipt_lifecycle_state_from_receipt_value,
 };
 
 const SCHEMA_VERSION: &str = "0.1";
+
+/// Verify and receipt labels for the panel's top issue (#3906).
+///
+/// A carried repair start makes verify and receipt the manual alternative to
+/// the repair's after phase; without one they run after the test edit.
+fn proof_path_labels(issue: &PanelTopIssue) -> (&'static str, &'static str) {
+    let labels = ProofPathLabels::for_repair_start(issue.repair_command.is_some());
+    (labels.verify, labels.receipt)
+}
+
+fn push_repair_start(out: &mut String, command: &str) {
+    out.push_str(&format!("- Repair start: `{command}`\n"));
+    out.push_str(&format!(
+        "- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+    ));
+}
 const REPORT_KIND: &str = "pr_review_front_panel";
 
 pub(crate) const DEFAULT_PR_REVIEW_FRONT_PANEL_OUT: &str =
@@ -466,15 +484,16 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
         if let Some(related) = &issue.related_test {
             out.push_str(&format!("- Related test: {related}\n"));
         }
+        let (verify_label, receipt_label) = proof_path_labels(issue);
         if let Some(command) = &issue.repair_command {
-            out.push_str(&format!("- Repair start: `{command}`\n"));
+            push_repair_start(&mut out, command);
         }
         out.push_str(&format!(
-            "- Verify command: {}\n",
+            "- {verify_label}: {}\n",
             markdown_command_or(issue.verify_command.as_deref(), "not_available")
         ));
         if let Some(command) = &issue.receipt_command {
-            out.push_str(&format!("- Receipt command: `{command}`\n"));
+            out.push_str(&format!("- {receipt_label}: `{command}`\n"));
         }
         out.push_str(&format!("- Receipt: {}\n", issue_receipt_summary(issue)));
         out.push_str(&format!("- Boundary: {}\n", issue.static_evidence_boundary));
@@ -596,13 +615,14 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
     {
         out.push_str("Repair:\n");
         if report.summary.top_issue_state != "already_improved" {
+            let (verify_label, _) = proof_path_labels(issue);
             if let Some(command) = &issue.repair_command {
-                out.push_str(&format!("- Repair start: `{command}`\n"));
+                push_repair_start(&mut out, command);
             } else if let Some(command) = &issue.agent_command {
                 out.push_str(&format!("- Agent handoff: `{command}`\n"));
             }
             if let Some(command) = &issue.verify_command {
-                out.push_str(&format!("- Verify: `{command}`\n"));
+                out.push_str(&format!("- {verify_label}: `{command}`\n"));
             }
         }
         out.push_str(&format!(
@@ -2422,6 +2442,9 @@ fn str_or<'a>(value: Option<&'a str>, fallback: &'a str) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::first_pr::{
+        MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL, VERIFY_AFTER_EDIT_LABEL,
+    };
     use crate::output::test_support::{read_file, repo_root};
     use std::path::Path;
 
@@ -2486,8 +2509,16 @@ mod tests {
                 read_file(&expected_json_path)?.trim_end(),
                 "{case_id} JSON fixture drifted"
             );
+            let markdown = render_pr_review_front_panel_markdown(&report);
+            // #3742 class (e): only the explicit RIPR_UPDATE_FIXTURES=1
+            // opt-in rewrites the Markdown pin; JSON stays asserted.
+            if crate::testing::rebless::fixture_rebless_enabled() {
+                std::fs::write(&expected_md_path, &markdown)
+                    .map_err(|err| format!("write {case_id} Markdown: {err}"))?;
+                continue;
+            }
             assert_eq!(
-                render_pr_review_front_panel_markdown(&report),
+                markdown,
                 read_file(&expected_md_path)?,
                 "{case_id} Markdown fixture drifted"
             );
@@ -3251,6 +3282,23 @@ mod tests {
             markdown.matches(&line).count(),
             2,
             "the repair start leads the top issue and the Repair block: {markdown}"
+        );
+        // #3906 (F60-14): each start is followed by its after phase, and
+        // verify and receipt are the manual alternative.
+        let transaction =
+            format!("{line}- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n");
+        assert_eq!(markdown.matches(&transaction).count(), 2, "{markdown}");
+        assert!(
+            !markdown.contains(&format!("- {VERIFY_AFTER_EDIT_LABEL}:")),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains(&format!("- {RECEIPT_AFTER_VERIFY_LABEL}:")),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains(&format!("- {MANUAL_VERIFY_LABEL}:")),
+            "{markdown}"
         );
         assert!(!markdown.contains("- Agent handoff:"), "{markdown}");
     }

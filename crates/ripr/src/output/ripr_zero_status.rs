@@ -1,3 +1,4 @@
+use super::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
 use super::gap_decision_ledger::{self, GapRecord};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -434,11 +435,18 @@ pub(crate) fn render_ripr_zero_status_markdown(report: &RiprZeroStatusReport) ->
         if let Some(suggested) = route.suggested_test.as_deref() {
             out.push_str(&format!("  Suggested test: {suggested}\n"));
         }
-        if let Some(verify) = route.verify_command.as_deref() {
-            out.push_str(&format!("  Verify: {verify}\n"));
-        }
+        // #3906: a carried repair start leads; its after phase runs verify,
+        // so the verify command is the manual alternative. Without one it
+        // runs after the test edit.
         if let Some(repair) = route.repair_command.as_deref() {
             out.push_str(&format!("  Repair start: {repair}\n"));
+            out.push_str(&format!(
+                "  {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+            ));
+        }
+        if let Some(verify) = route.verify_command.as_deref() {
+            let labels = ProofPathLabels::for_repair_start(route.repair_command.is_some());
+            out.push_str(&format!("  {}: {verify}\n", labels.verify));
         }
         if let Some(limit) = route.static_limitations.first() {
             out.push_str(&format!("  Static limit: {limit}\n"));
@@ -1328,6 +1336,7 @@ mod tests {
         RiprZeroStatusInput, build_ripr_zero_status_report, render_ripr_zero_status_json,
         render_ripr_zero_status_markdown,
     };
+    use crate::output::first_pr::{REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
     use serde_json::Value;
 
     #[test]
@@ -1655,10 +1664,15 @@ mod tests {
             carried_value["repair_routes"][0]["agent_command"],
             Value::from(carried)
         );
+        let carried_markdown = render_ripr_zero_status_markdown(&carried_report);
+        // #3906 (F60-14): the after phase follows the carried start.
         assert!(
-            render_ripr_zero_status_markdown(&carried_report)
-                .contains(&format!("  Repair start: {carried}\n"))
+            carried_markdown.contains(&format!(
+                "  Repair start: {carried}\n  {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+            )),
+            "{carried_markdown}"
         );
+        assert!(!carried_markdown.contains("  Verify after the test edit:"));
         let limitation = route
             .get("static_limitations")
             .and_then(Value::as_array)
