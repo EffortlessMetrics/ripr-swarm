@@ -147,6 +147,7 @@ jobs:
           toolchain: 1.95.0
 
       - name: Formatting preflight
+        id: formatting
         run: cargo fmt --check
 
       - name: Install CI tools
@@ -167,10 +168,40 @@ jobs:
           mkdir -p "$CARGO_TARGET_DIR" "$SCCACHE_DIR"
           sccache --start-server || true
 
-      - name: Required Rust compilation and lints
-        run: |
-          cargo check --workspace --all-targets
-          cargo clippy --workspace --all-targets -- -D warnings
+      # Keep each required producer independently visible in Actions. Policy
+      # failures stop before the later check/Clippy/test stages; xtask still
+      # needs its normal build, shared with the subsequent evidence commands.
+      - name: Repository policy preflight
+        id: precommit
+        run: cargo xtask precommit
+
+      - name: Evidence promotion honesty
+        id: promotion_honesty
+        run: cargo xtask check-evidence-promotion-honesty
+
+      - name: Agent skill contracts
+        id: agent_skills
+        run: cargo xtask check-agent-skills
+
+      - name: Dependency policy
+        id: dependencies
+        run: cargo xtask check-dependencies
+
+      - name: Process policy
+        id: process_policy
+        run: cargo xtask check-process-policy
+
+      - name: Network policy
+        id: network_policy
+        run: cargo xtask check-network-policy
+
+      - name: Workspace and all-target check
+        id: workspace_check
+        run: cargo check --workspace --all-targets
+
+      - name: Strict workspace Clippy
+        id: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Required Rust tests
         id: rust-tests
@@ -215,18 +246,16 @@ jobs:
       - name: Required Rust doctests
         run: cargo test --workspace --doc
 
-      - name: Required Rust gates
-        run: |
-          cargo xtask precommit
-          cargo xtask check-evidence-promotion-honesty
-          cargo xtask check-agent-skills
-          cargo xtask check-dependencies
-          cargo xtask check-process-policy
-          cargo xtask check-network-policy
-          cargo xtask goldens check
-          cargo xtask fixtures
+      - name: Golden output contracts
+        id: goldens
+        run: cargo xtask goldens check
+
+      - name: Fixture contracts
+        id: fixtures
+        run: cargo xtask fixtures
 
       - name: PR evidence
+        id: pr_evidence
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -288,14 +317,50 @@ jobs:
         if: always() && inputs.use-scratch && steps.scratch.outputs.status != 'tempfail'
         run: sccache --show-stats || true
 
-      - name: Write failure summary
-        if: failure()
+      - name: Write gate summary
+        id: gate_summary
+        if: always()
+        env:
+          SUBJECT_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXECUTION_ROUTE: ${{ inputs.artifact-name }}
+          FORMATTING_RESULT: ${{ steps.formatting.outcome }}
+          PRECOMMIT_RESULT: ${{ steps.precommit.outcome }}
+          PROMOTION_HONESTY_RESULT: ${{ steps.promotion_honesty.outcome }}
+          AGENT_SKILLS_RESULT: ${{ steps.agent_skills.outcome }}
+          DEPENDENCIES_RESULT: ${{ steps.dependencies.outcome }}
+          PROCESS_POLICY_RESULT: ${{ steps.process_policy.outcome }}
+          NETWORK_POLICY_RESULT: ${{ steps.network_policy.outcome }}
+          WORKSPACE_CHECK_RESULT: ${{ steps.workspace_check.outcome }}
+          CLIPPY_RESULT: ${{ steps.clippy.outcome }}
+          RUST_TESTS_RESULT: ${{ steps.rust-tests.outcome }}
+          GOLDENS_RESULT: ${{ steps.goldens.outcome }}
+          FIXTURES_RESULT: ${{ steps.fixtures.outcome }}
+          PR_EVIDENCE_RESULT: ${{ steps.pr_evidence.outcome }}
         run: |
           {
-            echo "## Rust gates failed"
+            echo "## Rust gate outcomes"
             echo ""
-            echo "The first failed step above is the authoritative failure."
-            echo "Broad advisory report generation was skipped after the required failure."
+            printf -- '- Workflow commit: `%s`\n- Subject head: `%s`\n- Run / attempt: `%s` / `%s`\n- Route: `%s`\n' "$GITHUB_SHA" "$SUBJECT_HEAD" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$EXECUTION_ROUTE"
+            echo ""
+            echo '| Gate | Outcome |'
+            echo '| --- | --- |'
+            printf '| formatting | %s |\n' "${FORMATTING_RESULT:-not_reported}"
+            printf '| precommit | %s |\n' "${PRECOMMIT_RESULT:-not_reported}"
+            printf '| promotion_honesty | %s |\n' "${PROMOTION_HONESTY_RESULT:-not_reported}"
+            printf '| agent_skills | %s |\n' "${AGENT_SKILLS_RESULT:-not_reported}"
+            printf '| dependencies | %s |\n' "${DEPENDENCIES_RESULT:-not_reported}"
+            printf '| process_policy | %s |\n' "${PROCESS_POLICY_RESULT:-not_reported}"
+            printf '| network_policy | %s |\n' "${NETWORK_POLICY_RESULT:-not_reported}"
+            printf '| workspace_check | %s |\n' "${WORKSPACE_CHECK_RESULT:-not_reported}"
+            printf '| clippy | %s |\n' "${CLIPPY_RESULT:-not_reported}"
+            printf '| rust-tests | %s |\n' "${RUST_TESTS_RESULT:-not_reported}"
+            printf '| goldens | %s |\n' "${GOLDENS_RESULT:-not_reported}"
+            printf '| fixtures | %s |\n' "${FIXTURES_RESULT:-not_reported}"
+            printf '| pr_evidence | %s |\n' "${PR_EVIDENCE_RESULT:-not_reported}"
+            echo ""
+            echo "Step timings are available in the Actions job view and workflow-jobs API."
+            echo "The first failed step is authoritative. Skipped, cancelled, and not_reported are not passes."
+            echo "This summary is diagnostic; Ripr Rust Small Result remains the required check."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove RIPR analysis cache before artifact upload

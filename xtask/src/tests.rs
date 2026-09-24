@@ -48698,33 +48698,6 @@ fn reusable_rust_workflow_text() -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
 }
 
-/// Extracts the run-block lines of each `- name: <step>` whose name matches
-/// `step_name`, stopping at the next step (`- ` at the same indent).
-fn routed_rust_step_run_blocks(workflow: &str, step_name: &str) -> Vec<Vec<String>> {
-    let marker = format!("- name: {step_name}");
-    let mut blocks = Vec::new();
-    let mut current: Option<Vec<String>> = None;
-    for line in workflow.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("- name: ") {
-            if let Some(block) = current.take() {
-                blocks.push(block);
-            }
-            if trimmed == marker {
-                current = Some(Vec::new());
-            }
-            continue;
-        }
-        if let Some(block) = current.as_mut() {
-            block.push(line.to_string());
-        }
-    }
-    if let Some(block) = current.take() {
-        blocks.push(block);
-    }
-    blocks
-}
-
 /// Returns an error unless `lines` mention `cargo xtask precommit` exactly
 /// once as a bare invocation line. A commented-out (`# cargo xtask
 /// precommit`) or otherwise decorated mention does not count as an
@@ -48743,49 +48716,45 @@ fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result
     Ok(())
 }
 
+/// The routed Rust lanes must delegate the required gate table to the shared
+/// reusable workflow, not inline a lane-only gate command where it could drift
+/// from `.github/workflows/rust-gates.yml`. The reusable workflow enumerates
+/// each gate as its own named per-producer step; the per-step shape (exact
+/// command, unconditional, ordered, outcome-reported) is owned by
+/// `xtask/tests/rust_gate_workflow_contract.rs`. `cargo xtask precommit` and
+/// `cargo xtask check-agent-skills` stay inline only in the docs-gate job,
+/// which `routed_rust_docs_gate_runs_full_precommit_table` covers.
 #[test]
 fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
     let workflow = routed_rust_workflow_text()?;
-    let routed_blocks = routed_rust_step_run_blocks(&workflow, "Required Rust gates");
-    if !routed_blocks.is_empty() {
-        return Err(format!(
-            "routed-rust.yml must delegate `Required Rust gates` to rust-gates.yml, found {} inline step(s)",
-            routed_blocks.len()
-        ));
-    }
-    let reusable = reusable_rust_workflow_text()?;
-    let blocks = routed_rust_step_run_blocks(&reusable, "Required Rust gates");
-    if blocks.len() != 1 {
-        return Err(format!(
-            "rust-gates.yml must have exactly 1 `Required Rust gates` step, found {}",
-            blocks.len()
-        ));
-    }
-    for (index, block) in blocks.iter().enumerate() {
-        require_single_bare_precommit_line(
-            block,
-            &format!("Required Rust gates step {}", index + 1),
-        )?;
-        if block.iter().any(|line| line.contains("if: false")) {
+    for lane_only in [
+        "cargo xtask check-evidence-promotion-honesty",
+        "cargo xtask check-dependencies",
+        "cargo xtask check-process-policy",
+        "cargo xtask check-network-policy",
+        "cargo xtask goldens check",
+        "cargo xtask fixtures",
+    ] {
+        if workflow.contains(lane_only) {
             return Err(format!(
-                "Required Rust gates step {} must not guard gates behind `if: false`",
-                index + 1
+                "routed-rust.yml must delegate `{lane_only}` to rust-gates.yml, not inline it"
             ));
         }
-        for lane_only in [
-            "cargo xtask check-evidence-promotion-honesty",
-            "cargo xtask check-dependencies",
-            "cargo xtask check-process-policy",
-            "cargo xtask check-network-policy",
-            "cargo xtask goldens check",
-            "cargo xtask fixtures",
-        ] {
-            if !block.iter().any(|line| line.trim() == lane_only) {
-                return Err(format!(
-                    "Required Rust gates step {} must keep lane-only gate `{lane_only}` enumerated",
-                    index + 1
-                ));
-            }
+    }
+    let reusable = reusable_rust_workflow_text()?;
+    for lane_only in [
+        "cargo xtask check-evidence-promotion-honesty",
+        "cargo xtask check-dependencies",
+        "cargo xtask check-process-policy",
+        "cargo xtask check-network-policy",
+        "cargo xtask goldens check",
+        "cargo xtask fixtures",
+    ] {
+        let count = reusable.matches(lane_only).count();
+        if count != 1 {
+            return Err(format!(
+                "rust-gates.yml must enumerate lane-only gate `{lane_only}` exactly once, found {count}"
+            ));
         }
     }
     Ok(())

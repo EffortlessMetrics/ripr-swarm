@@ -661,7 +661,8 @@ or a near-miss.
 
 Running a few `cargo xtask check-*` gates by hand before pushing missed two
 required gates twice in a row (`check-generated`, then `check-static-language`).
-The required CX43 "Required Rust gates" step runs the whole set. Mirror it
+The required Rust gate set runs as the named per-producer steps in
+`.github/workflows/rust-gates.yml` (routed by `routed-rust.yml`). Mirror it
 locally with one command:
 
 ```bash
