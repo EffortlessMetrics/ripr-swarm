@@ -174,6 +174,21 @@ import alias. Factory returns, dependency injection, mocked modules, prototype
 aliases, namespace chains, and dynamic property access remain advisory or
 unsupported.
 
+A test is related to an owner only when the test references the owner. When
+no owner-call, import-call, receiver, class-method, module-observer, or
+re-export relation exists, the same-stem, `describe(...)`-name, and
+test-name heuristics may relate a test only if its body references the owner
+without a recognized call shape: the bare owner identifier outside comments,
+strings, object-literal keys, and member positions and not shadowed by a
+local declaration; a named-import local of the owner; or a namespace member
+`ns.owner` whose import resolves to the owner module. Such a link stays
+`weakly_exposed` with `actionability_category = ambiguous_related_test`. A
+test that only names the owner in its title, its `describe(...)` title, or its
+file stem, or that only calls a sibling owner from the same module, is not
+related: when no test references the owner, the finding is `no_static_path`
+with reach `no` and the missing reference named (`No test references
+\`owner(\``).
+
 ## Probe Facts
 
 Probes the adapter must generate (syntax-first):
@@ -317,6 +332,33 @@ Expected static evidence:
 
 - probe emits `static_limit_kind = "dynamic_dispatch"`; finding stays
   conservative.
+
+Untested sibling owner in a tested module:
+
+```ts
+// src/pricing.ts
+export function discountedTotal(amount: number) { /* tested */ }
+export function loyaltyPrice(amount: number, years: number) {
+  if (years >= 5) {
+    return amount - Math.floor(amount / 20);
+  }
+  return amount;
+}
+
+// test/pricing.test.ts — never references loyaltyPrice
+import { discountedTotal } from "../src/pricing";
+it("no discount below threshold", () => {
+  expect(discountedTotal(5000)).toBe(5000);
+});
+```
+
+Expected static evidence:
+
+- changed `loyaltyPrice` lines classify `no_static_path` with
+  `reach no: 0 related test(s) found for owner \`loyaltyPrice\``;
+- no related test is listed, and the missing line names the absent
+  reference (`No test references \`loyaltyPrice(\``);
+- the same file still relates both tests to `discountedTotal`, which they call.
 
 ## Test Mapping
 

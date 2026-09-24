@@ -990,7 +990,7 @@
         { "type": "must_not_have_verify_command" },
         { "type": "must_not_have_receipt_command" },
         { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_class", "class": "no_static_path" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
@@ -1024,7 +1024,7 @@
         { "type": "must_not_have_verify_command" },
         { "type": "must_not_have_receipt_command" },
         { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_class", "class": "no_static_path" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
@@ -1041,7 +1041,7 @@
         { "type": "must_not_have_verify_command" },
         { "type": "must_not_have_receipt_command" },
         { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_class", "class": "no_static_path" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },

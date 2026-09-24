@@ -95,6 +95,12 @@ fn cleanup_temp_dir(path: Option<&Path>) -> Result<(), std::io::Error> {
     Ok(())
 }
 
+/// Best-effort temp-dir teardown. The `io::Result` is matched with `if let`
+/// so a `#[must_use]` cleanup failure is an explicit ignore.
+fn ignore_remove_dir_all(path: &Path) {
+    if let Ok(()) = std::fs::remove_dir_all(path) {}
+}
+
 fn inherited_coverage_is_enabled() -> bool {
     std::env::var_os("LLVM_PROFILE_FILE").is_some() || std::env::var_os("CARGO_LLVM_COV").is_some()
 }
@@ -1932,7 +1938,7 @@ fn diff_json_reports_changed_surface_before_full_repo_context() -> Result<(), St
         "diff-first report should preserve changed-seam evidence: {stdout}"
     );
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -5986,7 +5992,7 @@ fn doctor_reports_missing_config_defaults() -> Result<(), String> {
     assert!(stdout.contains("Recovery states: missing artifact, stale evidence, wrong root"));
     assert!(stdout.contains("Proof rail: verify command, receipt command, and receipt path"));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6009,7 +6015,7 @@ fn doctor_reports_present_start_here_packet() -> Result<(), String> {
     // here is a real route rather than a dead end.
     assert!(stdout.contains("Safe next action: open that packet"));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6027,7 +6033,7 @@ fn doctor_reports_directory_squatting_packet_path_as_not_generated() -> Result<(
     assert!(!stdout.contains("(present; open it first)"));
     assert!(stdout.contains("Safe next action: run the recommended first command below"));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6078,7 +6084,7 @@ fn check_rejects_missing_and_file_roots_without_leaking_the_git_invocation() -> 
         String::from_utf8_lossy(&ok_output.stderr)
     );
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6107,7 +6113,7 @@ fn config_validate_rejects_missing_and_file_roots() -> Result<(), String> {
         String::from_utf8_lossy(&file_output.stderr)
     );
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6325,7 +6331,7 @@ fn doctor_passes_python_only_root_without_rust_toolchain() -> Result<(), String>
         &path,
         "Rust not detected at this root (no Cargo.toml or .rs files); in scope: python",
     );
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     result
 }
 
@@ -6353,7 +6359,7 @@ fn doctor_passes_typescript_root_without_rust_toolchain() -> Result<(), String> 
         &path,
         "Rust is not enabled in [languages]",
     );
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     result
 }
 
@@ -6405,7 +6411,7 @@ fn doctor_still_fails_rust_roots_without_cargo_or_manifest() -> Result<(), Strin
         Ok(())
     };
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     manifest_result.and(sources_result)
 }
 
@@ -6431,7 +6437,7 @@ fn doctor_reports_loaded_config_path() -> Result<(), String> {
     assert!(!stdout.contains("mode = \"deep\""));
     assert!(!stdout.contains("seam_diagnostics"));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6456,7 +6462,7 @@ fn doctor_reports_malformed_config_error() -> Result<(), String> {
     assert!(stdout.contains("analysis.mode `slow` is not supported"));
     assert!(!stdout.contains("mode = \"slow\""));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6520,7 +6526,7 @@ fn doctor_reports_language_tiers_and_limitations() -> Result<(), String> {
         "expected the diff-first recommended command in stdout:\n{stdout}"
     );
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6627,7 +6633,7 @@ fn doctor_reports_perl_preview_section_when_perl_markers_present() -> Result<(),
         "project counts must reflect the recursive scan (1 .pm, 1 .t): {project_line}"
     );
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -6644,7 +6650,7 @@ fn doctor_omits_perl_preview_when_no_perl_markers() -> Result<(), String> {
         "must not emit a Perl preview for a Rust-only workspace:\n{stdout}"
     );
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6714,7 +6720,7 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
         "dirty worktree must NOT give the unconditional clean recommendation:\n{dirty_out}"
     );
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -6744,7 +6750,7 @@ fn init_writes_conservative_config_and_doctor_loads_it() -> Result<(), String> {
     assert!(stdout.contains("Analysis mode default: draft"));
     assert!(stdout.contains("LSP seam diagnostics default: true"));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6768,7 +6774,7 @@ fn init_dry_run_prints_config_without_writing() -> Result<(), String> {
     assert!(stdout.contains("Rerun without --dry-run to apply."));
     assert!(!workspace.join("ripr.toml").exists());
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6805,7 +6811,7 @@ fn init_dry_run_fails_like_the_real_run_when_config_exists_without_force() -> Re
         .map_err(|e| format!("read existing ripr.toml: {e}"))?;
     assert!(config.contains("mode = \"deep\""));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6848,7 +6854,7 @@ fn init_dry_run_fails_like_the_real_run_when_workflow_parent_is_a_file() -> Resu
         "the real run wrote ripr.toml before failing"
     );
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6884,7 +6890,7 @@ fn init_dry_run_fails_like_the_real_run_for_a_dangling_symlink_target() -> Resul
         String::from_utf8_lossy(&dry.stderr)
     );
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6948,7 +6954,7 @@ fn init_dry_run_plan_reports_leave_existing_for_untouched_config() -> Result<(),
     assert!(real_stdout.contains("Wrote"));
     assert!(workspace.join(".github/workflows/ripr.yml").exists());
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -6997,7 +7003,7 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(!workspace.join("ripr.toml").exists());
     assert!(!workspace.join(".github/workflows/ripr.yml").exists());
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -7023,7 +7029,7 @@ fn init_refuses_existing_config_without_force() -> Result<(), String> {
     assert!(config.contains("mode = \"deep\""));
     assert!(!config.contains("seam_diagnostics = true"));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -7096,7 +7102,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(!workflow.contains("RIPR_GATE_MODE: \"baseline-check\""));
     assert!(!workflow.contains("RIPR_GATE_MODE: \"calibrated-gate\""));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -7121,7 +7127,7 @@ fn init_ci_github_refuses_existing_workflow_without_force() -> Result<(), String
     assert!(stderr.contains("--force"));
     assert!(!workspace.join("ripr.toml").exists());
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -7140,7 +7146,7 @@ fn init_force_overwrites_existing_config() -> Result<(), String> {
     assert!(config.contains("seam_diagnostics = true"));
     assert!(!config.contains("mode = \"deep\""));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -7200,7 +7206,7 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
     assert!(stdout.contains("\"kind\": \"gate_baseline\""));
     assert!(!dry_run_out.exists());
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -7272,7 +7278,7 @@ fn baseline_diff_writes_debt_delta_json_and_markdown() -> Result<(), String> {
     assert!(missing_json.contains("\"missing_current_input\": 1"));
     assert!(missing_json.contains("required current gate-decision input"));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -7406,7 +7412,7 @@ fn capped_pr_guidance_baseline_round_trip_preserves_shared_canonical_gap_seams()
             .is_none_or(Vec::is_empty),
         "unchanged capped evidence must not produce ambiguous or stale warnings: {updated_value}"
     );
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -7461,7 +7467,7 @@ fn baseline_update_removes_resolved_without_adopting_new_debt() -> Result<(), St
     assert!(stderr.contains("--remove-resolved"));
     assert!(stderr.contains("adopting new debt is not supported"));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -7610,7 +7616,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
         "Markdown must not offer the snapshot pair beside the repair route:\n{next_section}"
     );
 
-    let _ = std::fs::remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&out_dir);
     Ok(())
 }
 
@@ -7727,7 +7733,7 @@ fn rerun_before_receipt_names_toolchain_fingerprint_change() -> Result<(), Strin
         ],
         &[("RUSTUP_TOOLCHAIN", "toolchain-after")],
     );
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     assert_success(&after);
     let report: serde_json::Value = serde_json::from_slice(&after.stdout)
         .map_err(|err| format!("parse fingerprint rerun JSON: {err}"))?;
@@ -7834,7 +7840,7 @@ fn rerun_gap_before_receipt_names_selector_ledger_change() -> Result<(), String>
         "--json",
     ])
     .map_err(|err| format!("run ledger fingerprint after rerun: {err}"))?;
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     assert_success(&after);
     let report: serde_json::Value = serde_json::from_slice(&after.stdout)
         .map_err(|err| format!("parse ledger fingerprint after JSON: {err}"))?;
@@ -7887,7 +7893,7 @@ fn rerun_check_parity_names_capped_inventory_and_suppresses_movement() -> Result
         ],
         &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
     );
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     assert_success(&after);
     let report: serde_json::Value = serde_json::from_slice(&after.stdout)
         .map_err(|err| format!("parse capped parity rerun JSON: {err}"))?;
@@ -7937,7 +7943,7 @@ fn rerun_changed_test_uses_explicit_before_receipt_for_static_movement() -> Resu
         &before_arg,
         "--json",
     ]);
-    let _ = std::fs::remove_file(&before_path);
+    if let Ok(()) = std::fs::remove_file(&before_path) {}
     assert_success(&after);
     let json: serde_json::Value = serde_json::from_slice(&after.stdout)
         .map_err(|err| format!("parse targeted rerun movement JSON: {err}"))?;
@@ -8199,7 +8205,7 @@ fn rerun_gap_recomputes_fixture_anchor_from_explicit_canonical_ledger() -> Resul
         return Err(format!("unexpected stale gap rerun report: {stale_json}"));
     }
 
-    let _ = std::fs::remove_dir_all(&ledger_dir);
+    ignore_remove_dir_all(&ledger_dir);
     Ok(())
 }
 
@@ -8343,7 +8349,7 @@ fn pilot_accepts_python_project_without_ripr_config() -> Result<(), String> {
     assert!(stdout.contains("Python preview:"));
     assert!(out_dir.join("pilot-summary.json").exists());
 
-    let _ = std::fs::remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&out_dir);
     Ok(())
 }
 
@@ -8430,8 +8436,411 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
         );
     }
 
-    let _ = std::fs::remove_dir_all(&root);
-    let _ = std::fs::remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// A committed git repository with one base commit, an `origin/main` ref at
+/// that base, and one follow-up commit that applies `change` (#3906 pilot
+/// language-route fixtures).
+fn pilot_language_fixture_repo(
+    label: &str,
+    files: &[(&str, &str)],
+    change: (&str, &str),
+) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    for (path, text) in files {
+        let path = root.join(path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("create {}: {err}", parent.display()))?;
+        }
+        std::fs::write(&path, text).map_err(|err| format!("write {}: {err}", path.display()))?;
+    }
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "ripr@example.invalid"])?;
+    run_git(&root, &["config", "user.name", "RIPR Test"])?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "base"])?;
+    run_git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+    std::fs::write(root.join(change.0), change.1)
+        .map_err(|err| format!("write changed {}: {err}", change.0))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "change"])?;
+    Ok(root)
+}
+
+/// Run `ripr pilot` and return (stdout, pilot-summary.md, pilot-summary.json,
+/// repo-exposure.json).
+fn run_pilot_language_fixture(
+    root: &Path,
+    out_dir: &Path,
+) -> Result<(String, String, serde_json::Value, serde_json::Value), String> {
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let md = std::fs::read_to_string(out_dir.join("pilot-summary.md"))
+        .map_err(|err| format!("read pilot summary md: {err}"))?;
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary json: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    let exposure: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("repo-exposure.json"))
+            .map_err(|err| format!("read repo exposure json: {err}"))?,
+    )
+    .map_err(|err| format!("parse repo exposure json: {err}"))?;
+    Ok((stdout, md, summary, exposure))
+}
+
+/// Precondition for the no-Rust-seam fixtures: pilot's Rust scan really found
+/// nothing to rank, so any route shown is the only signal about the repo.
+fn assert_pilot_found_no_rust_seams(summary: &serde_json::Value, exposure: &serde_json::Value) {
+    assert_eq!(
+        exposure["metrics"]["seams_total"],
+        serde_json::json!(0),
+        "fixture must have zero Rust seams: {exposure}"
+    );
+    assert_eq!(summary["actionable_seams_total"], serde_json::json!(0));
+    assert_eq!(summary["top_actionable_seams"], serde_json::json!([]));
+}
+
+/// The one route pilot reports for `language`, with the `required` state.
+fn required_language_route(
+    summary: &serde_json::Value,
+    language: &str,
+) -> Result<serde_json::Value, String> {
+    let routes = &summary["language_routes"];
+    if routes["state"] != "required" {
+        return Err(format!("language routes must be required: {routes}"));
+    }
+    let matching = routes["routes"]
+        .as_array()
+        .ok_or_else(|| format!("language_routes.routes is not an array: {routes}"))?
+        .iter()
+        .filter(|route| route["language"] == language)
+        .cloned()
+        .collect::<Vec<_>>();
+    match matching.as_slice() {
+        [route] if route["file_count"].as_u64().unwrap_or(0) >= 1 => Ok(route.clone()),
+        _ => Err(format!("expected one detected {language} route: {routes}")),
+    }
+}
+
+/// The empty Rust ranking must not read as a clean pass, and the Rust
+/// repo-exposure snapshot choreography (which can only report "no seams
+/// moved") must not be offered as the follow-up.
+fn assert_pilot_does_not_read_as_clean(stdout: &str, md: &str) {
+    assert!(
+        !stdout.contains("none ranked by the default pilot policy"),
+        "no-Rust-seam pilot must not print the plain no-recommendation line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("none: pilot ranks Rust seams and found none here"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Languages outside pilot's Rust seam scan:"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("ripr outcome --before") && !stdout.contains("repo-exposure-json >"),
+        "Rust snapshot follow-up must not be offered for a repo with no Rust seams:\n{stdout}"
+    );
+    assert!(
+        md.contains("## Languages Outside The Rust Seam Scan"),
+        "{md}"
+    );
+    assert!(md.contains("This is not a clean result"), "{md}");
+    assert!(!md.contains("ripr outcome --before"), "{md}");
+}
+
+#[test]
+#[cfg(feature = "lang-typescript")]
+fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Result<(), String> {
+    let base = "export function discount(amount: number, threshold: number): number {\n  if (amount > threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-lang-ts",
+        &[
+            (
+                "package.json",
+                "{\"name\":\"pilot-lang-ts\",\"version\":\"0.0.0\"}\n",
+            ),
+            ("src/pricing.ts", base),
+            (
+                "tests/pricing.test.ts",
+                "import { discount } from \"../src/pricing\";\ntest(\"discount\", () => {\n  expect(discount(125, 100)).toBeTruthy();\n});\n",
+            ),
+        ],
+        (
+            "src/pricing.ts",
+            &base.replace("amount > threshold", "amount >= threshold"),
+        ),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-lang-ts-out");
+    let (stdout, md, summary, exposure) = run_pilot_language_fixture(&root, &out_dir)?;
+
+    assert_pilot_found_no_rust_seams(&summary, &exposure);
+    let route = required_language_route(&summary, "typescript")?;
+    let command = format!("ripr check --root {}", root.display());
+    assert_eq!(route["language_status"], "preview");
+    assert_eq!(route["enabled"], false);
+    assert_eq!(route["route"], "check_diff_first");
+    assert_eq!(route["command"], serde_json::json!(command));
+    // The existing `typescript_diff_first` guidance is surfaced, not reworded.
+    assert_eq!(route["guidance_category"], "typescript_diff_first");
+    assert!(
+        route["guidance"]
+            .as_str()
+            .is_some_and(|text| text.starts_with("TypeScript is analyzed diff-first;")),
+        "{route}"
+    );
+    assert_pilot_does_not_read_as_clean(&stdout, &md);
+    assert!(
+        stdout.contains(
+            "typescript: 2 files (preview, diff-first; not enabled in ripr.toml [languages])"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "not enabled in ripr.toml [languages])\n    route: {command}\n"
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "Next, analyze the changed code in these languages:\n  {command}\n"
+        )),
+        "{stdout}"
+    );
+    assert!(md.contains("`typescript_diff_first`: TypeScript is analyzed diff-first;"));
+
+    // With the preview adapter enabled, the route no longer says "not enabled".
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+    )
+    .map_err(|err| format!("write ripr.toml: {err}"))?;
+    let (enabled_stdout, _, enabled_summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(
+        required_language_route(&enabled_summary, "typescript")?["enabled"],
+        true
+    );
+    assert!(
+        enabled_stdout.contains("typescript: 2 files (preview, diff-first)\n"),
+        "{enabled_stdout}"
+    );
+
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), String> {
+    let base = "def calculate_discount(amount, threshold):\n    if amount > threshold:\n        return amount - 10\n    return amount\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-lang-py",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"pilot-lang-py\"\nversion = \"0.0.0\"\n",
+            ),
+            ("src/pricing.py", base),
+            (
+                "tests/test_pricing.py",
+                "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n",
+            ),
+        ],
+        (
+            "src/pricing.py",
+            &base.replace("amount > threshold", "amount >= threshold"),
+        ),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-lang-py-out");
+    let (stdout, md, summary, exposure) = run_pilot_language_fixture(&root, &out_dir)?;
+
+    assert_pilot_found_no_rust_seams(&summary, &exposure);
+    // Python was detected and analyzed through the existing diff-first
+    // projection; the route adds where to rerun it.
+    assert_eq!(summary["python_first_use"]["status"], "ready");
+    let route = required_language_route(&summary, "python")?;
+    let command = format!("ripr check --root {}", root.display());
+    assert_eq!(route["enabled"], true);
+    assert_eq!(route["command"], serde_json::json!(command));
+    assert_eq!(route["guidance_category"], serde_json::Value::Null);
+    assert!(
+        stdout.contains(&format!(
+            "python: 2 files (preview, diff-first)\n    route: {command}\n"
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "Next, analyze the changed code in these languages:\n  {command}\n"
+        )),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("ripr outcome --before"),
+        "Python pilot must not end in the Rust repo-exposure outcome route:\n{stdout}"
+    );
+    assert!(md.contains(&format!("  - Route: `{command}`")), "{md}");
+    assert!(!md.contains("ripr outcome --before"), "{md}");
+
+    // The printed route must analyze the changed Python, not only parse.
+    let root_arg = root.display().to_string();
+    let routed = run_ripr(&["check", "--root", &root_arg]);
+    let routed_stdout = String::from_utf8_lossy(&routed.stdout);
+    assert!(
+        routed.status.code().is_some_and(|code| code <= 1),
+        "routed check failed: {routed:?}"
+    );
+    assert!(
+        routed_stdout.contains("src/pricing.py"),
+        "routed check must report the changed Python file:\n{routed_stdout}"
+    );
+
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+#[test]
+fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), String> {
+    let base = "package Pricing;\nsub discount {\n    my ($amount, $threshold) = @_;\n    return $amount > $threshold ? $amount - 10 : $amount;\n}\n1;\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-lang-pl",
+        &[("lib/Pricing.pm", base)],
+        (
+            "lib/Pricing.pm",
+            &base.replace("$amount > $threshold", "$amount >= $threshold"),
+        ),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-lang-pl-out");
+    let (stdout, md, summary, exposure) = run_pilot_language_fixture(&root, &out_dir)?;
+
+    assert_pilot_found_no_rust_seams(&summary, &exposure);
+    let route = required_language_route(&summary, "perl")?;
+    assert_eq!(route["file_count"], 1);
+    assert_pilot_does_not_read_as_clean(&stdout, &md);
+    if cfg!(feature = "lang-perl") {
+        assert_eq!(route["language_status"], "preview");
+        assert_eq!(
+            route["command"],
+            serde_json::json!(format!("ripr check --root {}", root.display()))
+        );
+    } else {
+        let notice = "Perl analysis is not available from this ripr binary. Rebuild ripr with Cargo feature `lang-perl` to analyze Perl files.";
+        assert_eq!(route["language_status"], "unavailable");
+        assert_eq!(route["route"], "unavailable_in_this_binary");
+        assert_eq!(route["command"], serde_json::Value::Null);
+        assert_eq!(route["guidance"], serde_json::json!(notice));
+        assert!(
+            stdout.contains(&format!(
+                "perl: 1 file (not available in this build)\n    {notice}\n"
+            )),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(
+                "No follow-up command applies: this ripr binary cannot analyze the languages listed above."
+            ),
+            "{stdout}"
+        );
+        assert!(md.contains(notice), "{md}");
+    }
+
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// Rust-only output is untouched by language routing, and adding TypeScript
+/// beside Rust seams leaves the human output byte-identical: the mixed repo
+/// keeps the Rust result and lists the other language in JSON only.
+#[test]
+fn pilot_keeps_rust_output_byte_identical_when_rust_seams_exist() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "pilot-lang-rs",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"pilot-lang-rs\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            (
+                "src/lib.rs",
+                "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+            ),
+        ],
+        (
+            "src/lib.rs",
+            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+        ),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-lang-rs-out");
+    let (rust_stdout, rust_md, rust_summary, rust_exposure) =
+        run_pilot_language_fixture(&root, &out_dir)?;
+
+    assert!(
+        rust_exposure["metrics"]["seams_total"]
+            .as_u64()
+            .unwrap_or(0)
+            >= 1,
+        "Rust fixture must produce Rust seams: {rust_exposure}"
+    );
+    assert_eq!(
+        rust_summary["language_routes"],
+        serde_json::json!({"state": "not_detected", "routes": []})
+    );
+    assert!(rust_stdout.contains("inspected seam: "), "{rust_stdout}");
+    assert!(
+        !rust_stdout.contains("Languages outside pilot's Rust seam scan"),
+        "{rust_stdout}"
+    );
+
+    std::fs::create_dir_all(root.join("web")).map_err(|err| format!("create web: {err}"))?;
+    std::fs::write(
+        root.join("web/pricing.ts"),
+        "export function discount(amount: number): number {\n  return amount - 10;\n}\n",
+    )
+    .map_err(|err| format!("write web/pricing.ts: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "add typescript"])?;
+    let (mixed_stdout, mixed_md, mixed_summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+
+    assert_eq!(
+        mixed_stdout, rust_stdout,
+        "mixed repo changed the Rust terminal output"
+    );
+    assert_eq!(
+        mixed_md, rust_md,
+        "mixed repo changed the Rust markdown output"
+    );
+    assert_eq!(mixed_summary["language_routes"]["state"], "supplementary");
+    let routes = mixed_summary["language_routes"]["routes"]
+        .as_array()
+        .ok_or_else(|| format!("routes is not an array: {mixed_summary}"))?;
+    assert_eq!(routes.len(), 1, "{mixed_summary}");
+    assert_eq!(routes[0]["language"], "typescript");
+    assert_eq!(routes[0]["file_count"], 1);
+    assert_eq!(
+        mixed_summary["top_actionable_seams"], rust_summary["top_actionable_seams"],
+        "mixed repo must keep the Rust ranking"
+    );
+
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
     Ok(())
 }
 
@@ -8481,8 +8890,8 @@ fn pilot_honors_explicit_mode_over_repo_config() -> Result<(), String> {
     assert!(summary_json.contains(r#""mode": "draft""#));
     assert!(summary_json.contains(r#""state": "loaded""#));
 
-    let _ = std::fs::remove_dir_all(&out_dir);
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -8509,8 +8918,8 @@ fn pilot_uses_repo_config_mode_without_explicit_flag() -> Result<(), String> {
     assert!(summary_json.contains(r#""mode": "ready""#));
     assert!(summary_json.contains(r#""state": "loaded""#));
 
-    let _ = std::fs::remove_dir_all(&out_dir);
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -8583,7 +8992,7 @@ fn artifact_input_commands_do_not_advertise_defaults_they_refuse_to_use() -> Res
         }
     }
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     if failures.is_empty() {
         Ok(())
     } else {
@@ -8612,7 +9021,7 @@ fn outcome_prints_markdown_receipt_by_default() -> Result<(), String> {
     assert!(stdout.contains("weakly_gripped -> strongly_gripped"));
     assert!(stdout.contains("does not run mutation testing"));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -8659,8 +9068,7 @@ fn outcome_disclosure_follows_the_artifacts_it_was_given() -> Result<(), String>
     assert_success(&with_identity);
     let identity_stderr = String::from_utf8_lossy(&with_identity.stderr).to_string();
 
-    let _ = std::fs::remove_dir_all(&workspace);
-
+    ignore_remove_dir_all(&workspace);
     if !missing_head_is_disclosed {
         return Err(format!(
             "identity-free snapshots must still disclose the missing head: {stderr}"
@@ -8704,7 +9112,7 @@ fn outcome_writes_json_receipt_when_requested() -> Result<(), String> {
     assert!(json.contains(r#""status": "advisory""#));
     assert!(json.contains(r#""moved": 1"#));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -8772,7 +9180,7 @@ fn calibrate_cargo_mutants_writes_json_when_requested() -> Result<(), String> {
     assert!(json.contains(r#""agreement""#));
     assert!(json.contains(r#""matches""#));
 
-    let _ = std::fs::remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&out_dir);
     Ok(())
 }
 
@@ -9165,7 +9573,7 @@ fn check_badge_plus_missing_test_efficiency_renders_neutral_badge() -> Result<()
             "stderr must not hardcode repo-private xtask guidance for `{format}`: {stderr}"
         );
     }
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -9199,7 +9607,7 @@ fn check_repo_badge_plus_json_emits_native_shape_with_fixture_report() -> Result
     assert!(stdout.contains(r#""smoke_oracle_only": 2"#));
     assert!(stdout.contains(r#""duplicate_activation_and_oracle_shape": 0"#));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -9243,7 +9651,7 @@ fn check_badge_plus_shields_emits_four_field_shape_with_fixture_report() -> Resu
     assert!(!stdout.to_ascii_lowercase().contains("coverage"));
     assert!(!stdout.to_ascii_lowercase().contains("uncovered"));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -9266,7 +9674,7 @@ fn check_badge_plus_command_exits_zero_by_default_even_with_nonzero_count() -> R
     ]);
     assert_success(&output);
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -9296,7 +9704,7 @@ fn check_repo_badge_json_emits_repo_scope_metadata() -> Result<(), String> {
     assert!(stdout.contains(r#""public_projection""#));
     assert!(stdout.contains(r#""source_report": "target/ripr/reports/repo-ripr-badge.json""#));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -9365,7 +9773,7 @@ fn check_repo_badge_json_can_use_gap_ledger_targets() -> Result<(), String> {
     assert!(stdout.contains(r#""state": "actionable""#));
     assert!(stdout.contains(r#""actionable_count": 1"#));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -9400,7 +9808,7 @@ fn check_repo_badge_shields_keeps_four_fields_without_scope_leak() -> Result<(),
         );
     }
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -9420,7 +9828,7 @@ fn check_repo_badge_plus_json_emits_repo_scope_metadata() -> Result<(), String> 
     assert!(stdout.contains(r#""label": "ripr+""#));
     assert!(stdout.contains(r#""public_projection""#));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -9450,7 +9858,7 @@ fn check_repo_exposure_summary_json_emits_bounded_summary() -> Result<(), String
     assert!(!stdout.contains(r#""related_tests""#));
     assert!(!stdout.contains(r#""observed_values""#));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -9482,7 +9890,7 @@ fn check_repo_badge_plus_shields_keeps_four_fields() -> Result<(), String> {
         "expected exactly 4 top-level Shields fields, got: {stdout}"
     );
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -9534,7 +9942,7 @@ index 0000000..1111111 100644
          was used instead: {stdout}"
     );
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -9699,7 +10107,7 @@ fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_sour
         );
         Ok(())
     })();
-    let _ = std::fs::remove_dir_all(&dir);
+    ignore_remove_dir_all(&dir);
     result
 }
 
@@ -9791,7 +10199,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
         );
         Ok(())
     })();
-    let _ = std::fs::remove_dir_all(&dir);
+    ignore_remove_dir_all(&dir);
     result
 }
 
@@ -9961,7 +10369,7 @@ fn check_worktree_write_artifact_then_explain_reuse_and_drift_fails_closed() -> 
         }
         Ok(())
     })();
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     result
 }
 
@@ -10044,7 +10452,7 @@ fn explain_from_consumes_artifact_written_with_non_default_mode() -> Result<(), 
             && stderr.contains("mode"),
         "mode mismatch must be named:\n{stderr}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    ignore_remove_dir_all(&dir);
     Ok(())
 }
 
@@ -10117,7 +10525,7 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
             && stderr.contains("analysis_options.include_unchanged_tests"),
         "include_unchanged_tests mismatch must be named:\n{stderr}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    ignore_remove_dir_all(&dir);
     Ok(())
 }
 
@@ -10172,7 +10580,7 @@ fn check_write_artifact_rejects_managed_perl_producer() -> Result<(), String> {
         );
         Ok(())
     })();
-    let _ = std::fs::remove_dir_all(&dir);
+    ignore_remove_dir_all(&dir);
     result
 }
 
@@ -10246,7 +10654,7 @@ expires = "2099-09-01"
     assert!(stdout.contains(r#""intentional_test_efficiency_findings": 0"#));
     assert!(stdout.contains(r#""warnings": []"#));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -10277,7 +10685,7 @@ expires = "2025-01-01"
     assert!(stdout.contains(r#""suppressed_test_efficiency_findings": 0"#));
     assert!(stdout.contains(r#""warnings": []"#));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -10320,7 +10728,7 @@ reason = "y"
         "stderr must name the offending value: {stderr}"
     );
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -10360,7 +10768,7 @@ reason = "ghost selector"
     let top_level = stdout.lines().filter(|l| l.starts_with("  \"")).count();
     assert_eq!(top_level, 4);
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -10409,7 +10817,7 @@ index 0000000..1111111 100644
     // diff) and no unrelated TE debt = 0.
     assert!(stdout.contains(r#""message": "0""#));
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -10432,7 +10840,7 @@ fn check_repo_badge_plus_does_not_count_unlifted_repo_wide_test_efficiency() -> 
         "repo-scope public `ripr+` must not count unlifted TE findings: {stdout}"
     );
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -10566,7 +10974,7 @@ fn check_repo_exposure_json_run_status_seam_limit_applied_and_complete() -> Resu
         ));
     }
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -10602,7 +11010,7 @@ fn check_repo_exposure_json_limit_source_configured_when_env_set() -> Result<(),
         ));
     }
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -10669,7 +11077,7 @@ fn check_repo_exposure_json_cache_roundtrip_preserves_seam_limit_applied() -> Re
         ));
     }
 
-    let _ = std::fs::remove_dir_all(&workspace);
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -10747,7 +11155,7 @@ fn receipt_write_then_check_exits_zero() -> Result<(), Box<dyn std::error::Error
         "receipt check should report valid, got: {check_stdout}"
     );
 
-    let _ = std::fs::remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&out_dir);
     Ok(())
 }
 
@@ -10836,7 +11244,7 @@ fn receipt_write_with_packet_id_smoke() -> Result<(), Box<dyn std::error::Error>
     );
     assert_eq!(value["verify_status"], "not_run");
 
-    let _ = std::fs::remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&out_dir);
     Ok(())
 }
 
@@ -10985,7 +11393,7 @@ fn receipt_check_orphan_exits_nonzero() -> Result<(), Box<dyn std::error::Error>
         "output should mention orphan_receipt; got: {combined}"
     );
 
-    let _ = std::fs::remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&out_dir);
     Ok(())
 }
 
@@ -11063,7 +11471,7 @@ fn check_mode_fast_alone_shows_no_scope_disclosure_smoke() {
         !stdout.contains("--mode fast"),
         "no-scope guidance must NOT recommend --mode fast; got:\n{stdout}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
 }
 
 // #2644 regression guards: the fast-mode no-op notice is a property of the
@@ -11108,7 +11516,7 @@ fn check_fast_mode_notice_fires_for_config_derived_mode_smoke()
     let with_config = run_ripr(&["check", "--root", &root_str]);
     let with_config_stderr = String::from_utf8_lossy(&with_config.stderr).into_owned();
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     assert!(
         !without_config_stderr.contains(FAST_MODE_NOOP_NOTICE),
         "default mode must not emit the fast no-op notice; got stderr:\n{without_config_stderr}"
@@ -11135,7 +11543,7 @@ fn check_fast_mode_notice_is_silent_when_a_later_mode_wins_smoke()
     let deep_only = run_ripr(&["check", "--root", &root_str, "--mode", "deep", "--json"]);
     let overridden_stderr = String::from_utf8_lossy(&overridden.stderr).into_owned();
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     assert!(
         !overridden_stderr.contains(FAST_MODE_NOOP_NOTICE),
         "--mode fast --mode deep resolves to deep and must not emit the fast no-op notice; got stderr:\n{overridden_stderr}"
@@ -11167,7 +11575,7 @@ fn check_fast_mode_notice_is_emitted_once_for_repeated_mode_flags_smoke()
     let repeated_stderr = String::from_utf8_lossy(&repeated.stderr).into_owned();
     let single_stderr = String::from_utf8_lossy(&single.stderr).into_owned();
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     assert_eq!(
         repeated_stderr.matches(FAST_MODE_NOOP_NOTICE).count(),
         1,
@@ -11222,7 +11630,7 @@ fn check_fast_mode_notice_precedes_repo_scoped_early_returns_smoke()
     let repo_exposure_stdout = String::from_utf8_lossy(&repo_exposure.stdout).into_owned();
     let gap_ledger_stdout = String::from_utf8_lossy(&gap_ledger.stdout).into_owned();
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     assert!(
         repo_exposure_stderr.contains(FAST_MODE_NOOP_NOTICE),
         "--format repo-exposure-json must still get the fast no-op notice; got stderr:\n{repo_exposure_stderr}"
@@ -11279,7 +11687,7 @@ fn check_with_base_scope_does_not_show_no_scope_disclosure_smoke() {
         !stdout.contains("no analysis scope was provided"),
         "check --base HEAD must NOT show no-scope disclosure; got stdout:\n{stdout}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
 }
 
 // RIPR-SPEC-0112 regression guards: --base must disclose uncommitted working-tree changes.
@@ -11346,7 +11754,7 @@ fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosur
         !human.contains("commit or stage"),
         "the disclosure must not suggest staging, which leaves a --base diff unchanged; got:\n{human}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
 }
 
 /// RIPR-SPEC-0112 (default base): bare `ripr check` resolves the default base
@@ -11424,7 +11832,7 @@ fn check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclo
         ));
     }
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -11470,7 +11878,7 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
         ));
     }
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -11512,7 +11920,7 @@ fn check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_dis
         !stdout.contains("uncommitted changes"),
         "check --base HEAD with clean worktree must NOT mention uncommitted changes; got:\n{stdout}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
 }
 
 /// RIPR-SPEC-0116: `ripr check --base HEAD --worktree --json` analyzes the
@@ -11578,7 +11986,7 @@ fn check_worktree_base_head_analyzes_uncommitted_tracked_edit() -> Result<(), St
         ));
     }
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -11639,7 +12047,7 @@ fn check_worktree_base_head_clean_worktree_has_no_scope_or_unanalyzed_disclosure
         ));
     }
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -11705,7 +12113,7 @@ fn agent_status_next_command_uses_the_workspace_root() -> Result<(), String> {
         return Err(format!("Markdown root must be the workspace:\n{rendered}"));
     }
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -11750,7 +12158,7 @@ fn agent_status_refuses_non_default_out_dir() -> Result<(), String> {
     ]);
     assert_success(&default);
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -11816,7 +12224,7 @@ fn pr_summary_with_missing_artifacts_writes_outputs() -> Result<(), String> {
         json.contains("not_available"),
         "missing artifacts must surface not_available, not zero:\n{json}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -11854,7 +12262,7 @@ fn pr_summary_does_not_invoke_cargo() -> Result<(), String> {
         elapsed.as_secs() < 10,
         "pr-summary must complete in <10s (no compile); took {elapsed:?}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -11904,7 +12312,7 @@ fn annotations_with_missing_comments_writes_empty() -> Result<(), String> {
         root.join("target/ripr/review/annotations.txt").is_file(),
         "must write annotations.txt even when comments.json is missing"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -11976,7 +12384,7 @@ fn pr_evidence_with_missing_artifacts_writes_error_packet() -> Result<(), String
             || combined.contains("error"),
         "pr-evidence must either write evidence or surface a named error:\n{combined}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 

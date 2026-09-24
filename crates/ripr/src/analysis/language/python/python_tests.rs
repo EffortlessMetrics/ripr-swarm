@@ -2026,7 +2026,9 @@ fn related_test_matching_falls_back_to_same_stem_when_no_call() {
     );
     let tests = extract_tests(
         Path::new("tests/test_pricing.py"),
-        "def test_unrelated():\n    do_something_else()\n",
+        // References the owner without a recognized call shape: a heuristic
+        // link requires a reference (RIPR-SPEC-0028).
+        "def test_unrelated():\n    handler = apply_discount\n    do_something_else()\n",
     );
     let candidates = related_test_candidates(&owners[0], &tests);
     assert_eq!(candidates.len(), 1);
@@ -2046,7 +2048,7 @@ fn related_test_matching_uses_test_name_similarity_as_uncertain_relation() -> Re
     );
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
-        "def test_apply_discount_boundary_case():\n    assert 90 == 90\n",
+        "def test_apply_discount_boundary_case():\n    handler = apply_discount\n    assert 90 == 90\n",
     );
     let candidates = related_test_candidates(&owners[0], &tests);
     if candidates.len() != 1 {
@@ -2077,7 +2079,7 @@ fn related_test_matching_uses_fixture_name_as_uncertain_relation() {
     );
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
-        "def test_checkout_total(pricing):\n    assert 102 == 102\n",
+        "def test_checkout_total(pricing):\n    fee = calculate_fee\n    assert 102 == 102\n",
     );
     let candidates = related_test_candidates(&owners[0], &tests);
     assert_eq!(candidates.len(), 1);
@@ -2240,11 +2242,11 @@ fn related_test_candidates_break_ties_by_oracle_then_file_then_name() {
     .remove(0);
     let mut tests = extract_tests(
         Path::new("tests/test_pricing.py"),
-        "def test_alpha():\n    assert 1 == 1\n\ndef test_beta():\n    assert 1 == 1\n",
+        "def test_alpha():\n    handler = apply_discount\n    assert 1 == 1\n\ndef test_beta():\n    handler = apply_discount\n    assert 1 == 1\n",
     );
     tests.extend(extract_tests(
         Path::new("tests/pricing_test.py"),
-        "def test_alpha():\n    assert 1 == 1\n",
+        "def test_alpha():\n    handler = apply_discount\n    assert 1 == 1\n",
     ));
     let candidates = related_test_candidates(&owner, &tests);
     assert!(
