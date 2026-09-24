@@ -159,6 +159,41 @@ invalidated direct field assignment must stop as
 `field_assignment_value_unresolved` instead of receiving a repair
 recommendation that the analyzer cannot credit.
 
+Named-constant boundary example:
+
+```rust
+pub const DISCOUNT_THRESHOLD: u64 = 10_000;
+
+if amount >= DISCOUNT_THRESHOLD { /* discount */ }
+```
+
+When a changed comparison's boundary operand names a constant (an upper-case
+identifier, optionally `Self::` qualified), RIPR looks the constant up in the
+owner's own source file through the shared named-constant lookup in
+`analysis/value_resolution.rs`, for both `ripr check` and repo-seam grip:
+
+- a constant declared exactly once as an integer literal resolves to that
+  value, so a related test input equal to it (`discounted_total(10_000)`)
+  observes the equality boundary;
+- a test argument that names the constant itself
+  (`discounted_total(DISCOUNT_THRESHOLD)`, `pricing::DISCOUNT_THRESHOLD`)
+  observes the boundary by identity when the owner's file declares that
+  constant exactly once, even when its initializer is computed. A test whose
+  own file (other than the owner's) declares a constant of the same name, or
+  whose file source is unavailable, is not credited by identity, because its
+  argument may name its own constant;
+- declarations are counted after any same-line `#[...]` attributes, so
+  `#[cfg(a)] const LIMIT: u32 = 10;` beside a second `LIMIT` makes the lookup
+  ambiguous rather than resolving to the unattributed one;
+- a constant declared once with a computed or suffixed initializer keeps the
+  missing equality-boundary discriminator, and its reason says RIPR cannot see
+  the constant's value and that passing the constant itself is recognized;
+- a constant the owner's file does not declare (imported) or declares more
+  than once is not named as a missing discriminator, because no test could
+  satisfy it. `ripr check` reports `infection unknown` and says it cannot see
+  the constant's value; repo-seam grip reports activation unknown with the
+  boundary-constant limitation and no actionable repair packet.
+
 ## Test Mapping
 
 Fixture coverage:
@@ -167,6 +202,22 @@ Fixture coverage:
 - `fixtures/weak_error_oracle` (baseline)
 - `fixtures/smoke_assertion_only`
 - `fixtures/no_static_path`
+- `fixtures/boundary_named_constant`
+- `same_file_constant_boundary_is_observed_at_its_literal_value`
+- `argument_naming_the_constant_is_the_boundary_by_identity`
+- `constant_not_pinned_to_the_owner_file_fails_closed`
+- `argument_naming_a_test_file_constant_of_the_same_name_is_not_the_boundary`
+- `given_test_file_declaring_its_own_same_name_constant_then_identity_is_not_credited`
+- `a_test_file_declaring_the_same_constant_name_may_shadow_the_owner`
+- `named_constant_counts_attribute_prefixed_declarations`
+- `predicate_infection_names_an_unmatched_constant_boundary`
+- `named_constant_reads_one_same_file_integer_declaration`
+- `named_constant_fails_closed_on_computed_duplicate_or_mutable_declarations`
+- `constant_operand_names_and_arguments_match_by_identity`
+- `given_literal_input_at_same_file_constant_value_then_equality_boundary_is_observed`
+- `given_inputs_off_the_same_file_constant_value_then_equality_boundary_names_its_value`
+- `given_argument_naming_a_declared_constant_then_equality_boundary_is_observed`
+- `given_constant_not_declared_in_owner_file_then_boundary_is_a_named_limitation`
 - unit coverage for local flow sink families: predicate-to-return,
   predicate-to-error, match-arm result, output field, event/outbound call,
   state write, persistence write, log message, configuration change, and

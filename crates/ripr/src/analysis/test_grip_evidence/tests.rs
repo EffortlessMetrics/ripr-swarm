@@ -14068,3 +14068,179 @@ pub fn exercise_tail() -> String {
     );
     Ok(())
 }
+
+fn named_constant_boundary_evidence(
+    constant: &str,
+    test_calls: &[&str],
+) -> Result<TestGripEvidence, String> {
+    let tests = test_calls
+        .iter()
+        .enumerate()
+        .map(|(index, call)| {
+            format!(
+                "    #[test]\n    fn case_{index}() {{\n        assert_eq!({call}, 0);\n    }}\n"
+            )
+        })
+        .collect::<String>();
+    let source = format!(
+        "{constant}\n\npub fn discounted_total(amount: u64) -> u64 {{\n    if amount >= DISCOUNT_THRESHOLD {{\n        amount - amount / 10\n    }} else {{\n        amount\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{tests}}}\n"
+    );
+    let path = PathBuf::from("src/lib.rs");
+    let config = PathBuf::from("src/config.rs");
+    let index = index_from_files(&[
+        (path.clone(), source.as_str()),
+        (config, "pub const DISCOUNT_THRESHOLD: u64 = 10_000;\n"),
+    ])?;
+    let seams = inventory_seams_from_index(&[path], &index);
+    let predicate = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::PredicateBoundary
+                && seam.expression().contains("amount >= DISCOUNT_THRESHOLD")
+        })
+        .ok_or_else(|| format!("named-constant predicate seam present: {seams:?}"))?;
+    Ok(evidence_for_seam(predicate, &index))
+}
+
+#[test]
+fn given_literal_input_at_same_file_constant_value_then_equality_boundary_is_observed()
+-> Result<(), String> {
+    let evidence = named_constant_boundary_evidence(
+        "pub const DISCOUNT_THRESHOLD: u64 = 10_000;",
+        &["discounted_total(5_000)", "discounted_total(10_000)"],
+    )?;
+    if !evidence.missing_discriminators.is_empty() || evidence.activate.state != StageState::Yes {
+        return Err(format!(
+            "a literal input equal to the constant's value hits the boundary: {:?} / {:?}",
+            evidence.activate, evidence.missing_discriminators
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn given_inputs_off_the_same_file_constant_value_then_equality_boundary_names_its_value()
+-> Result<(), String> {
+    let evidence = named_constant_boundary_evidence(
+        "pub const DISCOUNT_THRESHOLD: u64 = 10_000;",
+        &["discounted_total(5_000)", "discounted_total(20_000)"],
+    )?;
+    let [missing] = evidence.missing_discriminators.as_slice() else {
+        return Err(format!(
+            "exactly one missing boundary discriminator: {:?}",
+            evidence.missing_discriminators
+        ));
+    };
+    if missing.value != "DISCOUNT_THRESHOLD (equality boundary)"
+        || !missing.reason.contains("(DISCOUNT_THRESHOLD = 10_000)")
+    {
+        return Err(format!(
+            "missing discriminator names the value: {missing:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn given_argument_naming_a_declared_constant_then_equality_boundary_is_observed()
+-> Result<(), String> {
+    // The constant's initializer is computed, so its value is opaque, but
+    // passing the constant itself is the boundary by identity.
+    let evidence = named_constant_boundary_evidence(
+        "pub const DISCOUNT_THRESHOLD: u64 = 10 * 1_000;",
+        &[
+            "discounted_total(5_000)",
+            "discounted_total(crate::DISCOUNT_THRESHOLD)",
+        ],
+    )?;
+    if !evidence.missing_discriminators.is_empty() {
+        return Err(format!(
+            "an argument naming the constant satisfies the boundary: {:?}",
+            evidence.missing_discriminators
+        ));
+    }
+    let without_constant_argument = named_constant_boundary_evidence(
+        "pub const DISCOUNT_THRESHOLD: u64 = 10 * 1_000;",
+        &["discounted_total(5_000)", "discounted_total(10_000)"],
+    )?;
+    let [missing] = without_constant_argument.missing_discriminators.as_slice() else {
+        return Err(format!(
+            "an opaque constant stays a named missing boundary: {:?}",
+            without_constant_argument.missing_discriminators
+        ));
+    };
+    if !missing
+        .reason
+        .contains("ripr cannot see the value of constant DISCOUNT_THRESHOLD statically")
+    {
+        return Err(format!("opaque constant reason is honest: {missing:?}"));
+    }
+    Ok(())
+}
+
+fn named_constant_boundary_evidence_from_test_file(
+    test_file: &str,
+) -> Result<TestGripEvidence, String> {
+    let source = "pub const DISCOUNT_THRESHOLD: u64 = 10 * 1_000;\n\npub fn discounted_total(amount: u64) -> u64 {\n    if amount >= DISCOUNT_THRESHOLD {\n        amount - amount / 10\n    } else {\n        amount\n    }\n}\n";
+    let path = PathBuf::from("src/lib.rs");
+    let index = index_from_files(&[
+        (path.clone(), source),
+        (PathBuf::from("tests/pricing.rs"), test_file),
+    ])?;
+    let seams = inventory_seams_from_index(&[path], &index);
+    let predicate = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::PredicateBoundary
+                && seam.expression().contains("amount >= DISCOUNT_THRESHOLD")
+        })
+        .ok_or_else(|| format!("named-constant predicate seam present: {seams:?}"))?;
+    Ok(evidence_for_seam(predicate, &index))
+}
+
+#[test]
+fn given_test_file_declaring_its_own_same_name_constant_then_identity_is_not_credited()
+-> Result<(), String> {
+    let tests = "#[test]\nfn below() {\n    assert_eq!(discounted_total(5_000), 5_000);\n}\n\n#[test]\nfn at_constant() {\n    assert_eq!(discounted_total(DISCOUNT_THRESHOLD), 0);\n}\n";
+    let imported = named_constant_boundary_evidence_from_test_file(&format!(
+        "use app::{{discounted_total, DISCOUNT_THRESHOLD}};\n\n{tests}"
+    ))?;
+    if !imported.missing_discriminators.is_empty() {
+        return Err(format!(
+            "an imported owner constant is the boundary by identity: {:?}",
+            imported.missing_discriminators
+        ));
+    }
+    let shadowed = named_constant_boundary_evidence_from_test_file(&format!(
+        "use app::discounted_total;\n\nconst DISCOUNT_THRESHOLD: u64 = 5;\n\n{tests}"
+    ))?;
+    if shadowed.missing_discriminators.len() != 1 {
+        return Err(format!(
+            "a test file's own same-name constant is not the owner's boundary: {:?}",
+            shadowed.missing_discriminators
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn given_constant_not_declared_in_owner_file_then_boundary_is_a_named_limitation()
+-> Result<(), String> {
+    let evidence = named_constant_boundary_evidence(
+        "mod config;\nuse config::DISCOUNT_THRESHOLD;",
+        &["discounted_total(5_000)", "discounted_total(10_000)"],
+    )?;
+    if !evidence.missing_discriminators.is_empty()
+        || evidence.activate.state != StageState::Unknown
+        || !evidence
+            .activate
+            .summary
+            .contains("Boundary constant `DISCOUNT_THRESHOLD` has no statically visible value")
+    {
+        return Err(format!(
+            "an unresolvable constant is a limitation, not an actionable gap: {:?} / {:?}",
+            evidence.activate, evidence.missing_discriminators
+        ));
+    }
+    Ok(())
+}
