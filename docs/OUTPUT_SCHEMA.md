@@ -10032,7 +10032,8 @@ JSON shape:
     "suppressed": 0,
     "blocking_candidates": 0,
     "visible_unresolved": 41,
-    "ripr_zero_state": "not_yet"
+    "ripr_zero_state": "not_yet",
+    "count_source": "baseline_delta"
   },
   "gate": {
     "mode": "baseline-check",
@@ -10126,6 +10127,11 @@ Field contract:
   or all evidence sources are missing.
 - `movement.*` - copied or derived from existing gate, baseline delta, and RIPR
   Zero status artifacts. The ledger must not recompute analyzer semantics.
+- `movement.count_source` - `baseline_delta`, `ripr_zero_status`, or
+  `not_measured`. With `not_measured` neither artifact was supplied, so
+  `new_policy_eligible`, `baseline_still_present`, `baseline_resolved`, and
+  `visible_unresolved` hold their zero defaults and are not evidence of zero
+  gaps; the Markdown renders those rows as `not measured`.
 - `gate.pass_fail_authority` - names `ripr gate evaluate` whenever a gate
   decision is present.
 - `waivers[]` - PR-time visible acknowledgement records. Waivers do not hide

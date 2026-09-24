@@ -7326,6 +7326,13 @@ language = "rust"
         assert!(workflow.contains(".coverage_grip_frontier.status // \"not_available\""));
         assert!(workflow.contains(".history.trend // \"not_available\""));
         assert!(workflow.contains("Counts: new_policy_eligible=\\`$ledger_new_policy_eligible\\`"));
+        // F60-4: counts with no baseline delta or RIPR Zero status behind them
+        // print as not measured, not as zeros.
+        assert!(workflow.contains(".movement.count_source // \"unknown\""));
+        assert!(
+            workflow
+                .contains("gap counts not measured (no baseline debt delta or RIPR Zero status)")
+        );
         assert!(workflow.contains("sed 's/`/\\\\`/g'"));
         assert!(workflow.contains("Blocking reason (\\`$blocking\\`): \\`$blocking_reason\\`"));
         assert!(workflow.contains("Boundary: $limits_note"));
