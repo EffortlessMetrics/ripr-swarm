@@ -599,6 +599,34 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                 }
             };
 
+            // An ordinary attempt admits commits made on top of its prepared
+            // head (a committed focused test) and the edit cage evaluates
+            // every committed path. A HEAD that no longer descends from the
+            // prepared head is refused here, before anything is finished, so
+            // the attempt stays awaiting the edit and the recovery below can
+            // restore the prepared head. A trust-bound attempt keeps its
+            // exact-head rule and its typed `stale` record.
+            let head_movement = if retained_binding.is_some() {
+                crate::edit_cage::HeadMovement::RequireBaselineHead
+            } else {
+                if let crate::app::repair_attempt::AttemptHeadLineage::Diverged { current_head } =
+                    crate::app::repair_attempt::attempt_head_lineage(
+                        &root,
+                        &attempt.repository_head,
+                    )?
+                {
+                    for line in repair_after_diverged_head_lines(&root, &attempt, &current_head) {
+                        eprintln!("ripr: {line}");
+                    }
+                    return Err(format!(
+                        "repair attempt `{}` cannot finish: HEAD {current_head} does not descend from its before-phase head {}",
+                        attempt.attempt_id.as_str(),
+                        attempt.repository_head
+                    ));
+                }
+                crate::edit_cage::HeadMovement::AdmitDescendantCommits
+            };
+
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing
             // the receipt so the built-in repair route cannot report a clean
@@ -613,7 +641,19 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             };
 
             let verify_json = root.join("target/ripr/workflow/agent-verify.json");
-            let rendered_verify = render_agent_verify(&verify_options)?;
+            let rendered_verify = match render_agent_verify(&verify_options) {
+                Ok(rendered) => rendered,
+                Err(error) => {
+                    // The attempt is not finished yet, so it stays awaiting
+                    // the edit; name what moved and how to rerun.
+                    if error.contains("analysis input identities differ") {
+                        for line in repair_after_input_drift_lines(&root, &attempt) {
+                            eprintln!("ripr: {line}");
+                        }
+                    }
+                    return Err(error);
+                }
+            };
             write_text_file(&verify_json, &rendered_verify)?;
             print!("{rendered_verify}");
 
@@ -633,13 +673,19 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                 &root,
                 &attempt.attempt_id,
                 &packet_path,
+                head_movement,
             )?;
             eprintln!(
                 "ripr: edit-cage verdict for attempt `{}`: {:?}",
                 cage_after.attempt_id.as_str(),
                 cage_after.verdict.status
             );
-            for line in repair_after_cage_recovery_lines(&root, &attempt.seam_id, &cage_after) {
+            for line in repair_after_cage_recovery_lines(
+                &root,
+                &attempt.seam_id,
+                &attempt.repository_head,
+                &cage_after,
+            ) {
                 eprintln!("ripr: {line}");
             }
 
@@ -868,6 +914,7 @@ const CAGE_RECOVERY_MAX_VIOLATIONS: usize = 10;
 fn repair_after_cage_recovery_lines(
     root: &Path,
     seam_id: &str,
+    before_head: &str,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
 ) -> Vec<String> {
     use crate::agent::loop_commands::{display_path, shell_arg};
@@ -880,7 +927,9 @@ fn repair_after_cage_recovery_lines(
     let mut lines = Vec::new();
     if !after.current {
         lines.push(format!(
-            "attempt `{attempt_id}` is stale: repository HEAD moved after its before phase."
+            "attempt `{attempt_id}` is stale: repository HEAD moved from {} to {} after its before phase.",
+            short_head(before_head),
+            short_head(&after.repository_head)
         ));
     }
     let violations = &after.verdict.violations;
@@ -907,10 +956,119 @@ fn repair_after_cage_recovery_lines(
     lines.push(format!(
         "attempt `{attempt_id}` is terminal and cannot produce a receipt; re-running it or `ripr agent receipt` will refuse."
     ));
+    // A committed edit cannot be stashed: when HEAD moved, the recovery
+    // first uncommits it so the rest of the route applies unchanged.
+    let uncommit = if after.repository_head == before_head {
+        ""
+    } else {
+        "if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree), "
+    };
     lines.push(format!(
-        "to recover: undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+        "to recover: {uncommit}undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
     ));
     lines
+}
+
+/// Recovery narration for an ordinary after phase refused before finishing
+/// because HEAD no longer descends from the prepared head. The attempt is
+/// still awaiting the edit, so restoring the prepared head keeps it usable.
+fn repair_after_diverged_head_lines(
+    root: &Path,
+    attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
+    current_head: &str,
+) -> Vec<String> {
+    use crate::agent::loop_commands::{display_path, shell_arg};
+
+    let root_arg = shell_arg(&display_path(root));
+    let attempt_arg = shell_arg(attempt.attempt_id.as_str());
+    let seam_arg = shell_arg(&attempt.seam_id);
+    vec![
+        format!(
+            "HEAD {} does not descend from {}, the head attempt `{}` was prepared at (for example after `git commit --amend`, a rebase, a reset, or a checkout); commits made on top of that head are accepted, other history changes are not.",
+            short_head(current_head),
+            short_head(&attempt.repository_head),
+            attempt.attempt_id.as_str()
+        ),
+        "the attempt was not finished and is still awaiting the focused test edit.".to_string(),
+        format!(
+            "to recover when only your own test commit was rewritten: `git reset --soft {}` restores the prepared head and keeps your edit staged; then rerun `ripr agent repair --root {root_arg} --attempt {attempt_arg} --phase after`.",
+            attempt.repository_head
+        ),
+        format!(
+            "otherwise, prepare a new attempt at the current HEAD: set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the edit, then run the new --attempt command it prints."
+        ),
+    ]
+}
+
+/// Recovery narration for an after phase refused because the analysis input
+/// identity moved between the phases. The attempt is not finished, so it is
+/// still awaiting the edit: the lines name the changed inputs and the rerun.
+fn repair_after_input_drift_lines(
+    root: &Path,
+    attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
+) -> Vec<String> {
+    use crate::agent::loop_commands::{display_path, shell_arg};
+
+    let root_arg = shell_arg(&display_path(root));
+    let attempt_arg = shell_arg(attempt.attempt_id.as_str());
+    let seam_arg = shell_arg(&attempt.seam_id);
+    let mut lines = Vec::new();
+    match crate::app::repair_attempt::analysis_input_changes(root, &attempt.attempt_id) {
+        Ok(paths) if !paths.is_empty() => {
+            lines.push(format!(
+                "analysis inputs changed after the before phase: {}. The before and after snapshots must analyze the same Cargo manifests, Git-tracked Cargo.lock files, and ripr.toml (an untracked Cargo.lock that the build writes does not count).",
+                paths.join(", ")
+            ));
+            lines.push(format!(
+                "attempt `{}` was not finished and is still awaiting the focused test edit.",
+                attempt.attempt_id.as_str()
+            ));
+            // A committed input change cannot be restored in the worktree
+            // alone: the edit cage also reads the committed range.
+            let uncommit = match crate::app::repair_attempt::attempt_head_lineage(
+                root,
+                &attempt.repository_head,
+            ) {
+                Ok(crate::app::repair_attempt::AttemptHeadLineage::Prepared) => String::new(),
+                _ => format!(
+                    "if a commit made after the before phase changed them, first run `git reset --soft {}` (the changes stay in the worktree); then ",
+                    attempt.repository_head
+                ),
+            };
+            // Name the untrack route only when a lockfile is among the
+            // changed inputs; a manifest-only change has no lockfile to
+            // untrack, and the advice would send the reader after the wrong
+            // file.
+            let untrack = paths
+                .iter()
+                .find(|path| Path::new(path.as_str()).file_name() == Some("Cargo.lock".as_ref()))
+                .map(|path| {
+                    format!(", or `git rm --cached {path}` for a lockfile that became tracked")
+                })
+                .unwrap_or_default();
+            lines.push(format!(
+                "to recover: {uncommit}restore those files to their before-phase state (for example `git checkout {} -- <path>`{untrack}), then rerun `ripr agent repair --root {root_arg} --attempt {attempt_arg} --phase after`. To keep the change, set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before`, restore the edit, then run the new --attempt command it prints.",
+                attempt.repository_head
+            ));
+        }
+        Ok(_) => {
+            lines.push(
+                "no Cargo manifest, Git-tracked Cargo.lock, or ripr.toml changed after the before phase, so the analyzer build or its configuration differs (for example ripr was reinstalled between the phases)."
+                    .to_string(),
+            );
+            lines.push(format!(
+                "to recover: set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` with the ripr you will use for the after phase, restore the edit, then run the new --attempt command it prints."
+            ));
+        }
+        Err(error) => lines.push(format!(
+            "could not determine which analysis inputs changed: {error}"
+        )),
+    }
+    lines
+}
+
+fn short_head(head: &str) -> &str {
+    head.get(..12).unwrap_or(head)
 }
 
 /// One-line human result for the repair after phase, read from the receipt
@@ -936,7 +1094,13 @@ fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
             "result for seam `{seam_id}`: {before} -> {after} ({movement}).{summary}"
         ));
     }
-    if let Some(action) = text("/summary/next_action/recommended_action") {
+    // The receipt producer owns which next step fits its status: only an
+    // `advisory` receipt recommends including it in review, and any other
+    // status states that it is not review evidence and how to recover. A
+    // receipt without a status is not vouched for, so nothing is forwarded.
+    if text("/status").is_some()
+        && let Some(action) = text("/summary/next_action/recommended_action")
+    {
         lines.push(format!("next: {action}"));
     }
     lines
@@ -1407,6 +1571,7 @@ mod repair_summary_tests {
     #[test]
     fn repair_summary_names_movement_and_next_action_from_the_receipt() {
         let receipt = r#"{
+            "status": "advisory",
             "seam": {"seam_id": "67fc764ba37d77bd"},
             "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"},
             "summary": {"next_action": {"summary": "Static grip improved.", "recommended_action": "Keep the focused test and include this receipt in review."}}
@@ -1430,6 +1595,29 @@ mod repair_summary_tests {
             repair_receipt_summary_lines(receipt),
             vec!["result for seam `s`: weakly_gripped -> weakly_gripped (unchanged).".to_string()]
         );
+    }
+
+    #[test]
+    fn repair_summary_forwards_the_receipt_owned_next_step_for_a_non_advisory_receipt() {
+        let movement = r#""seam": {"seam_id": "s"},
+            "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"}"#;
+        let result =
+            "result for seam `s`: weakly_gripped -> strongly_gripped (improved). Static grip improved."
+                .to_string();
+        let step = "This receipt is not review evidence because its status is `invalid` (Analysis outcome artifact base does not match its typed identity); do not include it in review.";
+        let invalid = format!(
+            r#"{{"status": "invalid", {movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "{step}"}}}}}}"#
+        );
+        assert_eq!(
+            repair_receipt_summary_lines(&invalid),
+            vec![result.clone(), format!("next: {step}")]
+        );
+        // Without a status nothing vouches for the receipt, so its
+        // recommendation is not forwarded.
+        let unstated = format!(
+            r#"{{{movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "Keep the focused test and include this receipt in review."}}}}}}"#
+        );
+        assert_eq!(repair_receipt_summary_lines(&unstated), vec![result]);
     }
 
     #[test]
