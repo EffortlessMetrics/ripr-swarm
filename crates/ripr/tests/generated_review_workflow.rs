@@ -899,6 +899,7 @@ fn far_above_threshold_discounts() {
         }
         commands
     }
+}
 
 /// #4005: the generated "Capture pull request diff" step must use the pinned
 /// diff contract (same presentation pins as the production loaders), resolve
@@ -1303,3 +1304,4 @@ fn capture_pull_request_diff_step(text: &str) -> Option<String> {
         .map(|offset| marker.len() + offset)
         .unwrap_or(rest.len());
     Some(rest[..end].trim_end().to_string())
+}
