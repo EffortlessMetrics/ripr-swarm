@@ -19,7 +19,7 @@ Start here:
   Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (amount <= 0) {
   Missing discriminator: Only heuristic TypeScript test links were found for `formatCurrency`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
-  Related test: tests/formatter.test.ts:3 formatCurrency behavior formats positive amounts
+  Related test: tests/formatter.test.ts:7 formatCurrency behavior formats positive amounts
   Next step: TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.
   Evidence:
     - reach weak: 1 related test(s) found for owner `formatCurrency`
