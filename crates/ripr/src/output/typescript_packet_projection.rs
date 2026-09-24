@@ -119,7 +119,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         .map(|d| d.value.clone());
     let route_kind = typescript_route_kind_for(&finding.probe.family);
     let assertion_shape = evidence_value(finding, "typescript_oracle_observed: ")
-        .map(|observed| format!("expect({observed}).toBe({})", oracle_expected));
+        .map(|observed| typescript_target_assertion_shape(&finding.probe.family, observed));
 
     let repair_route = GapRepairRoute {
         route_kind: route_kind.to_string(),
@@ -252,6 +252,26 @@ pub(crate) fn typescript_receipt_command(canonical_gap_id: &str, verify_command:
         shell_arg(verify_command),
         shell_arg(&receipt_path)
     )
+}
+
+/// Build the assertion the repair should add, from the borrowed call shape.
+///
+/// The borrowed assertion supplies only the observed call (`applyDiscount(100,
+/// 100)`), which is what makes the target concrete. Its expected literal and
+/// matcher belong to a different, weaker check: the projection only runs for
+/// weakly-exposed findings, so by construction the borrowed assertion does not
+/// pin the changed behavior. Re-using its literal under `toBe` fabricated
+/// assertions such as `expect(result).toBe(50)` from `toBeGreaterThan(50)`.
+/// Static evidence cannot know the right expected value, so the shape uses the
+/// same `expected` placeholder as the Rust assertion shapes.
+fn typescript_target_assertion_shape(
+    family: &crate::domain::ProbeFamily,
+    observed: &str,
+) -> String {
+    match family {
+        crate::domain::ProbeFamily::ErrorPath => format!("expect({observed}).toThrow(expected)"),
+        _ => format!("expect({observed}).toBe(expected)"),
+    }
 }
 
 /// Map the probe family to a `GapRepairRoute` route_kind (§3.2).
@@ -423,6 +443,22 @@ mod tests {
             "shared validator must accept complete TS GapRecord, got: {:?}",
             result
         );
+    }
+
+    /// The target shape keeps the borrowed call but never the borrowed literal:
+    /// the borrowed assertion belongs to a weaker check that does not pin the
+    /// change, so `toBe(<its literal>)` would be a fabricated expectation.
+    #[test]
+    fn assertion_shape_keeps_the_call_and_drops_the_borrowed_literal() -> Result<(), String> {
+        let finding = complete_finding();
+        let record = typescript_gap_record_for(&finding)
+            .ok_or_else(|| "complete finding must produce a GapRecord".to_string())?;
+        let shape = record
+            .repair_route
+            .and_then(|route| route.assertion_shape)
+            .ok_or_else(|| "complete packet must carry an assertion shape".to_string())?;
+        assert_eq!(shape, "expect(applyDiscount(100, 100)).toBe(expected)");
+        Ok(())
     }
 
     /// §7.4: Missing verify command → validator fails (cond. 3), stays preview.

@@ -187,6 +187,290 @@ pub(crate) fn ts_observation_guard_limitation(
     )
 }
 
+// ── Predicate boundary witness (RIPR-SPEC-0027) ──────────────────────────────
+
+/// Returns `true` when static evidence shows that a strong, family-matching
+/// assertion observes an owner call that sits at the changed predicate's
+/// boundary. Non-predicate families are not gated here (`true`).
+///
+/// A strong exact assertion somewhere in a related test does not show that the
+/// changed comparison is discriminated: `shippingFee(60)` and `shippingFee(10)`
+/// both behave identically under `total > 50` and `total >= 50`. Only an input
+/// at the boundary (`total == 50`) tells the two apart, so `Exposed` requires
+/// an assertion whose observed owner call carries that boundary:
+///
+/// - **One literal operand** (`total >= 50`, `status === 'paid'`): an argument
+///   of the observed owner call contains the literal as a value token.
+/// - **No literal operand** (`count <= limit`): the adapter has no owner
+///   parameter facts to map operands to argument positions, so it accepts the
+///   same textual witness the Rust boundary evidence accepts without value
+///   resolution — two identical arguments in one observed owner call
+///   (`isAllowed(5, 5)`) — or an object-literal argument that names both
+///   operands with identical values (`PriceLabel({ amount: 100, threshold:
+///   100 })`). Otherwise the boundary is not witnessed.
+/// - **No parseable comparison** (`if (Number.isNaN(n))`, `case 'gold':`) or an
+///   ambiguous fallback shape (`}`): nothing statically ties a test to the
+///   changed branch, so this fails closed.
+///
+/// Observation keys on `observed_expression` (the `expect(<expr>)` argument).
+/// When it is absent, or names a local such as `result`, the witness fails
+/// closed; the finding then takes the existing weak path.
+pub(crate) fn ts_predicate_boundary_is_witnessed(
+    probe_shape: &TypeScriptProbeShape,
+    line_text: &str,
+    owner_name: &str,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+) -> bool {
+    // An ambiguous fallback shape (`}`, an unrecognised statement) never names
+    // a behavior an assertion could be shown to observe.
+    if !probe_shape.specific {
+        return false;
+    }
+    if probe_shape.family != ProbeFamily::Predicate {
+        return true;
+    }
+    let Some(boundary) = typescript_boundary_discriminator(line_text) else {
+        return false;
+    };
+    let Some((left, right)) = boundary.split_once(" == ") else {
+        return false;
+    };
+    let literals: Vec<&str> = [left, right]
+        .into_iter()
+        .filter(|operand| is_boundary_literal(operand))
+        .collect();
+
+    for candidate in candidates {
+        if !candidate.relation.uses_oracle() {
+            continue;
+        }
+        for assertion in &candidate.test.assertions {
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+                || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate)
+            {
+                continue;
+            }
+            let Some(observed) = assertion.observed_expression.as_deref() else {
+                continue;
+            };
+            for arguments in owner_call_arguments(observed, owner_name) {
+                let witnessed = if literals.is_empty() {
+                    call_has_identical_arguments(&arguments)
+                        || object_argument_pins_operands_equal(&arguments, left, right)
+                } else {
+                    literals
+                        .iter()
+                        .any(|literal| arguments_contain_literal(&arguments, literal))
+                };
+                if witnessed {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Build the named limitation for a predicate whose boundary no strong
+/// assertion reaches (RIPR-SPEC-0027 boundary witness).
+pub(crate) fn ts_predicate_boundary_limitation(
+    probe_shape: &TypeScriptProbeShape,
+    line_text: &str,
+    owner_name: &str,
+) -> String {
+    let boundary = if probe_shape.specific {
+        typescript_boundary_discriminator(line_text)
+    } else {
+        None
+    };
+    match boundary {
+        Some(boundary) => format!(
+            "Related tests reach `{owner_name}` with a strong oracle, but no strong assertion observes a `{owner_name}(...)` call at the changed predicate boundary `{boundary}`; inputs on one side of the boundary do not discriminate the changed comparison."
+        ),
+        None => format!(
+            "Related tests reach `{owner_name}` with a strong oracle, but the changed line has no statically comparable predicate boundary; static evidence cannot tie an assertion to the changed branch."
+        ),
+    }
+}
+
+fn is_boundary_literal(operand: &str) -> bool {
+    let operand = operand.trim();
+    numeric_literal_value(operand).is_some()
+        || matches!(operand, "true" | "false" | "null" | "undefined")
+        || (operand.len() >= 2
+            && ['"', '\'', '`']
+                .iter()
+                .any(|quote| operand.starts_with(*quote) && operand.ends_with(*quote)))
+}
+
+/// Canonical decimal text of a numeric literal token (`50`, `50.0`, `1_000`,
+/// `10n`), or `None` when the token is not a plain decimal literal.
+fn numeric_literal_value(token: &str) -> Option<String> {
+    let token = token.trim().trim_end_matches('n').replace('_', "");
+    if !token.starts_with(|ch: char| ch.is_ascii_digit())
+        || !token.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+        || token.matches('.').count() > 1
+    {
+        return None;
+    }
+    let (integer, fraction) = token.split_once('.').unwrap_or((token.as_str(), ""));
+    let integer = match integer.trim_start_matches('0') {
+        "" => "0",
+        digits => digits,
+    };
+    let fraction = fraction.trim_end_matches('0');
+    Some(if fraction.is_empty() {
+        integer.to_string()
+    } else {
+        format!("{integer}.{fraction}")
+    })
+}
+
+/// Return the argument lists (one per call) of every `<owner_name>(...)` call
+/// inside `observed`, split at top-level commas.
+fn owner_call_arguments(observed: &str, owner_name: &str) -> Vec<Vec<String>> {
+    let mut calls = Vec::new();
+    if owner_name.is_empty() {
+        return calls;
+    }
+    for (idx, _) in observed.match_indices(owner_name) {
+        let preceded_by_identifier = observed
+            .get(..idx)
+            .and_then(|before| before.chars().next_back())
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$');
+        if preceded_by_identifier {
+            continue;
+        }
+        let Some(inner) = observed
+            .get(idx + owner_name.len()..)
+            .and_then(|rest| rest.trim_start().strip_prefix('('))
+        else {
+            continue;
+        };
+        if let Some(arguments) = balanced_call_arguments(inner) {
+            calls.push(arguments);
+        }
+    }
+    calls
+}
+
+/// Split the text after a call's opening parenthesis into its top-level
+/// arguments, stopping at the matching closing parenthesis.
+fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut current = String::new();
+    let mut arguments = Vec::new();
+    for ch in inner.chars() {
+        if let Some(open) = quote {
+            current.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => {
+                quote = Some(ch);
+                current.push(ch);
+            }
+            '(' | '[' | '{' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' if depth == 0 => {
+                let last = current.trim();
+                if !last.is_empty() {
+                    arguments.push(last.to_string());
+                }
+                return Some(arguments);
+            }
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                current.push(ch);
+            }
+            ',' if depth == 0 => {
+                arguments.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    None
+}
+
+fn call_has_identical_arguments(arguments: &[String]) -> bool {
+    arguments.iter().enumerate().any(|(idx, left)| {
+        !left.is_empty() && arguments.iter().skip(idx + 1).any(|right| right == left)
+    })
+}
+
+/// `true` when an object-literal argument binds both comparison operands
+/// (matched by their last member segment, e.g. `props.amount` → `amount`) to
+/// the same non-empty value text.
+fn object_argument_pins_operands_equal(arguments: &[String], left: &str, right: &str) -> bool {
+    let key_of = |operand: &str| operand.rsplit('.').next().unwrap_or(operand).to_string();
+    let (left_key, right_key) = (key_of(left), key_of(right));
+    if left_key.is_empty() || left_key == right_key {
+        return false;
+    }
+    arguments.iter().any(|argument| {
+        let Some(body) = argument
+            .trim()
+            .strip_prefix('{')
+            .and_then(|rest| rest.strip_suffix('}'))
+        else {
+            return false;
+        };
+        let Some(fields) = balanced_call_arguments(&format!("{body})")) else {
+            return false;
+        };
+        let value_of = |key: &str| {
+            fields.iter().find_map(|field| {
+                let (name, value) = field.split_once(':')?;
+                (name.trim().trim_matches(['"', '\'']) == key).then(|| value.trim().to_string())
+            })
+        };
+        matches!(
+            (value_of(&left_key), value_of(&right_key)),
+            (Some(left_value), Some(right_value))
+                if !left_value.is_empty() && left_value == right_value
+        )
+    })
+}
+
+fn arguments_contain_literal(arguments: &[String], literal: &str) -> bool {
+    let literal = literal.trim();
+    if let Some(expected) = numeric_literal_value(literal) {
+        return arguments.iter().any(|argument| {
+            argument
+                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
+                .filter_map(numeric_literal_value)
+                .any(|value| value == expected)
+        });
+    }
+    if let Some(body) = literal
+        .strip_prefix(['"', '\'', '`'])
+        .and_then(|rest| rest.strip_suffix(['"', '\'', '`']))
+    {
+        return arguments.iter().any(|argument| {
+            ['"', '\'', '`']
+                .iter()
+                .any(|quote| argument.contains(&format!("{quote}{body}{quote}")))
+        });
+    }
+    arguments.iter().any(|argument| {
+        argument
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
+            .any(|token| token == literal)
+    })
+}
+
 // ── Family↔oracle-kind matching (RIPR-SPEC-0104) ─────────────────────────────
 
 /// Returns `true` when `oracle_kind` can observe the seam identified by
@@ -399,12 +683,12 @@ pub(crate) fn classify_change(
     // ADDITIVE: does not change oracle_kind, oracle_strength, static_limit_kind,
     // or repair_packet_ready. At most one assertion's metadata is emitted
     // (the strongest, by oracle_strength rank) to avoid redundant evidence.
+    let probe_shape = classify_probe_shape_detail(line_text);
     let oracle_metadata_lines: Vec<String> =
-        collect_oracle_metadata_evidence_lines(&related_candidates);
+        collect_oracle_metadata_evidence_lines(&probe_shape.family, &related_candidates);
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
-    let probe_shape = classify_probe_shape_detail(line_text);
 
     // RIPR-SPEC-0104: compute strongest_strength/strongest_kind at the
     // ASSERTION level, filtered by probe_family↔oracle_kind match.
@@ -433,7 +717,20 @@ pub(crate) fn classify_change(
     // When the strong-oracle precondition would hold, verify that at least one
     // strong assertion actually observes the changed sub-expression.  When this
     // proof fails, fall through to the downgraded WeaklyExposed arm instead.
-    let observation_confirmed = strongest_strength >= OracleStrength::Strong.rank()
+    //
+    // RIPR-SPEC-0027 boundary witness: a changed predicate is only `Exposed`
+    // when a strong assertion observes an owner call at the changed boundary,
+    // and an ambiguous fallback shape is never `Exposed`.
+    let strong_oracle_present = strongest_strength >= OracleStrength::Strong.rank();
+    let boundary_witnessed = !strong_oracle_present
+        || ts_predicate_boundary_is_witnessed(
+            &probe_shape,
+            line_text,
+            &owner.name,
+            &related_candidates,
+        );
+    let observation_confirmed = strong_oracle_present
+        && boundary_witnessed
         && ts_changed_value_is_observed(&probe_shape, line_text, &owner.name, &related_candidates);
 
     let (class, reach_state, observe_state, discriminate_state, mut missing) = if related.is_empty()
@@ -470,8 +767,13 @@ pub(crate) fn classify_change(
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // Strong oracle exists but observation guard failed: downgrade to
-        // WeaklyExposed with a named limitation (RIPR-SPEC-0098).
-        let named_limitation = ts_observation_guard_limitation(&probe_shape, line_text);
+        // WeaklyExposed with a named limitation (RIPR-SPEC-0098), or the
+        // predicate boundary is not witnessed (RIPR-SPEC-0027).
+        let named_limitation = if boundary_witnessed {
+            ts_observation_guard_limitation(&probe_shape, line_text)
+        } else {
+            ts_predicate_boundary_limitation(&probe_shape, line_text, &owner.name)
+        };
         (
             ExposureClass::WeaklyExposed,
             StageState::Yes,
@@ -583,6 +885,16 @@ pub(crate) fn classify_change(
             "Related test uses a `{}` oracle; static evidence suggests the changed behavior is discriminated.",
             strongest_kind.as_str()
         )
+    } else if strongest_strength >= OracleStrength::Strong.rank() && !boundary_witnessed {
+        // RIPR-SPEC-0027: strong oracle exists but no assertion reaches the
+        // changed predicate boundary.
+        match missing_discriminators.first() {
+            Some(discriminator) => format!(
+                "TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `{}`.",
+                discriminator.value
+            ),
+            None => "TypeScript preview adapter: strong oracle found but the changed predicate boundary is not statically witnessed by any strong assertion; discriminate unknown.".to_string(),
+        }
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // RIPR-SPEC-0098: strong oracle exists but observation guard failed.
         "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.".to_string()

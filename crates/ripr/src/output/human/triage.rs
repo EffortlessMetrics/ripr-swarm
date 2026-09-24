@@ -151,9 +151,20 @@ pub(crate) fn render_human_triage(
                 ),
             }
         }
-        HumanTriageState::MissingScope => out.push_str(
-            "  Safe next action: provide an analysis scope; this empty output is not an all-clear.\n",
-        ),
+        // #4012: on an established-but-empty range the scope was provided
+        // (a default base was resolved and compared) — the honest action is
+        // to change something, not to provide a scope.
+        HumanTriageState::MissingScope => {
+            if let Some(base) = output.base.as_deref() {
+                out.push_str(&format!(
+                    "  Safe next action: no changed files were compared against `{base}`; make a change and re-run.\n"
+                ));
+            } else {
+                out.push_str(
+                    "  Safe next action: provide an analysis scope; this empty output is not an all-clear.\n",
+                );
+            }
+        }
     }
     if let Some(finding) = triage.selected {
         out.push_str(&render_finding_digest_with_config(finding, config));
