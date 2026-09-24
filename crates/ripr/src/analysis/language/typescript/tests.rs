@@ -3901,7 +3901,9 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         describe_names: Vec::new(),
         file: PathBuf::from("tests/lib.test.ts"),
         line: 1,
-        body_text: "applyDiscount(50, 100)".to_string(),
+        // RIPR-SPEC-0027: the observed call sits at the changed boundary
+        // (`amount == threshold`), so the strong oracle witnesses it.
+        body_text: "expect(applyDiscount(100, 100)).toBe(90)".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
             argument_count: 1,
@@ -3910,7 +3912,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
             oracle_strength: OracleStrength::Strong,
             mock_payload: None,
             error_payload: None,
-            observed_expression: None,
+            observed_expression: Some("applyDiscount(100, 100)".to_string()),
             expected_value_or_variant: None,
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::Medium,
@@ -3964,7 +3966,8 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         describe_names: Vec::new(),
         file: PathBuf::from("tests/lib.test.ts"),
         line: 1,
-        body_text: "const result = applyDiscount(50, 100); t.is(result, 90);".to_string(),
+        // RIPR-SPEC-0027: the observed call sits at the changed boundary.
+        body_text: "t.is(applyDiscount(100, 100), 90);".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "is".to_string(),
             argument_count: 2,
@@ -3973,7 +3976,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
             oracle_strength: OracleStrength::Strong,
             mock_payload: None,
             error_payload: None,
-            observed_expression: Some("result".to_string()),
+            observed_expression: Some("applyDiscount(100, 100)".to_string()),
             expected_value_or_variant: Some("90".to_string()),
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
@@ -7725,6 +7728,293 @@ fn oracle_metadata_is_kept_for_a_matching_family_assertion() -> Result<(), Strin
     );
     Ok(())
 }
+
+// ── RIPR-SPEC-0027: predicate boundary witness ───────────────────────────────
+
+fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScriptTest {
+    TypeScriptTest {
+        name: format!("{owner_name} {observed}"),
+        local_name: format!("{owner_name} {observed}"),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/lib.test.ts"),
+        line: 1,
+        body_text: format!("expect({observed}).toBe({expected});"),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            observed_expression: Some(observed.to_string()),
+            expected_value_or_variant: Some(expected.to_string()),
+            has_dynamic_matcher_arg: false,
+            oracle_confidence: OracleConfidence::High,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    }
+}
+
+fn classify_boundary_line(
+    owner_name: &str,
+    line_text: &str,
+    tests: &[TypeScriptTest],
+) -> Result<Finding, String> {
+    classify_change(
+        Path::new("src/lib.ts"),
+        2,
+        line_text,
+        &[test_owner(owner_name, "src/lib.ts")],
+        tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| format!("expected a finding for `{line_text}`"))
+}
+
+/// RIPR-SPEC-0027 repro: `total > 50` → `total >= 50` with strong exact
+/// assertions only at 60 and 10. Neither input discriminates the changed
+/// comparison, so the finding must not be `exposed`; the weak path names the
+/// boundary discriminator `total == 50`.
+#[test]
+fn spec_0027_off_boundary_strong_assertions_do_not_expose_literal_predicate() -> Result<(), String>
+{
+    let tests = [
+        exact_value_test("shippingFee", "shippingFee(60)", "0"),
+        exact_value_test("shippingFee", "shippingFee(10)", "5"),
+    ];
+    let finding = classify_boundary_line("shippingFee", "  if (total >= 50) {", &tests)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        missing_discriminator_values(&finding),
+        vec!["total == 50".to_string()]
+    );
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("changed predicate boundary `total == 50`")),
+        "boundary limitation must be named: {:?}",
+        finding.missing
+    );
+    assert!(
+        finding.evidence.iter().any(|line| line
+            == "actionability_category: incomplete_repair_packet"
+            || line == "actionability_category: complete_repair_packet"),
+        "downgraded boundary must route to the repair path: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// RIPR-SPEC-0027 control: an exact assertion at the boundary literal keeps
+/// the predicate `exposed` (including `50.0`, and a literal inside an object
+/// argument).
+#[test]
+fn spec_0027_boundary_literal_exact_assertion_stays_exposed() -> Result<(), String> {
+    for observed in [
+        "shippingFee(50)",
+        "shippingFee(50.0)",
+        "await shippingFee({ total: 50 })",
+    ] {
+        let tests = [
+            exact_value_test("shippingFee", "shippingFee(60)", "0"),
+            exact_value_test("shippingFee", observed, "0"),
+        ];
+        let finding = classify_boundary_line("shippingFee", "  if (total >= 50) {", &tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "`{observed}` sits at the boundary"
+        );
+        assert!(finding.activation.missing_discriminators.is_empty());
+    }
+    Ok(())
+}
+
+/// RIPR-SPEC-0027 negative controls for the witness itself: a boundary value
+/// seen in a weak assertion or in a test set whose related owner calls never
+/// sit at the boundary does not witness the boundary. Every test here
+/// references the owner, so the F5-9 relation gate is passed and the boundary
+/// rule fail-closes to `weakly_exposed`.
+#[test]
+fn spec_0027_boundary_witness_fails_closed_without_strong_owner_call_at_boundary()
+-> Result<(), String> {
+    let mut weak_at_boundary = exact_value_test("shippingFee", "shippingFee(50)", "0");
+    for assertion in &mut weak_at_boundary.assertions {
+        assertion.oracle_kind = OracleKind::RelationalCheck;
+        assertion.oracle_strength = OracleStrength::Weak;
+    }
+    let cases = [
+        vec![
+            exact_value_test("shippingFee", "shippingFee(60)", "0"),
+            weak_at_boundary,
+        ],
+        vec![
+            exact_value_test("shippingFee", "shippingFee(60)", "0"),
+            exact_value_test("shippingFee", "otherShippingFee(50)", "0"),
+        ],
+        vec![exact_value_test("shippingFee", "shippingFee(500)", "0")],
+    ];
+    for tests in cases {
+        let finding = classify_boundary_line("shippingFee", "  if (total >= 50) {", &tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "tests {:?} must not witness the boundary",
+            tests
+                .iter()
+                .map(|test| test.body_text.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+    Ok(())
+}
+
+/// RIPR-SPEC-0027 + F5-9: a test that never references the owner is not
+/// related at all, so the relation gate answers `no_static_path` before the
+/// boundary witness is consulted.
+#[test]
+fn spec_0027_unrelated_test_does_not_reach_the_boundary_witness() -> Result<(), String> {
+    let tests = [exact_value_test("shippingFee", "result", "0")];
+    let finding = classify_boundary_line("shippingFee", "  if (total >= 50) {", &tests)?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert!(
+        finding.missing.iter().any(|line| line
+            == "No test references `shippingFee(` — add a test that calls the changed owner."),
+        "no_static_path must name the missing owner reference: {:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+/// RIPR-SPEC-0027: without literal operands the adapter only accepts an owner
+/// call with two identical arguments as the boundary witness.
+#[test]
+fn spec_0027_non_literal_boundary_requires_identical_arguments() -> Result<(), String> {
+    let below = [exact_value_test("isAllowed", "isAllowed(4, 5)", "true")];
+    let finding = classify_boundary_line("isAllowed", "  if (count <= limit) {", &below)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        missing_discriminator_values(&finding),
+        vec!["count == limit".to_string()]
+    );
+
+    let at = [
+        exact_value_test("isAllowed", "isAllowed(4, 5)", "true"),
+        exact_value_test("isAllowed", "isAllowed(5, 5)", "false"),
+    ];
+    let finding = classify_boundary_line("isAllowed", "  if (count <= limit) {", &at)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+
+    // Object-literal props name both operands: equal values witness the
+    // boundary, unequal values do not.
+    let props_at = [exact_value_test(
+        "PriceLabel",
+        "PriceLabel({ amount: 100, threshold: 100 })",
+        "90",
+    )];
+    let finding = classify_boundary_line("PriceLabel", "  if (amount >= threshold) {", &props_at)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    let props_above = [exact_value_test(
+        "PriceLabel",
+        "PriceLabel({ amount: 100, threshold: 50 })",
+        "90",
+    )];
+    let finding =
+        classify_boundary_line("PriceLabel", "  if (amount >= threshold) {", &props_above)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+/// RIPR-SPEC-0027: string-literal equality predicates need the literal in the
+/// observed owner call.
+#[test]
+fn spec_0027_string_literal_predicate_requires_literal_argument() -> Result<(), String> {
+    let other = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(100, 'silver')",
+        "95",
+    )];
+    let finding = classify_boundary_line("applyDiscount", "  if (tier === 'gold') {", &other)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
+    let gold = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(100, \"gold\")",
+        "90",
+    )];
+    let finding = classify_boundary_line("applyDiscount", "  if (tier === 'gold') {", &gold)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// RIPR-SPEC-0027: a new guard with no comparison (`Number.isNaN(n)`) is not
+/// exposed by a strong assertion on the unguarded path, and gets no invented
+/// discriminator.
+#[test]
+fn spec_0027_guard_without_comparison_is_not_exposed() -> Result<(), String> {
+    let tests = [exact_value_test("parseLimit", "parseLimit('10')", "10")];
+    let finding = classify_boundary_line("parseLimit", "  if (Number.isNaN(n)) {", &tests)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(finding.activation.missing_discriminators.is_empty());
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line == "actionability_category: missing_target_shape"),
+        "no discriminator means no repair packet: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// RIPR-SPEC-0027: an ambiguous-fallback shape is never `exposed`, and
+/// punctuation- or comment-only added lines produce no probe at all.
+#[test]
+fn spec_0027_ambiguous_fallback_is_never_exposed_and_punctuation_is_ignored() -> Result<(), String>
+{
+    let tests = [exact_value_test("parseLimit", "parseLimit('10')", "10")];
+    let finding = classify_boundary_line("parseLimit", "  n.value", &tests)?;
+    assert!(!classify_probe_shape_detail("  n.value").specific);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(finding.activation.missing_discriminators.is_empty());
+
+    for ignored in ["  }", "  });", ")", "  ],", "", "  // note", "  /* note */"] {
+        assert!(
+            should_ignore_typescript_changed_line(ignored),
+            "`{ignored}` carries no behavior"
+        );
+    }
+    for kept in [
+        "  if (x) {",
+        "  } else {",
+        "  return;",
+        "  foo();",
+        "  x = 1;",
+    ] {
+        assert!(
+            !should_ignore_typescript_changed_line(kept),
+            "`{kept}` must still be classified"
+        );
+    }
+    Ok(())
+}
+
+/// RIPR-SPEC-0027: the boundary witness does not touch non-predicate families;
+/// an exact return-value assertion still exposes a return-value change.
+#[test]
+fn spec_0027_boundary_witness_leaves_return_value_family_exposed() -> Result<(), String> {
+    let tests = [exact_value_test("shippingFee", "shippingFee(60)", "0")];
+    let finding = classify_boundary_line("shippingFee", "  return 0;", &tests)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
 // ── F5-9: a test is related to an owner only when it references the owner ────
 
 /// Owners from the F5-9 re-walk shape: `discountedTotal` (tested) and a new

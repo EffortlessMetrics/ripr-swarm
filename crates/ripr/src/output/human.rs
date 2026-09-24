@@ -26,6 +26,25 @@ pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConf
     render_bounded_with_config_and_navigation(output, config, Some(&navigation))
 }
 
+/// #4012: the no-scope note must describe what was actually analyzed. When
+/// the disclosure fires on an established base (empty `<base>...HEAD`
+/// range), name the compared base instead of claiming no scope was
+/// provided; only a run with no established base keeps the legacy note.
+fn render_no_scope_note(output: &CheckOutput) -> String {
+    if let Some(base) = output.base.as_deref() {
+        format!(
+            "\nNote: `{base}...HEAD` contains no changed files, so there was nothing to analyze. \
+             The compared base was `{base}`; an empty result here means no behavior changed against it.\n",
+        )
+    } else {
+        "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
+         Run `ripr check --base origin/main` to analyze your changes, or \
+         `ripr check --root . --format repo-exposure-md` for a full-repo scan. \
+         An empty result here does NOT mean your changed behavior is covered.\n"
+            .to_string()
+    }
+}
+
 pub(crate) fn render_bounded_with_config_and_navigation(
     output: &CheckOutput,
     config: &RiprConfig,
@@ -43,12 +62,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
             triage::render_human_triage(&mut out, &triage, output, config, navigation);
         }
         if output.no_scope_provided && !output.unanalyzed_working_tree {
-            out.push_str(
-                "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
-Run `ripr check --base origin/main` to analyze your changes, or \
-`ripr check --root . --format repo-exposure-md` for a full-repo scan. \
-An empty result here does NOT mean your changed behavior is covered.\n",
-            );
+            out.push_str(&render_no_scope_note(output));
         }
         if output.unanalyzed_working_tree {
             out.push_str(UNANALYZED_WORKING_TREE_NOTE);
@@ -78,16 +92,13 @@ pub(crate) fn render_full_with_config(output: &CheckOutput, config: &RiprConfig)
 
     if output.findings.is_empty() {
         out.push_str("No diff-derived static exposure probes found.\n");
-        // RIPR-SPEC-0083: disclose when no analysis scope was provided.
-        // This fires only when the caller passed no --diff/--base/--mode, so
-        // an empty result here means "nothing was analyzed", not "tests pass".
+        // RIPR-SPEC-0083: disclose when no analysis scope was provided
+        // (#4012: or when the established range is empty — the note then
+        // names the compared base instead of claiming no scope).
+        // Suppressed while uncommitted working-tree edits are unanalyzed:
+        // the working-tree note owns the guidance there (f752562fb).
         if output.no_scope_provided && !output.unanalyzed_working_tree {
-            out.push_str(
-                "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
-Run `ripr check --base origin/main` to analyze your changes, or \
-`ripr check --root . --format repo-exposure-md` for a full-repo scan. \
-An empty result here does NOT mean your changed behavior is covered.\n",
-            );
+            out.push_str(&render_no_scope_note(output));
         }
         // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
         // changes were NOT analyzed. An empty result here does NOT mean those changes
