@@ -183,6 +183,9 @@ pub fn fixture_git_ok_with_deadline(
 /// `commit` is rejected: landing reconcile carries no stdout, so a commit
 /// through this helper would silently discard the reconcile contract; use
 /// `fixture_git_ok` for state-changing invocations.
+// Shared test helper consumed by a different integration-test target; dead in
+// targets that only consume `fixture_git_ok` (see .ripr/allow-attributes.txt).
+#[allow(dead_code, reason = "consumed by the generated-workflow target only")]
 pub fn fixture_git_output(root: &Path, args: &[&str]) -> Result<String, String> {
     if fixture_subcommand(args) == Some("commit") {
         return Err("fixture_git_output does not support commit; use fixture_git_ok".to_string());
@@ -227,6 +230,8 @@ pub fn fixture_git_output(root: &Path, args: &[&str]) -> Result<String, String> 
 
 /// Strict stdout decode for [`fixture_git_output`]: fixture output feeds
 /// identity comparisons, so lossy conversion would collapse distinct paths.
+// Companion to `fixture_git_output`; same per-target dead-code note.
+#[allow(dead_code, reason = "consumed by the generated-workflow target only")]
 fn decode_stdout(root: &Path, args: &[&str], stdout: &[u8]) -> Result<String, String> {
     String::from_utf8(stdout.to_vec()).map_err(|error| {
         format!(

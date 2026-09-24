@@ -442,7 +442,9 @@ fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn
 /// One spawn site for executing extracted capture-step shell (process-policy
 /// bound). GitHub Actions runs a `run:` step without `shell:` as `bash -e`
 /// on ubuntu-latest, so the helper mirrors that invocation instead of a
-/// bare `sh -c`, which would not enable errexit.
+/// bare `sh -c`, which would not enable errexit. Unix-only like its single
+/// caller, so Windows builds never see a dead helper.
+#[cfg(unix)]
 fn run_sh(script: &str, cwd: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
     Ok(Command::new("bash")
         .args(["-e", "-c", script])
