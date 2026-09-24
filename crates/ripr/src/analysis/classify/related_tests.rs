@@ -301,11 +301,11 @@ fn lexical_body_call_names(body: &str) -> BTreeSet<String> {
             cursor += 1;
         }
         let end = cursor;
-        let mut tail = end;
-        while tail < bytes.len() && bytes[tail].is_ascii_whitespace() {
-            tail += 1;
-        }
-        if tail < bytes.len() && bytes[tail] == b'(' {
+        // Mirror `body_contains_owner_call`'s `trim_start()` exactly: the
+        // legacy scanner accepts any Unicode whitespace before the call
+        // parenthesis, so indexing with an ASCII-only whitespace skip could
+        // drop a candidate the full scan still finds.
+        if body[end..].trim_start().starts_with('(') {
             names.insert(body[start..end].to_string());
         }
     }
@@ -1566,8 +1566,8 @@ mod tests {
             )],
             ..RustIndex::default()
         };
-        let chain = super::helper_transfer::HelperChain {
-            hops: vec![super::helper_transfer::HelperHop {
+        let chain = crate::analysis::classify::helper_transfer::HelperChain {
+            hops: vec![crate::analysis::classify::helper_transfer::HelperHop {
                 caller: helper,
                 call_text: "target_owner(value)".to_string(),
                 arguments: vec!["value".to_string()],
@@ -1581,6 +1581,31 @@ mod tests {
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "reaches_through_helper");
         assert_eq!(related[0].1, RelationReason::HelperOwnerCall);
+    }
+
+    #[test]
+    fn indexed_body_call_matches_unicode_whitespace_before_paren() {
+        let owner = function("src/owner.rs", "target_owner");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test(
+                "tests/other_area.rs",
+                "nonstandard_whitespace_case",
+                "target_owner\u{00A0}(value);",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("src/owner.rs", "target_owner(value)");
+
+        // The legacy body scanner (`body_contains_owner_call`) trims any
+        // Unicode whitespace before the call parenthesis; the candidate
+        // index must index the same lexical call or the parity assertion
+        // inside `find_related_tests` diverges from the full-scan oracle.
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].0.name, "nonstandard_whitespace_case");
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
     }
 
     #[test]
