@@ -229,6 +229,17 @@ fn pinned_capture_flags_retain_edit_hidden_by_textconv() -> Result<(), Box<dyn E
 #[cfg(unix)]
 #[test]
 fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
+    // Runner tools: the generated workflow targets ubuntu-latest, where
+    // sh, coreutils, and jq exist. On minimal local Unix environments
+    // without sha256sum or jq, skip loudly instead of failing the suite.
+    let tools = run_sh(
+        "command -v sha256sum >/dev/null && command -v jq >/dev/null",
+        std::env::temp_dir().as_path(),
+    )?;
+    if !tools.status.success() {
+        eprintln!("skipping generated_capture_step_runs_end_to_end: sha256sum or jq not available");
+        return Ok(());
+    }
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let init_root = std::env::temp_dir().join(format!(
         "ripr-generated-capture-exec-init-{}-{nonce}",
