@@ -140,7 +140,10 @@ the explicit `--base` when one was given, the resolved default base
 (diff-file/stdin inputs and repo-scope runs). Base-matching consumers (for
 example `review-comments --check-output`, which requires the envelope `base`
 to equal its own `--base`) may rely on a present `base`; an absent `base`
-means the run cannot be attributed to a base.
+means the run cannot be attributed to a base. The typed
+`analysis_outcome.outcome.identity.base_revision` names the same value: a
+scope-less run records the resolved default there too, so the envelope and the
+identity agree and the analysis-outcome validator accepts the artifact.
 
 ```json
 {
@@ -2318,12 +2321,12 @@ additive top-level `artifact` envelope before it is suitable for
     "format": "repo-exposure-json",
     "mode": "draft",
     "base_revision": null,
-    "input_identity": "input:v3:fnv1a64:<16-hex-fingerprint>",
+    "input_identity": "input:v4:fnv1a64:<16-hex-fingerprint>",
     "command": "ripr check --format repo-exposure-json",
     "profile": "draft",
     "worktree": "clean"
   },
-  "snapshot_identity": "snapshot:input:v3:fnv1a64:<16-hex-fingerprint>;revision:<full-head-sha>",
+  "snapshot_identity": "snapshot:input:v4:fnv1a64:<16-hex-fingerprint>;revision:<full-head-sha>",
   "content_sha256": "sha256:<64-hex-digest>"
 }
 ```
@@ -2335,9 +2338,11 @@ commitment, not a signature or runtime proof. `repository.head` and
 such an artifact is disclosed but is not accepted by `agent verify`.
 `analysis.input_identity` is the portable semantic/configuration identity of
 the analysis input. It carries an explicit algorithm version and digest shape
-(`input:v3:fnv1a64:<16 lowercase hex>`) and covers the identity version,
+(`input:v4:fnv1a64:<16 lowercase hex>`) and covers the identity version,
 mode, profile (this producer binds profile to mode and states both), base
-semantics, analysis format, manifest and lockfile content identities, the
+semantics, analysis format, manifest content identities and the content
+identities of the Cargo lockfiles Git tracks (an untracked or ignored
+`Cargo.lock` is build state the seam inventory never reads), the
 repo-exposure producer-consumed configuration boundary (the three
 oracle-strength fields `oracles.snapshot_strength`,
 `oracles.mock_expectation_strength`, and `oracles.broad_error_strength` — the
@@ -2354,7 +2359,7 @@ rejected at another. The snapshot identity
 (`snapshot:<input_identity>;revision:<head>`) binds that portable input
 identity to the concrete repository head, so two clean artifacts from
 different commits have distinct snapshot identities even when their input
-identity is unchanged. Only the current `input:v3:` identity version with the
+identity is unchanged. Only the current `input:v4:` identity version with the
 exact `fnv1a64:<16 lowercase hex>` digest shape validates as current
 evidence; a wrong version is rejected as an unsupported input identity
 version and a wrong digest shape as a malformed input identity digest. `agent verify`
@@ -6913,7 +6918,9 @@ Field contract:
   receipt records them; it does not run them.
 - `summary.remaining_gap` / `summary.next_recommendation` - static advisory
   guidance derived from the verify bucket. It does not claim runtime
-  confirmation.
+  confirmation. When `status` is not `advisory`, `next_recommendation` instead
+  states that the receipt is not review evidence, with the status, the
+  analysis-outcome reason, and the recovery.
 - `summary.receipt_state` - canonical receipt lifecycle state for the selected
   receipt. It is one of `receipt_missing`, `receipt_found`, `receipt_stale`,
   `receipt_gap_mismatch`, `receipt_movement_improved`,
@@ -6923,6 +6930,10 @@ Field contract:
   `resolved`, or `unknown`; `summary` is a short static movement statement;
   `recommended_action` is the bounded next step; and `safe_to_merge` is always
   `false` because the static receipt is review evidence, not a merge policy.
+  Only an `advisory` receipt is review evidence: for an `incomplete` or
+  `invalid` receipt, `recommended_action` carries the same not-review-evidence
+  statement as `next_recommendation` and never recommends including the
+  receipt in review, while `kind` and `summary` still describe the movement.
 
 ## Assurance axes (design contract)
 
@@ -8787,7 +8798,8 @@ JSON shape:
       "suggested_test": "Add an equality-boundary assertion.",
       "related_test": "tests/pricing.rs::applies_discount_above_threshold",
       "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
-      "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow",
+      "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
+      "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
       "static_limitations": []
     }
   ],
@@ -8836,6 +8848,12 @@ Field contract:
   test, assertion shape, verification command, and static limitations while
   preserving legacy top-level fields as fallback. The report must not invent
   missing commands or generated tests.
+- `repair_routes[].repair_command` - present only when the delta item's
+  `evidence_record.canonical_item.repair_command` carries the repair start
+  (#3906), which that record names only past the fail-closed repair-packet
+  flip. `repair_routes[].agent_command` is that carried command or `null`;
+  RIPR Zero status never builds an `agent start` or `agent repair` command
+  from a seam id, and gap-record routes name none.
 - `warnings[]` - stale baseline metadata, missing inputs, unsupported schemas,
   ambiguous identities, and trend gaps.
 - `limits_note` - advisory boundary text for generated CI summaries.
@@ -10114,7 +10132,8 @@ JSON shape:
     "suggested_test": "Add an equality-boundary assertion.",
     "related_test": "tests/pricing.rs::applies_discount_above_threshold",
     "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
-    "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow"
+    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
+    "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before"
   },
   "history": {
     "source": ".ripr/pr-evidence-ledger.jsonl",
@@ -10168,6 +10187,16 @@ Field contract:
   artifacts. Missing fields are `null` plus warnings, not invented.
   `top_repair_route.gap_id` and `top_repair_route.canonical_gap_id` are copied
   from the selected source artifact when available.
+- `top_repair_route.repair_command` - present only when the selected source
+  carries the repair start (#3906): a review card's
+  `llm_guidance.repair_command`, a gate route's `repair_route.repair_command`,
+  or a RIPR Zero route's `repair_command`. Those producers name it only past
+  the fail-closed repair-packet flip; the ledger carries it and never derives
+  it. `top_repair_route.agent_command` is that command when present, else a
+  carried read-only inspection command, else `null`; the ledger never builds
+  an `agent start` or `agent repair` command from a bare seam id. Markdown
+  shows the carried command as `Repair start`. `top_repair_route.receipt_command`
+  for a review card is read from the card root.
 - `history.*` - present only when prior ledger history or previous ledger
   summary is supplied.
 - `warnings[]` - missing inputs, unavailable coverage, unsupported schemas,
@@ -10600,6 +10629,15 @@ Field contract:
   name, and assertion shape when supplied by existing artifacts.
 - `commands.*` records copyable commands from existing command templates or
   supplied artifacts. Missing commands become `null` and warnings.
+- `commands.repair` is present only when the first review card (inline
+  comments, then summary-only) carries `llm_guidance.repair_command` and no
+  assistant proof exists yet (#3906). The card names that command only past
+  the fail-closed repair-packet flip; first-action carries it verbatim, takes
+  every `selected` field from the same card, and never builds a repair
+  command from a bare seam id. Without it, a PR with review cards but no
+  assistant proof keeps the `missing_required_artifact` route. Markdown shows
+  the command under `Start Repair` and as `Repair start` in the one-screen
+  recommendation.
 - `evidence.*` records supporting artifact paths and static movement when
   supplied. Static movement is not runtime mutation confirmation.
 - `fallback` records the reason for non-actionable statuses and the next safe
@@ -10929,10 +10967,11 @@ JSON shape:
     "focused_proof_intent": "Add an equality-boundary assertion.",
     "related_test": "tests/pricing.rs::applies_discount_above_threshold",
     "suggested_test": "Add an equality-boundary assertion.",
+    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
     "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
     "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json",
     "static_evidence_boundary": "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.",
-    "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow",
+    "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
     "receipt": {
       "artifact": "target/ripr/reports/agent-receipt.json",
       "status": "present"
@@ -11046,6 +11085,14 @@ Field contract:
   gate, baseline, and assistant-health inputs may normalize existing typed
   class/status fields, but must not infer the value from Markdown prose or code
   inspection.
+- `top_issue.repair_command` is present only when an input carries the repair
+  start (#3906): first-action `commands.repair`, a review card's
+  `llm_guidance.repair_command`, or an acknowledged gate route's
+  `repair_route.repair_command`. `top_issue.agent_command` is that command
+  when present, else a carried read-only inspection command (first-action
+  `commands.context_packet`, a card's `llm_guidance.command`, or a gate
+  route's `inspection_command`), else `null`. The panel never builds an
+  `agent start` or `agent repair` command from a bare seam id.
 - `movement.*` preserves before/after static movement when supplied. It is not
   runtime mutation confirmation.
 - `debt_delta.*` carries PR-local movement from baseline, RIPR Zero, gate, or
@@ -11843,6 +11890,7 @@ JSON shape:
       "modified_unix_ms": 1778179200000
     }
   ],
+  "repair_attempts": [],
   "missing_commands": [
     {
       "step": "agent_packet",
@@ -11864,10 +11912,10 @@ JSON shape:
 Field contract:
 
 - `schema_version` - currently `"0.1"`.
-- `status` - `"complete"` when every required artifact is present and there
-  are no warnings; `"warning"` when every artifact is present but a
-  stale-looking condition exists; `"incomplete"` when any required artifact is
-  missing.
+- `status` - `"complete"` when every required artifact is present, no next
+  command is selected, and there are no warnings; `"warning"` when every
+  artifact is present but a stale-looking condition exists; `"incomplete"`
+  when any required artifact is missing or a next command is selected.
 - `root` - the `--root` argument normalized to forward slashes for reporting.
 - `seam` - recovered seam identity when available. The current recovery order
   is receipt, verify, packet, then brief. It is `null` when no existing
@@ -11878,8 +11926,26 @@ Field contract:
 - `missing_commands[]` - one command for each missing artifact in workflow
   order: before snapshot, packet, brief, after snapshot, verify, receipt. If no
   seam can be recovered, packet, brief, and receipt commands use `<seam-id>`.
-- `next_command` - the first entry from `missing_commands`, or `null` when no
-  required artifact is missing.
+- `repair_attempts[]` - every repair attempt under
+  `target/ripr/repair-attempts/`, validated by the attempt authority and
+  ordered by attempt ID (not by age): `attempt_id`, `seam_id`, `state` (the
+  manifest state), `head_current` (whether the attempt's `HEAD` is the current
+  one; `null` when `HEAD` cannot be read), `disposition` (`resumable`,
+  `prepared_at_other_head`, `head_unknown`, `not_published`, `finished`, or
+  `ended`), `manifest`, and `command` (the command that would move this attempt
+  or its seam forward, or `null`).
+- `next_command` - selected in the order RIPR-SPEC-0011 documents (#3906): the
+  one current awaiting repair attempt's recorded after command
+  (`repair_attempt_after`); otherwise a new attempt for the one seam whose
+  attempts ended without a receipt (`repair_attempt_before`); otherwise the
+  first `missing_commands` entry, except that an unknown seam routes to
+  `ripr pilot --root <root>` (`select_seam`) and a missing workflow directory
+  routes to a new repair attempt. It is `null` when nothing is missing, and
+  also when status cannot choose honestly: an unreadable attempt manifest,
+  several current awaiting attempts, several open seams, or an unreadable
+  `HEAD`. A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
+  `multiple_open_repair_seams`, `repair_attempt_head_unknown`) then names the
+  choices.
 - `warnings[]` - stale-looking or unreadable-artifact hints. Timestamp warnings
   are emitted when `agent verify` is older than a before/after snapshot or
   `agent receipt` is older than `agent verify`. Hash mismatch warnings remain a
@@ -13867,7 +13933,7 @@ command that analyzes it (#3906). With no Rust seams the state is `required`:
       "route": "unavailable_in_this_binary",
       "command": null,
       "guidance_category": null,
-      "guidance": "Perl analysis is not available from this ripr binary. Rebuild ripr with Cargo feature `lang-perl` to analyze Perl files."
+      "guidance": "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it."
     }
   ]
 }

@@ -20,7 +20,7 @@ Start here:
   Canonical gap: gap:python:src/reconcile.py:reconcile_total:return_value:return_value:amount-2
   Changed behavior: return amount - 2
   Missing discriminator: Only heuristic Python test links were found for `reconcile_total`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion.
-  Related test: tests/test_reconcile.py:1 test_reconcile_fixture_contract
+  Related test: tests/test_reconcile.py:4 test_reconcile_fixture_contract
   Evidence:
     - reach weak: 1 heuristic Python test link(s) found for owner `reconcile_total`; relation is uncertain
     - infection yes: Changed Python return expression can alter the owner return value: `return amount - 2`
