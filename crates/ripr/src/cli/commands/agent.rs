@@ -1843,3 +1843,70 @@ mod before_phase_stdout_tests {
         assert_eq!(before_phase_stdout(packet, "p", true), packet);
     }
 }
+
+#[cfg(test)]
+mod authored_test_changed_tests {
+    use super::authored_test_changed;
+    use crate::edit_cage::{CagePathRule, EditCagePolicy, EditCageVerdict, EditCageVerdictStatus};
+
+    fn policy() -> Result<EditCagePolicy, String> {
+        Ok(EditCagePolicy {
+            selected_target: CagePathRule::exact("tests/pricing.rs")?,
+            allowed_edit_surface: vec![CagePathRule::exact("tests/pricing.rs")?],
+            forbidden_paths: vec![CagePathRule::subtree("src")?],
+            expected_operational_writes: vec![CagePathRule::subtree("target/ripr")?],
+            ignored_build_output: None,
+            untracked_build_lockfile: None,
+        })
+    }
+
+    fn verdict(status: EditCageVerdictStatus, changed: &[&str]) -> EditCageVerdict {
+        EditCageVerdict {
+            status,
+            changed_paths: changed.iter().map(|path| (*path).to_string()).collect(),
+            violations: Vec::new(),
+        }
+    }
+
+    /// The receipt names the selected test file only when the cage is
+    /// compliant and recorded that file changing; any other verdict leaves
+    /// `test_changed` null rather than naming a file the cage did not admit.
+    #[test]
+    fn names_the_selected_file_only_for_a_compliant_cage_that_recorded_it() -> Result<(), String> {
+        let policy = policy()?;
+        assert_eq!(
+            authored_test_changed(
+                &policy,
+                &verdict(EditCageVerdictStatus::Compliant, &["tests/pricing.rs"])
+            ),
+            Some("tests/pricing.rs".to_string())
+        );
+        for status in [
+            EditCageVerdictStatus::Violated,
+            EditCageVerdictStatus::Incomparable,
+        ] {
+            assert_eq!(
+                authored_test_changed(&policy, &verdict(status, &["tests/pricing.rs"])),
+                None,
+                "{status:?}"
+            );
+        }
+        assert_eq!(
+            authored_test_changed(
+                &policy,
+                &verdict(
+                    EditCageVerdictStatus::Compliant,
+                    &["target/ripr/report.json"]
+                )
+            ),
+            None,
+            "a compliant cage that did not record the selected file"
+        );
+        assert_eq!(
+            authored_test_changed(&policy, &verdict(EditCageVerdictStatus::Compliant, &[])),
+            None,
+            "an empty delta"
+        );
+        Ok(())
+    }
+}
