@@ -2213,3 +2213,32 @@ Durable rules:
   must make the same harness fail. Also wait on the lock, not the PID, when
   simulating job death: in containers without a reaping init, `kill -0` keeps
   succeeding on a zombie long after its descriptors, and its lock, are gone.
+
+## 2026-09-24: A shared sccache server inherits the TMP of whichever lane started it
+
+2026-09-24, multiple concurrent agent lanes on one Windows host
+(`ripr-swarm`). Two lanes lost 30+ minutes each to a sccache failure that
+looked like a broken tree. `ripr`'s `.cargo/config.toml` sets
+`[env] TMP/TEMP` to a target-relative path, so a `sccache` server auto-started
+by cargo inside a lane worktree bakes that worktree's absolute TMP into the
+user-level server process. Every later compile on the host — including lanes
+in *other* worktrees, which resolve their own TMP fine — then fails with
+`Failed to create temp dir` when the server's cached TMP points at a worktree
+that was removed (lane cleanup deletes its worktree; the server outlives it).
+The poisoned server also survived until explicitly restarted; a `tail` pipe in
+one lane's proof wrapper masked the real non-zero exit behind a success-looking
+line, which is exactly the hidden-gate failure the repo validation rules warn
+about.
+
+Durable rules:
+
+- A user-level daemon started from inside a configured workspace inherits that
+  workspace's env for its whole lifetime. Anything that auto-starts such a
+  daemon (cargo via `sccache` in `RUSTC_WRAPPER`, caches, language servers)
+  must be started once from a stable path, or its TMP/cache-dir environment
+  must be pinned explicitly, before lanes fan out.
+- Deleting a worktree is not enough lane cleanup when a host-level daemon may
+  reference it; the cleanup pass for a lane that used sccache should treat
+  `sccache --stop-server` (or a health check) as part of reaping.
+- Read the native exit status, not a piped summary: a wrapper that ends in
+  `| tail` reports the pipe's status, and a red gate behind it looks green.
