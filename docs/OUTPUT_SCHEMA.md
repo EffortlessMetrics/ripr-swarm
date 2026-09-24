@@ -14924,7 +14924,12 @@ committed LSP fixture expectations, plus the VS Code e2e smoke test file, and
 summarizes the editor surface without opening VS Code.
 For seam fixtures, `status` downgrades from `pass` when the editor-agent loop
 command actions for packet, brief, after-snapshot, verify, or receipt are
-missing from the pinned action payloads.
+missing from the pinned action payloads. The repair-start action
+(`ripr.copyAgentRepairCommand`, `ripr agent repair --root . --seam-id <id>
+--phase before`) is offered only for a seam that passes the fail-closed
+repair-packet flip (RIPR-SPEC-0087 §8) with a test-surface target, so
+`agent_repair_command_available` is reported separately and does not affect
+`status`.
 
 JSON shape:
 
@@ -14949,6 +14954,7 @@ JSON shape:
         "titles": [
           "Inspect Test Gap - Copy Context",
           "Write targeted test: copy brief",
+          "Start repair: copy repair command",
           "Agent handoff: copy packet command",
           "Agent handoff: copy brief command",
           "Verify after test: copy after-snapshot command",
@@ -14961,6 +14967,7 @@ JSON shape:
         "commands": [
           "ripr.copyContext",
           "ripr.copyTargetedTestBrief",
+          "ripr.copyAgentRepairCommand",
           "ripr.copyAgentPacketCommand",
           "ripr.copyAgentBriefCommand",
           "ripr.copyAfterSnapshotCommand",
@@ -14998,6 +15005,7 @@ JSON shape:
       "context": {
         "seam_packet_available": true,
         "targeted_test_brief_available": true,
+        "agent_repair_command_available": true,
         "agent_packet_command_available": true,
         "agent_brief_command_available": true,
         "after_snapshot_command_available": true,
@@ -15016,6 +15024,7 @@ JSON shape:
       "ripr.copyAgentBriefCommand",
       "ripr.copyAgentPacketCommand",
       "ripr.copyAgentReceiptCommand",
+      "ripr.copyAgentRepairCommand",
       "ripr.copyAgentVerifyCommand",
       "ripr.copyContext",
       "ripr.copySuggestedAssertion",
@@ -15032,6 +15041,7 @@ JSON shape:
       "ripr.copyAgentBriefCommand",
       "ripr.copyAgentPacketCommand",
       "ripr.copyAgentReceiptCommand",
+      "ripr.copyAgentRepairCommand",
       "ripr.copyAgentVerifyCommand",
       "ripr.copyContext",
       "ripr.copySuggestedAssertion",
@@ -15047,6 +15057,7 @@ JSON shape:
       "ripr.copyAgentBriefCommand",
       "ripr.copyAgentPacketCommand",
       "ripr.copyAgentReceiptCommand",
+      "ripr.copyAgentRepairCommand",
       "ripr.copyAgentVerifyCommand",
       "ripr.copyContext",
       "ripr.copySuggestedAssertion",

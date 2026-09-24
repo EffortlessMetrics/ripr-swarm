@@ -268,3 +268,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — editor_lsp_workflow (3)
+
+Reason:
+#3906: the repair-eligible seam's editor projection now leads the agent loop with the repair start (`Start repair: copy repair command`, `ripr.copyAgentRepairCommand`, `ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before`) and the hover names it first; every other action and hover line is unchanged.
+
+Command:
+Hand-curated editor projection; the matching producer output is pinned by `cargo test -p ripr --lib lsp::tests::boundary_gap_lsp_code_actions_match_fixture_expectation`.
+
+Updated:
+- `expected/lsp-code-actions.json`
+- `expected/lsp-hover.md`

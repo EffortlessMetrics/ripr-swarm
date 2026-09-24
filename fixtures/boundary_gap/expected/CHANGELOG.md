@@ -489,3 +489,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_gap (3)
+
+Reason:
+#3906: the boundary seam passes the repair-packet flip (RIPR-SPEC-0087 §8), so its LSP code actions gain the repair start (`Start repair: copy repair command`, `ripr.copyAgentRepairCommand`) ahead of the agent-loop actions; every other action is unchanged.
+
+Command:
+`cargo test -p ripr --lib lsp::tests::boundary_gap_lsp_code_actions_match_fixture_expectation`
+
+Updated:
+- `expected/lsp-code-actions.json`

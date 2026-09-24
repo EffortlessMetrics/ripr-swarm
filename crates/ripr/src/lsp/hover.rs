@@ -7,6 +7,7 @@ use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
 };
+use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::preview_actionability::{PreviewActionability, preview_actionability_for};
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
@@ -791,6 +792,12 @@ fn push_editor_commands(
     let seam_id = entry.seam.id().as_str();
     lines.push(String::new());
     lines.push("## Handoff, verify, and receipt commands".to_string());
+    // Only a seam `agent repair` would accept (the fail-closed repair-packet
+    // flip, RIPR-SPEC-0087 §8, plus a test-surface target) names the repair
+    // start; any other seam's hover stays as it was (#3906).
+    if let Some(repair) = repair_start_command_for(entry) {
+        lines.push(format!("- repair (start here): `{repair}`"));
+    }
     lines.push(format!(
         "- packet: `{}`",
         loop_commands::agent_packet_command(

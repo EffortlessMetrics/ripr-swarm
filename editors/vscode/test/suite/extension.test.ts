@@ -51,6 +51,7 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.copyContext'));
     assert.ok(commands.includes('ripr.copySuggestedAssertion'));
     assert.ok(commands.includes('ripr.copyTargetedTestBrief'));
+    assert.ok(commands.includes('ripr.copyAgentRepairCommand'));
     assert.ok(commands.includes('ripr.copyAgentPacketCommand'));
     assert.ok(commands.includes('ripr.copyAgentBriefCommand'));
     assert.ok(commands.includes('ripr.copyAfterSnapshotCommand'));
@@ -3451,6 +3452,12 @@ suite('Extension Smoke', () => {
       const seamId = '67fc764ba37d77bd';
       const targets = [
         agentLoopCommandTarget(
+          'agent_repair',
+          `ripr agent repair --root . --seam-id ${seamId} --phase before`,
+          'target/ripr/repair-attempts',
+          { seamId }
+        ),
+        agentLoopCommandTarget(
           'agent_packet',
           `ripr agent packet --root . --seam-id ${seamId} --json > target/ripr/agent/agent-packet.json`,
           'target/ripr/agent/agent-packet.json',
@@ -3556,6 +3563,23 @@ suite('Extension Smoke', () => {
           'agent_receipt',
           'ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id 67fc764ba37d77bd --json --out target/ripr/agent/agent-receipt.json',
           'target/ripr/agent/agent-receipt.json'
+        )
+      );
+      // The repair start must name the before phase and the payload's seam.
+      await context.controller.copyAgentLoopCommand(
+        agentLoopCommandTarget(
+          'agent_repair',
+          'ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase after',
+          'target/ripr/repair-attempts',
+          { seamId: '67fc764ba37d77bd' }
+        )
+      );
+      await context.controller.copyAgentLoopCommand(
+        agentLoopCommandTarget(
+          'agent_repair',
+          'ripr agent repair --root . --seam-id other-seam --phase before',
+          'target/ripr/repair-attempts',
+          { seamId: '67fc764ba37d77bd' }
         )
       );
       await context.controller.copyAgentLoopCommand(

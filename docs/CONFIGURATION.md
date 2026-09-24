@@ -469,6 +469,7 @@ The extension contributes:
 - `ripr.copyContext`
 - `ripr.copySuggestedAssertion`
 - `ripr.copyTargetedTestBrief`
+- `ripr.copyAgentRepairCommand` (offered only for a repair-eligible seam)
 - `ripr.copyAgentPacketCommand`
 - `ripr.copyAgentBriefCommand`
 - `ripr.copyAfterSnapshotCommand`

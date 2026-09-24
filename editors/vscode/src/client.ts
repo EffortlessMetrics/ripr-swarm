@@ -94,6 +94,7 @@ const RIPR_CLIENT_COMMANDS: readonly string[] = [
   'ripr.copyAgentBriefCommand',
   'ripr.copyAgentPacketCommand',
   'ripr.copyAgentReceiptCommand',
+  'ripr.copyAgentRepairCommand',
   'ripr.copyAgentVerifyCommand',
   'ripr.copyContext',
   'ripr.copyCurrentRepairPacket',
@@ -4230,6 +4231,16 @@ interface AgentLoopCommandContract {
 }
 
 const AGENT_LOOP_COMMAND_CONTRACTS: Record<string, AgentLoopCommandContract> = {
+  // The server offers the repair start only for a seam `agent repair` would
+  // accept (the fail-closed repair-packet flip, RIPR-SPEC-0087 §8, plus a
+  // test-surface target; #3906); the attempt is retained under
+  // target/ripr/repair-attempts.
+  agent_repair: {
+    targetArtifact: 'target/ripr/repair-attempts',
+    startsWith: 'ripr agent repair --root . --seam-id ',
+    includes: [' --phase before'],
+    requiresSeamId: true
+  },
   agent_packet: {
     targetArtifact: 'target/ripr/agent/agent-packet.json',
     startsWith: 'ripr agent packet --root . --seam-id ',

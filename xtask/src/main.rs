@@ -10635,6 +10635,10 @@ struct LspCockpitFixture {
 struct LspCockpitContext {
     seam_packet_available: bool,
     targeted_test_brief_available: bool,
+    /// The repair start (`ripr agent repair ... --phase before`) is offered
+    /// only for a seam past the repair-packet flip, so it is reported on its
+    /// own and is not part of `agent_loop_commands_available` (#3906).
+    agent_repair_command_available: bool,
     agent_packet_command_available: bool,
     agent_brief_command_available: bool,
     after_snapshot_command_available: bool,
@@ -10849,6 +10853,10 @@ fn lsp_cockpit_fixture_report(
             "ripr.copyTargetedTestBrief" => {
                 context.targeted_test_brief_available = action_has_string_argument(action, "brief");
             }
+            "ripr.copyAgentRepairCommand" => {
+                context.agent_repair_command_available =
+                    action_has_string_argument(action, "command");
+            }
             "ripr.copyAgentPacketCommand" => {
                 context.agent_packet_command_available =
                     action_has_string_argument(action, "command");
@@ -11013,6 +11021,7 @@ fn lsp_cockpit_report_json(report: &LspCockpitReport) -> Result<String, String> 
                 "context": {
                     "seam_packet_available": fixture.context.seam_packet_available,
                     "targeted_test_brief_available": fixture.context.targeted_test_brief_available,
+                    "agent_repair_command_available": fixture.context.agent_repair_command_available,
                     "agent_packet_command_available": fixture.context.agent_packet_command_available,
                     "agent_brief_command_available": fixture.context.agent_brief_command_available,
                     "after_snapshot_command_available": fixture.context.after_snapshot_command_available,
@@ -11084,6 +11093,10 @@ fn lsp_cockpit_report_markdown(report: &LspCockpitReport) -> String {
         out.push_str(&format!(
             "- targeted test brief available: {}\n",
             yes_no(fixture.context.targeted_test_brief_available)
+        ));
+        out.push_str(&format!(
+            "- agent repair command available: {}\n",
+            yes_no(fixture.context.agent_repair_command_available)
         ));
         out.push_str(&format!(
             "- agent packet command available: {}\n",
