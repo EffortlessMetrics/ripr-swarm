@@ -1189,16 +1189,17 @@ mod tests {
         assert!(item.has_oracle_eligible_relation);
         assert_eq!(item.strongest_oracle_strength, OracleStrength::Smoke);
 
-        // No oracle-eligible relation at all — a different fact from a weak
-        // oracle. The shared matcher still reports the same-stem link
-        // (`test_app` stem == owner file stem), preserved as UNCERTAIN so a
-        // similarly named owner can never be read as a discriminating reach
-        // (the wrong-owner guard surface).
+        // No relation at all — a different fact from a weak oracle. The
+        // same-stem file (`test_app` stem == owner file stem) only exercises
+        // the sibling `observed`, and a test is related to an owner only when
+        // it references the owner (RIPR-SPEC-0028), so `lonely` has no link
+        // that could be read as reach (the wrong-owner guard surface).
         let lonely = find_owner(&evidence, "lonely")?;
-        assert_eq!(lonely.related_tests.len(), 1);
-        assert_eq!(lonely.related_tests[0].relation, "same_stem");
-        assert!(!lonely.related_tests[0].relation_uses_oracle);
-        assert!(lonely.related_tests[0].relation_uncertain);
+        assert!(
+            lonely.related_tests.is_empty(),
+            "a sibling-only same-stem test must not relate `lonely`: {:?}",
+            lonely.related_tests
+        );
         assert!(!lonely.behavior_items[0].has_oracle_eligible_relation);
         assert_eq!(
             lonely.behavior_items[0].strongest_oracle_strength,
