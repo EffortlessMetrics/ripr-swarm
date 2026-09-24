@@ -10195,8 +10195,10 @@ Field contract:
   it. `top_repair_route.agent_command` is that command when present, else a
   carried read-only inspection command, else `null`; the ledger never builds
   an `agent start` or `agent repair` command from a bare seam id. Markdown
-  shows the carried command as `Repair start`. `top_repair_route.receipt_command`
-  for a review card is read from the card root.
+  shows the carried command as `Repair start`, followed by the after-phase
+  step, with verify and receipt labelled as the manual alternative (#3906).
+  `top_repair_route.receipt_command` for a review card is read from the card
+  root.
 - `history.*` - present only when prior ledger history or previous ledger
   summary is supplied.
 - `warnings[]` - missing inputs, unavailable coverage, unsupported schemas,
@@ -10637,7 +10639,9 @@ Field contract:
   command from a bare seam id. Without it, a PR with review cards but no
   assistant proof keeps the `missing_required_artifact` route. Markdown shows
   the command under `Start Repair` and as `Repair start` in the one-screen
-  recommendation.
+  recommendation. The after-phase step follows it, and verify and receipt are
+  labelled as the manual alternative (`Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)`); without a repair start they read `Verify after the test edit`
+  and `Receipt after verify` (#3906). JSON fields are unchanged.
 - `evidence.*` records supporting artifact paths and static movement when
   supplied. Static movement is not runtime mutation confirmation.
 - `fallback` records the reason for non-actionable statuses and the next safe

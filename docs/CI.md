@@ -842,12 +842,12 @@ For a CI-first user, the useful output is the artifact packet:
 - `target/ripr/pilot/` - first-screen pilot summary, repo exposure snapshot,
   and agent seam packets;
 - `target/ripr/workflow/` - selected-seam workflow manifest, commands,
-  status JSON/Markdown, review summary JSON/Markdown, and agent packet,
-  brief, and verify JSON when a top seam is available;
-- `target/ripr/agent/` - compatibility copies of packet, brief, verify, and
-  receipt JSON for the top seam when one is available;
-- `target/ripr/reports/` - targeted-test outcome, SARIF files when enabled,
-  repo badge JSON, `agent-receipt.json`, `gap-decision-ledger.{json,md}`,
+  status JSON/Markdown, review summary JSON/Markdown, the before snapshot,
+  and agent packet and brief JSON when a top seam is available;
+- `target/ripr/agent/` - compatibility copies of packet and brief JSON for
+  the top seam when one is available;
+- `target/ripr/reports/` - SARIF files when enabled, repo badge JSON,
+  `gap-decision-ledger.{json,md}`,
   `assistant-loop-health.{json,md}`, `first-useful-action.{json,md}`,
   `pr-review-front-panel.{json,md}`, `start-here.{json,md}`,
   `waiver-aging.{json,md}`, `suppression-health.{json,md}`,
@@ -855,6 +855,15 @@ For a CI-first user, the useful output is the artifact packet:
   cockpit output.
 - `target/ripr/review/` - PR test guidance JSON and Markdown when
   `ripr review-comments` runs on pull requests.
+
+CI prepares the before side of the repair loop only. There is no test edit
+between two snapshots of one CI checkout, so the workflow writes no after
+snapshot, verify JSON, agent receipt, or targeted-test outcome. The
+`ripr agent repair --root . --seam-id <seam-id> --phase before` command the
+summary leads with starts the repair where the test edit happens; the
+`--attempt ... --phase after` command it prints runs verify and writes the
+receipt. The summary labels the low-level verify and receipt commands as steps
+that run after the test edit.
 
 The workflow also writes a `RIPR advisory summary` step summary. It starts with
 the `start-here` first-run packet when `ripr first-pr` can compose one from
@@ -1002,43 +1011,27 @@ jobs:
       - name: Generate RIPR agent loop artifacts
         if: always() && env.RIPR_TOP_SEAM_ID != ''
         continue-on-error: true
+        # CI writes the before side of the repair loop only: the workflow
+        # manifest, brief, and packet the focused-test edit starts from.
+        # The after snapshot, verify, and receipt need that edit between
+        # the snapshots, so the repair's `--attempt ... --phase after`
+        # command produces them where the edit happens (#3906). The packet
+        # lands through a temporary file so a failed render never leaves an
+        # empty JSON artifact for later steps or the upload.
         run: |
           ripr agent start \
             --root . \
             --seam-id "$RIPR_TOP_SEAM_ID" \
             --out target/ripr/workflow
+          packet_tmp="$(mktemp)"
           ripr agent packet \
             --root . \
             --seam-id "$RIPR_TOP_SEAM_ID" \
             --json \
-            > target/ripr/workflow/agent-packet.json
+            > "$packet_tmp"
+          mv "$packet_tmp" target/ripr/workflow/agent-packet.json
           cp target/ripr/workflow/agent-packet.json target/ripr/agent/agent-packet.json
           cp target/ripr/workflow/agent-brief.json target/ripr/agent/agent-brief.json
-          ripr check \
-            --root . \
-            --mode ready \
-            --format repo-exposure-json \
-            > target/ripr/workflow/after.repo-exposure.json
-          cp target/ripr/workflow/after.repo-exposure.json target/ripr/pilot/after.repo-exposure.json
-          ripr agent verify \
-            --root . \
-            --before target/ripr/workflow/before.repo-exposure.json \
-            --after target/ripr/workflow/after.repo-exposure.json \
-            --json \
-            > target/ripr/workflow/agent-verify.json
-          cp target/ripr/workflow/agent-verify.json target/ripr/agent/agent-verify.json
-          ripr agent receipt \
-            --root . \
-            --verify-json target/ripr/workflow/agent-verify.json \
-            --seam-id "$RIPR_TOP_SEAM_ID" \
-            --json \
-            --out target/ripr/reports/agent-receipt.json
-          cp target/ripr/reports/agent-receipt.json target/ripr/agent/agent-receipt.json
-          ripr outcome \
-            --before target/ripr/workflow/before.repo-exposure.json \
-            --after target/ripr/workflow/after.repo-exposure.json \
-            --format json \
-            --out target/ripr/reports/targeted-test-outcome.json
 
       - name: Capture pull request diff
         if: github.event_name == 'pull_request'
@@ -1405,15 +1398,26 @@ jobs:
                 action_fallback="$(markdown_inline "$action_fallback")"
                 action_warning_count="$(markdown_inline "$action_warning_count")"
                 echo '#### Recommended next test at a glance'
+                # #3906: a carried repair start leads; its after phase runs verify
+                # and writes the receipt, so verify and receipt are the manual
+                # alternative. Without one they run after the focused test edit.
+                if [ "$action_repair" != not_available ] && [ "$action_repair" != unknown ]; then
+                  echo "- Repair start: \`$action_repair\`"
+                  echo '- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.'
+                  action_verify_label='Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)'
+                  action_receipt_label='Manual receipt without a repair attempt (after the manual verify)'
+                else
+                  action_verify_label='Verify after the test edit'
+                  action_receipt_label='Receipt after verify'
+                fi
                 echo "- Status: \`$action_status\`"
                 echo "- Action: \`$action_kind\`"
                 echo "- Title: \`$action_title\`"
                 echo "- Why: \`$action_why\`"
                 echo "- Seam: \`$action_seam\`"
                 echo "- Target: \`$action_target\`"
-                echo "- Repair start: \`$action_repair\`"
-                echo "- Verify command: \`$action_verify\`"
-                echo "- Receipt command: \`$action_receipt\`"
+                echo "- $action_verify_label: \`$action_verify\`"
+                echo "- $action_receipt_label: \`$action_receipt\`"
                 echo "- Fallback: \`$action_fallback\`"
                 echo "- Warnings: \`$action_warning_count\`"
                 echo "- Action artifacts: \`target/ripr/reports/first-useful-action.json\`, \`target/ripr/reports/first-useful-action.md\`"
@@ -1435,7 +1439,29 @@ jobs:
             fi
             echo
             echo '### Agent review packet'
-            if [ -f target/ripr/workflow/agent-review-summary.md ]; then
+            # CI runs before any test edit, so no receipt exists yet (#3906,
+            # N5). The packet then leads with the carried repair start and
+            # its after phase, like every other block, instead of the
+            # low-level post-edit loop; the full summary stays an artifact.
+            review_movement=''
+            if [ -f target/ripr/workflow/agent-review-summary.json ]; then
+              review_movement="$(jq -r '.static_movement.state // empty' target/ripr/workflow/agent-review-summary.json 2>/dev/null || true)"
+            fi
+            if [ "$review_movement" = missing_artifact ]; then
+              echo '- Receipt: No agent receipt yet. None is expected before a repair: the `--attempt ... --phase after` command writes it after the focused test edit.'
+              review_repair_command=''
+              if [ -f target/ripr/reports/start-here.json ]; then
+                review_repair_command="$(jq -r '.selected.repair_command // empty' target/ripr/reports/start-here.json 2>/dev/null || true)"
+              fi
+              if [ -n "$review_repair_command" ]; then
+                review_repair_command="$(markdown_inline "$review_repair_command")"
+                echo "- Start repair: \`$review_repair_command\`"
+                echo '- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.'
+              else
+                echo '- No repair start is available; `ripr agent status --root .` names the next step on a local checkout.'
+              fi
+              echo '- Full packet: `target/ripr/workflow/agent-review-summary.md` (workflow artifact).'
+            elif [ -f target/ripr/workflow/agent-review-summary.md ]; then
               cat target/ripr/workflow/agent-review-summary.md
             else
               echo 'Agent review summary was not generated. Run `ripr agent status --root .` locally or inspect uploaded workflow artifacts.'

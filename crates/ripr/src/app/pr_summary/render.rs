@@ -1,6 +1,7 @@
 use super::io::file_state;
 use super::model::JsonInput;
 use super::util::{md_escape, string_field, summary_bool, summary_string_or_null, summary_u64};
+use crate::output::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
 use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
 use serde_json::Value;
 use std::path::Path;
@@ -125,25 +126,51 @@ fn render_start_here_top_gap(out: &mut String, start_here_value: Option<&Value>)
             "none"
         )
     ));
-    if let Some(command) = start_here_value
+    let repair_command = start_here_value
         .and_then(|value| value.pointer("/selected/repair_command"))
         .and_then(Value::as_str)
-        .filter(|command| !command.trim().is_empty())
-    {
-        out.push_str(&format!("- start repair: `{command}`\n"));
-    }
+        .filter(|command| !command.trim().is_empty());
+    let labels = push_repair_transaction(out, repair_command);
     out.push_str(&format!(
-        "- verify: `{}`\n",
+        "- {}: `{}`\n",
+        labels.verify,
         value_string(start_here_value, &["selected", "verify_command"])
     ));
     out.push_str(&format!(
-        "- receipt: `{}`\n",
+        "- {}: `{}`\n",
+        labels.receipt,
         value_string(start_here_value, &["selected", "receipt_command"])
     ));
     out.push_str(&format!(
         "- receipt state: `{}`\n",
         value_string(start_here_value, &["selected", "receipt_state"])
     ));
+}
+
+/// Lower-case proof-path labels for this summary's lower-case bullets.
+struct SummaryProofLabels {
+    verify: String,
+    receipt: String,
+}
+
+/// Render a carried repair start as the lead of the proof path (#3906):
+/// the start, then its after phase, which runs verify and writes the
+/// receipt. Returns the verify and receipt labels from the shared selector
+/// (F60-14): the manual alternative beside a start, otherwise steps that run
+/// after the test edit. JSON fields are unchanged.
+fn push_repair_transaction(out: &mut String, repair_command: Option<&str>) -> SummaryProofLabels {
+    if let Some(command) = repair_command {
+        out.push_str(&format!("- start repair: `{command}`\n"));
+        out.push_str(&format!(
+            "- {}: {REPAIR_AFTER_PHASE_STEP}\n",
+            REPAIR_AFTER_PHASE_LABEL.to_lowercase()
+        ));
+    }
+    let labels = ProofPathLabels::for_repair_start(repair_command.is_some());
+    SummaryProofLabels {
+        verify: labels.verify.to_lowercase(),
+        receipt: labels.receipt.to_lowercase(),
+    }
 }
 
 fn render_start_here_missing(out: &mut String, start_here_value: Option<&Value>) {
@@ -478,11 +505,15 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
         out.push_str(&format!("- language: `{}`\n", repair.language));
         out.push_str(&format!("- repair kind: `{}`\n", repair.repair_kind));
         out.push_str(&format!("- target: `{}`\n", repair.target));
-        if let Some(command) = &repair.repair_command {
-            out.push_str(&format!("- start repair: `{command}`\n"));
-        }
-        out.push_str(&format!("- verify: `{}`\n", repair.verify_command));
-        out.push_str(&format!("- receipt: `{}`\n", repair.receipt_command));
+        let labels = push_repair_transaction(&mut out, repair.repair_command.as_deref());
+        out.push_str(&format!(
+            "- {}: `{}`\n",
+            labels.verify, repair.verify_command
+        ));
+        out.push_str(&format!(
+            "- {}: `{}`\n",
+            labels.receipt, repair.receipt_command
+        ));
         out.push_str(&format!("- receipt state: `{}`\n", repair.receipt_state));
     } else {
         let state = s.top_repair_state.as_deref().unwrap_or("missing_artifact");
@@ -535,6 +566,10 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::first_pr::{
+        MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
+        VERIFY_AFTER_EDIT_LABEL,
+    };
 
     /// #3906: the legacy start-here section shows the carried repair start
     /// before verify, and nothing when start-here carries none.
@@ -554,11 +589,29 @@ mod tests {
         let start = with
             .find(&format!("- start repair: `{command}`\n"))
             .ok_or_else(|| format!("missing start repair line:\n{with}"))?;
+        // #3906 (F60-14): the after phase follows the start, then the
+        // manual verify and receipt, under the shared labels.
+        let after = with
+            .find(&format!(
+                "- {}: {REPAIR_AFTER_PHASE_STEP}\n",
+                REPAIR_AFTER_PHASE_LABEL.to_lowercase()
+            ))
+            .ok_or_else(|| format!("missing after-phase line:\n{with}"))?;
         let verify = with
-            .find("- verify: `")
-            .ok_or_else(|| format!("missing verify line:\n{with}"))?;
-        if start > verify {
-            return Err(format!("start repair must precede verify:\n{with}"));
+            .find(&format!("- {}: `", MANUAL_VERIFY_LABEL.to_lowercase()))
+            .ok_or_else(|| format!("missing manual verify line:\n{with}"))?;
+        let receipt = with
+            .find(&format!("- {}: `", MANUAL_RECEIPT_LABEL.to_lowercase()))
+            .ok_or_else(|| format!("missing manual receipt line:\n{with}"))?;
+        if !(start < after && after < verify && verify < receipt) {
+            return Err(format!(
+                "the repair transaction must read in order:\n{with}"
+            ));
+        }
+        if with.contains("- verify: `") || with.contains("- receipt: `") {
+            return Err(format!(
+                "verify and receipt must not be peer steps:\n{with}"
+            ));
         }
 
         if let Some(selected) = start_here
@@ -571,6 +624,18 @@ mod tests {
         render_start_here_top_gap(&mut without, Some(&start_here));
         if without.contains("start repair") || without.contains("agent repair") {
             return Err(format!("no repair start without the field:\n{without}"));
+        }
+        if without.contains(&format!("- {}: ", REPAIR_AFTER_PHASE_LABEL.to_lowercase()))
+            || without.contains("without a repair attempt")
+            || !without.contains(&format!("- {}: `", VERIFY_AFTER_EDIT_LABEL.to_lowercase()))
+            || !without.contains(&format!(
+                "- {}: `",
+                RECEIPT_AFTER_VERIFY_LABEL.to_lowercase()
+            ))
+        {
+            return Err(format!(
+                "without a start, verify and receipt run after the test edit:\n{without}"
+            ));
         }
         Ok(())
     }

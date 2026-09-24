@@ -7,7 +7,7 @@ pub(crate) mod types;
 mod util;
 
 pub(crate) use json::render_agent_review_summary_json;
-pub(crate) use markdown::render_agent_review_summary_markdown;
+pub(crate) use markdown::{NO_RECEIPT_BEFORE_REPAIR, render_agent_review_summary_markdown};
 pub(crate) use report::build_agent_review_summary_report;
 #[cfg(test)]
 mod tests {
@@ -578,6 +578,8 @@ mod tests {
         assert!(rendered.contains("# RIPR Agent Review Summary"));
         assert!(rendered.contains("Target seam: seam-a"));
         assert!(rendered.contains("Movement: improved"));
+        // A present receipt is not the pre-repair state (#3906, N5).
+        assert!(!rendered.contains(NO_RECEIPT_BEFORE_REPAIR), "{rendered}");
         assert!(rendered.contains("Static artifact relationship only."));
         assert!(rendered.contains("No runtime mutation execution."));
 
@@ -745,6 +747,112 @@ mod tests {
         assert!(rendered.contains("Next command:"));
         assert!(rendered.contains("ripr pilot --root ."));
         assert!(rendered.contains("No generated tests."));
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #3906 (F60-2): the review summary places the post-edit note before a
+    /// next command that runs after the focused test edit, and only there.
+    /// The renderer is driven with constructed next commands, so the
+    /// labelling contract holds whichever step status routes to (#3931).
+    #[test]
+    fn agent_review_summary_markdown_labels_constructed_next_commands() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("markdown-constructed-next");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let mut report = build_agent_review_summary_report(&root, Path::new("."));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        let command = |step: &str, command: &str| crate::app::agent_status::AgentStatusCommand {
+            step: step.to_string(),
+            artifact: "target/ripr/workflow/x.json".to_string(),
+            reason: format!("{step} is missing"),
+            command: command.to_string(),
+        };
+        let note = crate::app::agent_status::AFTER_TEST_EDIT_NOTE;
+
+        let post_edit = "ripr agent verify --root . --json";
+        report.next_command = Some(command("agent_verify", post_edit));
+        let rendered = render_agent_review_summary_markdown(&report);
+        let heading = rendered
+            .find("Next command:")
+            .ok_or_else(|| format!("next command missing:\n{rendered}"))?;
+        let at = rendered
+            .find(note)
+            .ok_or_else(|| format!("post-edit note missing:\n{rendered}"))?;
+        let fence = rendered
+            .find(format!("```bash\n{post_edit}\n```\n").as_str())
+            .ok_or_else(|| format!("post-edit command missing:\n{rendered}"))?;
+        assert!(heading < at && at < fence, "{rendered}");
+
+        for (step, pre_edit) in [
+            (
+                "before_snapshot",
+                "ripr check --root . --format repo-exposure-json",
+            ),
+            ("select_seam", "ripr pilot --root ."),
+            (
+                "repair_attempt_before",
+                "ripr agent repair --root . --seam-id seam-a --phase before",
+            ),
+        ] {
+            report.next_command = Some(command(step, pre_edit));
+            let rendered = render_agent_review_summary_markdown(&report);
+            assert!(
+                rendered.contains(&format!("```bash\n{pre_edit}\n```\n")),
+                "{rendered}"
+            );
+            assert!(!rendered.contains(note), "{step}: {rendered}");
+        }
+        Ok(())
+    }
+
+    /// #3906 (F60-2, N5): the before side a CI run writes, with its seam in
+    /// the packet and the workflow directory present, leaves the after
+    /// snapshot as the next command whether status reads only the artifact
+    /// loop or also repair attempts and pilot (#3931). The summary names the
+    /// missing receipt as the pre-repair state and labels the command as
+    /// post-edit; an empty root's pre-edit command carries no note.
+    #[test]
+    fn agent_review_summary_markdown_labels_post_edit_next_command() -> Result<(), String> {
+        let empty = unique_agent_review_summary_test_dir("markdown-next-command-before-side");
+        std::fs::create_dir_all(&empty).map_err(|err| format!("create root: {err}"))?;
+        let report = build_agent_review_summary_report(&empty, Path::new("."));
+        let rendered = render_agent_review_summary_markdown(&report);
+        assert!(rendered.contains("Next command:"), "{rendered}");
+        assert!(
+            !rendered.contains(crate::app::agent_status::AFTER_TEST_EDIT_NOTE),
+            "{rendered}"
+        );
+        std::fs::remove_dir_all(&empty).map_err(|err| format!("remove root: {err}"))?;
+
+        let root = unique_agent_review_summary_test_dir("markdown-next-command-after-side");
+        write_file(&root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT), "{}")?;
+        write_file(&root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT), "{}")?;
+        write_file(
+            &root.join(WORKFLOW_AGENT_PACKET_ARTIFACT),
+            r#"{"packets":[{"seam_id":"seam-a"}]}"#,
+        )?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let rendered = render_agent_review_summary_markdown(&report);
+        let receipt = rendered
+            .find(&format!(
+                "Movement: missing_artifact\nReceipt: {NO_RECEIPT_BEFORE_REPAIR}\n"
+            ))
+            .ok_or_else(|| format!("no-receipt line missing:\n{rendered}"))?;
+        let next = check_repo_exposure_command(".", "draft", WORKFLOW_AFTER_SNAPSHOT_ARTIFACT);
+        let heading = rendered
+            .find("Next command:")
+            .ok_or_else(|| format!("next command missing:\n{rendered}"))?;
+        let note = rendered
+            .find(crate::app::agent_status::AFTER_TEST_EDIT_NOTE)
+            .ok_or_else(|| format!("post-edit note missing:\n{rendered}"))?;
+        let fence = rendered
+            .find(format!("```bash\n{next}\n```\n").as_str())
+            .ok_or_else(|| format!("after-snapshot command missing:\n{rendered}"))?;
+        assert!(
+            receipt < heading && heading < note && note < fence,
+            "{rendered}"
+        );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())

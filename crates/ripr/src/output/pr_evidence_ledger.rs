@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+use super::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
 use super::receipt_lifecycle::{
     RECEIPT_MISSING, receipt_lifecycle_state, receipt_lifecycle_state_from_movement,
     receipt_lifecycle_state_from_receipt_value,
@@ -374,14 +375,21 @@ pub(crate) fn render_pr_evidence_ledger_markdown(report: &PrEvidenceLedgerReport
         if let Some(related) = route.related_test.as_deref() {
             out.push_str(&format!("- Related test: {related}\n"));
         }
+        // #3906: a carried repair start leads; its after phase runs verify
+        // and writes the receipt, so verify and receipt are the manual
+        // alternative. Without one they run after the test edit.
         if let Some(repair) = route.repair_command.as_deref() {
             out.push_str(&format!("- Repair start: `{repair}`\n"));
+            out.push_str(&format!(
+                "- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+            ));
         }
+        let labels = ProofPathLabels::for_repair_start(route.repair_command.is_some());
         if let Some(verify) = route.verify_command.as_deref() {
-            out.push_str(&format!("- Verify command: `{verify}`\n"));
+            out.push_str(&format!("- {}: `{verify}`\n", labels.verify));
         }
         if let Some(receipt) = route.receipt_command.as_deref() {
-            out.push_str(&format!("- Receipt command: `{receipt}`\n"));
+            out.push_str(&format!("- {}: `{receipt}`\n", labels.receipt));
         }
         out.push_str(&format!(
             "- Receipt state: {}\n",
@@ -1557,6 +1565,7 @@ mod tests {
         PrEvidenceLedgerInput, build_pr_evidence_ledger_report, render_pr_evidence_ledger_json,
         render_pr_evidence_ledger_markdown,
     };
+    use crate::output::first_pr::{REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -1775,7 +1784,9 @@ mod tests {
         assert!(markdown.contains("src/pricing.rs:42"));
         assert!(markdown.contains("Gap: gap:pr:pricing:threshold-boundary"));
         assert!(markdown.contains("Gap decision ledger: gap-ledger.json"));
-        assert!(markdown.contains("Verify command: `cargo xtask fixtures boundary_gap`"));
+        assert!(
+            markdown.contains("Verify after the test edit: `cargo xtask fixtures boundary_gap`")
+        );
         Ok(())
     }
 
@@ -2159,6 +2170,19 @@ mod tests {
         assert_eq!(route["repair_command"], LEDGER_CARRIED_REPAIR);
         assert_eq!(route["agent_command"], LEDGER_CARRIED_REPAIR);
         assert!(rendered.contains(&format!("- Repair start: `{LEDGER_CARRIED_REPAIR}`\n")));
+        // #3906 (F60-14): the after phase follows the start, and verify and
+        // receipt are the manual alternative rather than peer next steps.
+        assert!(
+            rendered.contains(&format!(
+                "- Repair start: `{LEDGER_CARRIED_REPAIR}`\n- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+            )),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("- Verify after the test edit:"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("- Receipt after verify:"), "{rendered}");
         assert!(!rendered.contains("- Agent handoff:"), "{rendered}");
         assert!(!rendered.contains("agent start"), "{rendered}");
     }

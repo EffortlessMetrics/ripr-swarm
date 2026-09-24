@@ -14,8 +14,8 @@ State: actionable
 - Current evidence strength: Static evidence found related Python test context, but the current proof is weak because the discriminator is missing.
 - Missing discriminator: amount == threshold
 - Focused proof intent: Strengthen the existing related test in `tests/test_pricing.py`: `assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount`.
-- Verify command: `pytest tests/test_pricing.py::test_calculate_discount_smoke`
-- Receipt command: `ripr outcome --before .ripr/before.json --after .ripr/after.json --format json --out .ripr/receipts/python-threshold.json`
+- Verify after the test edit: `pytest tests/test_pricing.py::test_calculate_discount_smoke`
+- Receipt after verify: `ripr outcome --before .ripr/before.json --after .ripr/after.json --format json --out .ripr/receipts/python-threshold.json`
 - Receipt path: `target/ripr/receipts/gap-pr-gap-python-app-pricing-py-calculate-discount-predicate-boundary-amount-threshold.targeted-test-outcome.json`
 - Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.
 
@@ -34,12 +34,12 @@ Repair:
 - Target: `tests/test_pricing.py`
 - Assertion: `assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount`
 
-Verify command:
+Verify after the test edit:
 `pytest tests/test_pricing.py::test_calculate_discount_smoke`
 
 It runs unchanged in Bash and PowerShell; cmd.exe is not supported.
 
-Receipt command:
+Receipt after verify:
 `ripr outcome --before .ripr/before.json --after .ripr/after.json --format json --out .ripr/receipts/python-threshold.json`
 
 It runs unchanged in Bash and PowerShell; cmd.exe is not supported.

@@ -15,8 +15,9 @@ Start here:
 - Suggested focused test: add amount == discount_threshold boundary assertion
 - Related test: above_threshold_gets_discount
 - Repair start: `ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before`
-- Verify command: `ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
-- Receipt command: `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 8f7fa8644fd12280 --json --out target/ripr/reports/agent-receipt.json`
+- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.
+- Manual verify without a repair attempt (needs before and after snapshots taken around the test edit): `ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
+- Manual receipt without a repair attempt (after the manual verify): `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 8f7fa8644fd12280 --json --out target/ripr/reports/agent-receipt.json`
 - Receipt: receipt_missing
 - Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.
 
@@ -33,7 +34,8 @@ Policy:
 
 Repair:
 - Repair start: `ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before`
-- Verify: `ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
+- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.
+- Manual verify without a repair attempt (needs before and after snapshots taken around the test edit): `ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
 - Receipt: receipt_missing
 
 Artifacts:
