@@ -145,26 +145,29 @@ use super::{
     parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts,
     parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
     parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
-    parse_targeted_test_outcome_args, pr_actionable_delta_front_panel_from_inputs,
-    pr_body_validation_warning, pr_checks_summary, pr_ready_json, pr_ready_markdown,
-    pr_ready_next_action, pr_ready_status, pr_ready_status_from_report_status,
-    pr_sensitive_file_reason, pr_shape_warnings, pr_summary_body, pr_title_family,
-    pr_triage_findings, pr_triage_json, pr_triage_markdown, pr_triage_queue_dispositions,
-    precommit_report_body, public_badge_basis_violations, public_contract_rows, read_json_value,
-    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
-    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
-    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
+    parse_targeted_test_outcome_args, pin_report_packet_index_generated_at,
+    pr_actionable_delta_front_panel_from_inputs, pr_body_validation_warning, pr_checks_summary,
+    pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
+    pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
+    pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
+    pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
+    public_contract_rows, read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
+    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
+    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+    repo_badge_artifacts_summary_markdown, repo_exposure_latency_json,
+    repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_trace, repo_exposure_summary_report_timeout_ms_from_env, repo_root,
     repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
     report_index_lane1_readiness_packets, report_index_missing_artifact_count,
     report_index_missing_expected, report_index_next_commands, report_index_repo_ops_packets,
-    report_index_repo_ops_status, report_status_from_text,
-    repository_owned_review_thread_mutation_violations, ripr_command_literals_in_text,
-    ripr_debug_binary, ripr_plus_receipt_from_badge, ripr_plus_receipt_from_options,
-    ripr_plus_receipt_from_repo_badge_json, ripr_plus_receipt_from_repo_exposure_summary_json,
+    report_index_repo_ops_status, report_packet_index_case_id_violation,
+    report_packet_index_generated_at_violation, report_packet_index_render_plan,
+    report_status_from_text, repository_owned_review_thread_mutation_violations,
+    ripr_command_literals_in_text, ripr_debug_binary, ripr_plus_receipt_from_badge,
+    ripr_plus_receipt_from_options, ripr_plus_receipt_from_repo_badge_json,
+    ripr_plus_receipt_from_repo_exposure_summary_json,
     ripr_plus_receipt_from_repo_exposure_summary_json_with_source, ripr_plus_receipt_markdown,
     ripr_pre_commit_hook, ripr_swarm_attempt_allowed_file_line,
     ripr_swarm_attempt_dry_run_from_actionable_gaps_value, ripr_swarm_attempt_dry_run_markdown,
@@ -4859,6 +4862,14 @@ fn write_report_packet_index_corpus(
     gate_authority_present: bool,
 ) {
     write(&base.join("README.md"), "# Report Packet Index Corpus\n");
+    // The corpus contract requires a real packet directory. These guard tests
+    // exercise the declaration checks only, so the tree's contents do not
+    // matter; `write` is this file's owner for creating one.
+    let packet_root = base.join("packet");
+    write(
+        &packet_root.join("README.md"),
+        "# Synthetic packet root for the report-packet-index corpus guard tests\n",
+    );
     let expected = format!(
         r#"{{
         "status": "{expected_status}",
@@ -4884,10 +4895,12 @@ fn write_report_packet_index_corpus(
         format!(
             r#"{{
       "id": "{id}",
+      "packet_root": "{}",
       "expected_report": "{}",
       "expected_markdown": "{}",
       "expected": {expected}
     }}"#,
+            json_path(&packet_root),
             json_path(report),
             json_path(markdown)
         )
@@ -4900,6 +4913,7 @@ fn write_report_packet_index_corpus(
             r#"{{
   "kind": "report_packet_index_corpus",
   "spec": "RIPR-SPEC-0024",
+  "canonical_command": "ripr reports index --root . --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md",
   "cases": [
 {cases}
   ]
@@ -5555,6 +5569,45 @@ fn report_packet_index_fixture_corpus_guard_accepts_complete_contract() -> Resul
     super::validate_report_packet_index_fixture_corpus_at(&base, &mut violations)?;
 
     assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn report_packet_index_fixture_corpus_guard_requires_a_renderable_corpus() -> Result<(), String> {
+    let root = temp_dir("report-packet-index-unrenderable");
+    let base = root.join("report-packet-index");
+    let report = root.join("index.json");
+    let markdown = root.join("index.md");
+    write_report_packet_index_corpus(&base, &report, &markdown, "pass", 0, 0, true);
+
+    // Strip the two fields the dogfood render needs. Without them the gate
+    // falls back to comparing two committed declarations, which is the state
+    // #3972 reports.
+    let corpus_path = base.join("corpus.json");
+    let corpus = fs::read_to_string(&corpus_path)
+        .map_err(|err| format!("failed to read the synthetic corpus: {err}"))?;
+    let stripped = corpus
+        .lines()
+        .filter(|line| !line.contains("\"canonical_command\"") && !line.contains("\"packet_root\""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    write(&corpus_path, &format!("{stripped}\n"));
+
+    let mut violations = Vec::new();
+    super::validate_report_packet_index_fixture_corpus_at(&base, &mut violations)?;
+
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("missing canonical_command")),
+        "a corpus with no canonical_command renders nothing: {violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("is missing packet_root")),
+        "a case with no packet_root has no producer input: {violations:?}"
+    );
     Ok(())
 }
 
@@ -12626,7 +12679,13 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
         };
     let report_packet_index_run = DogfoodReportPacketIndexRun {
         name: "complete_packet".to_string(),
-        actual_dir: Path::new("fixtures/boundary_gap/expected/report-packet-index/complete-packet")
+        packet_root: Path::new(
+            "fixtures/boundary_gap/expected/report-packet-index/complete-packet/packet",
+        )
+        .to_path_buf(),
+        render_command: "ripr reports index --root .".to_string(),
+        rendered: true,
+        actual_dir: Path::new("target/ripr/dogfood/report-packet-index/complete_packet")
             .to_path_buf(),
         json_path: Path::new(
             "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.json",
@@ -19658,6 +19717,100 @@ fn dogfood_report_packet_index_scenarios_have_checked_receipts() -> Result<(), S
 
         Ok(())
     })
+}
+
+#[test]
+fn report_packet_index_render_plan_reads_the_documented_command() -> Result<(), String> {
+    let (args, json, markdown) = report_packet_index_render_plan(
+        "ripr reports index --root . --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md",
+    )?;
+    assert_eq!(args.first().map(String::as_str), Some("reports"));
+    assert!(!args.iter().any(|arg| arg == "ripr"));
+    assert_eq!(json, Path::new("target/ripr/reports/index.json"));
+    assert_eq!(markdown, Path::new("target/ripr/reports/index.md"));
+    Ok(())
+}
+
+#[test]
+fn report_packet_index_render_plan_names_a_command_it_cannot_run() {
+    let missing_out_md = report_packet_index_render_plan(
+        "ripr reports index --root . --out target/ripr/reports/index.json",
+    )
+    .expect_err("a command without --out-md names no Markdown to compare");
+    assert!(
+        missing_out_md.contains("--out-md"),
+        "error should name the missing flag: {missing_out_md}"
+    );
+
+    let wrong_program = report_packet_index_render_plan("cargo xtask reports index")
+        .expect_err("only the ripr binary renders this corpus");
+    assert!(
+        wrong_program.contains("must start with `ripr`"),
+        "error should name the expected program: {wrong_program}"
+    );
+
+    let empty = report_packet_index_render_plan("   ")
+        .expect_err("an empty canonical_command renders nothing");
+    assert!(
+        empty.contains("is empty"),
+        "error should say the command is empty: {empty}"
+    );
+}
+
+#[test]
+fn report_packet_index_generated_at_violation_accepts_only_a_live_stamp() {
+    assert_eq!(
+        report_packet_index_generated_at_violation("unix_ms:1758672000000"),
+        None
+    );
+
+    // The pin substitutes the observed stamp, so a renderer that stopped
+    // emitting `unix_ms:<millis>` would otherwise surface only as whole-
+    // document drift. Each of these has to be named.
+    for observed in [
+        "2026-05-10T12:00:00Z",
+        "unix_ms:",
+        "unix_ms:later",
+        // The pinned golden value means the render did not stamp its own
+        // clock, which is how a hand-written golden would look.
+        "unix_ms:0",
+    ] {
+        assert!(
+            report_packet_index_generated_at_violation(observed).is_some(),
+            "`{observed}` should be reported as a generated_at violation"
+        );
+    }
+}
+
+#[test]
+fn report_packet_index_case_id_violation_rejects_anything_but_one_component() {
+    assert_eq!(
+        report_packet_index_case_id_violation("complete_packet"),
+        None
+    );
+
+    // The render clears the scratch directory named by the id, so each of
+    // these would point `remove_dir_all` somewhere the corpus never named.
+    for name in ["", ".", "..", "../other", "a/b", "trailing/"] {
+        assert!(
+            report_packet_index_case_id_violation(name).is_some(),
+            "`{name}` should be rejected as a scratch directory component"
+        );
+    }
+}
+
+#[test]
+fn pin_report_packet_index_generated_at_replaces_only_the_stamp() {
+    let rendered = "{\n  \"generated_at\": \"unix_ms:1758672000000\",\n  \"note\": \"unix_ms:1758672000000 elsewhere\"\n}";
+    let pinned = pin_report_packet_index_generated_at(rendered, "unix_ms:1758672000000");
+    assert!(
+        pinned.contains("\"generated_at\": \"unix_ms:0\""),
+        "the stamp should be pinned: {pinned}"
+    );
+    assert!(
+        pinned.contains("unix_ms:1758672000000 elsewhere"),
+        "only the generated_at field should move: {pinned}"
+    );
 }
 
 #[test]

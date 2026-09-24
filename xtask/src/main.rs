@@ -94,7 +94,9 @@ pub(crate) use dogfood::{
     dogfood_typescript_false_actionable_audit_summary,
     dogfood_typescript_preview_repair_loop_scenarios, finding_alignment_verify_command_is_missing,
     json_number_after, parse_bun_ub_preview_summary_args, parse_configured_bridge_inventory_args,
-    repo_rooted_fixture_path, typescript_bun_ub_calibration_cases,
+    pin_report_packet_index_generated_at, repo_rooted_fixture_path,
+    report_packet_index_case_id_violation, report_packet_index_generated_at_violation,
+    report_packet_index_render_plan, typescript_bun_ub_calibration_cases,
     typescript_preview_false_actionable_audit_cases,
 };
 pub(crate) use dogfood::{
@@ -344,8 +346,8 @@ pub(crate) use ripr_swarm::{
 use run::{
     TimedFileOutput, TimedOutput, capture_output, capture_output_with_timeout,
     capture_stdout_to_file_with_timeout, command_success_owned, run, run_in_dir,
-    run_in_dir_with_envs, run_output, run_output_optional, run_output_owned, run_owned,
-    run_with_envs,
+    run_in_dir_with_envs, run_output, run_output_optional, run_output_owned, run_output_owned_in,
+    run_output_owned_with_timeout, run_owned, run_with_envs, tool_build_timeout,
 };
 
 /// Process-wide fair reader-writer gate serialising tests that mutate the process
