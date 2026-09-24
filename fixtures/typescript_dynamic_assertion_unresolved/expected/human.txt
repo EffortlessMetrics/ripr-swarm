@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/typescript_dynamic_assertion_unresolved/input
 
-Summary: 1 probe(s), 1 exposed, 0 weak, 0 unrevealed, 0 no path, 0 unknown
+Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
 
 Changed file(s) by language: rust: 0, typescript: 1.
 
@@ -15,11 +15,12 @@ Start here:
   File: src/clamp.ts:2
   Language: typescript
   Language status: preview
-  Static exposure: exposed (warning, confidence 0.60)
+  Static exposure: weakly_exposed (warning, confidence 0.40)
+  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (value < min) {
-  Discriminator (observed, advisory): Related test reaches `clamp` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
+  Missing discriminator: Related tests reach `clamp` with a strong oracle, but no strong assertion observes a `clamp(...)` call at the changed predicate boundary `value == min`; inputs on one side of the b…
   Related test: tests/clamp.test.ts:6 clamps below minimum
-  Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
+  Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `value == min`; no actionable repair packet is emitted until verify, receipt, and edit-…
   Evidence:
     - reach yes: 1 related test(s) found for owner `clamp`
     - infection unknown: TypeScript preview adapter does not yet model infection.

@@ -210,7 +210,11 @@ mod tests {
 
         let finding = classify_probe(&probe, &index, true, None);
 
-        assert_eq!(finding.ripr.reach.state, StageState::Yes);
+        // The token match keeps the test visible as the likely location, but
+        // a name token is not a captured call, so reach is `Weak` and the
+        // neighbour's strong assertion cannot make the owner `Exposed`.
+        assert_eq!(finding.ripr.reach.state, StageState::Weak);
+        assert_ne!(finding.class, ExposureClass::Exposed);
         assert_eq!(finding.related_tests.len(), 1);
         assert_eq!(
             finding.related_tests[0].name,

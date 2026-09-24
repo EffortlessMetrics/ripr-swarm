@@ -96,11 +96,26 @@ For machine-readable state:
 ripr agent status --root . --json > target/ripr/workflow/agent-status.json
 ```
 
-`agent status` reads existing artifacts only. It reports required artifacts as
-present or missing, recovers a `seam_id` when possible, warns about stale-looking
-verify or receipt files, and prints the next missing command.
+`agent status` reads existing artifacts only. It reports the repair attempts
+under `target/ripr/repair-attempts/` and the workflow artifacts above as present
+or missing, recovers a `seam_id` when possible, warns about stale-looking verify
+or receipt files, and prints one next command:
 
-If no before snapshot exists yet, create one:
+| State | Next command |
+| --- | --- |
+| No seam known yet | `ripr pilot --root <root>`, which selects the seam |
+| One repair attempt waiting for its test edit at the current `HEAD` | that attempt's `ripr agent repair --attempt <id> --phase after` |
+| A seam whose attempt failed, went stale, or was prepared at another `HEAD` | `ripr agent repair --seam-id <seam-id> --phase before`, which starts a new attempt |
+| Every artifact present | none; status is `complete` |
+| Otherwise | the first missing artifact's command below |
+
+When picking would mean guessing (two waiting attempts, several open seams, an
+unreadable attempt manifest, or an unreadable `HEAD`), status prints no next
+command and a warning that lists the choices. It never picks the newest attempt.
+The full selection order is in RIPR-SPEC-0011 (amendment #3906).
+
+The numbered steps below are the manual path. If no before snapshot exists yet,
+create one:
 
 ```bash
 mkdir -p target/ripr/workflow

@@ -24,7 +24,7 @@ Start here:
   Evidence:
     - reach yes: 1 related Python test(s) found for owner `apply_discount`
     - infection yes: Changed Python predicate can alter branch selection: `if amount >= threshold:`
-    - 5 more evidence line(s) hidden
+    - 8 more evidence line(s) hidden
 
 Next: drill into the top finding:
   ripr explain --root fixtures/python_strong_oracle/input --diff fixtures/python_strong_oracle/diff.patch --mode fast probe:src_discount.py:python_preview:d1182145

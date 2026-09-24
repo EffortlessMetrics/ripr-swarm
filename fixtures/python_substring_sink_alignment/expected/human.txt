@@ -29,7 +29,7 @@ Start here:
   Evidence:
     - reach yes: 1 related Python test(s) found for owner `pack`
     - infection yes: Changed Python predicate can alter branch selection: `if len(buffer) <= limit:`
-    - 5 more evidence line(s) hidden
+    - 6 more evidence line(s) hidden
 
 Next: drill into the top finding:
   ripr explain --root fixtures/python_substring_sink_alignment/input --diff fixtures/python_substring_sink_alignment/diff.patch --mode fast probe:src_pack.py:python_preview:cfc61771

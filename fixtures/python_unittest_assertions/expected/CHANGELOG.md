@@ -327,6 +327,18 @@ Updated:
 ## Pending — python_unittest_assertions (2)
 
 Reason:
+RIPR-SPEC-0028: predicate boundary activation rule records literal owner-call arguments and the observed boundary equality; the strong oracle calls the owner at the boundary, so exposed stays
+
+Command:
+`cargo xtask goldens bless python_unittest_assertions --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_unittest_assertions (4)
+
+Reason:
 RIPR-SPEC-0084: CheckInput default base is now None (was origin/main); --diff fixture envelopes honestly omit the inapplicable top-level base and record base_revision null. Only base/base_revision changed; findings, counts, and input_identity byte-identical.
 
 Command:

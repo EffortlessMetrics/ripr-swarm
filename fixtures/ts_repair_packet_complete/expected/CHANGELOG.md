@@ -353,6 +353,19 @@ Updated:
 ## Pending — ts_repair_packet_complete (3)
 
 Reason:
+RIPR-SPEC-0087: repair action leads with the missing discriminator and the target shape uses an expected placeholder instead of re-using the borrowed toBeGreaterThan(50) literal under toBe; readiness and class unchanged
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_complete --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_repair_packet_complete (4)
+
+Reason:
 RIPR-SPEC-0082/RIPR-SPEC-0122 wording owner change (PR #3978): Why lines re-derived from reach/observe stage state, preview notes use language display names with singular file counts, recovery detail lines end with exactly one period; mechanical re-render of unchanged fixture evidence
 
 Command:

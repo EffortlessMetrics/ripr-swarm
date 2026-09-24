@@ -765,3 +765,126 @@ fn invalidated_field_assignment_does_not_fall_back_to_a_stale_struct_value() -> 
     }
     Ok(())
 }
+
+#[test]
+fn named_constant_reads_one_same_file_integer_declaration() {
+    let source = "//! pricing\npub const DISCOUNT_THRESHOLD: u64 = 10_000;\npub(crate) const LIMIT: i32 = -5;\nconst fn helper() -> u64 { 1 }\n";
+    assert_eq!(
+        named_constant(source, "DISCOUNT_THRESHOLD"),
+        NamedConstant::Value("10_000".to_string())
+    );
+    assert_eq!(
+        named_constant(source, "LIMIT"),
+        NamedConstant::Value("-5".to_string())
+    );
+    assert_eq!(named_constant(source, "OTHER"), NamedConstant::Undeclared);
+}
+
+#[test]
+fn named_constant_fails_closed_on_computed_duplicate_or_mutable_declarations() {
+    let computed = "pub const DISCOUNT_THRESHOLD: u64 = 10 * 1_000;\n";
+    assert_eq!(
+        named_constant(computed, "DISCOUNT_THRESHOLD"),
+        NamedConstant::Opaque
+    );
+    let suffixed = "pub const DISCOUNT_THRESHOLD: u64 = 10_000u64;\n";
+    assert_eq!(
+        named_constant(suffixed, "DISCOUNT_THRESHOLD"),
+        NamedConstant::Opaque
+    );
+    let duplicated = "mod eu {\n    pub const LIMIT: u32 = 10;\n}\nmod us {\n    pub const LIMIT: u32 = 20;\n}\n";
+    assert_eq!(
+        named_constant(duplicated, "LIMIT"),
+        NamedConstant::Ambiguous
+    );
+    let mutable = "static mut LIMIT: u32 = 10;\n";
+    assert_eq!(named_constant(mutable, "LIMIT"), NamedConstant::Opaque);
+    let commented = "// const LIMIT: u32 = 10;\n";
+    assert_eq!(
+        named_constant(commented, "LIMIT"),
+        NamedConstant::Undeclared
+    );
+}
+
+#[test]
+fn constant_operand_names_and_arguments_match_by_identity() {
+    assert_eq!(
+        constant_operand_name(" DISCOUNT_THRESHOLD "),
+        Some("DISCOUNT_THRESHOLD")
+    );
+    assert_eq!(constant_operand_name("Self::LIMIT"), Some("LIMIT"));
+    assert_eq!(constant_operand_name("threshold"), None);
+    assert_eq!(constant_operand_name("config.limit"), None);
+    assert_eq!(constant_operand_name("10_000"), None);
+
+    assert!(argument_names_constant(
+        "DISCOUNT_THRESHOLD",
+        "DISCOUNT_THRESHOLD"
+    ));
+    assert!(argument_names_constant(
+        "&DISCOUNT_THRESHOLD",
+        "DISCOUNT_THRESHOLD"
+    ));
+    assert!(argument_names_constant(
+        "pricing::DISCOUNT_THRESHOLD",
+        "DISCOUNT_THRESHOLD"
+    ));
+    assert!(!argument_names_constant(
+        "DISCOUNT_THRESHOLD + 1",
+        "DISCOUNT_THRESHOLD"
+    ));
+    assert!(!argument_names_constant(
+        "OTHER_DISCOUNT_THRESHOLD",
+        "DISCOUNT_THRESHOLD"
+    ));
+    assert!(!argument_names_constant("10_000", "DISCOUNT_THRESHOLD"));
+}
+
+#[test]
+fn named_constant_counts_attribute_prefixed_declarations() {
+    let attributed = "#[doc(hidden)] pub const LIMIT: u32 = 10;\n";
+    assert!(named_constant(attributed, "LIMIT").is_declared_once());
+    let cfg_pair = "#[cfg(feature = \"eu\")] const LIMIT: u32 = 10;\n#[cfg(not(feature = \"eu\"))]\nconst LIMIT: u32 = 20;\n";
+    assert_eq!(named_constant(cfg_pair, "LIMIT"), NamedConstant::Ambiguous);
+    let nested_brackets =
+        "#[doc = \"[x]\"] #[doc(hidden)] const LIMIT: u32 = 10;\nconst LIMIT: u32 = 20;\n";
+    assert_eq!(
+        named_constant(nested_brackets, "LIMIT"),
+        NamedConstant::Ambiguous
+    );
+}
+
+#[test]
+fn a_test_file_declaring_the_same_constant_name_may_shadow_the_owner() {
+    let owner = std::path::Path::new("src/pricing.rs");
+    let test = std::path::Path::new("tests/pricing.rs");
+    let shadowing = "const DISCOUNT_THRESHOLD: u64 = 5;\n#[test]\nfn t() {}\n";
+    let importing = "use app::pricing::DISCOUNT_THRESHOLD;\n#[test]\nfn t() {}\n";
+    assert!(test_file_may_shadow_constant(
+        owner,
+        test,
+        Some(shadowing),
+        "DISCOUNT_THRESHOLD"
+    ));
+    assert!(!test_file_may_shadow_constant(
+        owner,
+        test,
+        Some(importing),
+        "DISCOUNT_THRESHOLD"
+    ));
+    // Source not available: fail closed.
+    assert!(test_file_may_shadow_constant(
+        owner,
+        test,
+        None,
+        "DISCOUNT_THRESHOLD"
+    ));
+    // Same file as the owner: the owner lookup already counts a second
+    // declaration as ambiguous.
+    assert!(!test_file_may_shadow_constant(
+        owner,
+        owner,
+        Some(shadowing),
+        "DISCOUNT_THRESHOLD"
+    ));
+}
