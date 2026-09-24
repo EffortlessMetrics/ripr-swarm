@@ -10707,6 +10707,142 @@ fn check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_dis
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Build a one-commit Cargo fixture repository with an uncommitted tracked
+/// edit, for the #4008 disclosure tests.
+///
+/// Returns the root. The caller removes it. Every step is checked so a fixture
+/// that failed to build cannot be mistaken for the behavior under test.
+fn issue_4008_dirty_fixture(label: &str, package: &str) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(root.join("src"))
+        .map_err(|error| format!("create fixture src: {error}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|error| format!("write fixture source: {error}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+    )
+    .map_err(|error| format!("write fixture manifest: {error}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    // The uncommitted tracked edit a committed-history diff cannot see.
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b + 1 }\n",
+    )
+    .map_err(|error| format!("dirty the fixture: {error}"))?;
+    Ok(root)
+}
+
+/// Run the built `ripr` binary and return its stdout.
+///
+/// Routed through `run_command`, this harness's single spawn point, so the
+/// suite keeps one tracked spawn site.
+fn issue_4008_ripr_stdout(args: &[&str]) -> Result<String, String> {
+    let output = run_command(env!("CARGO_BIN_EXE_ripr"), None, args)
+        .map_err(|error| format!("run ripr {args:?}: {error}"))?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// #4008: a bare `ripr check` — no `--base`, no `--diff`, no `--worktree` —
+/// analyzes `<resolved default branch>...HEAD` and excludes uncommitted tracked
+/// edits exactly as an explicit `--base` does. The RIPR-SPEC-0112 disclosure
+/// used to require the flag, so this run, the one a first-time user makes,
+/// stayed silent about the exclusion.
+///
+/// This is the reported path. Reverting the gate to `base_explicitly_provided`
+/// fails here and nowhere else.
+#[test]
+fn bare_check_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure() -> Result<(), String>
+{
+    let root = issue_4008_dirty_fixture("unanalyzed-wt-bare", "issue-4008-fixture")?;
+    let root_str = root.to_string_lossy().into_owned();
+    let mut failures = Vec::new();
+
+    // Construction check: the fixture really is dirty, so a silent run below
+    // is the reported fault and not an empty `git status`.
+    let status = run_command(
+        "git",
+        Some(&root),
+        &["status", "--porcelain", "--untracked-files=no"],
+    )
+    .map_err(|error| format!("git status in the fixture: {error}"))?;
+    if String::from_utf8_lossy(&status.stdout).trim().is_empty() {
+        failures.push("fixture has no uncommitted tracked change".to_string());
+    }
+
+    let json = issue_4008_ripr_stdout(&["check", "--root", &root_str, "--json"])?;
+    if !json.contains("\"unanalyzed_working_tree\": true") {
+        failures.push(format!(
+            "a bare check with an uncommitted edit must emit unanalyzed_working_tree: true; got:\n{json}"
+        ));
+    }
+
+    let human = issue_4008_ripr_stdout(&["check", "--root", &root_str])?;
+    if !human.contains("uncommitted changes to tracked source were not analyzed") {
+        failures.push(format!(
+            "a bare check with an uncommitted edit must show the Note; got:\n{human}"
+        ));
+    }
+    // The remedy has to be one that works. `--worktree` is the mode that
+    // includes uncommitted tracked edits; a bare re-run is not, which is what
+    // the note used to advise.
+    if !human.contains("ripr check --worktree") {
+        failures.push(format!(
+            "the Note must name --worktree as the remedy; got:\n{human}"
+        ));
+    }
+    if human.contains("(no --base)") {
+        failures.push(format!(
+            "the Note must not advise a bare re-run, which analyzes the same range; got:\n{human}"
+        ));
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+/// #4008 negative: `--diff <file>` has no live worktree scope, so widening the
+/// disclosure to every committed-history run must not reach it. Without this,
+/// the fix leaks a disclosure into a mode whose subject is a file on disk.
+#[test]
+fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> Result<(), String> {
+    let root = issue_4008_dirty_fixture("unanalyzed-wt-difffile", "issue-4008-diff-fixture")?;
+    let patch = root.join("change.patch");
+    std::fs::write(
+        &patch,
+        "diff --git a/src/lib.rs b/src/lib.rs\n\
+--- a/src/lib.rs\n\
++++ b/src/lib.rs\n\
+@@ -1 +1 @@\n\
+-pub fn add(a: i32, b: i32) -> i32 { a + b }\n\
++pub fn add(a: i32, b: i32) -> i32 { a - b }\n",
+    )
+    .map_err(|error| format!("write fixture patch: {error}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+    let patch_str = patch.to_string_lossy().into_owned();
+
+    let json =
+        issue_4008_ripr_stdout(&["check", "--root", &root_str, "--diff", &patch_str, "--json"])?;
+    let _ = std::fs::remove_dir_all(&root);
+    if json.contains("unanalyzed_working_tree") {
+        return Err(format!(
+            "a --diff run must not emit unanalyzed_working_tree; got:\n{json}"
+        ));
+    }
+    Ok(())
+}
+
 /// RIPR-SPEC-0116: `ripr check --base HEAD --worktree --json` analyzes the
 /// user's uncommitted tracked edit instead of reporting the committed `HEAD`
 /// diff as empty.

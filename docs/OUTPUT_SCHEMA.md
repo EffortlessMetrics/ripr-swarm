@@ -1481,18 +1481,28 @@ requires no disclosure.
 Added as an additive optional top-level boolean. Emitted (as `true`) only when
 ALL of the following are true:
 
-1. `ripr check --base <rev>` was invoked (i.e. `--base` was explicit).
+1. The run's analysis subject was a committed-history diff and a base was
+   actually compared. The base may have been typed as `--base <rev>` or
+   resolved from the repository's default branch (RIPR-SPEC-0084) — both
+   produce `<base>...HEAD` and both exclude the working tree.
 2. `--diff <file>` was NOT also supplied.
-3. The working tree has at least one uncommitted change to a tracked source
+3. `--worktree` was NOT supplied.
+4. A repo-scope format was NOT selected.
+5. The working tree has at least one uncommitted change to a tracked source
    file, as reported by `git status --porcelain`.
 
 Absent (not emitted) when `false`. Does not bump `schema_version`.
 
-This field closes the false-clean gap where `ripr check --base HEAD` with an
+This field closes the false-clean gap where a committed-history run with an
 uncommitted `.rs` edit returns 0 probes and exit 0 — a result that is honest
 for the committed diff but misleading if the user assumes it covers their
 working-tree change. When `unanalyzed_working_tree: true` is present, the
 result is NOT a clean pass for the uncommitted changes.
+
+Condition 1 used to read "`--base` was explicit". #4008 measured that a bare
+`ripr check` resolves a default base and returns the identical finding set with
+the identical exclusion, so consumers may now see this field on runs that
+passed no `--base`. Treat its presence, not the invocation, as the signal.
 
 Example:
 
@@ -1501,9 +1511,10 @@ Example:
 ```
 
 The field is absent when the worktree is clean, when `--diff <file>` was used
-instead of `--base`, when `--worktree` was used to include staged and unstaged
-tracked edits in the analyzed diff, or when `git status --porcelain` cannot be
-run (fail-closed: no fabricated disclosure).
+instead of a committed-history range, when `--worktree` was used to include
+staged and unstaged tracked edits in the analyzed diff, when a repo-scope
+format read the tree from disk, or when `git status --porcelain` cannot be run
+(fail-closed: no fabricated disclosure).
 
 ### `suppression_policy` and suppressed findings (top-level additive, #1441)
 

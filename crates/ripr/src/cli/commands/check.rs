@@ -451,6 +451,13 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     let input_root = input.root.clone();
     let input_diff_file_is_some = input.diff_file.is_some();
     let limited_check_input = input.clone();
+    // #4008: whether this run's analysis subject is a committed-history
+    // diff. That is the state the RIPR-SPEC-0112 disclosure is about, and it
+    // is decided here, by which analysis entry point runs, rather than by
+    // whether the user typed `--base`: RIPR-SPEC-0084 made a run without
+    // `--base` resolve the repository's default branch and produce the same
+    // `<base>...HEAD` range, with the same working-tree exclusion.
+    let mut analyzed_committed_history = false;
     let output_result = if format.is_repo_seam_inventory() {
         // Repo seam-driven formats do not consume legacy repo `Findings`,
         // so skip `run_repo_analysis` and let `render_check` drive the
@@ -462,6 +469,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     } else if worktree_explicitly_provided {
         app::check_workspace_worktree_with_config(input, &config)
     } else {
+        analyzed_committed_history = true;
         app::check_workspace_with_config(input, &config)
     };
     let mut output = match output_result {
@@ -522,16 +530,25 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             suppression.warnings.len()
         );
     }
-    // RIPR-SPEC-0112: disclose when --base was explicitly provided (committed-history
-    // diff) AND the working tree has uncommitted changes to tracked source files.
+    // RIPR-SPEC-0112: disclose when the analysis subject was a committed-history
+    // diff AND the working tree has uncommitted changes to tracked source files.
     // Those changes were NOT analyzed. A zero-finding result in this state must NOT
     // be read as a clean pass — the user's uncommitted edits were excluded from the diff.
     // Fires independent of findings.is_empty() (honest whether or not committed diff
     // had findings), but the false-clean risk is highest when findings are empty.
-    // Does NOT fire when --diff was used (file-based diff; no live worktree scope).
-    if base_explicitly_provided
-        && !worktree_explicitly_provided
+    // Does NOT fire for `--worktree` (uncommitted edits are the subject), `--diff`
+    // (file-based diff; no live worktree scope, and `output.base` there is the
+    // informational input value rather than a compared range), or the repo-scope
+    // formats (they read the tree from disk, so nothing is excluded).
+    //
+    // #4008: this used to require an explicit `--base`. A bare `ripr check` then
+    // analyzed `<resolved default>...HEAD` and excluded the working tree without
+    // saying so, which is the run a first-time user makes. `output.base` carries
+    // the base the loader actually used (#3940), so `None` here means no
+    // committed-history range was compared and there is nothing to disclose.
+    if analyzed_committed_history
         && !input_diff_file_is_some
+        && output.base.is_some()
         && analysis::working_tree_has_tracked_changes(&input_root)
     {
         output.unanalyzed_working_tree = true;
