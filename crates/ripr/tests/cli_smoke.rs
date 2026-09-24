@@ -4366,6 +4366,84 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
     Ok(())
 }
 
+/// F15-12: a seam whose only related test lives inline in another crate has
+/// no test file the repair can edit. The before phase refuses before it
+/// writes any workflow artifact and never prints a completion line first, so
+/// neither the phase nor a later `agent status` reads as a started repair.
+#[test]
+fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anything()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-repair-no-test-target");
+    std::fs::create_dir_all(root.join("crates/rates/src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/rates\"]\nresolver = \"2\"\n",
+    )?;
+    std::fs::write(
+        root.join("crates/rates/Cargo.toml"),
+        "[package]\nname = \"rates\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(
+        root.join("crates/rates/src/lib.rs"),
+        "/// Tax in basis points for the given region code.\npub fn tax_bps(region: &str) -> u32 {\n    match region {\n        \"EU\" => 2000,\n        _ => 0,\n    }\n}\n\n/// Orders at or above this many items ship free.\npub fn ships_free(items: u32) -> bool {\n    items >= 10\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn eu_tax() {\n        assert_eq!(tax_bps(\"EU\"), 2000);\n    }\n}\n",
+    )?;
+    std::fs::write(root.join(".gitignore"), "/target\n")?;
+    run_git(&root, &["init", "-q"])?;
+    run_git(&root, &["add", "."])?;
+    commit_repair_fixture(&root, &["-qm", "rates"])?;
+
+    let root_arg = root.display().to_string();
+    let exposure = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+    ]);
+    assert_success(&exposure);
+    let exposure: serde_json::Value = serde_json::from_slice(&exposure.stdout)?;
+    let seam = exposure["seams"]
+        .as_array()
+        .ok_or("repo exposure has no seams array")?
+        .iter()
+        .find(|seam| seam["owner"] == "crates/rates/src/lib.rs::ships_free")
+        .ok_or("precondition: the ships_free boundary seam exists")?;
+    let seam_id = seam["seam_id"]
+        .as_str()
+        .ok_or("seam has no id")?
+        .to_string();
+    // Fixture construction: the seam's only related test is the inline one.
+    assert_eq!(seam["related_tests"][0]["file"], "crates/rates/src/lib.rs");
+
+    let before = run_repair_phase(&root, &["--seam-id", &seam_id], "before")?;
+    assert_failure(&before);
+    let stderr = String::from_utf8_lossy(&before.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started."
+        )),
+        "the refusal must say why in plain words:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("before phase complete"),
+        "a refused before phase must not claim completion:\n{stderr}"
+    );
+    for artifact in [
+        "target/ripr/workflow/before.repo-exposure.json",
+        "target/ripr/workflow/agent-packet.json",
+        "target/ripr/workflow/workflow.json",
+    ] {
+        assert!(
+            !root.join(artifact).exists(),
+            "refused before writing {artifact}"
+        );
+    }
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 /// F15-1 boundary: a Git-tracked `Cargo.lock` is an analysis input. Changing
 /// it between the phases, or starting to track a generated one, is refused
 /// with the named cause and a rerun route, and the attempt stays awaiting

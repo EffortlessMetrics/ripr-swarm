@@ -14,6 +14,8 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 
 The before phase prints the attempt manifest path and the exact `--attempt` command to run next. Preserve that command across agent sessions, process restarts, and concurrent work.
 
+The repair packet is written to `target/ripr/workflow/agent-packet.json`. When stdout is piped or redirected, the before phase also prints that packet JSON on stdout, unchanged, for agents and scripts. In a terminal it prints a short summary instead: the seam, the changed behavior, the missing discriminator, the one test file to edit, an assertion shape, and the packet path.
+
 `--seam-id <id> --phase after` remains a compatibility route. It succeeds only when exactly one awaiting attempt has that seam. Zero or multiple matches fail closed; RIPR does not guess which attempt is newest or intended.
 
 ## Governed Python sequence
@@ -218,8 +220,9 @@ Repair attempts fail closed:
 - a packet whose selected edit target is not a test surface (a `tests` or
   `test` path component, or a `*_test.rs`, `*_tests.rs`, `test_*.py`,
   `*_test.py`, or `*_tests.py` file name) is refused before any attempt is
-  created; inline `#[cfg(test)]` modules in production files are not valid edit
-  targets;
+  created, and before the phase writes any workflow artifact or prints a
+  completion line; inline `#[cfg(test)]` modules in production files are not
+  valid edit targets;
 - malformed or unknown attempt IDs are rejected;
 - missing, moved, modified, or digest-mismatched retained artifacts are rejected;
 - a cross-attempt packet is rejected;
