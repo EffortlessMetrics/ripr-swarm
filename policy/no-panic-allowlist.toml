@@ -543,177 +543,6 @@ line = 3504
 column = 5
 
 [[allow]]
-id = "panic-0037"
-path = "crates/ripr/tests/cli_smoke.rs"
-family = "unwrap"
-classification = "test_only"
-explanation = "RIPR-SPEC-0083 regression guard smoke test: create_dir_all src for temp git repo; canonical fail-fast pattern for binary integration tests"
-owner = "core/cli"
-expires = "2027-09-30"
-
-[allow.selector]
-kind = "method_call"
-container = "check_mode_fast_alone_shows_no_scope_disclosure_smoke"
-callee = "unwrap"
-receiver_fingerprint = "std::fs::create_dir_all(root.join(\"src\"))"
-
-[allow.last_seen]
-line = 3962
-column = 5
-
-[[allow]]
-id = "panic-0038"
-path = "crates/ripr/tests/cli_smoke.rs"
-family = "unwrap"
-classification = "test_only"
-explanation = "RIPR-SPEC-0083 regression guard smoke test: run_git init for temp git repo; canonical fail-fast pattern for binary integration tests"
-owner = "core/cli"
-expires = "2027-09-30"
-
-[allow.selector]
-kind = "method_call"
-container = "check_mode_fast_alone_shows_no_scope_disclosure_smoke"
-callee = "unwrap"
-receiver_fingerprint = "run_git(&root, &[\"init\"])"
-
-[allow.last_seen]
-line = 3963
-column = 5
-
-[[allow]]
-id = "panic-0039"
-path = "crates/ripr/tests/cli_smoke.rs"
-family = "unwrap"
-classification = "test_only"
-explanation = "RIPR-SPEC-0083 regression guard smoke test: run_git config user.email; canonical fail-fast pattern for binary integration tests"
-owner = "core/cli"
-expires = "2027-09-30"
-
-[allow.selector]
-kind = "method_call"
-container = "check_mode_fast_alone_shows_no_scope_disclosure_smoke"
-callee = "unwrap"
-receiver_fingerprint = "run_git(&root, &[\"config\", \"user.email\", \"test@test.com\"])"
-
-[allow.last_seen]
-line = 3964
-column = 5
-
-[[allow]]
-id = "panic-0040"
-path = "crates/ripr/tests/cli_smoke.rs"
-family = "unwrap"
-classification = "test_only"
-explanation = "RIPR-SPEC-0083 regression guard smoke test: run_git config user.name; canonical fail-fast pattern for binary integration tests"
-owner = "core/cli"
-expires = "2027-09-30"
-
-[allow.selector]
-kind = "method_call"
-container = "check_mode_fast_alone_shows_no_scope_disclosure_smoke"
-callee = "unwrap"
-receiver_fingerprint = "run_git(&root, &[\"config\", \"user.name\", \"Test\"])"
-
-[allow.last_seen]
-line = 3965
-column = 5
-
-[[allow]]
-id = "panic-0051"
-path = "crates/ripr/tests/cli_smoke.rs"
-family = "unwrap"
-classification = "test_only"
-explanation = "RIPR-SPEC-0083 regression guard smoke test: fs::write src/lib.rs in temp git repo; canonical fail-fast pattern for binary integration tests"
-owner = "core/cli"
-expires = "2027-09-30"
-
-[allow.selector]
-kind = "method_call"
-container = "check_mode_fast_alone_shows_no_scope_disclosure_smoke"
-callee = "unwrap"
-receiver_fingerprint = "std::fs::write( root.join(\"src/lib.rs\"), \"pub fn add(a: i32, b: i32) -> i32 { a + b }\\n\", )"
-
-[allow.last_seen]
-line = 3966
-column = 5
-
-[[allow]]
-id = "panic-0052"
-path = "crates/ripr/tests/cli_smoke.rs"
-family = "unwrap"
-classification = "test_only"
-explanation = "RIPR-SPEC-0083 regression guard smoke test: fs::write Cargo.toml in temp git repo; canonical fail-fast pattern for binary integration tests"
-owner = "core/cli"
-expires = "2027-09-30"
-
-[allow.selector]
-kind = "method_call"
-container = "check_mode_fast_alone_shows_no_scope_disclosure_smoke"
-callee = "unwrap"
-receiver_fingerprint = "std::fs::write( root.join(\"Cargo.toml\"), \"[package]\\nname = \\\"mode-fast-fixture\\\"\\nversion = \\\"0.1.0\\\"\\nedition = \\\"2024\\\"\\n\", )"
-
-[allow.last_seen]
-line = 3971
-column = 5
-
-[[allow]]
-id = "panic-0053"
-path = "crates/ripr/tests/cli_smoke.rs"
-family = "unwrap"
-classification = "test_only"
-explanation = "RIPR-SPEC-0083 regression guard smoke test: run_git add in temp git repo; canonical fail-fast pattern for binary integration tests"
-owner = "core/cli"
-expires = "2027-09-30"
-
-[allow.selector]
-kind = "method_call"
-container = "check_mode_fast_alone_shows_no_scope_disclosure_smoke"
-callee = "unwrap"
-receiver_fingerprint = "run_git(&root, &[\"add\", \".\"])"
-
-[allow.last_seen]
-line = 3976
-column = 5
-
-[[allow]]
-id = "panic-0054"
-path = "crates/ripr/tests/cli_smoke.rs"
-family = "unwrap"
-classification = "test_only"
-explanation = "RIPR-SPEC-0083 regression guard smoke test: run_git commit in temp git repo; canonical fail-fast pattern for binary integration tests"
-owner = "core/cli"
-expires = "2027-09-30"
-
-[allow.selector]
-kind = "method_call"
-container = "check_mode_fast_alone_shows_no_scope_disclosure_smoke"
-callee = "unwrap"
-receiver_fingerprint = "run_git(&root, &[\"commit\", \"-m\", \"initial\"])"
-
-[allow.last_seen]
-line = 3977
-column = 5
-
-[[allow]]
-id = "panic-0041"
-path = "crates/ripr/tests/cli_smoke.rs"
-family = "unwrap"
-classification = "test_only"
-explanation = "RIPR-SPEC-0083 regression guard smoke test: Command::output() in temp git repo; canonical fail-fast pattern for binary integration tests"
-owner = "core/cli"
-expires = "2027-09-30"
-
-[allow.selector]
-kind = "method_call"
-container = "check_mode_fast_alone_shows_no_scope_disclosure_smoke"
-callee = "unwrap"
-receiver_fingerprint = "std::process::Command::new(bin) .args([\"check\", \"--root\", &root_str, \"--mode\", \"fast\"]) .output()"
-
-[allow.last_seen]
-line = 3983
-column = 18
-
-[[allow]]
 id = "panic-0042"
 path = "crates/ripr/tests/cli_smoke.rs"
 family = "unwrap"
@@ -1263,3 +1092,383 @@ receiver_fingerprint = "std::process::Command::new(bin) .args([\"check\", \"--ro
 [allow.last_seen]
 line = 4190
 column = 18
+
+[[allow]]
+id = "panic-0075"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: create_dir_all src for temp git repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_mode_fast_alone_on_empty_range_names_compared_base_smoke"
+callee = "unwrap"
+receiver_fingerprint = "std::fs::create_dir_all(root.join(\"src\"))"
+
+[allow.last_seen]
+line = 11426
+column = 5
+
+[[allow]]
+id = "panic-0076"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git init for temp git repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_mode_fast_alone_on_empty_range_names_compared_base_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"init\"])"
+
+[allow.last_seen]
+line = 11427
+column = 5
+
+[[allow]]
+id = "panic-0077"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git config user.email; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_mode_fast_alone_on_empty_range_names_compared_base_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"config\", \"user.email\", \"test@test.com\"])"
+
+[allow.last_seen]
+line = 11428
+column = 5
+
+[[allow]]
+id = "panic-0078"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git config user.name; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_mode_fast_alone_on_empty_range_names_compared_base_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"config\", \"user.name\", \"Test\"])"
+
+[allow.last_seen]
+line = 11429
+column = 5
+
+[[allow]]
+id = "panic-0079"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: fs::write src/lib.rs in temp repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_mode_fast_alone_on_empty_range_names_compared_base_smoke"
+callee = "unwrap"
+receiver_fingerprint = "std::fs::write( root.join(\"src/lib.rs\"), \"pub fn add(a: i32, b: i32) -> i32 { a + b }\\n\", )"
+
+[allow.last_seen]
+line = 11430
+column = 5
+
+[[allow]]
+id = "panic-0080"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: fs::write Cargo.toml in temp repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_mode_fast_alone_on_empty_range_names_compared_base_smoke"
+callee = "unwrap"
+receiver_fingerprint = "std::fs::write( root.join(\"Cargo.toml\"), \"[package]\\nname = \\\"mode-fast-fixture\\\"\\nversion = \\\"0.1.0\\\"\\nedition = \\\"2024\\\"\\n\", )"
+
+[allow.last_seen]
+line = 11435
+column = 5
+
+[[allow]]
+id = "panic-0081"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git add in temp repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_mode_fast_alone_on_empty_range_names_compared_base_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"add\", \".\"])"
+
+[allow.last_seen]
+line = 11440
+column = 5
+
+[[allow]]
+id = "panic-0082"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git commit in temp repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_mode_fast_alone_on_empty_range_names_compared_base_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"commit\", \"-m\", \"initial\"])"
+
+[allow.last_seen]
+line = 11441
+column = 5
+
+[[allow]]
+id = "panic-0083"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: create_dir_all src for temp git repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
+callee = "unwrap"
+receiver_fingerprint = "std::fs::create_dir_all(root.join(\"src\"))"
+
+[allow.last_seen]
+line = 11472
+column = 5
+
+[[allow]]
+id = "panic-0084"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git init for temp git repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"init\"])"
+
+[allow.last_seen]
+line = 11473
+column = 5
+
+[[allow]]
+id = "panic-0085"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git config user.email; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"config\", \"user.email\", \"test@test.com\"])"
+
+[allow.last_seen]
+line = 11474
+column = 5
+
+[[allow]]
+id = "panic-0086"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git config user.name; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"config\", \"user.name\", \"Test\"])"
+
+[allow.last_seen]
+line = 11475
+column = 5
+
+[[allow]]
+id = "panic-0087"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: fs::write src/lib.rs in temp repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
+callee = "unwrap"
+receiver_fingerprint = "std::fs::write(root.join(\"src/lib.rs\"), \"pub const VALUE: u32 = 1;\\n\")"
+
+[allow.last_seen]
+line = 11476
+column = 5
+
+[[allow]]
+id = "panic-0088"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: fs::write Cargo.toml in temp repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
+callee = "unwrap"
+receiver_fingerprint = "std::fs::write( root.join(\"Cargo.toml\"), \"[package]\\nname = \\\"analyzed-empty-fixture\\\"\\nversion = \\\"0.1.0\\\"\\nedition = \\\"2024\\\"\\n\", )"
+
+[allow.last_seen]
+line = 11477
+column = 5
+
+[[allow]]
+id = "panic-0089"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git add in temp repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"add\", \".\"])"
+
+[allow.last_seen]
+line = 11482
+column = 5
+
+[[allow]]
+id = "panic-0090"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git commit base in temp repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"commit\", \"-m\", \"base\"])"
+
+[allow.last_seen]
+line = 11483
+column = 5
+
+[[allow]]
+id = "panic-0091"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git checkout work branch in temp repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"checkout\", \"-b\", \"work\"])"
+
+[allow.last_seen]
+line = 11484
+column = 5
+
+[[allow]]
+id = "panic-0092"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: fs::write edited src/lib.rs in temp repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
+callee = "unwrap"
+receiver_fingerprint = "std::fs::write(root.join(\"src/lib.rs\"), \"pub const VALUE: u32 = 2;\\n\")"
+
+[allow.last_seen]
+line = 11485
+column = 5
+
+[[allow]]
+id = "panic-0093"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git add edited file in temp repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"add\", \"src/lib.rs\"])"
+
+[allow.last_seen]
+line = 11486
+column = 5
+
+[[allow]]
+id = "panic-0094"
+path = "crates/ripr/tests/cli_smoke.rs"
+family = "unwrap"
+classification = "test_only"
+explanation = "RIPR-SPEC-0083 #4012 regression guard smoke test: run_git commit edit in temp repo; canonical fail-fast pattern for binary integration tests"
+owner = "core/cli"
+expires = "2027-09-30"
+
+[allow.selector]
+kind = "method_call"
+container = "check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke"
+callee = "unwrap"
+receiver_fingerprint = "run_git(&root, &[\"commit\", \"-m\", \"edit\"])"
+
+[allow.last_seen]
+line = 11487
+column = 5
