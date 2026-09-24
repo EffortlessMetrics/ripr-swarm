@@ -3206,6 +3206,12 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
             "write_focused_test",
         ),
         (
+            "repair-start",
+            "repair_start_carried",
+            "actionable",
+            "write_focused_test",
+        ),
+        (
             "stale",
             "stale_editor_evidence",
             "stale",
@@ -3561,6 +3567,28 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
             assert!(
                 report.pointer("/fallback").is_some_and(|v| !v.is_null()),
                 "`{case_id}` should include a fallback report object"
+            );
+        }
+
+        if case_id == "repair_start_carried" {
+            // #3906: the carried command is the card's own string, byte for byte.
+            let guidance_artifact = json_pointer_str(case, "/inputs/pr_guidance/artifact")?;
+            let guidance: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                workspace_root().join(guidance_artifact),
+            )?)?;
+            assert_eq!(
+                json_pointer_str(&report, "/commands/repair")?,
+                json_pointer_str(&guidance, "/comments/0/llm_guidance/repair_command")?
+            );
+            assert_eq!(
+                json_pointer_str(&report, "/selected/seam_id")?,
+                json_pointer_str(&guidance, "/comments/0/seam_id")?
+            );
+            assert!(
+                report
+                    .pointer("/inputs/assistant_proof")
+                    .is_some_and(serde_json::Value::is_null),
+                "`{case_id}` must lead before any assistant proof exists"
             );
         }
 
