@@ -336,4 +336,39 @@ mod tests {
             Ok(decoded) => Err(format!("non-UTF-8 path must fail, decoded {decoded:?}")),
         }
     }
+
+    #[test]
+    fn status_rejects_truncated_non_rename_record() -> Result<(), String> {
+        match statuses(b"M\0") {
+            Err(err) => {
+                assert_eq!(
+                    err,
+                    PathRecordError::TruncatedRecord {
+                        record: 0,
+                        status: "M".to_string()
+                    }
+                    .to_string()
+                );
+                Ok(())
+            }
+            Ok(decoded) => Err(format!(
+                "truncated non-rename record must fail, decoded {decoded:?}"
+            )),
+        }
+    }
+
+    #[test]
+    fn status_decodes_copy_pair_with_source() -> Result<(), String> {
+        let output = b"C75\0template.txt\0copy.txt\0";
+        let decoded = statuses(output)?;
+        assert_eq!(
+            decoded,
+            vec![StatusRecord {
+                status: "C75".to_string(),
+                path: PathBuf::from("copy.txt"),
+                renamed_from: Some(PathBuf::from("template.txt")),
+            }]
+        );
+        Ok(())
+    }
 }
