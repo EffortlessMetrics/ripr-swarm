@@ -2205,6 +2205,14 @@ tests = [
   "xtask/src/main.rs::tests::dogfood_typescript_preview_repair_loop_rejects_overclaiming",
   "xtask/src/main.rs::tests::dogfood_typescript_preview_repair_loop_rejects_invented_source_verify_command",
   "xtask/src/main.rs::tests::typescript_preview_false_actionable_audit_cases_are_checked",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_off_boundary_strong_assertions_do_not_expose_literal_predicate",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_boundary_literal_exact_assertion_stays_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_boundary_witness_fails_closed_without_strong_owner_call_at_boundary",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_non_literal_boundary_requires_identical_arguments",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_string_literal_predicate_requires_literal_argument",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_guard_without_comparison_is_not_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_ambiguous_fallback_is_never_exposed_and_punctuation_is_ignored",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_boundary_witness_leaves_return_value_family_exposed"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
