@@ -710,7 +710,7 @@ mod tests {
             markdown.contains(bash_form),
             "bash verify command drifted:\n{markdown}"
         );
-        let powershell_form = "```powershell\n$ripr = ((cargo test boundary) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('evidence.txt', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }\n```\n\n";
+        let powershell_form = "```powershell\n$ripr = ((cargo test boundary) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('evidence.txt', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }\n```\n\n";
         assert!(
             markdown.contains(powershell_form),
             "powershell verify command missing or drifted:\n{markdown}"

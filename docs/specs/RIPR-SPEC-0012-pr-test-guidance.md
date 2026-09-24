@@ -137,11 +137,23 @@ Placement order:
 
 1. exact changed seam line;
 2. nearest changed line in the same owner function;
-3. nearest changed line in the same file;
+3. nearest changed line inside the seam owner's span that owner attribution
+   bound to a nested function (`same_file_changed_line`);
 4. summary-only recommendation when no safe changed-line placement exists.
 
 Do not force a line-level comment onto an unrelated changed line. Bad placement
-is noisier than a summary-only recommendation.
+is noisier than a summary-only recommendation. Sharing a file with the diff is
+not a placement: a seam whose own line and owner span sit outside every hunk
+(for example, an unchanged function above a newly added one) is summary-only
+with `summary_reason = no_safe_changed_line_placement`. When owner spans for
+the changed lines are unknown, rule 3 does not apply and the seam is
+summary-only as well.
+
+Consumers inherit this decision. Check annotations read only `comments[]`.
+`ripr gate evaluate` keeps a `no_safe_changed_line_placement` summary item
+advisory at the seam's own location, gives the reason that the seam is outside
+the pull request's changed lines, and names its owner and behavior without the
+"Changed" label. Seams placed by rules 1-3 stay block-eligible as before.
 
 ## JSON Shape
 
@@ -265,7 +277,9 @@ The JSON report uses schema version `0.1`:
 - `comments[].dedupe_key` - stable key based on seam ID, path, and seam line.
 - `comments[].placement` - GitHub-compatible changed-line placement.
 - `comments[].placement.mode` - `"exact_seam_line"`,
-  `"owner_function_changed_line"`, or `"same_file_changed_line"`.
+  `"owner_function_changed_line"`, or `"same_file_changed_line"` (a changed
+  line inside the seam owner's span, attributed to a nested function; never
+  merely a changed line elsewhere in the same file).
 - `comments[].source_location` - canonical source coordinate rendered next to
   the seam ID in Markdown. If source resolution is unavailable, the row must
   render `unknown:unknown` with `source_location_unresolved` and
@@ -406,7 +420,9 @@ PR test guidance must not:
 
 Initial implementation should add tests for:
 
-- changed-line placement and summary-only fallback;
+- changed-line placement and summary-only fallback, including an unchanged
+  seam in a changed file that stays summary-only and non-blocking while a
+  changed seam in the same file still anchors and blocks;
 - selection rules for production changes, nearby test changes, configured-off
   seams, and suppressed seams;
 - ranking and cap behavior;

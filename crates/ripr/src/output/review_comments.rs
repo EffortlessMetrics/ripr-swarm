@@ -17,7 +17,8 @@ use crate::output::agent_seam_packets::missing_discriminator_records_for as miss
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY, CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE,
     EvidenceRecordStaticLimitation, actionability_for, canonical_receipt_command_for,
-    cross_language_test_target_unresolved, gap_state_for, static_limitations_for,
+    canonical_repair_command_for, cross_language_test_target_unresolved, gap_state_for,
+    static_limitations_for,
 };
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
 #[cfg(test)]
@@ -949,6 +950,17 @@ fn review_recommendation_json(
     if let (Some(cmd), Some(object)) = (receipt_command, recommendation.as_object_mut()) {
         object.insert("receipt_command".to_string(), json!(cmd));
     }
+    // The repair transaction's start (#3906), only past the fail-closed
+    // repair-packet flip. The evidence record owns the decision; the card
+    // projects it.
+    if let (Some(cmd), Some(guidance)) = (
+        canonical_repair_command_for(entry, gap_state),
+        recommendation
+            .get_mut("llm_guidance")
+            .and_then(Value::as_object_mut),
+    ) {
+        guidance.insert("repair_command".to_string(), json!(cmd));
+    }
     // Project limitation-only fields.
     if let (Some(why), Some(object)) = (why_not_actionable, recommendation.as_object_mut()) {
         object.insert("why_not_actionable".to_string(), json!(why));
@@ -1025,13 +1037,28 @@ fn placement_for(
         });
     }
 
-    production_lines
+    // `same_file_changed_line` (RIPR-SPEC-0012): a changed line inside the
+    // seam owner's span that owner attribution bound to a nested function.
+    // Sharing a file with the diff is not enough: a seam whose own line and
+    // owner span sit outside every hunk has no safe changed-line placement
+    // and stays summary-only, which keeps it out of annotations and gate
+    // blocking. Unknown owner spans (no enclosing-owner evidence) fail
+    // closed the same way.
+    working_set
+        .enclosing_owners
         .iter()
-        .filter(|line| normalize_path_text(&line.file) == seam_file)
+        .filter(|owner| normalize_path_text(&owner.file) == seam_file)
+        .filter(|owner| owner.owner == seam.owner())
+        .filter(|owner| !is_test_like_path(&owner.file))
+        .filter(|owner| {
+            production_lines
+                .iter()
+                .any(|line| normalize_path_text(&line.file) == seam_file && line.line == owner.line)
+        })
         .min_by(|left, right| nearest_line_ordering(left.line, right.line, seam.display_line()))
-        .map(|line| ReviewPlacement {
+        .map(|owner| ReviewPlacement {
             path: seam_file,
-            line: line.line,
+            line: owner.line,
             mode: "same_file_changed_line",
         })
 }
@@ -1468,6 +1495,25 @@ mod tests {
                 }],
             },
         }
+    }
+
+    fn classified_in_owner(line: usize, owner: &str) -> ClassifiedSeam {
+        let mut entry = classified(line);
+        let seam = RepoSeam::new(
+            "src/pricing.rs",
+            owner,
+            SeamKind::PredicateBoundary,
+            line * 10,
+            line,
+            "amount >= 5_000",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount == 5_000".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        entry.evidence.seam_id = seam.id().clone();
+        entry.seam = seam;
+        entry
     }
 
     fn field_classified_without_discriminator() -> ClassifiedSeam {
@@ -1929,6 +1975,59 @@ mod tests {
         Ok(())
     }
 
+    /// #3906: a card offers `agent repair` only for an actionable seam past
+    /// the fail-closed repair-packet flip. The second seam adds a TypeScript
+    /// observer beside the same Rust test, so the flip refuses it: a known
+    /// seam with a non-actionable route, which must get no repair start.
+    #[test]
+    fn review_cards_offer_the_repair_start_only_past_the_repair_packet_flip() -> Result<(), String>
+    {
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let eligible = classified(88);
+        let mut ineligible = classified(88);
+        let mut observer = ineligible.evidence.related_tests[0].clone();
+        observer.file = PathBuf::from("tests/pricing.test.ts");
+        ineligible.evidence.related_tests.push(observer);
+
+        for (entry, want_repair) in [(eligible, true), (ineligible, false)] {
+            let seam_id = entry.seam.id().as_str().to_string();
+            if crate::analysis::repair_route::repair_packet_eligibility(&entry).eligible()
+                != want_repair
+            {
+                return Err(format!(
+                    "{seam_id}: fixture eligibility must be {want_repair}"
+                ));
+            }
+            let value = render_value(&working_set, std::slice::from_ref(&entry))?;
+            let card = &value["comments"][0];
+            // Preconditions: both seams render a card with a known seam id;
+            // only the eligible one is actionable.
+            let expected_state = if want_repair {
+                "actionable"
+            } else {
+                "static_limitation"
+            };
+            if card["seam_id"] != seam_id.as_str() || card["gap_state"] != expected_state {
+                return Err(format!("{seam_id}: card must be {expected_state}: {card}"));
+            }
+            let repair = card["llm_guidance"].get("repair_command");
+            let expected = format!("ripr agent repair --root . --seam-id {seam_id} --phase before");
+            match (want_repair, repair) {
+                (true, Some(Value::String(command))) if *command == expected => {}
+                (false, None) => {}
+                _ => {
+                    return Err(format!(
+                        "{seam_id}: repair_command {repair:?}, want present={want_repair}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn review_comments_places_owner_function_changed_line() -> Result<(), String> {
         let seams = [classified(88)];
@@ -1954,14 +2053,27 @@ mod tests {
 
     #[test]
     fn review_comments_places_nearest_same_file_changed_line() -> Result<(), String> {
+        // RIPR-SPEC-0012: `same_file_changed_line` is the changed line inside
+        // the seam owner's span that owner attribution bound to a nested
+        // function. Line 84 is nearer the seam but belongs to another owner,
+        // so nearest-line proximity alone must not win.
         let seams = [classified(88)];
         let working_set = AgentBriefResolvedWorkingSet::base(
             "main",
             vec![
-                AgentBriefLine::new("src/pricing.rs", 60),
-                AgentBriefLine::new("src/pricing.rs", 92),
+                AgentBriefLine::new("src/pricing.rs", 84),
+                AgentBriefLine::new("src/pricing.rs", 95),
             ],
-        );
+        )
+        .with_changed_owners(vec![
+            AgentBriefChangedOwner::new("src/pricing.rs", 84, "pricing::apply_fee"),
+            AgentBriefChangedOwner::new("src/pricing.rs", 95, "pricing::discounted_total::clamp"),
+        ])
+        .with_enclosing_owners(vec![
+            AgentBriefChangedOwner::new("src/pricing.rs", 84, "pricing::apply_fee"),
+            AgentBriefChangedOwner::new("src/pricing.rs", 95, "pricing::discounted_total"),
+            AgentBriefChangedOwner::new("src/pricing.rs", 95, "pricing::discounted_total::clamp"),
+        ]);
 
         let value = render_value(&working_set, &seams)?;
         assert_eq!(value["summary"]["comments"], 1);
@@ -1969,7 +2081,150 @@ mod tests {
             value["comments"][0]["placement"]["mode"],
             "same_file_changed_line"
         );
-        assert_eq!(value["comments"][0]["placement"]["line"], 92);
+        assert_eq!(value["comments"][0]["placement"]["line"], 95);
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_keeps_unchanged_same_file_seam_summary_only() -> Result<(), String> {
+        // F60-5: the seam at line 88 and its owner span are outside every
+        // hunk; the PR only changed another owner and a blank line in the
+        // same file. Neither line may carry the seam, with or without owner
+        // attribution for the blank line.
+        let seams = [classified(88)];
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![
+                AgentBriefLine::new("src/pricing.rs", 94),
+                AgentBriefLine::new("src/pricing.rs", 96),
+            ],
+        )
+        .with_changed_owners(vec![AgentBriefChangedOwner::new(
+            "src/pricing.rs",
+            96,
+            "pricing::loyalty_price",
+        )])
+        .with_enclosing_owners(vec![AgentBriefChangedOwner::new(
+            "src/pricing.rs",
+            96,
+            "pricing::loyalty_price",
+        )]);
+
+        let value = render_value(&working_set, &seams)?;
+        assert_eq!(value["summary"]["comments"], 0);
+        assert_eq!(value["summary"]["summary_only"], 1);
+        assert_eq!(value["summary_only"][0]["placement"], Value::Null);
+        assert_eq!(
+            value["summary_only"][0]["summary_reason"],
+            SUMMARY_REASON_NO_SAFE_PLACEMENT
+        );
+        assert_eq!(value["summary_only"][0]["seam"]["line"], 88);
+
+        // Unknown owner spans fail closed: with no enclosing-owner evidence
+        // a same-file changed line is still not a safe placement.
+        let unresolved = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 92)],
+        );
+        let value = render_value(&unresolved, &seams)?;
+        assert_eq!(value["summary"]["comments"], 0);
+        assert_eq!(
+            value["summary_only"][0]["summary_reason"],
+            SUMMARY_REASON_NO_SAFE_PLACEMENT
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gate_blocks_changed_seam_but_not_unchanged_same_file_seam() -> Result<(), String> {
+        // F60-5 end to end over the produced PR-guidance artifact: the
+        // changed seam (exact changed line) still blocks under
+        // acknowledgeable mode, while the unchanged seam in the same file is
+        // advisory at its own line and is not labeled changed.
+        let changed = classified(11);
+        let unchanged = classified_in_owner(20, "pricing::with_shipping");
+        let seams = [changed, unchanged];
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![
+                AgentBriefLine::new("src/pricing.rs", 11),
+                AgentBriefLine::new("src/pricing.rs", 26),
+                AgentBriefLine::new("src/pricing.rs", 28),
+            ],
+        )
+        .with_changed_owners(vec![
+            AgentBriefChangedOwner::new("src/pricing.rs", 11, "pricing::discounted_total"),
+            AgentBriefChangedOwner::new("src/pricing.rs", 28, "pricing::loyalty_price"),
+        ])
+        .with_enclosing_owners(vec![
+            AgentBriefChangedOwner::new("src/pricing.rs", 11, "pricing::discounted_total"),
+            AgentBriefChangedOwner::new("src/pricing.rs", 28, "pricing::loyalty_price"),
+        ]);
+        let value = render_value(&working_set, &seams)?;
+        assert_eq!(value["summary"]["comments"], 1);
+        assert_eq!(value["comments"][0]["owner"], "pricing::discounted_total");
+        assert_eq!(value["comments"][0]["placement"]["mode"], "exact_seam_line");
+        assert_eq!(value["summary_only"][0]["owner"], "pricing::with_shipping");
+
+        let root = std::env::temp_dir().join(format!(
+            "ripr-review-anchor-gate-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|err| format!("clock: {err}"))?
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).map_err(|err| format!("create {}: {err}", root.display()))?;
+        let guidance = root.join("comments.json");
+        let text = serde_json::to_string(&value).map_err(|err| format!("encode: {err}"))?;
+        fs::write(&guidance, text).map_err(|err| format!("write guidance: {err}"))?;
+        let input = crate::output::gate::GateEvaluateInput {
+            root: root.clone(),
+            repo_exposure: None,
+            pr_guidance: Some(PathBuf::from("comments.json")),
+            gap_ledger: None,
+            sarif_policy: None,
+            labels_json: None,
+            labels: Vec::new(),
+            agent_verify: None,
+            agent_receipt: None,
+            recommendation_calibration: None,
+            mutation_calibration: None,
+            baseline: None,
+            mode: crate::output::gate::GateMode::Acknowledgeable,
+            acknowledgement_labels: Vec::new(),
+            exception_policy: None,
+        };
+        let report = crate::output::gate::build_gate_decision_report(&input);
+        let _ = fs::remove_dir_all(&root);
+        let report = report?;
+        assert!(crate::output::gate::gate_decision_should_fail(&report));
+        let markdown = crate::output::gate::render_gate_decision_markdown(&report);
+        let (blocking, advisory) = markdown
+            .split_once("## Advisory")
+            .ok_or_else(|| format!("gate markdown has no advisory section:\n{markdown}"))?;
+        assert!(blocking.contains("Blocking: 1"), "{markdown}");
+        assert!(
+            blocking.contains("- src/pricing.rs:11 weakly_gripped — policy-eligible gap blocks"),
+            "{markdown}"
+        );
+        assert!(
+            blocking.contains("Changed owner: `pricing::discounted_total`"),
+            "{markdown}"
+        );
+        assert!(!blocking.contains("with_shipping"), "{markdown}");
+        assert!(
+            advisory.contains(
+                "- src/pricing.rs:20 weakly_gripped — seam is outside this PR's changed lines"
+            ),
+            "{markdown}"
+        );
+        assert!(
+            advisory.contains("  - Owner: `pricing::with_shipping`"),
+            "{markdown}"
+        );
+        assert!(!advisory.contains("Changed owner"), "{markdown}");
+        assert!(!advisory.contains("Changed behavior"), "{markdown}");
         Ok(())
     }
 
@@ -2964,13 +3219,20 @@ mod tests {
             &render_markdown(&owner, &exact_seams),
         )?;
 
+        // Line 92 sits inside `pricing::discounted_total`'s span (enclosing
+        // owner evidence); line 60 does not. Only 92 is a safe placement.
         let same_file = AgentBriefResolvedWorkingSet::base(
             "main",
             vec![
                 AgentBriefLine::new("src/pricing.rs", 60),
                 AgentBriefLine::new("src/pricing.rs", 92),
             ],
-        );
+        )
+        .with_enclosing_owners(vec![AgentBriefChangedOwner::new(
+            "src/pricing.rs",
+            92,
+            "pricing::discounted_total",
+        )]);
         assert_json_fixture("same-file-line", &render_value(&same_file, &exact_seams)?)?;
         assert_markdown_fixture("same-file-line", &render_markdown(&same_file, &exact_seams))?;
 

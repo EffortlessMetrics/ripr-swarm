@@ -25,8 +25,9 @@ mod value_resolution;
 mod workspace;
 
 pub(crate) use diff::{
-    load_diff, load_diff_range, load_worktree_diff, parse_unified_diff, resolve_base_commit,
-    resolve_default_base_commit, working_tree_has_tracked_changes,
+    load_diff, load_diff_range, load_pr_evidence_diff_range, load_worktree_diff,
+    parse_unified_diff, resolve_base_commit, resolve_default_base_commit,
+    working_tree_has_tracked_changes,
 };
 pub(crate) use facts::validated_file_wide_harness_targets;
 pub(crate) use language::{DIFF_SCOPE_OVERSIZED_PREFIX, is_diff_scope_oversized};
@@ -740,6 +741,27 @@ pub(crate) fn owner_symbols_for_lines(
     root: &Path,
     lines: &[(PathBuf, usize)],
 ) -> Result<Vec<ChangedLineOwner>, String> {
+    changed_line_ownership_for_lines(root, lines).map(|ownership| ownership.owners)
+}
+
+/// Owner attribution for changed lines from one Rust index build.
+///
+/// `owners` holds the innermost owner function of each changed line (the
+/// historical `owner_symbols_for_lines` projection). `enclosing_owners` holds
+/// every function whose span contains a changed line, so a consumer can tell
+/// whether an outer owner's span overlaps the diff even when attribution named
+/// a nested function. A line outside every function span has no entry in
+/// either list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ChangedLineOwnership {
+    pub(crate) owners: Vec<ChangedLineOwner>,
+    pub(crate) enclosing_owners: Vec<ChangedLineOwner>,
+}
+
+pub(crate) fn changed_line_ownership_for_lines(
+    root: &Path,
+    lines: &[(PathBuf, usize)],
+) -> Result<ChangedLineOwnership, String> {
     let files = lines
         .iter()
         .map(|(file, _)| file.clone())
@@ -748,7 +770,7 @@ pub(crate) fn owner_symbols_for_lines(
         .collect::<Vec<_>>();
 
     let index = rust_index::build_index(root, &files)?;
-    let mut owners = lines
+    let owners = lines
         .iter()
         .filter_map(|(file, line)| {
             rust_index::find_owner_function(&index, file, *line).map(|function| ChangedLineOwner {
@@ -758,6 +780,25 @@ pub(crate) fn owner_symbols_for_lines(
             })
         })
         .collect::<Vec<_>>();
+    let enclosing_owners = lines
+        .iter()
+        .flat_map(|(file, line)| {
+            rust_index::find_enclosing_functions(&index, file, *line).map(|function| {
+                ChangedLineOwner {
+                    file: file.clone(),
+                    line: *line,
+                    owner: function.id.to_string(),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(ChangedLineOwnership {
+        owners: sorted_owners(owners),
+        enclosing_owners: sorted_owners(enclosing_owners),
+    })
+}
+
+fn sorted_owners(mut owners: Vec<ChangedLineOwner>) -> Vec<ChangedLineOwner> {
     owners.sort_by(|left, right| {
         left.file
             .cmp(&right.file)
@@ -765,7 +806,7 @@ pub(crate) fn owner_symbols_for_lines(
             .then_with(|| left.owner.cmp(&right.owner))
     });
     owners.dedup();
-    Ok(owners)
+    owners
 }
 
 #[cfg(test)]
@@ -1132,6 +1173,72 @@ pub fn unrelated() -> i32 {
         {
             return Err(format!("expected unrelated owner, got {owners:?}"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_line_ownership_names_outer_owner_of_nested_function_line() -> Result<(), String> {
+        // Review placement (RIPR-SPEC-0012) needs the outer owner span for a
+        // changed line inside a nested fn; a blank line between functions
+        // has no owner at all.
+        let root = temp_dir("owner_chain_lines");
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        fs::write(
+            root.join("src/lib.rs"),
+            r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    fn clamp(value: i32) -> i32 {
+        value.max(0)
+    }
+    if amount >= threshold { clamp(amount - 10) } else { amount }
+}
+
+pub fn unrelated() -> i32 {
+    0
+}
+"#,
+        )
+        .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+
+        let ownership = changed_line_ownership_for_lines(
+            &root,
+            &[
+                (PathBuf::from("src/lib.rs"), 4),
+                (PathBuf::from("src/lib.rs"), 8),
+                (PathBuf::from("src/lib.rs"), 10),
+            ],
+        );
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
+        let ownership = ownership?;
+
+        let owners_at = |owners: &[ChangedLineOwner], line: usize| {
+            let mut names = owners
+                .iter()
+                .filter(|owner| owner.line == line)
+                .map(|owner| {
+                    owner
+                        .owner
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            names.sort();
+            names
+        };
+        assert_eq!(owners_at(&ownership.owners, 4), vec!["clamp"]);
+        assert_eq!(
+            owners_at(&ownership.enclosing_owners, 4),
+            vec!["clamp", "discounted_total"]
+        );
+        assert!(owners_at(&ownership.owners, 8).is_empty());
+        assert!(owners_at(&ownership.enclosing_owners, 8).is_empty());
+        assert_eq!(
+            owners_at(&ownership.enclosing_owners, 10),
+            vec!["unrelated"]
+        );
         Ok(())
     }
 

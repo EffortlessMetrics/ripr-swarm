@@ -302,7 +302,7 @@ Performance:
   Use --from to skip re-analysis when you already ran
   `ripr check --write-artifact PATH` (see `ripr explain --help`).
 "#;
-pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (Rust toolchain, workspace, paths).
+pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace, config, toolchains, paths).
 
 Usage: ripr doctor [--root PATH] [--json]
 
@@ -316,9 +316,14 @@ decision.
 
 Checks:
   - root directory exists
-  - Cargo.toml is present at the selected root
+  - Cargo.toml is present at the selected root (when Rust is in scope)
   - ripr.toml load status and effective defaults are visible
-  - git, cargo, and rustc are available
+  - git is available; cargo and rustc are available (when Rust is in scope)
+
+Rust is in scope when it is enabled and Cargo.toml or .rs files are detected,
+or when no other language is detected or enabled. Otherwise (for example a
+Python-only or TypeScript-only root) the Cargo.toml, cargo, and rustc checks
+print as skipped with the reason and do not fail doctor.
 
 First-run diagnosis (printed automatically):
   - Detected languages: shallow file-marker scan; each language shows its
