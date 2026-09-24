@@ -11624,7 +11624,9 @@ Field contract:
   `selected.receipt_path`, `selected.receipt_command_source`, and
   `selected.receipt_state` are the static movement proof path. When the source
   gap ledger omits a receipt command, `ripr first-pr` may provide a deterministic
-  `ripr outcome` command under the configured receipts directory. A missing
+  canonical `ripr receipt write` command (RIPR-SPEC-0079) under the configured
+  receipts directory; `receipt_command_source` is then
+  `first_pr.default_receipt_write_command`. A missing
   receipt is not failure, merge approval, mutation proof, or runtime adequacy.
   `selected.receipt_state` uses the canonical receipt lifecycle vocabulary:
   `receipt_missing`, `receipt_found`, `receipt_stale`,
