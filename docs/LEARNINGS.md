@@ -2217,9 +2217,9 @@ Durable rules:
 ## 2026-09-24: A shared sccache server inherits the TMP of whichever lane started it
 
 2026-09-24, multiple concurrent agent lanes on one Windows host
-(`ripr-swarm`). Two lanes lost 30+ minutes each to a sccache failure that
+(`ripr-swarm`). Two lanes lost 30+ minutes each to an sccache failure that
 looked like a broken tree. `ripr`'s `.cargo/config.toml` sets
-`[env] TMP/TEMP` to a target-relative path, so a `sccache` server auto-started
+`[env] TMP/TEMP` to a target-relative path, so an `sccache` server auto-started
 by cargo inside a lane worktree bakes that worktree's absolute TMP into the
 user-level server process. Every later compile on the host — including lanes
 in *other* worktrees, which resolve their own TMP fine — then fails with
@@ -2242,3 +2242,5 @@ Durable rules:
   `sccache --stop-server` (or a health check) as part of reaping.
 - Read the native exit status, not a piped summary: a wrapper that ends in
   `| tail` reports the pipe's status, and a red gate behind it looks green.
+  Running wrappers under `set -o pipefail` (or the repo's `-o pipefail`
+  convention) propagates the real status instead.
