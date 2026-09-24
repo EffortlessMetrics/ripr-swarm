@@ -6069,9 +6069,18 @@ fn check_rejects_missing_and_file_roots_without_leaking_the_git_invocation() -> 
         String::from_utf8_lossy(&file_output.stderr)
     );
 
-    // Negative control: a real workspace root is still analyzed.
+    // Negative control: a real workspace root is still analyzed. The workspace
+    // gets its own repository and an explicit base because the temp dir is
+    // inside the checkout running the tests (.cargo/config.toml sets TMPDIR to
+    // target/). A bare `check` there would diff the enclosing branch against
+    // its default base and fail on that branch's size, not on this root.
+    run_git(&workspace, &["init"])?;
+    run_git(&workspace, &["config", "user.email", "test@test.com"])?;
+    run_git(&workspace, &["config", "user.name", "Test"])?;
+    run_git(&workspace, &["add", "."])?;
+    run_git(&workspace, &["commit", "-m", "initial"])?;
     let workspace_string = workspace.display().to_string();
-    let ok_output = run_ripr(&["check", "--root", &workspace_string]);
+    let ok_output = run_ripr(&["check", "--root", &workspace_string, "--base", "HEAD"]);
     assert!(
         ok_output.status.success(),
         "expected a valid explicit root to run; stderr:\n{}",
