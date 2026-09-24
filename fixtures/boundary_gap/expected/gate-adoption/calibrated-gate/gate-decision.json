@@ -44,10 +44,11 @@
         "changed_behavior": "amount >= discount_threshold",
         "changed_owner": "pricing::discounted_total",
         "classification": "weakly_gripped",
-        "inspection_command": "ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json",
+        "inspection_command": "ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > <cwd>/target/ripr/workflow/agent-brief.json",
         "limitation": null,
         "missing_discriminator": "amount == discount_threshold",
         "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 8f7fa8644fd12280 --json --out target/ripr/reports/agent-receipt.json",
+        "repair_command": "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before",
         "repair_target": {
           "file": "tests/pricing.rs",
           "kind": "related_test",

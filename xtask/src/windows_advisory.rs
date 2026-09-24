@@ -664,6 +664,79 @@ mod tests {
         );
     }
 
+    /// The hardest missing-evidence shape to read correctly: the logs parsed
+    /// cleanly, so `### Totals` reports observed passes, but the captured exit
+    /// status never arrived. Every number on the page looks like a clean run.
+    /// The refusal has to survive that, or a reader skimming the totals would
+    /// take an unverifiable run for a green one.
+    #[test]
+    fn pass_shaped_totals_still_refuse_a_verdict_when_the_status_is_missing() {
+        let mut unverified = outcome(RunState::StatusMissing, &[], &["x::y"]);
+        unverified.exit_status = None;
+        let rendered = render(&unverified, &unverified);
+        assert!(rendered.contains("**Evidence failure.**"), "{rendered}");
+        assert!(
+            rendered.contains("No verdict: see the evidence failure above."),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("No test failed in either run."),
+            "pass-shaped totals must not be promoted to a clean verdict: {rendered}"
+        );
+        assert!(
+            rendered.contains("observed 1 pass, 0 fail"),
+            "the observed counts stay on the page; the banner is what refuses: {rendered}"
+        );
+    }
+
+    /// The summarizer's refusal only protects the lane if a reader can see it.
+    ///
+    /// `run()` prints the rendered verdict and *then* returns an error for
+    /// unusable evidence, so both halves travel the same pipe: the step's
+    /// standard output carries the `**Evidence failure.**` banner and its exit
+    /// status carries the failure. This binds the workflow side of that. A
+    /// redirection operator on the command would consume `tee`'s standard
+    /// output and leave the job log with a command echo and nothing else —
+    /// which is the state issue #2393's lane was in until this step was
+    /// changed — and a `|| true` or a `continue-on-error` would turn the
+    /// refusal back into a green job.
+    #[test]
+    fn the_summarizer_verdict_reaches_the_job_log_and_its_refusal_is_not_suppressed() {
+        let workflow = include_str!("../../.github/workflows/windows-advisory.yml");
+        let mut checked = false;
+        for command in workflow
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("cargo xtask windows-advisory-summary"))
+        {
+            checked = true;
+            assert!(
+                !command.contains('>'),
+                "no redirection may divert the summarizer's stdout away from the job log: {command}"
+            );
+            assert!(
+                command.contains("| tee target/windows-verdict.md"),
+                "the verdict must still reach the artifact file: {command}"
+            );
+            assert!(
+                command.contains(r#"| tee -a "$GITHUB_STEP_SUMMARY""#),
+                "the verdict must still reach the step summary, appended not truncated: {command}"
+            );
+            assert!(
+                !command.contains("|| true"),
+                "an evidence failure must fail the step: {command}"
+            );
+        }
+        assert!(checked, "the lane must invoke the summarizer");
+
+        assert!(
+            !workflow.contains("continue-on-error"),
+            "test outcomes are advisory because the run steps exit 0, never because \
+             a failure is swallowed; a continue-on-error would also swallow the \
+             evidence refusal"
+        );
+    }
+
     #[test]
     fn run_state_labels_are_stable_wire_strings() {
         assert_eq!(RunState::CompletedClean.label(), "completed_clean");

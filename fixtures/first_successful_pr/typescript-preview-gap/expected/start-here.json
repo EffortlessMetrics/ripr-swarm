@@ -49,11 +49,11 @@
     "static_limit_kind": "typescript_preview",
     "static_limit_detail": "TypeScript repair packets are preview advisory evidence.",
     "static_evidence_boundary": "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.",
-    "agent_packet_command": "ripr agent packet --root fixtures/first_successful_pr/typescript-preview-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:gap:typescript:typescript_preview:2396aec1 --json > target/ripr/workflow/agent-packet.json"
+    "agent_packet_command": "ripr agent packet --root fixtures/first_successful_pr/typescript-preview-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:gap:typescript:typescript_preview:2396aec1 --json > <cwd>/fixtures/first_successful_pr/typescript-preview-gap/target/ripr/workflow/agent-packet.json"
   },
   "commands": {
-    "regenerate_gap_ledger": "ripr check --root fixtures/first_successful_pr/typescript-preview-gap --base origin/main --json > target/ripr/reports/check.json && ripr reports gap-ledger --check-output target/ripr/reports/check.json --root fixtures/first_successful_pr/typescript-preview-gap --out inputs/reports/gap-decision-ledger.json --out-md inputs/reports/gap-decision-ledger.md",
-    "agent_packet": "ripr agent packet --root fixtures/first_successful_pr/typescript-preview-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:gap:typescript:typescript_preview:2396aec1 --json > target/ripr/workflow/agent-packet.json",
+    "regenerate_gap_ledger": "ripr check --root fixtures/first_successful_pr/typescript-preview-gap --base origin/main --json > <cwd>/fixtures/first_successful_pr/typescript-preview-gap/target/ripr/reports/check.json && ripr reports gap-ledger --check-output <cwd>/fixtures/first_successful_pr/typescript-preview-gap/target/ripr/reports/check.json --root fixtures/first_successful_pr/typescript-preview-gap --out inputs/reports/gap-decision-ledger.json --out-md inputs/reports/gap-decision-ledger.md",
+    "agent_packet": "ripr agent packet --root fixtures/first_successful_pr/typescript-preview-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:gap:typescript:typescript_preview:2396aec1 --json > <cwd>/fixtures/first_successful_pr/typescript-preview-gap/target/ripr/workflow/agent-packet.json",
     "verify": "jest tests/discount.test.ts",
     "receipt": "ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 --verify-command \"jest tests/discount.test.ts\" --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json"
   },
@@ -63,7 +63,7 @@
       "label": "Gap decision ledger",
       "path": "inputs/reports/gap-decision-ledger.json",
       "status": "present",
-      "regeneration_command": "ripr check --root fixtures/first_successful_pr/typescript-preview-gap --base origin/main --json > target/ripr/reports/check.json && ripr reports gap-ledger --check-output target/ripr/reports/check.json --root fixtures/first_successful_pr/typescript-preview-gap --out inputs/reports/gap-decision-ledger.json --out-md inputs/reports/gap-decision-ledger.md"
+      "regeneration_command": "ripr check --root fixtures/first_successful_pr/typescript-preview-gap --base origin/main --json > <cwd>/fixtures/first_successful_pr/typescript-preview-gap/target/ripr/reports/check.json && ripr reports gap-ledger --check-output <cwd>/fixtures/first_successful_pr/typescript-preview-gap/target/ripr/reports/check.json --root fixtures/first_successful_pr/typescript-preview-gap --out inputs/reports/gap-decision-ledger.json --out-md inputs/reports/gap-decision-ledger.md"
     },
     {
       "id": "first_action",
@@ -84,7 +84,7 @@
       "label": "Agent repair packet",
       "path": "target/ripr/workflow/agent-packet.json",
       "status": "missing",
-      "regeneration_command": "ripr agent packet --root fixtures/first_successful_pr/typescript-preview-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:gap:typescript:typescript_preview:2396aec1 --json > target/ripr/workflow/agent-packet.json"
+      "regeneration_command": "ripr agent packet --root fixtures/first_successful_pr/typescript-preview-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:gap:typescript:typescript_preview:2396aec1 --json > <cwd>/fixtures/first_successful_pr/typescript-preview-gap/target/ripr/workflow/agent-packet.json"
     },
     {
       "id": "gate_decision",

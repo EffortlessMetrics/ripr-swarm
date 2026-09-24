@@ -84,6 +84,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             timeout_ms: options.timeout_ms,
             artifacts: &artifacts,
             python_first_use: None,
+            language_routes: None,
         };
         std::fs::write(
             &artifacts.pilot_summary_json,
@@ -123,6 +124,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     }
 
     let python_first_use = collect_pilot_python_first_use(&input, &config);
+    // #3906: pilot ranks Rust seams only. Name the languages it did not rank
+    // so an empty ranking is never read as a clean result for them.
+    let language_routes = output::pilot::PilotLanguageRoutes::from_discovered(
+        &input.root,
+        !classified.is_empty(),
+        config.languages().enabled(),
+        &analysis::workspace_preview_language_files(&input.root),
+    );
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
         mode: &input.mode,
@@ -131,6 +140,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         timeout_ms: options.timeout_ms,
         artifacts: &artifacts,
         python_first_use: python_first_use.as_ref(),
+        language_routes: Some(&language_routes),
     };
 
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);

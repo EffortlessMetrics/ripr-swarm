@@ -40,7 +40,7 @@ fn semantic_panic_entry(
     receiver_fingerprint: Option<&str>,
     last_seen_line: Option<usize>,
 ) -> PanicAllowEntryVersioned {
-    PanicAllowEntryVersioned::V2(PanicAllowEntryV2 {
+    PanicAllowEntryVersioned::V2(Box::new(PanicAllowEntryV2 {
         id: Some(id.to_string()),
         path: "src/lib.rs".to_string(),
         family: "unwrap".to_string(),
@@ -61,7 +61,7 @@ fn semantic_panic_entry(
             column: Some(5),
         }),
         count: None,
-    })
+    }))
 }
 
 // ============================================================================
@@ -1613,7 +1613,7 @@ fn expired_entry_is_flagged_by_evaluation() {
     use super::{PanicAllowEntryV2, PanicAllowEntryVersioned, evaluate_semantic_no_panic_policy};
     // An entry expired in 2020 with no matching finding should produce
     // both a stale-entry violation AND an expiry violation.
-    let entry = PanicAllowEntryVersioned::V2(PanicAllowEntryV2 {
+    let entry = PanicAllowEntryVersioned::V2(Box::new(PanicAllowEntryV2 {
         id: Some("panic-test-0001".to_string()),
         path: "src/test.rs".to_string(),
         family: "unwrap".to_string(),
@@ -1624,7 +1624,7 @@ fn expired_entry_is_flagged_by_evaluation() {
         selector: None,
         last_seen: None,
         count: None,
-    });
+    }));
     let report = evaluate_semantic_no_panic_policy(&[], &[entry]);
     let has_expiry_violation = report
         .violations

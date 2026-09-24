@@ -36,6 +36,14 @@ fn generated_workflow_batches_compact_review_comments() -> Result<(), Box<dyn Er
     assert!(workflow.contains("comments: ["));
     assert!(workflow.contains("<details><summary>Full RIPR repair card</summary>"));
     assert!(workflow.contains("presentation=compact-v1"));
+    // #3906: a card that carries the repair start leads the compact comment
+    // with it; only cards without one fall back to the Verify line.
+    assert!(
+        workflow.contains(r#"captured("\nStart the repair:\n`(?<value>[^`]+)`"; "")) as $start"#)
+    );
+    assert!(workflow.contains(
+        r#"(if $start then "Start the repair: `\($start)`" else "Verify: `\($verify)`" end) as $next"#
+    ));
     assert!(workflow.contains("__ripr_legacy_presentation__"));
     assert!(workflow.contains("__ripr_compact_presentation_unreadable__"));
     assert!(workflow.contains("additional recommendation"));

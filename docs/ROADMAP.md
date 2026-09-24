@@ -1074,7 +1074,7 @@ for the complete change and non-claim boundary.
 The shipped 0.9.0 content is recorded in the
 [0.9.0 swarm freeze note](handoffs/2026-06-05-0.9.0-swarm-freeze.md); the
 freeze candidate is re-pinned during Phase R of the
-[current operating sequence](#current-operating-sequence-090-release-and-evidence-to-repair-routing).
+[historical operating sequence](#historical-operating-sequence-090-release-and-evidence-to-repair-routing).
 
 Ship:
 
