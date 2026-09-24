@@ -1116,9 +1116,180 @@ fn json_scalar_as_usize(value: &Value) -> Option<usize> {
     }
 }
 
+/// The repository head a snapshot reports, when it carries one.
+///
+/// `repo_exposure_artifact_metadata` writes `artifact.repository.head` from
+/// `git rev-parse HEAD`, keeping it only when it is a full Git object name and
+/// substituting a placeholder otherwise. This asks the producer's own
+/// [`is_full_sha`](crate::agent::artifact::is_full_sha) rather than comparing
+/// against that placeholder's spelling, so today's `"unavailable"` and any
+/// later sentinel are both read as an absent head instead of being reported as
+/// a commit.
+///
+/// Snapshots written without artifact identity (the plain
+/// `write_repo_exposure_json` path, which is what `ripr pilot` emits) have no
+/// `artifact` key at all.
+fn snapshot_repository_head(snapshot: &str) -> Option<String> {
+    /// Just enough of the artifact envelope to read the head, so this does
+    /// not hold a second full `Value` for a document the report path has
+    /// already parsed.
+    #[derive(serde::Deserialize)]
+    struct HeadEnvelope {
+        artifact: Option<ArtifactIdentity>,
+    }
+    #[derive(serde::Deserialize)]
+    struct ArtifactIdentity {
+        repository: Option<RepositoryIdentity>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RepositoryIdentity {
+        head: Option<String>,
+    }
+
+    serde_json::from_str::<HeadEnvelope>(snapshot)
+        .ok()?
+        .artifact?
+        .repository?
+        .head
+        .map(|head| head.trim().to_string())
+        .filter(|head| crate::agent::artifact::is_full_sha(head))
+}
+
+/// The stderr disclosure `ripr outcome` prints beside the comparison (#1942).
+///
+/// The comparison itself matches seams and findings by id in every case; what
+/// changes is what can be said about the two snapshots' provenance. Before
+/// this was derived, the line claimed unconditionally that "the before/after
+/// artifacts do not carry a head SHA", which is false for any snapshot written
+/// through the artifact-identity path: `ripr check --format
+/// repo-exposure-json` carries a full head SHA. A disclosure that understates
+/// the evidence actually present is as misleading as one that overstates it,
+/// and it asks the reader to re-establish by hand something the artifacts
+/// already answer.
+///
+/// Equal heads are the ordinary case for an uncommitted repair, so they are
+/// reported as agreement rather than as a problem; the worktree may still have
+/// moved between the two snapshots, which is why this does not claim the trees
+/// were identical.
+pub(crate) fn head_provenance_disclosure(before: &str, after: &str) -> String {
+    match (
+        snapshot_repository_head(before),
+        snapshot_repository_head(after),
+    ) {
+        (Some(before_head), Some(after_head)) if before_head == after_head => format!(
+            "ripr outcome: comparison matches seams/findings by id; both snapshots report repository head {before_head}, so they are from the same commit (the working tree may still differ between them)."
+        ),
+        (Some(before_head), Some(after_head)) => format!(
+            "ripr outcome: comparison matches seams/findings by id; the snapshots report different repository heads (before {before_head}, after {after_head}), so reported movement may include changes other than the one you are measuring."
+        ),
+        _ => "ripr outcome: comparison matches seams/findings by id only; at least one of the before/after artifacts does not carry a head SHA, so ensure both snapshots are from the same repository and adjacent commits.".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn snapshot_with_head(head: Option<&str>) -> String {
+        match head {
+            Some(head) => serde_json::json!({
+                "schema_version": "0.3",
+                "artifact": { "repository": { "root": "/w", "head": head } },
+            }),
+            // The shape `ripr pilot` writes: no artifact identity at all.
+            None => serde_json::json!({ "schema_version": "0.3" }),
+        }
+        .to_string()
+    }
+
+    /// The disclosure must follow the artifacts. The three arms are the whole
+    /// value domain, and the negative that matters is that no arm keeps the
+    /// pre-#3963 claim that the artifacts carry no head when they do.
+    #[test]
+    fn head_disclosure_reports_matching_heads_instead_of_claiming_none_exist() {
+        let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+        let line = head_provenance_disclosure(
+            &snapshot_with_head(Some(head)),
+            &snapshot_with_head(Some(head)),
+        );
+        assert!(line.contains(head), "the head must be named: {line}");
+        assert!(
+            line.contains("same commit"),
+            "matching heads must be reported as agreement: {line}"
+        );
+        assert!(
+            !line.contains("do not carry a head SHA")
+                && !line.contains("does not carry a head SHA"),
+            "must not claim the artifacts lack a head they carry: {line}"
+        );
+    }
+
+    #[test]
+    fn head_disclosure_names_both_heads_when_they_differ() {
+        let before = "1111111111111111111111111111111111111111";
+        let after = "2222222222222222222222222222222222222222";
+        let line = head_provenance_disclosure(
+            &snapshot_with_head(Some(before)),
+            &snapshot_with_head(Some(after)),
+        );
+        assert!(
+            line.contains(before) && line.contains(after),
+            "both heads must be named so the reader can see the gap: {line}"
+        );
+        assert!(
+            line.contains("may include changes other than"),
+            "differing heads must warn that movement is not attributable: {line}"
+        );
+    }
+
+    /// The original warning is kept exactly where it is true, and `pilot`'s
+    /// own repo-exposure artifact is that case.
+    #[test]
+    fn head_disclosure_keeps_the_warning_when_either_side_has_no_head() {
+        for (before, after) in [
+            (None, None),
+            (Some("3333333333333333333333333333333333333333"), None),
+            (None, Some("3333333333333333333333333333333333333333")),
+        ] {
+            let line =
+                head_provenance_disclosure(&snapshot_with_head(before), &snapshot_with_head(after));
+            assert!(
+                line.contains("does not carry a head SHA"),
+                "a missing head must keep the warning ({before:?}, {after:?}): {line}"
+            );
+        }
+    }
+
+    /// `repo_exposure_artifact_metadata` substitutes a placeholder when
+    /// `git rev-parse HEAD` fails. Treating one as a head would print "both
+    /// snapshots report repository head unavailable".
+    ///
+    /// The cases beyond today's `"unavailable"` are the point: the reader asks
+    /// the producer's `is_full_sha` rather than matching that one spelling, so
+    /// a renamed sentinel, a short SHA, or a non-hex value is still an absent
+    /// head. A reader coupled to the string would pass every line below the
+    /// first.
+    #[test]
+    fn head_disclosure_treats_a_placeholder_as_no_head() {
+        for placeholder in [
+            "unavailable",
+            "not_available",
+            "none",
+            "2bd22c0b",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+            "2bd22c0b0718157870e2e78c9a70b9da1c9c1b2",
+        ] {
+            let line = head_provenance_disclosure(
+                &snapshot_with_head(Some(placeholder)),
+                &snapshot_with_head(Some(placeholder)),
+            );
+            assert!(
+                line.contains("does not carry a head SHA")
+                    && !line.contains(&format!("head {placeholder}")),
+                "{placeholder:?} is not a Git object name and must read as an absent head: {line}"
+            );
+        }
+    }
 
     #[test]
     fn targeted_test_outcome_report_buckets_seam_movement() -> Result<(), String> {

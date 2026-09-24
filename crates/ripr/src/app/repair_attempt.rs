@@ -27,6 +27,8 @@ const REPAIR_ATTEMPT_COMMITMENT: &str = "before-commitment.sha256";
 const REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY: &str = "artifacts";
 const REPAIR_ATTEMPT_ID_PREFIX: &str = "repair-attempt-";
 const REPAIR_ATTEMPT_ID_HEX_LEN: usize = 24;
+/// Cargo's default build directory, relative to the workspace root.
+const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
 
 static ATTEMPT_NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -134,7 +136,6 @@ pub(crate) fn receipt_binding(
             .map_err(|error| format!("repair packet is not UTF-8: {error}"))?,
         seam_id,
     )?;
-    validate_trusted_head_surface(&root, &policy)?;
     let (manifest_path, manifest) = if let Some(attempt_id) = attempt_id {
         let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
         let loaded = load_repair_attempt_by_id(&root, &attempt_id)?;
@@ -214,6 +215,7 @@ pub(crate) fn receipt_binding(
     if sha256_bytes(&delta_bytes) != after.delta_sha256 || verdict != after.verdict {
         return Err("repair attempt after verdict binding is tampered or stale".to_string());
     }
+    validate_trusted_head_surface(&root, &policy, &verdict.changed_paths)?;
     let manifest_path = display_path(&manifest_path);
     Ok(serde_json::json!({
         "attempt_id": after.attempt_id.as_str(),
@@ -715,6 +717,23 @@ pub(crate) fn edit_cage_policy_from_packet(
         .first()
         .cloned()
         .ok_or_else(|| "repair packet has no selected edit target".to_string())?;
+    // A Rust repair's focused test is built and run with Cargo, whose default
+    // build directory is `target/` at the workspace root this attempt is bound
+    // to. The documented loop runs the project tests between the phases, so
+    // the git-ignored contents of that directory are expected build output,
+    // not edits. The cage still observes tracked and untracked-not-ignored
+    // paths there, every rule path named here (including `target/ripr`), and
+    // every other ignored path. Other languages keep observing every ignored
+    // path: the trust-bound Python verify phase executes tests and retains
+    // its full ignored-path guard.
+    let ignored_build_output =
+        if Path::new(selected_target.path()).extension() == Some(std::ffi::OsStr::new("rs")) {
+            Some(crate::edit_cage::CagePathRule::subtree(
+                CARGO_DEFAULT_BUILD_OUTPUT_DIR,
+            )?)
+        } else {
+            None
+        };
     Ok(EditCagePolicy {
         selected_target,
         allowed_edit_surface: allowed,
@@ -724,6 +743,7 @@ pub(crate) fn edit_cage_policy_from_packet(
             .transpose()?
             .unwrap_or_default(),
         expected_operational_writes: vec![crate::edit_cage::CagePathRule::subtree("target/ripr")?],
+        ignored_build_output,
     })
 }
 
@@ -1249,10 +1269,34 @@ fn validate_manifest_at(
     Ok(())
 }
 
-fn validate_trusted_head_surface(root: &Path, policy: &EditCagePolicy) -> Result<(), String> {
+/// Refuses receipt admission when the repository differs from the trusted
+/// surface.
+///
+/// Tracked content is compared with `HEAD` in full: the receipt names that
+/// committed head, so any tracked difference outside the trusted surface,
+/// pre-existing or not, blocks admission. An untracked path belongs to no
+/// commit; it blocks admission only when the attempt observably wrote it,
+/// which is exactly the edit cage's baseline-relative delta
+/// (`observed_changes`, built from exact content digests of untracked files).
+/// A pre-existing untracked file whose bytes are unchanged since the before
+/// phase (for example a `Cargo.lock` an earlier build generated) is not an
+/// attempt write, and the cage's compliant verdict already reported it as
+/// unchanged, so refusing it here would contradict the cage's own delta.
+fn validate_trusted_head_surface(
+    root: &Path,
+    policy: &EditCagePolicy,
+    observed_changes: &[String],
+) -> Result<(), String> {
     let tracked = git_paths(root, &["diff", "--name-only", "-z", "HEAD"])?;
     let untracked = git_paths(root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-    for path in tracked.into_iter().chain(untracked) {
+    let observed = observed_changes
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let written_untracked = untracked
+        .into_iter()
+        .filter(|path| observed.contains(path.as_str()));
+    for path in tracked.into_iter().chain(written_untracked) {
         if !policy.allows_path(&path) {
             return Err(format!(
                 "repair receipt observed repository path outside trusted edit surface: {path}"

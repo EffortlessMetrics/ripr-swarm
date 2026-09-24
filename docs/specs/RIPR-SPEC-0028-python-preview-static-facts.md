@@ -130,6 +130,13 @@ syntactic call proximity. Direct owner calls must be token-aware. Module
 import aliases may match attribute calls such as `pricing.apply_discount(...)`;
 arbitrary object method calls must not be treated as related to a top-level
 function owner unless the changed owner is itself a method or class method.
+Free-function module identity compares a `from M import name` source module
+with the owner's dotted module path by exact equality. An owner below a
+directory named `src` (the PyPA src layout, including monorepo
+`packages/<pkg>/src/`) also matches the dotted path below that `src` import
+root, so `from pricing.discounts import f` identifies `src/pricing/discounts.py`
+while the repository-relative `src.pricing.discounts` form still matches. Bare
+file stems and arbitrary path suffixes never count as module identity.
 Test-name and fixture-name proximity may provide a suggested repair location,
 but these links must be marked uncertain, must keep weak reachability, and must
 not promote unrelated assertions to strong revealability.

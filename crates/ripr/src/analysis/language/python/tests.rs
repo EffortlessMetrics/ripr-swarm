@@ -1553,6 +1553,130 @@ fn free_function_changed_value_token_from_other_module_does_not_credit_exposed()
     Ok(())
 }
 
+const SRC_LAYOUT_DISCOUNTS_SOURCE: &str =
+    "def bulk_discount(quantity):\n    if quantity > 100:\n        return 0.15\n    return 0.0\n";
+const SRC_LAYOUT_DISCOUNTS_CHANGED_LINE: &str = "    if quantity > 100:";
+
+/// Classifies the `bulk_discount` boundary change for an owner at `owner_file`
+/// against one strong exact-value test that imports it via `import_line`.
+fn classify_src_layout_bulk_discount(
+    owner_file: &str,
+    import_line: &str,
+) -> Result<crate::domain::Finding, String> {
+    let owners = extract_owners(Path::new(owner_file), SRC_LAYOUT_DISCOUNTS_SOURCE);
+    let tests = extract_tests(
+        Path::new("tests/test_discounts.py"),
+        &format!(
+            "{import_line}\n\n\ndef test_bulk_discount_large_order():\n    assert bulk_discount(101) == 0.15\n"
+        ),
+    );
+    assert_eq!(
+        tests.len(),
+        1,
+        "fixture must parse exactly one pytest test for {import_line}"
+    );
+    classify_change(
+        Path::new(owner_file),
+        2,
+        SRC_LAYOUT_DISCOUNTS_CHANGED_LINE,
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| format!("changed predicate in {owner_file} should classify"))
+}
+
+#[test]
+fn src_layout_owner_imported_by_package_name_credits_exposed() -> Result<(), String> {
+    // PyPA src layout: the owner lives at `src/pricing/discounts.py`, but the
+    // import root is `src/`, so tests write `from pricing.discounts import ...`.
+    // That is a real import of the owner's module and must carry free-function
+    // module identity (before the fix it was `weakly_exposed` /
+    // `strong_oracle_observes_different_sink`).
+    let finding = classify_src_layout_bulk_discount(
+        "src/pricing/discounts.py",
+        "from pricing.discounts import bulk_discount",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a src-layout package import of the owner module is identity-bearing"
+    );
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    Ok(())
+}
+
+#[test]
+fn src_layout_owner_imported_with_src_prefix_still_credits_exposed() -> Result<(), String> {
+    // Keep the repository-relative form: projects that put the repository root
+    // on `sys.path` really do write `from src.pricing.discounts import ...`.
+    let finding = classify_src_layout_bulk_discount(
+        "src/pricing/discounts.py",
+        "from src.pricing.discounts import bulk_discount",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    Ok(())
+}
+
+#[test]
+fn nested_src_layout_owner_imported_by_package_name_credits_exposed() -> Result<(), String> {
+    // Monorepo src layout: `packages/billing/src/pricing/discounts.py` is
+    // imported as `pricing.discounts` when `packages/billing/src` is the root.
+    let finding = classify_src_layout_bulk_discount(
+        "packages/billing/src/pricing/discounts.py",
+        "from pricing.discounts import bulk_discount",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    Ok(())
+}
+
+#[test]
+fn src_layout_same_named_function_from_other_module_does_not_credit_exposed() -> Result<(), String>
+{
+    // Discriminating negatives: stripping the `src` import root must not turn
+    // a same-named function from a DIFFERENT module, or a bare stem/suffix of
+    // the owner module path, into module identity. Only an exact module-path
+    // match counts.
+    for import_line in [
+        "from pricing.other import bulk_discount",
+        "from src.pricing.other import bulk_discount",
+        "from discounts import bulk_discount",
+        "from other.pricing.discounts import bulk_discount",
+    ] {
+        let finding = classify_src_layout_bulk_discount("src/pricing/discounts.py", import_line)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "`{import_line}` is not the owner module and must not credit exposed"
+        );
+        assert_eq!(
+            finding.alignment_reason.as_deref(),
+            Some("strong_oracle_observes_different_sink"),
+            "`{import_line}` must stay on the fail-closed orthogonal branch"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn src_directory_below_repo_root_is_not_stripped_for_non_src_owner() -> Result<(), String> {
+    // Only a directory literally named `src` is an import root. An owner at
+    // `app/pricing/discounts.py` imported as `pricing.discounts` stays
+    // unmatched (its module is `app.pricing.discounts`), so the fix does not
+    // widen identity to arbitrary path suffixes.
+    let finding = classify_src_layout_bulk_discount(
+        "app/pricing/discounts.py",
+        "from pricing.discounts import bulk_discount",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert_eq!(
+        finding.alignment_reason.as_deref(),
+        Some("strong_oracle_observes_different_sink")
+    );
+    Ok(())
+}
+
 #[test]
 fn changed_sink_token_requires_delta_not_unchanged_operand() -> Result<(), String> {
     // #1276: the delta is `max` (the wrap); the oracle observes the UNCHANGED

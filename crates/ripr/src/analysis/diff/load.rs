@@ -11,6 +11,11 @@ mod contract_tests;
 /// `effective_base` is the explicit base when one was given, the resolved
 /// default base when the loader chose one, and `None` when the text came
 /// from a diff file or stdin (where `base` is ignored by contract).
+///
+/// A reported base is always one that resolved, because the field only exists
+/// on a successful load: `resolve_effective_base` rejects an unresolvable
+/// explicit `--base` before the diff runs, and a base that slipped past that
+/// probe still fails in `run_git_diff`.
 pub struct LoadedDiff {
     pub text: String,
     pub effective_base: Option<String>,
@@ -50,20 +55,20 @@ pub fn load_diff_with_effective_base(
         });
     }
 
+    // #3952: a missing root must fail as a missing root, not as an
+    // unresolvable base. Default-base resolution would otherwise turn a
+    // typo'd --root into "could not resolve a default base", misdirecting
+    // the caller toward --base.
+    if !root.is_dir() {
+        return Err(format!(
+            "repository root {} does not exist or is not a directory",
+            root.display()
+        ));
+    }
+
     warn_if_git_operation_in_progress(root, git_timeout);
 
-    // RIPR-SPEC-0084: when the caller passes an explicit base, use it as-is
-    // (if it does not exist, git diff will surface a clear error that names
-    // the ref the user chose). When the caller passes None (bare `ripr check`,
-    // no --base flag), resolve the repo's real default branch rather than
-    // hardcoding origin/main.
-    let owned;
-    let base: &str = if let Some(explicit) = base {
-        explicit
-    } else {
-        owned = resolve_default_base(root, git_timeout)?;
-        &owned
-    };
+    let base = resolve_effective_base(root, base, git_timeout)?;
 
     let text = run_git_diff(
         root,
@@ -73,7 +78,7 @@ pub fn load_diff_with_effective_base(
     )?;
     Ok(LoadedDiff {
         text,
-        effective_base: Some(base.to_string()),
+        effective_base: Some(base),
     })
 }
 
@@ -97,19 +102,101 @@ pub fn load_worktree_diff_with_effective_base(
 ) -> Result<LoadedDiff, String> {
     warn_if_git_operation_in_progress(root, git_timeout);
 
-    let owned;
-    let base: &str = if let Some(explicit) = base {
-        explicit
-    } else {
-        owned = resolve_default_base(root, git_timeout)?;
-        &owned
-    };
+    let base = resolve_effective_base(root, base, git_timeout)?;
 
-    let text = run_git_diff(root, base, &["--submodule=short"], git_timeout)?;
+    let text = run_git_diff(root, &base, &["--submodule=short"], git_timeout)?;
     Ok(LoadedDiff {
         text,
-        effective_base: Some(base.to_string()),
+        effective_base: Some(base),
     })
+}
+
+/// Resolve the base ref the diff will actually run against, which is also
+/// the value reported as [`LoadedDiff::effective_base`].
+///
+/// RIPR-SPEC-0084: an explicit `--base` is never substituted. It is only
+/// verified, so an unresolvable ref fails in ripr's own voice — naming the ref
+/// the user chose and saying the analysis did not run — instead of reaching
+/// `git diff` and surfacing git's `ambiguous argument` usage advice, which
+/// recommends `--` path separation for a mistake the user did not make. The
+/// zero-config path (no `--base`) still resolves the repository's real default
+/// branch below.
+///
+/// Both of those failures ask [`not_a_work_tree`] first, because neither
+/// names the right thing when the root is not a repository: no ref resolves
+/// there, so blaming the chosen ref or the default-base search sends the user
+/// to a repair that cannot work. When that probe answers, its message replaces
+/// theirs; otherwise they stand.
+///
+/// The probe is evidence, not an assumption: only a `rev-parse` that actually
+/// ran and reported the ref absent produces the named failure above. When the
+/// probe cannot complete at all — the spawn fails, or it exceeds `git_timeout`
+/// — this returns the base unverified and `run_git_diff` decides, exactly as
+/// before this check existed.
+///
+/// That fallback is deliberately unconditional about *why* the probe failed,
+/// so it also carries the case where the ref really is absent but nothing
+/// could establish it. Git's raw `ambiguous argument` advice can therefore
+/// still reach the user on that path; the trade is that a probe which never
+/// ran is never allowed to assert a bad ref, and an unusable root keeps
+/// producing the `failed to run git diff: ...` text that the `context` and
+/// `explain` invalid-root contract pins.
+fn resolve_effective_base(
+    root: &Path,
+    base: Option<&str>,
+    git_timeout: Option<Duration>,
+) -> Result<String, String> {
+    let Some(explicit) = base else {
+        return resolve_default_base(root, git_timeout)
+            .map_err(|err| not_a_work_tree(root, git_timeout).unwrap_or(err));
+    };
+
+    let commit = format!("{explicit}^{{commit}}");
+    match git_ref_output(root, &commit, git_timeout) {
+        Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
+            .unwrap_or_else(|| {
+                format!(
+                    "the base `{explicit}` does not resolve to a commit (the analysis did not \
+                     run). Fetch the ref (for example `git fetch origin`) or pass `--base <ref>` \
+                     for a ref this repository has."
+                )
+            })),
+        _ => Ok(explicit.to_string()),
+    }
+}
+
+/// The accurate failure when no base could resolve because `root` is not a Git
+/// work tree, or `None` when it is one.
+///
+/// Every base failure above reads as a ref problem and sends the user to
+/// `git fetch` or to a different `--base`. Outside a repository neither repair
+/// applies: no ref can resolve there, so `git fetch origin` fails for the same
+/// reason the base did. Only this probe tells the two apart, and it runs on the
+/// failure path alone, so the ordinary run still costs one `rev-parse`.
+///
+/// It is evidence on the same terms as the base probe: `None` when the command
+/// could not run at all, because a probe that never ran may not assert that a
+/// directory is not a repository any more than it may assert a ref is absent.
+/// `--is-inside-work-tree` prints `true` only inside a work tree, so a run that
+/// printed anything else — or failed, which is what it does outside a
+/// repository — is the case this names.
+fn not_a_work_tree(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--is-inside-work-tree"],
+        git_timeout,
+    )
+    .ok()?;
+    if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true" {
+        return None;
+    }
+    Some(format!(
+        "`{}` is not inside a Git work tree (the analysis did not run). `ripr check` diffs \
+         committed history, so run it from inside your repository, or pass `--root <path>` \
+         pointing at one. For a repository-free scan of the current sources, use \
+         `ripr check --root . --format repo-exposure-md`.",
+        root.display()
+    ))
 }
 
 /// Resolve the best available base ref for `ripr check` when none was
@@ -257,6 +344,21 @@ pub fn load_diff_range(root: &Path, base: &str, head: &str) -> Result<String, St
         &["--unified=0", "--no-ext-diff", "--submodule=short"],
         None,
     )
+}
+
+/// PR-evidence range path (issue #3930): the same pinned presentation as
+/// the analysis loaders, with `--binary` as the caller extra (the packet
+/// artifact keeps binary hunks) and three context lines (the pre-#3930
+/// `PR_DIFF` presentation was Git's three-line default). No
+/// `--submodule=short`: submodule rendering stays exactly as the
+/// PR-evidence path produced it, so ordinary repositories see
+/// byte-identical `PR_DIFF`. The packet artifact records evidence, so the
+/// decode stays strict like the pre-#3930 helper: non-UTF-8 stdout is a
+/// named error, never silently recorded with replacement characters. Like
+/// [`load_diff_range`], no deadline is threaded.
+pub fn load_pr_evidence_diff_range(root: &Path, base: &str, head: &str) -> Result<String, String> {
+    let bytes = run_git_diff_bytes(root, &format!("{base}...{head}"), &["--binary"], "3", None)?;
+    String::from_utf8(bytes).map_err(|err| format!("packet diff is not valid UTF-8: {err}"))
 }
 
 /// Return `true` when the working tree at `root` has uncommitted changes to
@@ -417,11 +519,44 @@ fn run_git_diff(
     extra_args: &[&str],
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
+    // Analysis loaders consume source-coordinate patches: zero context
+    // lines stay the assembly default.
+    run_git_diff_with_unified(root, range, extra_args, "0", git_timeout)
+}
+
+fn run_git_diff_with_unified(
+    root: &Path,
+    range: &str,
+    extra_args: &[&str],
+    unified: &str,
+    git_timeout: Option<Duration>,
+) -> Result<String, String> {
+    // Analysis decodes lossy (unchanged): coordinates come from the
+    // C-quoted path contract above, and hunk bodies are parsed, not
+    // recorded as evidence.
+    Ok(String::from_utf8_lossy(&run_git_diff_bytes(
+        root,
+        range,
+        extra_args,
+        unified,
+        git_timeout,
+    )?)
+    .into_owned())
+}
+
+fn run_git_diff_bytes(
+    root: &Path,
+    range: &str,
+    extra_args: &[&str],
+    unified: &str,
+    git_timeout: Option<Duration>,
+) -> Result<Vec<u8>, String> {
     // Delegate the spawn to the shared git authority (#1921, #2303), which
-    // spawns with `current_dir(root)`: a missing/unusable root fails the
-    // SPAWN, so the wrap arm below reproduces the established
-    // `failed to run git diff: ...` text the context/explain invalid-root
-    // contract pins. The named timeout and cancellation errors pass through
+    // spawns with `current_dir(root)`. A missing root never reaches the
+    // spawn: `load_diff_with_effective_base` rejects non-directories up
+    // front (#3952), so the wrap arm below only reproduces the
+    // `failed to run git diff: ...` text for other invocation failures.
+    // The named timeout and cancellation errors pass through
     // unwrapped so the LSP refresh path can match them; the non-zero-exit
     // text below stays byte-identical.
     // `core.quotePath=true` pins the diff input contract (#3601): with the
@@ -437,12 +572,16 @@ fn run_git_diff(
     // Analysis consumes source-coordinate patches, not human diff views.
     // Pin every caller, including worktree mode: helpers can suppress real
     // changes, textconv can invent source coordinates, and ambient context
-    // can expand a one-line edit into a full-file payload (#3850).
+    // can expand a one-line edit into a full-file payload (#3850). The
+    // context-line count is the one caller-selected presentation knob (the
+    // appended pin wins over any same-named extra): analysis takes zero,
+    // the PR-evidence packet takes three.
+    let unified_arg = format!("--unified={unified}");
     args.extend_from_slice(&[
         "--no-ext-diff",
         "--no-textconv",
         "--no-color",
-        "--unified=0",
+        unified_arg.as_str(),
         "--inter-hunk-context=0",
     ]);
     args.push(range);
@@ -463,7 +602,7 @@ fn run_git_diff(
         ));
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(output.stdout)
 }
 
 #[cfg(test)]
@@ -914,27 +1053,186 @@ mod tests {
     #[test]
     fn explicit_base_is_used_as_is_without_resolution() -> std::io::Result<()> {
         // When an explicit base is given, load_diff does not attempt resolution.
-        // A nonexistent explicit base should produce a git-diff error (not the
-        // named "could not resolve" message), confirming the explicit path is kept.
+        // A nonexistent explicit base must fail naming the ref the user chose,
+        // never the auto-resolve message (that would mean we silently
+        // substituted it).
         let dir = unique_fixture_root("explicit-base-no-subst")?;
         let _ = fs::remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
         let result = load_diff(&dir, Some("nonexistent-branch-xyz"), None, None);
         let err = result.expect_err("expected error for nonexistent explicit base");
-        // Must NOT contain the auto-resolve message (that would mean we silently
-        // substituted the explicit ref).
         assert!(
             !err.contains("could not resolve a default base"),
             "explicit base must not trigger auto-resolve fallback; got: {err}"
         );
-        // Must surface a git error referencing the chosen ref.
         assert!(
             err.contains("nonexistent-branch-xyz") || err.contains("git diff failed"),
-            "expected git-diff error for explicit bad base, got: {err}"
+            "expected error naming the chosen ref, got: {err}"
         );
 
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn unresolvable_explicit_base_reports_the_ref_instead_of_git_usage_advice()
+    -> std::io::Result<()> {
+        // The user-facing defect: `ripr check --base origin/main` in a repo with
+        // no `origin` used to print git's raw `ambiguous argument` text, whose
+        // remedy ("use `--` to separate paths from revisions") addresses a
+        // mistake the user did not make. The failure now names the ref, says the
+        // analysis did not run, and gives the two real next actions.
+        let dir = unique_fixture_root("explicit-base-named-failure")?;
+        let _ = fs::remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        let err = load_diff(&dir, Some("origin/main"), None, None)
+            .expect_err("expected error for a base with no origin remote");
+
+        assert!(
+            err.contains("`origin/main`"),
+            "expected the chosen ref to be named, got: {err}"
+        );
+        assert!(
+            err.contains("does not resolve to a commit"),
+            "expected the named non-resolution state, got: {err}"
+        );
+        assert!(
+            err.contains("the analysis did not run"),
+            "expected an explicit did-not-run boundary so an unresolvable base \
+             is never read as an empty result, got: {err}"
+        );
+        assert!(
+            err.contains("--base <ref>"),
+            "expected the next action, got: {err}"
+        );
+        // Discriminator: git's usage advice for a different mistake must be gone.
+        assert!(
+            !err.contains("ambiguous argument") && !err.contains("separate paths from revisions"),
+            "raw git usage advice must not reach the user, got: {err}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn resolvable_explicit_base_still_loads_its_diff() -> std::io::Result<()> {
+        // Negative control for the preflight above: a base that does resolve is
+        // analyzed exactly as before, so the new check cannot pass by rejecting
+        // every explicit base.
+        let dir = unique_fixture_root("explicit-base-resolvable")?;
+        let _ = fs::remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        fs::write(dir.join("src.rs"), "pub fn added() -> i32 { 1 }\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "add src"])?;
+
+        let loaded = load_diff(&dir, Some("HEAD~1"), None, None);
+        assert!(
+            loaded.as_ref().is_ok_and(|diff| diff.contains("src.rs")),
+            "expected a resolvable explicit base to analyze the changed file, got: {loaded:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_load_reports_an_unresolvable_explicit_base_by_name() -> std::io::Result<()> {
+        // `--worktree` shares the same base authority, so it shares the fix.
+        let dir = unique_fixture_root("worktree-base-named-failure")?;
+        let _ = fs::remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        let err = load_worktree_diff(&dir, Some("origin/main"), None)
+            .expect_err("expected error for a worktree base with no origin remote");
+        assert!(
+            err.contains("`origin/main`") && err.contains("does not resolve to a commit"),
+            "expected the named non-resolution state, got: {err}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn outside_a_work_tree_names_the_missing_repository_not_a_missing_ref() -> std::io::Result<()> {
+        // A root that is not a usable work tree fails every base, and the ref
+        // messages send the user to `git fetch origin` or to a different
+        // `--base`. Neither repair applies there: `git fetch` fails for the
+        // same reason the base did. Reported against a plain directory, where
+        // `--base origin/main` printed git's whole `--no-index` usage — 129
+        // lines of it — with `ripr:` in front.
+        //
+        // The two fixtures are the two ways the probe establishes it, and
+        // neither depends on where the temp directory happens to live: a bare
+        // repository makes `--is-inside-work-tree` print `false`, and an
+        // invalid gitfile makes it exit nonzero. A plain directory outside any
+        // checkout takes the second path, so it is the second fixture's case.
+        let bare = unique_fixture_root("no-work-tree-bare")?;
+        run_git_checked(&bare, &["init", "--bare", "--quiet", "."])?;
+        let gitfile = unique_fixture_root("no-work-tree-gitfile")?;
+        fs::write(gitfile.join(".git"), "not a gitfile\n")?;
+
+        for dir in [&bare, &gitfile] {
+            // Assert the fixture before reading anything into the message: a
+            // root that is a work tree would make this pass for another reason.
+            let probe = crate::git::run_git_output_with_deadline(
+                dir,
+                &["rev-parse", "--is-inside-work-tree"],
+                None,
+            )
+            .map_err(std::io::Error::other)?;
+            assert!(
+                !(probe.status.success()
+                    && String::from_utf8_lossy(&probe.stdout).trim() == "true"),
+                "fixture {} is a work tree, so this test proves nothing",
+                dir.display()
+            );
+
+            for base in [Some("origin/main"), None] {
+                let err = load_diff(dir, base, None, None)
+                    .expect_err("expected an error outside a work tree");
+                assert!(
+                    err.contains("not inside a Git work tree"),
+                    "expected the repository state to be named for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                assert!(
+                    err.contains("the analysis did not run"),
+                    "expected the did-not-run boundary for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                assert!(
+                    err.contains("--root <path>"),
+                    "expected the next action for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                // Discriminators. The ref advice is wrong here, and so is git's
+                // own text; neither may reach the user in this state.
+                assert!(
+                    !err.contains("does not resolve to a commit") && !err.contains("git fetch"),
+                    "ref-repair advice must not be given for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                assert!(
+                    !err.contains("could not resolve a default base"),
+                    "default-base search advice must not be given for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                assert!(
+                    !err.contains("--no-index") && !err.contains("invalid gitfile"),
+                    "raw git output must not reach the user for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+            }
+        }
+
+        let _ = fs::remove_dir_all(&bare);
+        let _ = fs::remove_dir_all(&gitfile);
         Ok(())
     }
 

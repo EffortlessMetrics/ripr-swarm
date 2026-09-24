@@ -57,6 +57,11 @@ pub(super) const PR_REVIEW_HELP: &str = r#"Compose the first-screen PR review su
 
 Usage: ripr pr-review front-panel [--root PATH] [--pr-guidance PATH] [--first-action PATH] [--assistant-proof PATH] [--assistant-health PATH] [--ledger PATH] [--baseline-delta PATH] [--zero-status PATH] [--gate-decision PATH] [--recommendation-calibration PATH] [--mutation-calibration PATH] [--coverage-frontier PATH] [--receipt PATH] [--out PATH] [--out-md PATH]
 
+At least one artifact input is required. Each one below is individually
+optional, but `ripr pr-review front-panel` with none exits 2 rather than
+guessing where artifacts live, so the paths printed in `ripr help --all` are
+examples of what to pass, not defaults that are read for you.
+
 Front-panel options:
   --root PATH                         Workspace root label. Defaults to current directory.
   --pr-guidance PATH                  Optional PR guidance JSON from `ripr review-comments`.
