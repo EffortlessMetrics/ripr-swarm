@@ -6877,12 +6877,23 @@ language = "rust"
     fn typescript_preview_receipt_command_is_not_ripr_outcome() -> Result<(), String> {
         let check = ts_repair_packet_complete_check_json()?;
         let command = ts_packet_receipt_command(ts_repair_packet(&check)?)?;
-        let words = posix_words(&command)?;
-        if words.get(..2) == Some(&["ripr".to_string(), "outcome".to_string()][..])
-            || command.contains("ripr outcome")
-        {
+        if command.contains("ripr outcome") {
             return Err(format!(
                 "receipt_command must not be a ripr outcome invocation: {command}"
+            ));
+        }
+        let words = posix_words(&command)?;
+        if words.get(..3)
+            != Some(
+                &[
+                    "ripr".to_string(),
+                    "receipt".to_string(),
+                    "write".to_string(),
+                ][..],
+            )
+        {
+            return Err(format!(
+                "receipt_command must be a ripr receipt write invocation: {command}"
             ));
         }
         let receipt_args = words.get(3..).ok_or("receipt command has no arguments")?;
