@@ -5,8 +5,8 @@ use super::source_utils::{
 };
 use super::static_limits::{collect_static_cli_receiver_names, is_static_route_decorator};
 use super::{
-    PythonImport, PythonOwner, PythonTest, collect_assertions_from_statements, expr_full_name,
-    first_parenthesized_string_argument,
+    PythonImport, PythonOwner, PythonParameter, PythonTest, collect_assertions_from_statements,
+    expr_full_name, first_parenthesized_string_argument,
 };
 use crate::domain::OwnerKind;
 use rustpython_parser::{
@@ -41,6 +41,7 @@ pub(super) fn collect_owners_from_statements(
                     function.name.as_str(),
                     function.range,
                     &function.decorator_list,
+                    &function.args,
                     false,
                 ));
             }
@@ -55,6 +56,7 @@ pub(super) fn collect_owners_from_statements(
                     function.name.as_str(),
                     function.range,
                     &function.decorator_list,
+                    &function.args,
                     true,
                 ));
             }
@@ -97,6 +99,7 @@ fn owner_from_function(
     name: &str,
     range: TextRange,
     decorators: &[Expr],
+    args: &ast::Arguments,
     is_async: bool,
 ) -> PythonOwner {
     let decorator_names = decorator_names(decorators);
@@ -132,7 +135,27 @@ fn owner_from_function(
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths,
         dynamic_route_decorators,
+        parameters: function_parameters(context.source, args),
     }
+}
+
+/// Declared parameters in binding order: positional-only, then regular, then
+/// keyword-only. `*args` / `**kwargs` are not bindable names and are omitted.
+fn function_parameters(source: &str, args: &ast::Arguments) -> Vec<PythonParameter> {
+    let parameter = |arg: &ast::ArgWithDefault, keyword_only: bool| PythonParameter {
+        name: arg.def.arg.to_string(),
+        default: arg
+            .default
+            .as_ref()
+            .map(|default| text_for_range(source, default.range()).trim().to_string()),
+        keyword_only,
+    };
+    args.posonlyargs
+        .iter()
+        .chain(args.args.iter())
+        .map(|arg| parameter(arg, false))
+        .chain(args.kwonlyargs.iter().map(|arg| parameter(arg, true)))
+        .collect()
 }
 
 fn owner_from_class(
@@ -157,6 +180,7 @@ fn owner_from_class(
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths: collect_static_route_paths(context.source, decorators),
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
+        parameters: Vec::new(),
     }
 }
 
@@ -178,6 +202,7 @@ pub(super) fn module_owner(
         cli_receiver_names: collect_static_cli_receiver_names(source, imports),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     }
 }
 

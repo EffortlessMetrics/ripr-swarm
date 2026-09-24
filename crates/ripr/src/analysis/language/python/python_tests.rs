@@ -1042,6 +1042,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1302,6 +1303,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1337,6 +1339,7 @@ fn same_stem_related_handles_missing_stems() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     };
     let test = PythonTest {
         name: "test_x".to_string(),
@@ -2756,6 +2759,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -2818,6 +2822,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -2873,6 +2878,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     }
 }
 

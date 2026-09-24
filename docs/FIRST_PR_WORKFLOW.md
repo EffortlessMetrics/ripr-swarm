@@ -145,6 +145,18 @@ The before phase prints the exact `--attempt` command; see
 and receipt commands below remain available for gap-ledger records and explicit
 control.
 
+When the gap ledger selects no top gap, `ripr first-pr` reads the review cards
+(`--review-comments`, default `target/ripr/review/comments.json`) and selects
+the first card that carries `llm_guidance.repair_command`. `start-here.md`
+then shows a `Start repair` line before `Verify command`, and
+`ripr pr-summary` carries the same command as its first local reproduction
+command. Only cards past the fail-closed repair-packet flip carry the command;
+first-pr copies it and never builds one from a seam id. If no card carries one,
+the no-action reason says why and, when the cards are missing or were rendered
+from the gap ledger, names the seam-level
+`ripr review-comments --root . --base origin/main --head HEAD --out target/ripr/review/comments.json`
+route.
+
 For a gap-ledger-backed task, create the focused agent packet:
 
 ```bash

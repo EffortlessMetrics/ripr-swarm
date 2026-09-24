@@ -125,6 +125,13 @@ fn render_start_here_top_gap(out: &mut String, start_here_value: Option<&Value>)
             "none"
         )
     ));
+    if let Some(command) = start_here_value
+        .and_then(|value| value.pointer("/selected/repair_command"))
+        .and_then(Value::as_str)
+        .filter(|command| !command.trim().is_empty())
+    {
+        out.push_str(&format!("- start repair: `{command}`\n"));
+    }
     out.push_str(&format!(
         "- verify: `{}`\n",
         value_string(start_here_value, &["selected", "verify_command"])
@@ -471,6 +478,9 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
         out.push_str(&format!("- language: `{}`\n", repair.language));
         out.push_str(&format!("- repair kind: `{}`\n", repair.repair_kind));
         out.push_str(&format!("- target: `{}`\n", repair.target));
+        if let Some(command) = &repair.repair_command {
+            out.push_str(&format!("- start repair: `{command}`\n"));
+        }
         out.push_str(&format!("- verify: `{}`\n", repair.verify_command));
         out.push_str(&format!("- receipt: `{}`\n", repair.receipt_command));
         out.push_str(&format!("- receipt state: `{}`\n", repair.receipt_state));
@@ -517,4 +527,48 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
     );
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #3906: the legacy start-here section shows the carried repair start
+    /// before verify, and nothing when start-here carries none.
+    #[test]
+    fn start_here_top_gap_leads_with_the_carried_repair_start() -> Result<(), String> {
+        let command = "ripr agent repair --root crates/pricing --seam-id seam-b --phase before";
+        let mut start_here = serde_json::json!({
+            "selected": {
+                "state": "top_gap",
+                "seam_id": "seam-b",
+                "verify_command": "ripr agent verify --root . --json",
+                "repair_command": command
+            }
+        });
+        let mut with = String::new();
+        render_start_here_top_gap(&mut with, Some(&start_here));
+        let start = with
+            .find(&format!("- start repair: `{command}`\n"))
+            .ok_or_else(|| format!("missing start repair line:\n{with}"))?;
+        let verify = with
+            .find("- verify: `")
+            .ok_or_else(|| format!("missing verify line:\n{with}"))?;
+        if start > verify {
+            return Err(format!("start repair must precede verify:\n{with}"));
+        }
+
+        if let Some(selected) = start_here
+            .get_mut("selected")
+            .and_then(Value::as_object_mut)
+        {
+            selected.remove("repair_command");
+        }
+        let mut without = String::new();
+        render_start_here_top_gap(&mut without, Some(&start_here));
+        if without.contains("start repair") || without.contains("agent repair") {
+            return Err(format!("no repair start without the field:\n{without}"));
+        }
+        Ok(())
+    }
 }

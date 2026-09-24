@@ -129,8 +129,11 @@ fn run_check(
         // If invocation fails (missing binary, timeout, non-zero exit, no
         // packet), leave perl_facts_path as None so the pipeline records a
         // Perl `unavailable` language_runs[] entry and the other languages'
-        // findings still emit. The error is surfaced as the language_runs
-        // reason string.
+        // findings still emit. Known gap: the producer error is surfaced
+        // only as the stderr warning below. The Perl `language_runs` reason
+        // and the typed outcome limitation carry the adapter's generic
+        // missing-packet reason, because the pipeline has no carrier for
+        // this error (threading one needs a new `AnalysisOptions` field).
         match invoke_perl_lsp_producer(perl_config, &input) {
             Ok(packet_path) => input.perl_facts_path = Some(packet_path),
             Err(reason) => {
