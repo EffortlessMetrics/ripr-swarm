@@ -366,7 +366,7 @@ Updated:
 ## Pending — ts_repair_packet_complete (4)
 
 Reason:
-RIPR-SPEC-0087: TypeScript preview receipt_command stays a ripr outcome invocation but drops --verify-cmd, which ripr outcome rejects (#3906)
+RIPR-SPEC-0079: TypeScript preview receipt_command is the canonical ripr receipt write command from the shared receipt-write owner, not ripr outcome (#3906)
 
 Command:
 `cargo xtask goldens bless ts_repair_packet_complete --reason "..."`

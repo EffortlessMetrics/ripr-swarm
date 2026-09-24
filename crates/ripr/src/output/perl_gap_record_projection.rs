@@ -152,7 +152,7 @@ pub(crate) fn perl_gap_record_for(finding: &Finding) -> Option<GapRecord> {
 
     // Build the receipt command (mirrors the TS receipt shape — no external
     // provider, no curl/http; the shared validator only checks non-empty).
-    let receipt_command = perl_receipt_command(&canonical_gap_id);
+    let receipt_command = perl_receipt_command(&canonical_gap_id, verify_command);
 
     // route_kind: map the Perl repair kind onto the shared Rust taxonomy.
     // (Mirrors `perl_route_kind` at gap_decision_ledger.rs:1142-1154 — kept
@@ -252,18 +252,19 @@ pub(crate) fn perl_gap_record_for(finding: &Finding) -> Option<GapRecord> {
 /// Mirrors `typescript_receipt_command`: a fixed `ripr outcome …` shape with
 /// no external provider, curl, or http request. The shared validator only
 /// checks `receipt_command` is non-empty (`agent_seam_packets.rs:904-911`).
-pub(crate) fn perl_receipt_command(canonical_gap_id: &str) -> String {
+pub(crate) fn perl_receipt_command(canonical_gap_id: &str, verify_command: &str) -> String {
     let slug = canonical_gap_id
         .chars()
         .map(|c| if c == ':' || c == '/' { '_' } else { c })
         .collect::<String>();
     let receipt_path = format!("target/ripr/receipts/{slug}.targeted-test-outcome.json");
-    // `ripr outcome` accepts only --before/--after/--format/--out, so the
-    // verify command is not part of this string: the record carries it in its
-    // own `verify_command` field. Emitting it here as `--verify-cmd` produced
-    // a receipt command that `ripr outcome` rejected when copied (#3906).
+    // Route both operator-supplied values through the shared bash encoder
+    // rather than wrapping them in double quotes here: a verify command
+    // containing `$`, a backtick, or a redirect would otherwise execute when
+    // this advisory string is copied into a shell (#2347).
     format!(
-        "ripr outcome --before <baseline> --after <repair> --out {}",
+        "ripr outcome --before <baseline> --after <repair> --verify-cmd {} --out {}",
+        shell_arg(verify_command),
         shell_arg(&receipt_path)
     )
 }
@@ -591,7 +592,7 @@ mod tests {
     /// (mirrors the TS receipt invariant).
     #[test]
     fn perl_receipt_command_is_ripr_outcome_shape() {
-        let cmd = perl_receipt_command("gap:perl:lib/My/App.pm:discount");
+        let cmd = perl_receipt_command("gap:perl:lib/My/App.pm:discount", "prove t/app.t");
         assert!(
             cmd.starts_with("ripr outcome --before"),
             "receipt must be a ripr outcome command: {cmd}"

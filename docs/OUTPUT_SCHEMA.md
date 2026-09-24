@@ -1199,6 +1199,11 @@ JSON fields:
   optional `owner`, `verify_command`, optional `receipt_command`, `allowed_edit_surface[]`,
   `forbidden_files[]`, `must_not_change[]`, optional `assertion_shape`,
   optional `repair_kind`, optional `target_test`, and optional `missing_discriminator`.
+  When present, `receipt_command` is the canonical RIPR-SPEC-0079
+  `ripr receipt write --gap <canonical_gap_id> --verify-command <verify_command>
+  --status not_run --out target/ripr/receipts/<gap_slug>.json` command built by
+  the shared receipt-write owner — the same string the gap decision ledger
+  synthesizes for that gap — and never a `ripr outcome` movement command.
   When absent, the human output contains a named `status: not actionable` limitation
   section instead. This field is RIPR-SPEC-0088 §2.2. It is not a gate, badge, or
   public repair authority; authority boundary remains `preview_advisory_only`.

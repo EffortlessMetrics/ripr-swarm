@@ -131,8 +131,11 @@ with a **named** reason surfaced in `actionability_category` or
   fields validated by `validate_agent_gap_record_packet`: `projection_eligibility`,
   `repair_route`, `verification_commands`, `repairability`, `allowed_edit_surface`,
   `receipt_command`.
-- A `receipt_command` of the form `ripr outcome … target/ripr/receipts/<gap_id>.json`
-  (no external provider, no fabricated command).
+- A `receipt_command` in the canonical RIPR-SPEC-0079 form
+  `ripr receipt write --gap <canonical_gap_id> --verify-command <verify_command>
+  --status not_run --out target/ripr/receipts/<gap_slug>.json`, built by the
+  shared receipt-write owner (no external provider, no fabricated command, never
+  `ripr outcome`).
 - A `canonical_gap_id` of the form `gap:typescript:<family>:<fp8>`, with path
   normalized `\`→`/`.
 - Behavioral fixtures for the complete case (flips) and one per each of the
@@ -286,7 +289,7 @@ producer audit.
 
 | Packet field | Why missing today | Producer PR 7 adds | Real basis (no fabrication) |
 | --- | --- | --- | --- |
-| `receipt_command` | validator rejects on empty (§1.1 cond. 6); actionability.rs lists it missing at lines 96/119/142/168 | `typescript_receipt_command(finding)` deriving a `ripr outcome --before … --after … --out target/ripr/receipts/<canonical_gap_id>.targeted-test-outcome.json` | Mirrors the Rust receipt shape (`render_agent_gap_record_packet_json`); the `<gap_id>` slug is the canonical gap id from this same projection — no new external command, no provider call |
+| `receipt_command` | validator rejects on empty (§1.1 cond. 6); actionability.rs lists it missing at lines 96/119/142/168 | NOT a new TS producer — the shared `preview_receipt_write_command(record)` (gap_decision_ledger.rs), which calls the RIPR-SPEC-0079 owner `output::receipt_write::receipt_write_command` to emit `ripr receipt write --gap <canonical_gap_id> --verify-command <verify_command> --status not_run --out target/ripr/receipts/<gap_slug>.json` | RIPR-SPEC-0079 `canonical_receipt_command` field rule; the gap ledger synthesizes the same string for the same record, so the packet and the ledger agree — no new external command, no provider call, never `ripr outcome` |
 | `must_not_change` | actionability.rs lists missing at line 168 | `typescript_must_not_change(language_status)` returning the **same** constant boundary list the Rust packet uses, **including** the preview-language clause | Reuses `gap_record_packet_do_not_do` semantics; for preview it MUST include "Do not treat preview-language evidence as gate authority." |
 | `allowed_edit_surface` | actionability.rs lists missing at lines 97/120/143/169 | NOT a new TS producer — derived by the **shared** `allowed_edit_surface_for_gap_route(route)` from `repair_route.target_file`/`related_test` | Reuses the existing shared function (agent_seam_packets.rs:906); PR 7 only ensures the projected `repair_route` carries a tokenizable test file so the shared fn returns non-empty |
 | `canonical_gap_id` | no TS producer; actionability.rs lists missing at line 162 | `typescript_canonical_gap_id(finding)` = content-addressed `gap:typescript:<probe_family>:<fp8>` derived from the existing content-addressed finding id | MUST normalize `\`→`/` before hashing (per content-addressed-ids learning) so Windows-blessed goldens match Linux CI; reuses the finding's existing SHA-256 fp8, no new hash domain |
@@ -317,7 +320,7 @@ guard that MUST hold for the flip; failing it ⇒ `repair_packet_ready: false`.
 | F4 | Cross-package / monorepo test that doesn't exercise the owner | related test resolved same-package; workspace_root filtered before ranking | related_tests.rs ownership filter; else `missing_context` (preview) |
 | F5 | Guessed/templated `verify_command` | command produced by `verify_command_for_discovery()` from real framework/runner discovery; the complete legacy verification list is non-empty and every display is non-whitespace after trimming | validator cond. 3; package.rs |
 | F6 | Missing receipt ⇒ unrecordable repair | `receipt_command` is present and non-whitespace after trimming | validator cond. 6 (§1.1); §3.2 |
-| F7 | Receipt delegates to external provider | receipt is a `ripr outcome …` invocation only; reject any `curl`/`http`/provider-name pattern | `typescript_receipt_command` constructs a fixed `ripr outcome` shape; no interpolation of free text |
+| F7 | Receipt delegates to external provider or names a movement command | receipt is the canonical `ripr receipt write …` invocation only (RIPR-SPEC-0079); never `ripr outcome`; reject any `curl`/`http`/provider-name pattern | the shared receipt-write owner constructs the command; operator values pass through the shared bash encoder (`shell_arg`) |
 | F8 | Implicit / unbounded edit surface | `allowed_edit_surface_for_gap_route(route)` non-empty AND tokenizes to a single test file | validator cond. 5 (shared fn) |
 | F9 | Edit surface points at production (not test) file | route.target_file is the *test* file; production file lands in `forbidden_files` | `forbidden_files_for_gap_record` (shared) |
 | F10 | Static limit buried, flip taken anyway | static_limit short-circuits to `static_limitation` BEFORE oracle/relation checks | actionability.rs:51 early return; G-A excludes it |
@@ -356,7 +359,8 @@ input diff + expected output, run by `cargo xtask fixtures` and checked by
   `authority_boundary: "preview_advisory_only"`,
   `must_not_change` includes the preview clause,
   `canonical_gap_id` matches `gap:typescript:.*:[0-9a-f]{8}`,
-  `receipt_command` is a `ripr outcome … target/ripr/receipts/…` string,
+  `receipt_command` is a canonical `ripr receipt write --gap … --status not_run
+  --out target/ripr/receipts/…` string (RIPR-SPEC-0079), never `ripr outcome`,
   `allowed_edit_surface` = the single test file,
   `forbidden_files` includes the production file.
 
@@ -668,7 +672,7 @@ crates/ripr/src/output/typescript_packet_projection.rs::tests::
   validator_parity_cross_language_bridge_returns_none
   canonical_gap_id_derives_from_finding_id
   canonical_gap_id_normalizes_backslashes
-  receipt_command_is_ripr_outcome_shape
+  projected_receipt_command_is_canonical_receipt_write
   must_not_change_includes_preview_clause_via_shared_function
 ```
 

@@ -14,10 +14,9 @@
 //! - No parallel TypeScript-specific completeness validator is introduced.
 //!   The only flip gate is `validate_agent_gap_record_packet(..) == Ok(())`.
 
-use crate::agent::loop_commands::shell_arg;
 use crate::domain::Finding;
 use crate::output::gap_decision_ledger::{
-    GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility,
+    GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility, preview_receipt_write_command,
 };
 use std::collections::BTreeMap;
 
@@ -105,11 +104,6 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         return None;
     }
 
-    // Build receipt command (§3.2 new producer F6/F7):
-    // A fixed `ripr outcome … target/ripr/receipts/<canonical_gap_id>.targeted-test-outcome.json`
-    // command — no external provider, no interpolation of free text.
-    let receipt_command = typescript_receipt_command(&canonical_gap_id);
-
     // Build repair_route from the finding (§3.1 — test file from related test).
     // The route_kind is derived from the probe family / missing discriminator.
     let missing_discriminator = finding
@@ -177,7 +171,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // Evidence IDs: the finding's own id.
     let evidence_ids = vec![finding.id.clone()];
 
-    Some(GapRecord {
+    let mut record = GapRecord {
         source_currentness: Some(finding.source_currentness.as_str().to_string()),
         gap_id: finding.id.clone(),
         canonical_gap_id,
@@ -199,12 +193,20 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         projection_eligibility,
         verification_commands: vec![verify_command.to_string()],
         command_specs: None,
-        receipt_command: Some(receipt_command),
+        receipt_command: None,
         regeneration_commands: Vec::new(),
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: TS_AUTHORITY_BOUNDARY.to_string(),
-    })
+    };
+    // Receipt command (RIPR-SPEC-0079 `canonical_receipt_command` field rule):
+    // the canonical `ripr receipt write …` form built by the shared receipt-write
+    // owner from this record's canonical gap id, verify command, and default
+    // preview receipt path. The gap ledger synthesizes the same string for the
+    // same record, so the packet and the ledger agree. `ripr outcome` is a
+    // movement command and must not appear here.
+    record.receipt_command = Some(preview_receipt_write_command(&record));
+    Some(record)
 }
 
 /// Derive the content-addressed `gap:typescript:<probe_family>:<fp8>` canonical
@@ -228,29 +230,6 @@ pub(crate) fn typescript_canonical_gap_id(finding_id: &str) -> String {
         // Fallback: use the whole normalized id as a slug.
         format!("gap:typescript:{normalized}")
     }
-}
-
-/// Derive the receipt command for a TypeScript preview finding (§3.2 / F6/F7).
-///
-/// The command is a fixed `ripr outcome …` invocation that mirrors the Rust
-/// receipt shape without any external provider call, curl, or http request.
-pub(crate) fn typescript_receipt_command(canonical_gap_id: &str) -> String {
-    // F7: fixed `ripr outcome` shape only — no external provider or curl.
-    // The receipt path uses the canonical_gap_id as a slug (slashes replaced
-    // with underscores so the path is a single filename component).
-    let slug = canonical_gap_id
-        .chars()
-        .map(|c| if c == ':' || c == '/' { '_' } else { c })
-        .collect::<String>();
-    let receipt_path = format!("target/ripr/receipts/{slug}.targeted-test-outcome.json");
-    // `ripr outcome` accepts only --before/--after/--format/--out, so the
-    // verify command is not part of this string: the record carries it in its
-    // own `verify_command` field. Emitting it here as `--verify-cmd` produced
-    // a receipt command that `ripr outcome` rejected when copied (#3906).
-    format!(
-        "ripr outcome --before <baseline> --after <repair> --out {}",
-        shell_arg(&receipt_path)
-    )
 }
 
 /// Build the assertion the repair should add, from the borrowed call shape.
@@ -582,19 +561,31 @@ mod tests {
         assert!(gap_id.starts_with("gap:typescript:"));
     }
 
+    /// RIPR-SPEC-0079 `canonical_receipt_command` field rule: the projected
+    /// record's `receipt_command` is the canonical `ripr receipt write …`
+    /// form carrying the record's canonical gap id, its verify command, and
+    /// the ledger's default preview receipt path — never `ripr outcome`.
     #[test]
-    fn receipt_command_is_ripr_outcome_shape() {
-        let cmd = typescript_receipt_command("gap:typescript:typescript_preview:a1b2c3d4");
-        assert!(
-            cmd.starts_with("ripr outcome "),
-            "must start with ripr outcome"
+    fn projected_receipt_command_is_canonical_receipt_write() -> Result<(), String> {
+        let record = typescript_gap_record_for(&complete_finding())
+            .ok_or("complete finding must produce a GapRecord")?;
+        let cmd = record
+            .receipt_command
+            .as_deref()
+            .ok_or("projected record must carry a receipt command")?;
+        assert_eq!(
+            cmd,
+            "ripr receipt write --gap gap:typescript:typescript_preview:a1b2c3d4 \
+             --verify-command 'jest tests/discount.test.ts' --status not_run \
+             --out target/ripr/receipts/gap-typescript-typescript_preview-a1b2c3d4.json"
         );
         assert!(
-            cmd.contains("target/ripr/receipts/"),
-            "must reference receipts path"
+            !cmd.contains("ripr outcome"),
+            "receipt_command must not be a movement command: {cmd}"
         );
         assert!(!cmd.contains("curl"), "F7: must not contain curl");
         assert!(!cmd.contains("http"), "F7: must not contain http");
+        Ok(())
     }
 
     /// §3.2 / F14: The shared `gap_record_packet_do_not_do` function must include

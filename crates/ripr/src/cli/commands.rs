@@ -6726,46 +6726,221 @@ language = "rust"
         );
     }
 
-    /// #3906: the TypeScript and Perl preview receipt commands are copied
-    /// verbatim into a shell, so every flag they carry must be one the
-    /// `ripr outcome` parser accepts. The placeholders stand in for the
-    /// operator's before and after snapshot paths.
-    #[test]
-    fn preview_receipt_commands_parse_as_ripr_outcome() -> Result<(), String> {
-        let commands = [
-            crate::output::typescript_packet_projection::typescript_receipt_command(
-                "gap:typescript:typescript_preview:a1b2c3d4",
-            ),
-            crate::output::perl_gap_record_projection::perl_receipt_command(
-                "gap:perl:lib/My/App.pm:discount",
-            ),
-        ];
-        for command in commands {
-            let words: Vec<String> = command.split_whitespace().map(str::to_string).collect();
-            let rest = words
-                .strip_prefix(&["ripr".to_string(), "outcome".to_string()])
-                .ok_or_else(|| format!("not a ripr outcome command: {command}"))?;
-            let options = parse_outcome_options(rest)
-                .map_err(|err| format!("`{command}` is rejected by ripr outcome: {err}"))?;
-            if options.before != Path::new("<baseline>") || options.after != Path::new("<repair>") {
-                return Err(format!("unexpected snapshot placeholders in `{command}`"));
-            }
-            if !options
-                .out
-                .as_deref()
-                .is_some_and(|out| out.starts_with("target/ripr/receipts"))
-            {
-                return Err(format!(
-                    "receipt must write under target/ripr/receipts: `{command}`"
-                ));
-            }
-        }
-        Ok(())
-    }
-
     #[test]
     fn outcome_help_returns_ok() {
         assert_eq!(outcome(&args(&["--help"])), Ok(()));
+    }
+
+    /// Run the retained `ripr check` production path over the
+    /// `ts_repair_packet_complete` fixture and return the rendered check JSON.
+    #[cfg(feature = "lang-typescript")]
+    fn ts_repair_packet_complete_check_json() -> Result<serde_json::Value, String> {
+        let fixture = repo_root().join("fixtures/ts_repair_packet_complete");
+        let mut input = crate::app::CheckInput {
+            root: fixture.join("input"),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: crate::app::Mode::Draft,
+            ..crate::app::CheckInput::default()
+        };
+        let config = crate::config::load_for_root(&input.root)?;
+        crate::config::apply_to_check_input(
+            &mut input,
+            &config,
+            crate::config::CheckInputExplicit::default(),
+        );
+        let output = crate::app::check_workspace_with_config(input, &config)?;
+        let rendered = crate::output::json::render_with_config(&output, &config);
+        serde_json::from_str(&rendered).map_err(|err| format!("check JSON did not parse: {err}"))
+    }
+
+    /// The single TypeScript repair packet the fixture's check JSON carries.
+    #[cfg(feature = "lang-typescript")]
+    fn ts_repair_packet(check: &serde_json::Value) -> Result<&serde_json::Value, String> {
+        let packets: Vec<&serde_json::Value> = check["findings"]
+            .as_array()
+            .ok_or("check JSON must carry a findings array")?
+            .iter()
+            .filter_map(|finding| finding.get("typescript_repair_packet"))
+            .collect();
+        match packets.as_slice() {
+            [packet] => Ok(packet),
+            other => Err(format!(
+                "expected exactly one TypeScript repair packet, got {}",
+                other.len()
+            )),
+        }
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    fn ts_packet_receipt_command(packet: &serde_json::Value) -> Result<String, String> {
+        packet["receipt_command"]
+            .as_str()
+            .map(ToString::to_string)
+            .ok_or_else(|| format!("TypeScript repair packet has no receipt_command: {packet}"))
+    }
+
+    /// Split a copied bash command into argv the way a POSIX shell does for
+    /// the quoting `shell_arg` emits: whitespace-separated words, single-quoted
+    /// spans taken literally, and backslash escapes outside quotes. Any other
+    /// shell-active character fails instead of being guessed at.
+    fn posix_words(command: &str) -> Result<Vec<String>, String> {
+        let mut words = Vec::new();
+        let mut current: Option<String> = None;
+        let mut chars = command.chars();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\'' => {
+                    let word = current.get_or_insert_with(String::new);
+                    loop {
+                        match chars.next() {
+                            Some('\'') => break,
+                            Some(inner) => word.push(inner),
+                            None => return Err(format!("unterminated quote in `{command}`")),
+                        }
+                    }
+                }
+                '\\' => {
+                    let escaped = chars
+                        .next()
+                        .ok_or_else(|| format!("dangling escape in `{command}`"))?;
+                    current.get_or_insert_with(String::new).push(escaped);
+                }
+                '"' | '$' | '`' | ';' | '&' | '|' | '<' | '>' | '(' | ')' => {
+                    return Err(format!("shell-active `{ch}` in `{command}`"));
+                }
+                ch if ch.is_whitespace() => {
+                    if let Some(word) = current.take() {
+                        words.push(word);
+                    }
+                }
+                ch => current.get_or_insert_with(String::new).push(ch),
+            }
+        }
+        if let Some(word) = current {
+            words.push(word);
+        }
+        Ok(words)
+    }
+
+    /// #3906 / RIPR-SPEC-0079 `canonical_receipt_command` field rule: the
+    /// receipt command the TypeScript preview packet emits is copied verbatim
+    /// into a shell, so it must be the canonical `ripr receipt write` form and
+    /// every argument it carries must be accepted by that command's parser.
+    #[test]
+    #[cfg(feature = "lang-typescript")]
+    fn typescript_preview_receipt_command_parses_as_receipt_write() -> Result<(), String> {
+        let check = ts_repair_packet_complete_check_json()?;
+        let packet = ts_repair_packet(&check)?;
+        let command = ts_packet_receipt_command(packet)?;
+        let words = posix_words(&command)?;
+        let rest = words
+            .strip_prefix(&[
+                "ripr".to_string(),
+                "receipt".to_string(),
+                "write".to_string(),
+            ])
+            .ok_or_else(|| format!("not a `ripr receipt write` command: {command}"))?;
+        let options = receipt_command::parse_receipt_write_options(rest)
+            .map_err(|err| format!("`{command}` is rejected by ripr receipt write: {err}"))?;
+        assert_eq!(
+            options.canonical_gap_id,
+            "gap:typescript:typescript_preview:2396aec1"
+        );
+        assert_eq!(
+            Some(options.canonical_gap_id.as_str()),
+            packet["canonical_gap_id"].as_str(),
+            "receipt must bind to the packet's canonical gap id"
+        );
+        assert_eq!(options.verify_command, "jest tests/discount.test.ts");
+        assert_eq!(
+            Some(options.verify_command.as_str()),
+            packet["verify_command"].as_str(),
+            "receipt must carry the packet's real verify command"
+        );
+        assert_eq!(options.verify_status, "not_run");
+        assert_eq!(
+            options.out,
+            Some(PathBuf::from(
+                "target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json"
+            ))
+        );
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0079 "`ripr outcome` is not a receipt command": the emitted
+    /// TypeScript receipt command is not a movement invocation, `ripr outcome`
+    /// rejects its arguments, and the retired movement form it replaced is not
+    /// a receipt write either. The gap ledger also synthesizes the same string
+    /// for the same gap when the packet supplies none, so both surfaces agree.
+    #[test]
+    #[cfg(feature = "lang-typescript")]
+    fn typescript_preview_receipt_command_is_not_ripr_outcome() -> Result<(), String> {
+        let check = ts_repair_packet_complete_check_json()?;
+        let command = ts_packet_receipt_command(ts_repair_packet(&check)?)?;
+        let words = posix_words(&command)?;
+        if words.get(..2) == Some(&["ripr".to_string(), "outcome".to_string()][..])
+            || command.contains("ripr outcome")
+        {
+            return Err(format!(
+                "receipt_command must not be a ripr outcome invocation: {command}"
+            ));
+        }
+        let receipt_args = words.get(3..).ok_or("receipt command has no arguments")?;
+        if parse_outcome_options(receipt_args).is_ok() {
+            return Err(format!(
+                "ripr outcome must reject the receipt-write arguments of `{command}`"
+            ));
+        }
+        let retired_movement_form = args(&[
+            "--before",
+            "<baseline>",
+            "--after",
+            "<repair>",
+            "--out",
+            "target/ripr/receipts/gap_typescript_typescript_preview_2396aec1.targeted-test-outcome.json",
+        ]);
+        if receipt_command::parse_receipt_write_options(&retired_movement_form).is_ok() {
+            return Err("ripr receipt write must reject the retired movement form".to_string());
+        }
+
+        let mut without_packet_receipt = check.clone();
+        if let Some(packet) = without_packet_receipt["findings"]
+            .as_array_mut()
+            .and_then(|findings| findings.first_mut())
+            .and_then(|finding| finding.get_mut("typescript_repair_packet"))
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            packet.remove("receipt_command");
+        }
+        let ledger = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+            crate::output::gap_decision_ledger::GapDecisionLedgerInput {
+                root: ".".to_string(),
+                generated_at: "test".to_string(),
+                source_kind:
+                    crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::CheckOutput,
+                records_path: "target/ripr/reports/check.json".to_string(),
+                records_json: Ok(without_packet_receipt.to_string()),
+            },
+        );
+        let ledger: serde_json::Value = serde_json::from_str(
+            &crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&ledger)?,
+        )
+        .map_err(|err| format!("gap ledger JSON did not parse: {err}"))?;
+        let synthesized = match ledger["records"].as_array().map(Vec::as_slice) {
+            Some([record]) => record["receipt_command"].as_str().map(ToString::to_string),
+            other => {
+                return Err(format!(
+                    "expected one gap-ledger record, got {:?}",
+                    other.map(<[serde_json::Value]>::len)
+                ));
+            }
+        };
+        assert_eq!(
+            synthesized.as_deref(),
+            Some(command.as_str()),
+            "gap ledger and TypeScript packet must emit the same receipt command"
+        );
+        Ok(())
     }
 
     #[test]
