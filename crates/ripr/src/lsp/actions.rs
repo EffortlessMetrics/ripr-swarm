@@ -10,9 +10,9 @@ use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
     COLLECT_REPAIR_PACKET_COMMAND, COLLECT_TOP_LIMITATION_COMMAND,
     COLLECT_WORKSPACE_STATUS_COMMAND, COPY_AFTER_SNAPSHOT_COMMAND, COPY_AGENT_BRIEF_COMMAND,
-    COPY_AGENT_PACKET_COMMAND, COPY_AGENT_RECEIPT_COMMAND, COPY_AGENT_VERIFY_COMMAND,
-    COPY_CONTEXT_COMMAND, COPY_SUGGESTED_ASSERTION_COMMAND, COPY_TARGETED_TEST_BRIEF_COMMAND,
-    OPEN_RELATED_TEST_COMMAND, REFRESH_COMMAND,
+    COPY_AGENT_PACKET_COMMAND, COPY_AGENT_RECEIPT_COMMAND, COPY_AGENT_REPAIR_COMMAND,
+    COPY_AGENT_VERIFY_COMMAND, COPY_CONTEXT_COMMAND, COPY_SUGGESTED_ASSERTION_COMMAND,
+    COPY_TARGETED_TEST_BRIEF_COMMAND, OPEN_RELATED_TEST_COMMAND, REFRESH_COMMAND,
 };
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
@@ -20,12 +20,15 @@ use crate::analysis::repair_route::{
     cross_language_test_target_unresolved, repair_packet_eligibility,
 };
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, RelationConfidence};
+use crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY;
 use crate::domain::OracleStrength;
 use crate::lsp::gap_artifacts::command_specs_for_projection;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_for_classified_seam,
 };
-use crate::output::evidence_record::CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY;
+use crate::output::evidence_record::{
+    CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY, repair_start_command_for,
+};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tower_lsp_server::ls_types::{
@@ -628,6 +631,28 @@ fn push_seam_actions(
             Some(context.snapshot),
         ));
     }
+    // The repair start leads the agent loop, but only for a seam `agent
+    // repair` would accept (the fail-closed repair-packet flip, RIPR-SPEC-0087
+    // §8, plus a test-surface target): any other seam gets no new action
+    // rather than a command that would be refused (#3906). The shared
+    // builder is the only place the command string and its gate live.
+    if let Some(command) = repair_start_command_for(context.seam) {
+        actions.push(copy_agent_loop_command_action(
+            AGENT_REPAIR_COMMAND_TITLE,
+            COPY_AGENT_REPAIR_COMMAND,
+            "copy_agent_repair_command",
+            agent_loop_command_target(
+                context.snapshot,
+                context.diagnostic,
+                context.seam,
+                "agent_repair",
+                REPAIR_ATTEMPT_DIRECTORY,
+                command,
+            ),
+            context.diagnostic,
+            Some(context.snapshot),
+        ));
+    }
     actions.push(copy_agent_loop_command_action(
         AGENT_PACKET_COMMAND_TITLE,
         COPY_AGENT_PACKET_COMMAND,
@@ -959,6 +984,7 @@ const INSPECT_SEAM_PACKET_TITLE: &str = "Inspect Test Gap - Copy Context";
 const TARGETED_TEST_BRIEF_TITLE: &str = "Write targeted test: copy brief";
 const SUGGESTED_ASSERTION_TITLE: &str = "Write targeted test: copy suggested assertion";
 const OPEN_RELATED_TEST_TITLE: &str = "Write targeted test: open best related test";
+const AGENT_REPAIR_COMMAND_TITLE: &str = "Start repair: copy repair command";
 const AGENT_PACKET_COMMAND_TITLE: &str = "Agent handoff: copy packet command";
 const AGENT_BRIEF_COMMAND_TITLE: &str = "Agent handoff: copy brief command";
 const AFTER_SNAPSHOT_COMMAND_TITLE: &str = "Verify after test: copy after-snapshot command";

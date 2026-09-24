@@ -366,7 +366,7 @@ Updated:
 ## Pending — ts_repair_packet_complete (4)
 
 Reason:
-RIPR-SPEC-0079: TypeScript preview receipt_command is the canonical ripr receipt write command from the shared receipt-write owner, not ripr outcome (#3906)
+RIPR-SPEC-0082/RIPR-SPEC-0122 wording owner change (PR #3978): Why lines re-derived from reach/observe stage state, preview notes use language display names with singular file counts, recovery detail lines end with exactly one period; mechanical re-render of unchanged fixture evidence
 
 Command:
 `cargo xtask goldens bless ts_repair_packet_complete --reason "..."`

@@ -1707,6 +1707,7 @@ impl RustAdapter {
             eprintln!("{disclosure}");
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
+        let mut related_test_candidate_index = None;
 
         let mut findings = Vec::new();
         let mut changed_rust_files = 0usize;
@@ -1800,11 +1801,14 @@ impl RustAdapter {
             for (probe, binding_relation) in probes {
                 candidate_lines.insert((probe.location.file.clone(), probe.location.line));
                 cancellation::checkpoint()?;
-                let mut finding = classifier::classify_probe(
+                let related_test_candidate_index = related_test_candidate_index
+                    .get_or_insert_with(|| classify::RelatedTestCandidateIndex::new(&index));
+                let mut finding = classifier::classify_probe_with_candidate_index(
                     &probe,
                     &index,
                     workspace_index_complete,
                     dependency_edges.as_ref(),
+                    related_test_candidate_index,
                 );
                 finding.language = Some(LanguageId::Rust);
                 // Producer-owned source currentness (#3280): resolved from the diff
@@ -1986,6 +1990,7 @@ impl RustAdapter {
             eprintln!("{disclosure}");
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
+        let mut related_test_candidate_index = None;
 
         let mut findings = Vec::new();
 
@@ -2006,8 +2011,15 @@ impl RustAdapter {
         for path in &production_files {
             let probes = probes::probes_for_repo_file(&options.root, path, &index);
             for probe in probes {
-                let mut finding =
-                    classifier::classify_probe(&probe, &index, true, Some(&dependency_edges));
+                let related_test_candidate_index = related_test_candidate_index
+                    .get_or_insert_with(|| classify::RelatedTestCandidateIndex::new(&index));
+                let mut finding = classifier::classify_probe_with_candidate_index(
+                    &probe,
+                    &index,
+                    true,
+                    Some(&dependency_edges),
+                    related_test_candidate_index,
+                );
                 finding.language = Some(LanguageId::Rust);
                 // Repo mode seeds probes from the current tree, so every
                 // finding's source is candidate-side by construction

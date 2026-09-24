@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+use super::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
 use super::receipt_lifecycle::{
     RECEIPT_MISSING, receipt_lifecycle_state, receipt_lifecycle_state_from_movement,
     receipt_lifecycle_state_from_receipt_value,
@@ -173,11 +174,17 @@ struct RepairRoute {
     missing_discriminator: Option<String>,
     suggested_test: Option<String>,
     related_test: Option<String>,
+    /// The repair transaction's start (#3906), carried verbatim from the
+    /// upstream artifact that made the fail-closed repair-packet decision
+    /// (a review card, a gate route, or ripr-zero status). Never derived here.
+    repair_command: Option<String>,
     verify_command: Option<String>,
     receipt_command: Option<String>,
     receipt_state: Option<String>,
     static_limit_kind: Option<String>,
     static_limit_detail: Option<String>,
+    /// A carried handoff: the repair start when present, else an upstream
+    /// read-only inspection command. Never a start built from a bare seam id.
     agent_command: Option<String>,
 }
 
@@ -368,11 +375,21 @@ pub(crate) fn render_pr_evidence_ledger_markdown(report: &PrEvidenceLedgerReport
         if let Some(related) = route.related_test.as_deref() {
             out.push_str(&format!("- Related test: {related}\n"));
         }
+        // #3906: a carried repair start leads; its after phase runs verify
+        // and writes the receipt, so verify and receipt are the manual
+        // alternative. Without one they run after the test edit.
+        if let Some(repair) = route.repair_command.as_deref() {
+            out.push_str(&format!("- Repair start: `{repair}`\n"));
+            out.push_str(&format!(
+                "- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+            ));
+        }
+        let labels = ProofPathLabels::for_repair_start(route.repair_command.is_some());
         if let Some(verify) = route.verify_command.as_deref() {
-            out.push_str(&format!("- Verify command: `{verify}`\n"));
+            out.push_str(&format!("- {}: `{verify}`\n", labels.verify));
         }
         if let Some(receipt) = route.receipt_command.as_deref() {
-            out.push_str(&format!("- Receipt command: `{receipt}`\n"));
+            out.push_str(&format!("- {}: `{receipt}`\n", labels.receipt));
         }
         out.push_str(&format!(
             "- Receipt state: {}\n",
@@ -388,7 +405,9 @@ pub(crate) fn render_pr_evidence_ledger_markdown(report: &PrEvidenceLedgerReport
                 out.push_str(&format!("  - {detail}\n"));
             }
         }
-        if let Some(agent) = route.agent_command.as_deref() {
+        if let Some(agent) = route.agent_command.as_deref()
+            && route.repair_command.as_deref() != Some(agent)
+        {
             out.push_str(&format!("- Agent handoff: `{agent}`\n"));
         }
         out.push_str("- Boundary: advisory static evidence only; raw counts below are supporting evidence and gate authority remains separate.\n");
@@ -1057,7 +1076,7 @@ fn route_from_gap_ledger(value: &Value) -> Option<RepairRoute> {
         canonical_gap_id: string_path(record, &["canonical_gap_id"]),
         language: string_path(record, &["language"]),
         language_status: string_path(record, &["language_status"]),
-        seam_id: seam_id.clone(),
+        seam_id,
         path: string_from_sources(&[(anchor, &["file"]), (Some(route), &["target_file"])]),
         line: u64_from_sources(&[(anchor, &["line"]), (Some(route), &["target_line"])]),
         repair_route: string_path(route, &["route_kind"]),
@@ -1070,6 +1089,9 @@ fn route_from_gap_ledger(value: &Value) -> Option<RepairRoute> {
             .or_else(|| string_path(route, &["suggested_test"])),
         related_test: string_path(route, &["related_test"])
             .or_else(|| string_path(route, &["target_file"])),
+        // Gap records carry no repair start (#3906): none of them passed the
+        // seam repair-packet flip. The route keeps its verify command.
+        repair_command: None,
         verify_command: first_string_array_item(record, &["verification_commands"]),
         receipt_command: string_path(record, &["receipt_command"]),
         receipt_state: string_path(record, &["receipt", "state"])
@@ -1077,11 +1099,8 @@ fn route_from_gap_ledger(value: &Value) -> Option<RepairRoute> {
             .map(|state| receipt_lifecycle_state(Some(&state))),
         static_limit_kind: string_path(record, &["static_limit_kind"]),
         static_limit_detail: string_path(record, &["static_limit_detail"]),
-        agent_command: string_path(route, &["agent_command"]).or_else(|| {
-            seam_id.map(|id| {
-                format!("ripr agent start --root . --seam-id {id} --out target/ripr/workflow")
-            })
-        }),
+        agent_command: non_empty_string_path(route, &["agent_command"])
+            .or_else(|| non_empty_string_path(route, &["inspection_command"])),
     })
 }
 
@@ -1131,6 +1150,7 @@ fn gap_records(value: &Value) -> Vec<&Value> {
 
 fn route_from_zero_status(value: &Value) -> Option<RepairRoute> {
     let route = array_path(value, &["repair_routes"]).first().copied()?;
+    let repair_command = non_empty_string_path(route, &["repair_command"]);
     Some(RepairRoute {
         source: "ripr_zero_status".to_string(),
         gap_id: string_path(route, &["gap_id"]),
@@ -1145,13 +1165,14 @@ fn route_from_zero_status(value: &Value) -> Option<RepairRoute> {
         missing_discriminator: string_path(route, &["missing_discriminator"]),
         suggested_test: string_path(route, &["suggested_test"]),
         related_test: string_path(route, &["related_test"]),
+        repair_command: repair_command.clone(),
         verify_command: string_path(route, &["verify_command"]),
         receipt_command: string_path(route, &["receipt_command"]),
         receipt_state: string_path(route, &["receipt_state"])
             .map(|state| receipt_lifecycle_state(Some(&state))),
         static_limit_kind: string_path(route, &["static_limit_kind"]),
         static_limit_detail: string_path(route, &["static_limit_detail"]),
-        agent_command: string_path(route, &["agent_command"]),
+        agent_command: repair_command.or_else(|| non_empty_string_path(route, &["agent_command"])),
     })
 }
 
@@ -1161,13 +1182,14 @@ fn route_from_pr_guidance(value: &Value) -> Option<RepairRoute> {
         .copied()
         .or_else(|| array_path(value, &["summary_only"]).first().copied())?;
     let seam_id = string_path(item, &["seam_id"]);
+    let repair_command = non_empty_string_path(item, &["llm_guidance", "repair_command"]);
     Some(RepairRoute {
         source: "pr_guidance".to_string(),
         gap_id: string_path(item, &["gap_id"]),
         canonical_gap_id: canonical_gap_id_from_value(item),
         language: string_path(item, &["language"]),
         language_status: string_path(item, &["language_status"]),
-        seam_id: seam_id.clone(),
+        seam_id,
         path: string_path(item, &["placement", "path"])
             .or_else(|| string_path(item, &["seam", "file"])),
         line: u64_path(item, &["placement", "line"]).or_else(|| u64_path(item, &["seam", "line"])),
@@ -1177,15 +1199,18 @@ fn route_from_pr_guidance(value: &Value) -> Option<RepairRoute> {
         suggested_test: string_path(item, &["suggested_test", "assertion_shape"])
             .or_else(|| string_path(item, &["suggested_test", "intent"])),
         related_test: string_path(item, &["suggested_test", "near_test"]),
+        repair_command: repair_command.clone(),
         verify_command: string_path(item, &["llm_guidance", "verify_command"]),
-        receipt_command: string_path(item, &["llm_guidance", "receipt_command"]),
+        // Review cards put the receipt command at the card root; the
+        // `llm_guidance` spelling is kept as a fallback for older cards.
+        receipt_command: non_empty_string_path(item, &["receipt_command"])
+            .or_else(|| non_empty_string_path(item, &["llm_guidance", "receipt_command"])),
         receipt_state: string_path(item, &["receipt_state"])
             .map(|state| receipt_lifecycle_state(Some(&state))),
         static_limit_kind: string_path(item, &["static_limit_kind"]),
         static_limit_detail: string_path(item, &["static_limit_detail"]),
-        agent_command: seam_id.map(|id| {
-            format!("ripr agent start --root . --seam-id {id} --out target/ripr/workflow")
-        }),
+        agent_command: repair_command
+            .or_else(|| non_empty_string_path(item, &["llm_guidance", "command"])),
     })
 }
 
@@ -1200,13 +1225,14 @@ fn route_from_gate(value: &Value) -> Option<RepairRoute> {
         })
         .copied()?;
     let seam_id = string_path(item, &["seam_id"]);
+    let repair_command = non_empty_string_path(item, &["repair_route", "repair_command"]);
     Some(RepairRoute {
         source: "gate_decision".to_string(),
         gap_id: string_path(item, &["gap_id"]),
         canonical_gap_id: canonical_gap_id_from_value(item),
         language: string_path(item, &["language"]),
         language_status: string_path(item, &["language_status"]),
-        seam_id: seam_id.clone(),
+        seam_id,
         path: string_path(item, &["placement", "path"]),
         line: u64_path(item, &["placement", "line"]),
         repair_route: string_path(item, &["repair_route"])
@@ -1214,6 +1240,7 @@ fn route_from_gate(value: &Value) -> Option<RepairRoute> {
         missing_discriminator: string_path(item, &["evidence", "missing_discriminator"]),
         suggested_test: string_path(item, &["evidence", "assertion_shape"]),
         related_test: string_path(item, &["evidence", "recommended_test"]),
+        repair_command: repair_command.clone(),
         verify_command: Some("ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json".to_string()),
         receipt_command: None,
         receipt_state: None,
@@ -1221,9 +1248,8 @@ fn route_from_gate(value: &Value) -> Option<RepairRoute> {
             .or_else(|| string_path(item, &["evidence", "static_limit_kind"])),
         static_limit_detail: string_path(item, &["static_limit_detail"])
             .or_else(|| string_path(item, &["evidence", "static_limit_detail"])),
-        agent_command: seam_id.map(|id| {
-            format!("ripr agent start --root . --seam-id {id} --out target/ripr/workflow")
-        }),
+        agent_command: repair_command
+            .or_else(|| non_empty_string_path(item, &["repair_route", "inspection_command"])),
     })
 }
 
@@ -1245,7 +1271,7 @@ fn route_from_baseline_delta(value: &Value) -> Option<RepairRoute> {
         canonical_gap_id: canonical_gap_id_from_value(item),
         language: string_path(item, &["language"]),
         language_status: string_path(item, &["language_status"]),
-        seam_id: seam_id.clone(),
+        seam_id,
         path: string_path(item, &["path"]),
         line: u64_path(item, &["line"]),
         repair_route: string_path(item, &["repair", "route_kind"])
@@ -1253,15 +1279,16 @@ fn route_from_baseline_delta(value: &Value) -> Option<RepairRoute> {
         missing_discriminator: string_path(item, &["missing_discriminator"]),
         suggested_test: string_path(item, &["suggested_test", "assertion_shape"]),
         related_test: string_path(item, &["suggested_test", "recommended_test"]),
+        // Baseline-delta items carry no repair start (#3906), so the route
+        // names none and keeps its verify command.
+        repair_command: None,
         verify_command: string_path(item, &["repair", "verify_command"]),
         receipt_command: string_path(item, &["repair", "receipt_command"]),
         receipt_state: string_path(item, &["receipt_state"])
             .map(|state| receipt_lifecycle_state(Some(&state))),
         static_limit_kind: string_path(item, &["static_limit_kind"]),
         static_limit_detail: string_path(item, &["static_limit_detail"]),
-        agent_command: seam_id.map(|id| {
-            format!("ripr agent start --root . --seam-id {id} --out target/ripr/workflow")
-        }),
+        agent_command: None,
     })
 }
 
@@ -1405,6 +1432,14 @@ fn repair_route_json(route: &RepairRoute) -> Value {
     {
         fields.insert("gap_id".to_string(), Value::String(gap_id.clone()));
     }
+    if let Some(repair_command) = route.repair_command.as_ref()
+        && let Some(fields) = value.as_object_mut()
+    {
+        fields.insert(
+            "repair_command".to_string(),
+            Value::String(repair_command.clone()),
+        );
+    }
     value
 }
 
@@ -1432,6 +1467,11 @@ fn array_path<'a>(value: &'a Value, path: &[&str]) -> Vec<&'a Value> {
         .and_then(Value::as_array)
         .map(|items| items.iter().collect())
         .unwrap_or_default()
+}
+
+/// A carried command string, or `None` when the field is absent or blank.
+fn non_empty_string_path(value: &Value, path: &[&str]) -> Option<String> {
+    string_path(value, path).filter(|text| !text.trim().is_empty())
 }
 
 fn string_path(value: &Value, path: &[&str]) -> Option<String> {
@@ -1525,6 +1565,7 @@ mod tests {
         PrEvidenceLedgerInput, build_pr_evidence_ledger_report, render_pr_evidence_ledger_json,
         render_pr_evidence_ledger_markdown,
     };
+    use crate::output::first_pr::{REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -1743,7 +1784,9 @@ mod tests {
         assert!(markdown.contains("src/pricing.rs:42"));
         assert!(markdown.contains("Gap: gap:pr:pricing:threshold-boundary"));
         assert!(markdown.contains("Gap decision ledger: gap-ledger.json"));
-        assert!(markdown.contains("Verify command: `cargo xtask fixtures boundary_gap`"));
+        assert!(
+            markdown.contains("Verify after the test edit: `cargo xtask fixtures boundary_gap`")
+        );
         Ok(())
     }
 
@@ -2056,6 +2099,222 @@ mod tests {
         assert!(baseline_json.contains("\"source\": \"baseline_debt_delta\""));
         assert!(baseline_json.contains("fixture suppression"));
         assert!(baseline_json.contains("has no supported coverage/grip frontier fields"));
+        Ok(())
+    }
+
+    // ── #3906: carried repair start, never a synthesized one ─────────────
+
+    const LEDGER_CARRIED_REPAIR: &str =
+        "ripr agent repair --root . --seam-id seam-a --phase before";
+
+    #[derive(Default)]
+    struct LedgerSources {
+        gate: Option<String>,
+        delta: Option<String>,
+        zero: Option<String>,
+        guidance: Option<String>,
+        gap_ledger: Option<String>,
+    }
+
+    fn ledger_route(sources: LedgerSources) -> Result<(serde_json::Value, String), String> {
+        let path = |value: &Option<String>, name: &str| value.as_ref().map(|_| name.to_string());
+        let report = build_pr_evidence_ledger_report(PrEvidenceLedgerInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:1000".to_string(),
+            pr_number: "123".to_string(),
+            base: "base".to_string(),
+            head: "head".to_string(),
+            labels: Vec::new(),
+            gate_path: path(&sources.gate, "gate.json"),
+            baseline_delta_path: path(&sources.delta, "delta.json"),
+            zero_status_path: path(&sources.zero, "zero.json"),
+            pr_guidance_path: path(&sources.guidance, "comments.json"),
+            gap_ledger_path: path(&sources.gap_ledger, "gap-ledger.json"),
+            recommendation_calibration_path: None,
+            agent_receipt_path: None,
+            coverage_path: None,
+            history_path: None,
+            gate_json: sources.gate.map(Ok),
+            baseline_delta_json: sources.delta.map(Ok),
+            zero_status_json: sources.zero.map(Ok),
+            pr_guidance_json: sources.guidance.map(Ok),
+            gap_ledger_json: sources.gap_ledger.map(Ok),
+            recommendation_calibration_json: None,
+            agent_receipt_json: None,
+            coverage_json: None,
+            history_json: None,
+        });
+        let rendered = render_pr_evidence_ledger_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse ledger: {err}"))?;
+        let markdown = render_pr_evidence_ledger_markdown(&report);
+        let route = value
+            .get("top_repair_route")
+            .cloned()
+            .ok_or_else(|| format!("missing top_repair_route: {rendered}"))?;
+        Ok((route, format!("{rendered}\n{markdown}")))
+    }
+
+    fn assert_no_repair_loop_command(rendered: &str) {
+        assert!(
+            !rendered.contains("agent start"),
+            "synthesized agent start: {rendered}"
+        );
+        assert!(
+            !rendered.contains("agent repair"),
+            "uncarried agent repair: {rendered}"
+        );
+    }
+
+    fn assert_repair_start_leads(route: &serde_json::Value, rendered: &str) {
+        assert_eq!(route["repair_command"], LEDGER_CARRIED_REPAIR);
+        assert_eq!(route["agent_command"], LEDGER_CARRIED_REPAIR);
+        assert!(rendered.contains(&format!("- Repair start: `{LEDGER_CARRIED_REPAIR}`\n")));
+        // #3906 (F60-14): the after phase follows the start, and verify and
+        // receipt are the manual alternative rather than peer next steps.
+        assert!(
+            rendered.contains(&format!(
+                "- Repair start: `{LEDGER_CARRIED_REPAIR}`\n- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+            )),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("- Verify after the test edit:"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("- Receipt after verify:"), "{rendered}");
+        assert!(!rendered.contains("- Agent handoff:"), "{rendered}");
+        assert!(!rendered.contains("agent start"), "{rendered}");
+    }
+
+    fn ledger_card(repair: Option<&str>) -> String {
+        let mut llm_guidance = serde_json::json!({"verify_command": "ripr agent verify --json"});
+        if let Some(repair) = repair {
+            llm_guidance["repair_command"] = serde_json::Value::from(repair);
+        }
+        serde_json::json!({
+            "comments": [{
+                "seam_id": "seam-a",
+                "placement": {"path": "src/a.rs", "line": 3},
+                "receipt_command": "ripr agent receipt --root . --seam-id seam-a --json",
+                "llm_guidance": llm_guidance
+            }]
+        })
+        .to_string()
+    }
+
+    fn ledger_gate(repair: Option<&str>) -> String {
+        let mut decision = serde_json::json!({
+            "id": "gate-blocking",
+            "decision": "blocking",
+            "seam_id": "seam-a",
+            "placement": {"path": "src/a.rs", "line": 3}
+        });
+        if let Some(repair) = repair {
+            decision["repair_route"] = serde_json::json!({ "repair_command": repair });
+        }
+        serde_json::json!({
+            "mode": "baseline-check",
+            "status": "blocked",
+            "summary": {"blocking": 1},
+            "decisions": [decision]
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn guidance_route_carries_repair_start_and_the_card_root_receipt() -> Result<(), String> {
+        let (route, rendered) = ledger_route(LedgerSources {
+            guidance: Some(ledger_card(None)),
+            ..LedgerSources::default()
+        })?;
+        assert_eq!(route["source"], "pr_guidance");
+        assert_eq!(route["seam_id"], "seam-a");
+        assert!(route.get("repair_command").is_none());
+        assert_eq!(route["agent_command"], serde_json::Value::Null);
+        assert_eq!(
+            route["receipt_command"], "ripr agent receipt --root . --seam-id seam-a --json",
+            "review cards put receipt_command at the card root"
+        );
+        assert_no_repair_loop_command(&rendered);
+
+        let (route, rendered) = ledger_route(LedgerSources {
+            guidance: Some(ledger_card(Some(LEDGER_CARRIED_REPAIR))),
+            ..LedgerSources::default()
+        })?;
+        assert_repair_start_leads(&route, &rendered);
+        Ok(())
+    }
+
+    #[test]
+    fn gate_route_carries_only_the_gate_route_repair_start() -> Result<(), String> {
+        let (route, rendered) = ledger_route(LedgerSources {
+            gate: Some(ledger_gate(None)),
+            ..LedgerSources::default()
+        })?;
+        assert_eq!(route["source"], "gate_decision");
+        assert_eq!(route["seam_id"], "seam-a");
+        assert_eq!(route["agent_command"], serde_json::Value::Null);
+        assert_no_repair_loop_command(&rendered);
+
+        let (route, rendered) = ledger_route(LedgerSources {
+            gate: Some(ledger_gate(Some(LEDGER_CARRIED_REPAIR))),
+            ..LedgerSources::default()
+        })?;
+        assert_eq!(route["source"], "gate_decision");
+        assert_repair_start_leads(&route, &rendered);
+        Ok(())
+    }
+
+    #[test]
+    fn gap_and_baseline_routes_name_no_repair_loop_command_for_a_seam_id() -> Result<(), String> {
+        let gap_ledger = r#"{"gap_records":[{"gap_id":"gap:pr:a","seam_id":"seam-a","kind":"MissingBoundaryAssertion","language":"rust","language_status":"stable","scope":"pr_local","gap_state":"actionable","policy_state":"new","repairability":"repairable","anchor":{"file":"src/a.rs","line":3},"repair_route":{"route_kind":"AddBoundaryAssertion"},"verification_commands":["cargo xtask fixtures boundary_gap"]}]}"#;
+        let (route, rendered) = ledger_route(LedgerSources {
+            gap_ledger: Some(gap_ledger.to_string()),
+            ..LedgerSources::default()
+        })?;
+        assert_eq!(route["source"], "gap_decision_ledger");
+        assert_eq!(route["seam_id"], "seam-a");
+        assert_eq!(route["verify_command"], "cargo xtask fixtures boundary_gap");
+        assert_eq!(route["agent_command"], serde_json::Value::Null);
+        assert_no_repair_loop_command(&rendered);
+
+        let delta = r#"{"items":[{"bucket":"new_policy_eligible","identity":{"seam_id":"seam-a"},"path":"src/a.rs","line":3,"repair":{"verify_command":"ripr agent verify --json"}}]}"#;
+        let (route, rendered) = ledger_route(LedgerSources {
+            delta: Some(delta.to_string()),
+            ..LedgerSources::default()
+        })?;
+        assert_eq!(route["source"], "baseline_debt_delta");
+        assert_eq!(route["seam_id"], "seam-a");
+        assert_eq!(route["agent_command"], serde_json::Value::Null);
+        assert_no_repair_loop_command(&rendered);
+
+        let zero = |repair: Option<&str>| {
+            let mut route = serde_json::json!({
+                "source": "baseline_debt_delta",
+                "seam_id": "seam-a",
+                "path": "src/a.rs",
+                "line": 3,
+                "agent_command": null
+            });
+            if let Some(repair) = repair {
+                route["repair_command"] = serde_json::Value::from(repair);
+                route["agent_command"] = serde_json::Value::from(repair);
+            }
+            serde_json::json!({ "kind": "ripr_zero_status", "repair_routes": [route] }).to_string()
+        };
+        let (route, rendered) = ledger_route(LedgerSources {
+            zero: Some(zero(None)),
+            ..LedgerSources::default()
+        })?;
+        assert_eq!(route["source"], "ripr_zero_status");
+        assert_eq!(route["agent_command"], serde_json::Value::Null);
+        assert_no_repair_loop_command(&rendered);
+        let (route, rendered) = ledger_route(LedgerSources {
+            zero: Some(zero(Some(LEDGER_CARRIED_REPAIR))),
+            ..LedgerSources::default()
+        })?;
+        assert_repair_start_leads(&route, &rendered);
         Ok(())
     }
 

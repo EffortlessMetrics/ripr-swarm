@@ -8,7 +8,7 @@ use crate::analysis::extract::{
 use crate::analysis::seam_cache::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationReason};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.
@@ -34,6 +34,284 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
 /// Minimum token length for the `assertions_reference_owner` signal.
 /// Tokens shorter than this threshold are too common to safely assert ownership.
 const ASSERTION_TOKEN_MIN_LEN: usize = 5;
+
+const RELATION_TRIGRAM_WIDTH: usize = 3;
+
+/// Deterministic candidate-generation indexes for Rust test relations.
+///
+/// This is deliberately only a prefilter. Every selected test still passes
+/// through the existing relation, package, shadow, and confidence logic below,
+/// so indexed and legacy semantics stay identical. Queries that cannot be
+/// represented safely by the bounded indexes fall back to the complete test
+/// set instead of under-emitting.
+#[derive(Clone, Debug, Default)]
+pub(in crate::analysis) struct RelatedTestCandidateIndex {
+    by_call_name: BTreeMap<String, Vec<usize>>,
+    by_assertion_token: BTreeMap<String, Vec<usize>>,
+    by_test_name_trigram: BTreeMap<[u8; RELATION_TRIGRAM_WIDTH], Vec<usize>>,
+    by_path_trigram: BTreeMap<[u8; RELATION_TRIGRAM_WIDTH], Vec<usize>>,
+    by_test_stem: BTreeMap<String, Vec<usize>>,
+    by_function_name: BTreeMap<String, Vec<usize>>,
+    all_tests: Vec<usize>,
+}
+
+impl RelatedTestCandidateIndex {
+    pub(in crate::analysis) fn new(index: &RustIndex) -> Self {
+        let mut candidates = Self::default();
+
+        for (function_index, function) in index.functions.iter().enumerate() {
+            push_index(
+                &mut candidates.by_function_name,
+                function.name.clone(),
+                function_index,
+            );
+        }
+
+        for (test_index, test) in index.tests.iter().enumerate() {
+            candidates.all_tests.push(test_index);
+
+            for call in &test.calls {
+                push_index(&mut candidates.by_call_name, call.name.clone(), test_index);
+            }
+            // Preserve the existing body-text fallback without rescanning the
+            // full body for every probe. The scanner intentionally sees raw
+            // comments/strings exactly as body_contains_owner_call does.
+            for call_name in lexical_body_call_names(&test.body) {
+                push_index(&mut candidates.by_call_name, call_name, test_index);
+            }
+
+            for assertion in &test.assertions {
+                for token in &assertion.observed_tokens {
+                    push_index(
+                        &mut candidates.by_assertion_token,
+                        token.clone(),
+                        test_index,
+                    );
+                }
+            }
+
+            let lowered_name = test.name.to_ascii_lowercase();
+            index_trigrams(
+                &mut candidates.by_test_name_trigram,
+                lowered_name.as_bytes(),
+                test_index,
+            );
+            let normalized_path = normalize_path(&test.file);
+            index_trigrams(
+                &mut candidates.by_path_trigram,
+                normalized_path.as_bytes(),
+                test_index,
+            );
+            if let Some(stem) = cross_host_stem(&test.file)
+                && !stem.is_empty()
+            {
+                push_index(&mut candidates.by_test_stem, stem, test_index);
+            }
+        }
+
+        candidates
+    }
+
+    fn candidate_indices(
+        &self,
+        probe: &Probe,
+        owner_fn: Option<&FunctionSummary>,
+        helper_chain: Option<&super::helper_transfer::HelperChain>,
+        seam_callee: Option<&str>,
+    ) -> Vec<usize> {
+        let owner_name = owner_fn
+            .map(|function| function.name.as_str())
+            .unwrap_or("");
+        let probe_tokens = extract_identifier_tokens(&probe.expression);
+        let file_name = normalized_file_stem(&probe.location.file);
+        let mut selected = BTreeSet::new();
+        let mut scan_all = false;
+
+        if !owner_name.is_empty() {
+            extend_bucket(
+                &mut selected,
+                self.by_call_name.get(owner_name).map(Vec::as_slice),
+            );
+
+            let lowered_owner = owner_name.to_ascii_lowercase();
+            if !extend_substring_bucket(
+                &mut selected,
+                &self.by_test_name_trigram,
+                lowered_owner.as_bytes(),
+            ) {
+                scan_all = true;
+            }
+            // The one-pass raw-body call-name scanner indexes ordinary ASCII
+            // identifier tokens. Preserve Unicode/raw-identifier correctness
+            // by falling back rather than assuming a missing lexical call.
+            if !owner_name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            {
+                scan_all = true;
+            }
+        }
+
+        if owner_fn.is_none() {
+            for token in probe_tokens
+                .iter()
+                .filter(|token| token.len() >= ASSERTION_TOKEN_MIN_LEN)
+            {
+                extend_bucket(
+                    &mut selected,
+                    self.by_assertion_token.get(token).map(Vec::as_slice),
+                );
+            }
+        }
+
+        if let Some(probe_stem) = cross_host_stem(&probe.location.file)
+            && !probe_stem.is_empty()
+        {
+            for stem in [
+                probe_stem.clone(),
+                format!("{probe_stem}_test"),
+                format!("{probe_stem}_tests"),
+            ] {
+                extend_bucket(
+                    &mut selected,
+                    self.by_test_stem.get(&stem).map(Vec::as_slice),
+                );
+            }
+        }
+
+        if !file_name.is_empty()
+            && !extend_substring_bucket(&mut selected, &self.by_path_trigram, file_name.as_bytes())
+        {
+            scan_all = true;
+        }
+
+        for token in probe_tokens.iter().filter(|token| token.len() > 2) {
+            let lowered = token.to_ascii_lowercase();
+            // len() > 2 guarantees at least one byte trigram.
+            let _ = extend_substring_bucket(
+                &mut selected,
+                &self.by_test_name_trigram,
+                lowered.as_bytes(),
+            );
+        }
+
+        if let Some(chain) = helper_chain {
+            for hop in &chain.hops {
+                extend_bucket(
+                    &mut selected,
+                    self.by_call_name
+                        .get(hop.caller.name.as_str())
+                        .map(Vec::as_slice),
+                );
+            }
+        }
+
+        if let Some(callee) = seam_callee {
+            extend_bucket(
+                &mut selected,
+                self.by_call_name.get(callee).map(Vec::as_slice),
+            );
+        }
+
+        if scan_all {
+            self.all_tests.clone()
+        } else {
+            selected.into_iter().collect()
+        }
+    }
+
+    fn function_indices(&self, name: &str) -> &[usize] {
+        self.by_function_name
+            .get(name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+}
+
+fn push_index<K: Ord>(map: &mut BTreeMap<K, Vec<usize>>, key: K, index: usize) {
+    let bucket = map.entry(key).or_default();
+    if bucket.last().copied() != Some(index) {
+        bucket.push(index);
+    }
+}
+
+fn index_trigrams(
+    map: &mut BTreeMap<[u8; RELATION_TRIGRAM_WIDTH], Vec<usize>>,
+    text: &[u8],
+    index: usize,
+) {
+    for window in text.windows(RELATION_TRIGRAM_WIDTH) {
+        let key = [window[0], window[1], window[2]];
+        push_index(map, key, index);
+    }
+}
+
+/// Add a conservative substring candidate bucket.
+///
+/// A query shorter than the trigram width cannot be represented, so callers
+/// must use the full-set fallback. For longer queries the first trigram is a
+/// necessary condition for substring containment; the existing exact contains
+/// check below remains authoritative.
+fn extend_substring_bucket(
+    selected: &mut BTreeSet<usize>,
+    map: &BTreeMap<[u8; RELATION_TRIGRAM_WIDTH], Vec<usize>>,
+    query: &[u8],
+) -> bool {
+    if query.len() < RELATION_TRIGRAM_WIDTH {
+        return false;
+    }
+    let key = [query[0], query[1], query[2]];
+    extend_bucket(selected, map.get(&key).map(Vec::as_slice));
+    true
+}
+
+fn extend_bucket(selected: &mut BTreeSet<usize>, bucket: Option<&[usize]>) {
+    if let Some(bucket) = bucket {
+        selected.extend(bucket.iter().copied());
+    }
+}
+
+/// Extract the ASCII identifier tokens that the existing raw-body fallback
+/// would accept as call-shaped names. This is the same boundary rule as
+/// body_contains_owner_call for ordinary Rust identifiers: the whole token
+/// must be followed only by whitespace and an opening parenthesis. Comments
+/// and strings remain visible because the existing fallback also examines raw
+/// body text.
+fn lexical_body_call_names(body: &str) -> BTreeSet<String> {
+    let bytes = body.as_bytes();
+    let mut names = BTreeSet::new();
+    let mut cursor = 0usize;
+
+    while cursor < bytes.len() {
+        let byte = bytes[cursor];
+        let is_ident = byte.is_ascii_alphanumeric() || byte == b'_';
+        let starts_ident = is_ident
+            && (cursor == 0
+                || (!bytes[cursor - 1].is_ascii_alphanumeric() && bytes[cursor - 1] != b'_'));
+        if !starts_ident {
+            cursor += 1;
+            continue;
+        }
+
+        let start = cursor;
+        cursor += 1;
+        while cursor < bytes.len()
+            && (bytes[cursor].is_ascii_alphanumeric() || bytes[cursor] == b'_')
+        {
+            cursor += 1;
+        }
+        let end = cursor;
+        // Mirror `body_contains_owner_call`'s `trim_start()` exactly: the
+        // legacy scanner accepts any Unicode whitespace before the call
+        // parenthesis, so indexing with an ASCII-only whitespace skip could
+        // drop a candidate the full scan still finds.
+        if body[end..].trim_start().starts_with('(') {
+            names.insert(body[start..end].to_string());
+        }
+    }
+
+    names
+}
 
 /// #3714: the converted callee of a wrapper error seam
 /// (`callee(..).map_err(..)` whose changed expression carries no parseable
@@ -147,6 +425,14 @@ fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
     best.map(str::to_string)
 }
 
+#[derive(Clone, Copy)]
+enum RelatedTestCandidates<'a> {
+    Indexed(&'a RelatedTestCandidateIndex),
+    #[cfg(test)]
+    FullScan,
+}
+
+#[cfg(test)]
 pub(in crate::analysis) fn find_related_tests<'a>(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -154,6 +440,79 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     workspace_complete: bool,
     helper_chain: Option<&super::helper_transfer::HelperChain>,
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
+) -> Vec<(&'a TestSummary, RelationReason)> {
+    let candidate_index = RelatedTestCandidateIndex::new(index);
+    let indexed = find_related_tests_with_candidate_index(
+        probe,
+        owner_fn,
+        index,
+        workspace_complete,
+        helper_chain,
+        dependency_edges,
+        &candidate_index,
+    );
+    let full_scan = find_related_tests_with_candidates(
+        probe,
+        owner_fn,
+        index,
+        workspace_complete,
+        helper_chain,
+        dependency_edges,
+        RelatedTestCandidates::FullScan,
+    );
+
+    let parity_rows = |related: &[(&TestSummary, RelationReason)]| {
+        related
+            .iter()
+            .map(|(test, reason)| {
+                (
+                    normalize_path(&test.file),
+                    test.name.clone(),
+                    test.start_line,
+                    *reason,
+                    reason.confidence(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        parity_rows(&indexed),
+        parity_rows(&full_scan),
+        "indexed related-test candidate selection diverged from the independent full-scan oracle for probe: {}",
+        probe.expression
+    );
+
+    indexed
+}
+
+pub(in crate::analysis) fn find_related_tests_with_candidate_index<'a>(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    index: &'a RustIndex,
+    workspace_complete: bool,
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+    dependency_edges: Option<&DependencyEdgeContext<'_>>,
+    candidate_index: &RelatedTestCandidateIndex,
+) -> Vec<(&'a TestSummary, RelationReason)> {
+    find_related_tests_with_candidates(
+        probe,
+        owner_fn,
+        index,
+        workspace_complete,
+        helper_chain,
+        dependency_edges,
+        RelatedTestCandidates::Indexed(candidate_index),
+    )
+}
+
+fn find_related_tests_with_candidates<'a>(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    index: &'a RustIndex,
+    workspace_complete: bool,
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+    dependency_edges: Option<&DependencyEdgeContext<'_>>,
+    candidates: RelatedTestCandidates<'_>,
 ) -> Vec<(&'a TestSummary, RelationReason)> {
     let mut related: Vec<(&TestSummary, RelationReason)> = Vec::new();
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
@@ -195,16 +554,29 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     let mut same_name_definition_manifests: BTreeSet<String> = BTreeSet::new();
     let mut same_name_unattributed_definition = false;
     if workspace_complete && !owner_name.is_empty() {
-        for function in &index.functions {
-            if function.name == owner_name {
-                same_name_function_count += 1;
-                match dependency_edges.and_then(|context| {
-                    nearest_manifest_identity(context.manifest_dir_prefixes, &function.file)
-                }) {
-                    Some(manifest) => {
-                        same_name_definition_manifests.insert(manifest);
+        let mut record_same_name = |function: &FunctionSummary| {
+            same_name_function_count += 1;
+            match dependency_edges.and_then(|context| {
+                nearest_manifest_identity(context.manifest_dir_prefixes, &function.file)
+            }) {
+                Some(manifest) => {
+                    same_name_definition_manifests.insert(manifest);
+                }
+                None => same_name_unattributed_definition = true,
+            }
+        };
+        match candidates {
+            RelatedTestCandidates::Indexed(candidate_index) => {
+                for &function_index in candidate_index.function_indices(owner_name) {
+                    record_same_name(&index.functions[function_index]);
+                }
+            }
+            #[cfg(test)]
+            RelatedTestCandidates::FullScan => {
+                for function in &index.functions {
+                    if function.name == owner_name {
+                        record_same_name(function);
                     }
-                    None => same_name_unattributed_definition = true,
                 }
             }
         }
@@ -243,7 +615,15 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         .map(String::as_str)
         .collect();
 
-    for test in &index.tests {
+    let candidate_indices = match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => {
+            candidate_index.candidate_indices(probe, owner_fn, helper_chain, seam_callee.as_deref())
+        }
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => (0..index.tests.len()).collect(),
+    };
+    for test_index in candidate_indices {
+        let test = &index.tests[test_index];
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
         // test that genuinely calls a uniquely-named owner is not filtered out
         // before the strong signal can save it.
@@ -1078,6 +1458,256 @@ mod tests {
         DeltaKind, OracleKind, OracleStrength, ProbeFamily, ProbeId, SourceLocation, SymbolId,
     };
     use std::path::PathBuf;
+
+    #[test]
+    fn candidate_index_bounds_large_unrelated_test_set() {
+        let owner = function("src/lib.rs", "target_owner");
+        let mut tests = (0..2_000)
+            .map(|index| {
+                test(
+                    "tests/unrelated.rs",
+                    &format!("unrelated_case_{index}"),
+                    "helper(1)",
+                )
+            })
+            .collect::<Vec<_>>();
+        tests.push(test_with_call(
+            "tests/target.rs",
+            "target_owner_is_observed",
+            "target_owner(1)",
+            "target_owner",
+        ));
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests,
+            ..RustIndex::default()
+        };
+        let probe = probe("src/lib.rs", "target_owner(value)");
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let seam_callee = wrapper_seam_callee(&probe);
+        let candidate_indices =
+            candidate_index.candidate_indices(&probe, Some(&owner), None, seam_callee.as_deref());
+
+        assert_eq!(
+            candidate_indices.len(),
+            1,
+            "one direct relation should not rescan thousands of unrelated tests"
+        );
+
+        let related = find_related_tests_with_candidate_index(
+            &probe,
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+            &candidate_index,
+        );
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].0.name, "target_owner_is_observed");
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    #[test]
+    fn full_scan_oracle_detects_missing_index_candidates() {
+        let owner = function("src/lib.rs", "target_owner");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/target.rs",
+                "target_owner_is_observed",
+                "target_owner(1)",
+                "target_owner",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("src/lib.rs", "target_owner(value)");
+        let broken_index = RelatedTestCandidateIndex::default();
+
+        let indexed = find_related_tests_with_candidate_index(
+            &probe,
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+            &broken_index,
+        );
+        let full_scan = find_related_tests_with_candidates(
+            &probe,
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+            RelatedTestCandidates::FullScan,
+        );
+
+        assert!(
+            indexed.is_empty(),
+            "the intentionally empty candidate index must omit the relation"
+        );
+        assert_eq!(full_scan.len(), 1);
+        assert_eq!(full_scan[0].0.name, "target_owner_is_observed");
+        assert_eq!(full_scan[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    #[test]
+    fn indexed_and_full_scan_match_for_helper_owner_call() {
+        let owner = function("src/owner.rs", "target_owner");
+        let helper = function("src/helper.rs", "helper_entry");
+        let index = RustIndex {
+            functions: vec![owner.clone(), helper.clone()],
+            tests: vec![test_with_call(
+                "tests/helper_bridge.rs",
+                "reaches_through_helper",
+                "helper_entry(1)",
+                "helper_entry",
+            )],
+            ..RustIndex::default()
+        };
+        let chain = crate::analysis::classify::helper_transfer::HelperChain {
+            hops: vec![crate::analysis::classify::helper_transfer::HelperHop {
+                caller: helper,
+                call_text: "target_owner(value)".to_string(),
+                arguments: vec!["value".to_string()],
+            }],
+            stop_above: None,
+        };
+        let probe = probe("src/owner.rs", "target_owner(value)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, Some(&chain), None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].0.name, "reaches_through_helper");
+        assert_eq!(related[0].1, RelationReason::HelperOwnerCall);
+    }
+
+    #[test]
+    fn indexed_body_call_matches_unicode_whitespace_before_paren() {
+        let owner = function("src/owner.rs", "target_owner");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test(
+                "tests/other_area.rs",
+                "nonstandard_whitespace_case",
+                "target_owner\u{00A0}(value);",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("src/owner.rs", "target_owner(value)");
+
+        // The legacy body scanner (`body_contains_owner_call`) trims any
+        // Unicode whitespace before the call parenthesis; the candidate
+        // index must index the same lexical call or the parity assertion
+        // inside `find_related_tests` diverges from the full-scan oracle.
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].0.name, "nonstandard_whitespace_case");
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    #[test]
+    fn candidate_index_falls_back_for_short_owner_query() {
+        let owner = function("src/lib.rs", "id");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test("tests/misc.rs", "id_behavior", "helper(1)")],
+            ..RustIndex::default()
+        };
+        let probe = probe("src/lib.rs", "id + 1");
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+
+        assert_eq!(
+            candidate_index.candidate_indices(&probe, Some(&owner), None, None),
+            vec![0],
+            "a two-byte owner substring cannot use trigrams and must scan all tests"
+        );
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::OwnerNamedTest);
+    }
+
+    #[test]
+    fn candidate_index_falls_back_for_unicode_owner_query() {
+        let owner = function("src/lib.rs", "café");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test("tests/misc.rs", "unicode_case", "café(1)")],
+            ..RustIndex::default()
+        };
+        let probe = probe("src/lib.rs", "café(value)");
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+
+        assert_eq!(
+            candidate_index.candidate_indices(&probe, Some(&owner), None, None),
+            vec![0],
+            "Unicode owner spellings must fail open to the legacy full candidate set"
+        );
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    #[test]
+    fn candidate_index_falls_back_for_raw_identifier_owner() {
+        let owner = function("src/lib.rs", "r#type");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test("tests/misc.rs", "misc_case", "r#type(1)")],
+            ..RustIndex::default()
+        };
+        let probe = probe("src/lib.rs", "r#type(value)");
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+
+        assert_eq!(
+            candidate_index.candidate_indices(&probe, Some(&owner), None, None),
+            vec![0],
+            "an owner spelling outside the lexical index must conservatively scan all tests"
+        );
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    #[test]
+    fn candidate_index_rebuild_reflects_changed_test_facts() {
+        let owner = function("src/lib.rs", "target_owner");
+        let probe = probe("src/lib.rs", "target_owner(value)");
+        let mut index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/misc.rs",
+                "misc_case",
+                "helper(1)",
+                "helper",
+            )],
+            ..RustIndex::default()
+        };
+
+        let before = RelatedTestCandidateIndex::new(&index);
+        assert!(
+            before
+                .candidate_indices(&probe, Some(&owner), None, None)
+                .is_empty(),
+            "the old test facts must not fabricate a candidate"
+        );
+
+        index.tests[0] = test_with_call(
+            "tests/misc.rs",
+            "misc_case",
+            "target_owner(1)",
+            "target_owner",
+        );
+        let after = RelatedTestCandidateIndex::new(&index);
+        assert_eq!(
+            after.candidate_indices(&probe, Some(&owner), None, None),
+            vec![0],
+            "a new analysis pass must derive candidates from the changed test facts"
+        );
+    }
 
     #[test]
     fn given_owner_function_when_tests_share_name_across_packages_then_filters_to_package() {
@@ -2434,6 +3064,7 @@ fn crate_c_score_test() {
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "vat_boundary_is_checked_by_macro");
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
     }
 
     #[test]
@@ -3386,6 +4017,7 @@ try_parse_summary(raw).map_err(Into::into)"
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
+        assert_eq!(related[0].1, RelationReason::AssertionTargetAffinity);
     }
 
     #[test]

@@ -3,6 +3,20 @@
 ## Pending
 
 Reason:
+#3906 (F60-14, F60-2(c)): gate-decision Markdown leads a carried repair start with the after-phase step and labels verify and receipt as the manual alternative that names its prerequisites; the front panel and first-useful-action manual labels name the same prerequisites. JSON is unchanged.
+
+Command:
+`RIPR_UPDATE_FIXTURES=1 cargo test -p ripr --lib -- first_useful_action_matches_repair_start_fixture pr_review_front_panel_matches_fixture_corpus calibrated_gate_fixture_matrix_matches_checked_outputs baseline_fallback_disclosure_fixture_matrix_matches_checked_outputs`; gate adoption Markdown from `cargo xtask dogfood` actual outputs
+
+Updated:
+- `expected/calibrated-gate/*/gate-decision.md`
+- `expected/gate-adoption/*/gate-decision.md`
+- `expected/first-useful-action/repair-start/first-useful-action.md`
+- `expected/pr-review-front-panel/repair-start/pr-review-front-panel.md`
+
+## Pending
+
+Reason:
 RIPR-SPEC-0067: refresh CLI-backed gate adoption receipts and pin a self-contained blocking repair route
 
 Command:
@@ -489,3 +503,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_gap (3)
+
+Reason:
+#3906: the boundary seam passes the repair-packet flip (RIPR-SPEC-0087 §8), so its LSP code actions gain the repair start (`Start repair: copy repair command`, `ripr.copyAgentRepairCommand`) ahead of the agent-loop actions; every other action is unchanged.
+
+Command:
+`cargo test -p ripr --lib lsp::tests::boundary_gap_lsp_code_actions_match_fixture_expectation`
+
+Updated:
+- `expected/lsp-code-actions.json`

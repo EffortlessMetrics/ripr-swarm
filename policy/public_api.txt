@@ -167,6 +167,17 @@ pub use ripr::analysis::PARTIAL_DIFF_LANGUAGE_TIER_VERSION
 pub use ripr::analysis::PARTIAL_DIFF_SELECTION_VERSION
 pub use ripr::analysis::PartialDiffScope
 pub use ripr::analysis::PartialDiffStopReason
+# PR #4035: owner ripr/analysis/diff; reason: intentional shared NUL
+# path-record authority for #4006, consumed by the product and xtask routes;
+# Issue #4004: same owner; reason: intentional shared pinned PR-evidence
+# diff assembly (#3930), consumed by the product route and the xtask route;
+# covered_by:
+# cargo test -p ripr --lib analysis::diff::records, cargo xtask check-public-api.
+pub use ripr::analysis::PathRecordError
+pub use ripr::analysis::StatusRecord
+pub use ripr::analysis::load_pr_evidence_diff_range
+pub use ripr::analysis::parse_git_path_records
+pub use ripr::analysis::parse_git_status_records
 pub use ripr::app::OutputFormat
 pub use ripr::app::check_workspace
 pub use ripr::app::check_workspace_repo

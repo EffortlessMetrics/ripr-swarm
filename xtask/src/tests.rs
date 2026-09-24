@@ -19486,11 +19486,34 @@ fn dogfood_blocking_gate_report_is_self_contained() -> Result<(), String> {
             "  - Why it remains open:",
             "  - Near test:",
             "  - Add:",
-            "  - Verify:",
-            "  - Receipt:",
             "  - Inspect: `ripr agent brief --root . --seam-id",
             "  - Boundary: `static_ripr_evidence_only`",
         ] {
+            if !markdown.contains(required) {
+                return Err(format!(
+                    "blocking gate Markdown is not self-contained; missing {required:?}"
+                ));
+            }
+        }
+        // #3906 (F60-14): verify and receipt are labelled as the manual
+        // alternative beside a carried repair start (which its after phase
+        // follows), or as steps after the test edit without one.
+        let (verify, receipt) = if markdown.contains("  - Start repair: `ripr agent repair ") {
+            if !markdown.contains("  - After the test edit: run the `--attempt ... --phase after`")
+            {
+                return Err("blocking gate Markdown lacks the repair after phase".to_string());
+            }
+            (
+                "  - Manual verify without a repair attempt (",
+                "  - Manual receipt without a repair attempt (",
+            )
+        } else {
+            (
+                "  - Verify after the test edit: `",
+                "  - Receipt after verify: `",
+            )
+        };
+        for required in [verify, receipt] {
             if !markdown.contains(required) {
                 return Err(format!(
                     "blocking gate Markdown is not self-contained; missing {required:?}"
@@ -45766,6 +45789,7 @@ fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), St
     );
     assert!(boundary_gap.context.seam_packet_available);
     assert!(boundary_gap.context.targeted_test_brief_available);
+    assert!(boundary_gap.context.agent_repair_command_available);
     assert!(boundary_gap.context.agent_packet_command_available);
     assert!(boundary_gap.context.agent_brief_command_available);
     assert!(boundary_gap.context.after_snapshot_command_available);
@@ -45797,6 +45821,7 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
     assert_eq!(editor_fixture.seam_diagnostic_count, 1);
     assert!(editor_fixture.context.seam_packet_available);
     assert!(editor_fixture.context.targeted_test_brief_available);
+    assert!(editor_fixture.context.agent_repair_command_available);
     assert!(editor_fixture.context.agent_packet_command_available);
     assert!(editor_fixture.context.agent_brief_command_available);
     assert!(editor_fixture.context.after_snapshot_command_available);

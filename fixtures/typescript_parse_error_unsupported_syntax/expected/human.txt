@@ -8,7 +8,7 @@ Changed file(s) by language: rust: 0, typescript: 1.
 
 Analysis outcome: partial_with_limitations (analysis incomplete).
   Zero findings is not a clean result because the analyzed scope is incomplete.
-  Limitation: language_scope_unsupported at language_adapter (src/broken.ts); affected items: 1; recovery: retry — Fix the TypeScript or JavaScript parse error, then re-run the analysis..
+  Limitation: language_scope_unsupported at language_adapter (src/broken.ts); affected items: 1; recovery: retry — Fix the TypeScript or JavaScript parse error, then re-run the analysis.
 
 Start here:
   State: preview_limited
@@ -41,4 +41,4 @@ Note: ripr found no static test path for any of the 1 changed expression(s) in t
   integration tests that ripr's static model does not yet trace; if none does, add co-located tests
   that observe the changed behavior.
 
-Note: 1 Typescript(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

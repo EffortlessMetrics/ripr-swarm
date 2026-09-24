@@ -54,6 +54,7 @@ use crate::output::agent_seam_packets::{
     render_agent_gap_record_packet_json, suggested_assertion_for_classified_seam,
     targeted_test_brief_outline_for_classified_seam, validate_agent_gap_record_packet,
 };
+use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::gap_decision_ledger::{
     DEFAULT_GAP_DECISION_LEDGER_OUT, GapRecord, parse_gap_records_json,
@@ -6798,6 +6799,10 @@ fn evidence_context_packet(snapshot: &AnalysisSnapshot, entry: &ClassifiedSeam) 
             "candidate_value": outline.candidate_value,
             "assertion_shape": outline.assertion_shape,
         },
+        // The repair start only for a seam `agent repair` would accept (the
+        // fail-closed repair-packet flip, RIPR-SPEC-0087 §8, plus a
+        // test-surface target); `null` otherwise (#3906).
+        "repair_command": repair_start_command_for(entry),
         "agent_packet_command": loop_commands::agent_packet_command(
             ".",
             seam_id,
