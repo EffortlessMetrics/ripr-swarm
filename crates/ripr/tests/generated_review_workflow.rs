@@ -73,6 +73,15 @@ fn generated_workflow_batches_compact_review_comments() -> Result<(), Box<dyn Er
 fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box<dyn Error>> {
     for tool in ["bash", "git", "jq"] {
         if !replay::tool_available(tool) {
+            // A hosted runner always has these tools, so a missing one there
+            // is a broken runner, not a reason to skip the strongest oracle
+            // for the generated workflow.
+            if std::env::var_os("GITHUB_ACTIONS").is_some() {
+                return Err(format!(
+                    "`{tool}` is not on PATH under GitHub Actions; the generated-workflow replay cannot be skipped in CI"
+                )
+                .into());
+            }
             eprintln!(
                 "SKIPPED generated_workflow_replay_prints_only_runnable_next_steps: `{tool}` is not on PATH; the generated workflow needs it"
             );
@@ -179,6 +188,30 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         !summary.contains("Safe next action command: `none`"),
         "summary still says there is no safe next action"
     );
+    // Each full report is collapsed under its at-a-glance lines: every
+    // `Full report` opener has its own closer, and no report's top-level
+    // heading (the workflow's own headings are `##` and deeper) is visible
+    // outside a collapsed block.
+    let openers = summary.matches("<details><summary>Full report: ").count();
+    assert!(openers > 0, "summary collapses no full report:\n{summary}");
+    assert_eq!(
+        openers,
+        summary.matches("</details>").count(),
+        "every collapsed full report must close"
+    );
+    let mut collapsed = false;
+    for line in summary.lines() {
+        if line.starts_with("<details><summary>Full report: ") {
+            collapsed = true;
+        } else if line == "</details>" {
+            collapsed = false;
+        } else if !collapsed {
+            assert!(
+                !line.starts_with("# "),
+                "a full report's heading is visible outside its collapsed block: {line}"
+            );
+        }
+    }
 
     // The annotation GitHub places on the changed line carries the same
     // repair start, and nothing that points into this runner's checkout

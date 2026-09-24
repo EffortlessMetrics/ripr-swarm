@@ -2187,7 +2187,11 @@ jobs:
               target/ripr/reports/policy-promotion-calibrated-gate.md; do
               if [ -f "$promotion_md" ]; then
                 echo
+                echo "<details><summary>Full report: $promotion_md</summary>"
+                echo
                 cat "$promotion_md"
+                echo
+                echo '</details>'
               fi
             done
             echo
@@ -2222,7 +2226,11 @@ jobs:
             for preview_md in target/ripr/reports/preview-promotion-*-*.md; do
               if [ -f "$preview_md" ]; then
                 echo
+                echo "<details><summary>Full report: $preview_md</summary>"
+                echo
                 cat "$preview_md"
+                echo
+                echo '</details>'
               fi
             done
             echo
