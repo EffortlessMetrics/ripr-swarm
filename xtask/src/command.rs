@@ -1664,7 +1664,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/markdown-links.md",
             false,
             true,
-            "Checks Markdown links.",
+            "Checks Markdown links and their heading anchors.",
         ),
         command_entry(
             "check-pr-shape",

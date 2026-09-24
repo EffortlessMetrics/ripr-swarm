@@ -60,7 +60,7 @@ use super::{
     GENERATED_CI_FIRST_PR_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
     GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
     Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
-    LocalContextAllow, LspCockpitFixture, LspCockpitReport, MarkdownLink,
+    LocalContextAllow, LocalMarkdownTarget, LspCockpitFixture, LspCockpitReport, MarkdownLink,
     PYTHON_REAL_REPO_EVAL_REQUIRED_CASES, PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
@@ -122,21 +122,22 @@ use super::{
     gh_pr_safe_next_action, gh_pr_status_json, gh_pr_status_markdown, gh_pr_status_readiness,
     github_event_pull_request_title_from_text, glob_matches, golden_changes_without_blessing,
     golden_drift_semantics, guarded_allow_attribute_lints, guarded_allow_attributes_in_text,
-    help_message, install_hooks_in, is_badge_refresh_context, is_bdd_test_name,
-    is_dependency_surface_candidate, is_generated_candidate, is_non_rust_programming_candidate,
-    is_public_badge_basis_surface, is_receipt_status, is_ripr_managed_hook, is_snake_case_id,
-    is_spec_id, json_escape, json_number_after, json_string_values_for_key, json_summary_count,
-    known_commands, known_xtask_command, lane1_actionable_gap_packets_json,
-    lane1_actionable_gap_packets_markdown, lane1_evidence_audit_from_repo_exposure,
-    lane1_evidence_audit_json, lane1_evidence_audit_limited_report, lane1_evidence_audit_markdown,
+    heading_slug, heading_slugs, help_message, install_hooks_in, is_badge_refresh_context,
+    is_bdd_test_name, is_dependency_surface_candidate, is_generated_candidate,
+    is_non_rust_programming_candidate, is_public_badge_basis_surface, is_receipt_status,
+    is_ripr_managed_hook, is_snake_case_id, is_spec_id, json_escape, json_number_after,
+    json_string_values_for_key, json_summary_count, known_commands, known_xtask_command,
+    lane1_actionable_gap_packets_json, lane1_actionable_gap_packets_markdown,
+    lane1_evidence_audit_from_repo_exposure, lane1_evidence_audit_json,
+    lane1_evidence_audit_limited_report, lane1_evidence_audit_markdown,
     lane1_evidence_audit_repo_exposure_args,
     lane1_evidence_audit_report_from_complete_repo_exposure, lane1_evidence_audit_timeout_error,
     lane1_readiness_packet_specs, limited_badge_artifacts_json, limited_badge_artifacts_markdown,
     line_has_static_language_inline_allow, local_context_line_findings, local_markdown_target,
     lsp_cockpit_report, lsp_cockpit_report_json, lsp_cockpit_report_markdown,
-    markdown_links_in_text, mutation_calibration_report_json, mutation_calibration_report_markdown,
-    next_checkpoints_from_capabilities, next_spec_id_from_ids,
-    non_rust_programming_retention_reason, normalize_fixture_human_output,
+    markdown_links_in_text, missing_anchor_violation, mutation_calibration_report_json,
+    mutation_calibration_report_markdown, next_checkpoints_from_capabilities,
+    next_spec_id_from_ids, non_rust_programming_retention_reason, normalize_fixture_human_output,
     normalize_fixture_json_output, normalize_golden_text, normalize_path,
     parse_actionable_gap_outcomes_args, parse_doc_artifact_ledger_text,
     parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
@@ -145,26 +146,29 @@ use super::{
     parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts,
     parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
     parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
-    parse_targeted_test_outcome_args, pr_actionable_delta_front_panel_from_inputs,
-    pr_body_validation_warning, pr_checks_summary, pr_ready_json, pr_ready_markdown,
-    pr_ready_next_action, pr_ready_status, pr_ready_status_from_report_status,
-    pr_sensitive_file_reason, pr_shape_warnings, pr_summary_body, pr_title_family,
-    pr_triage_findings, pr_triage_json, pr_triage_markdown, pr_triage_queue_dispositions,
-    precommit_report_body, public_badge_basis_violations, public_contract_rows, read_json_value,
-    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
-    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
-    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
+    parse_targeted_test_outcome_args, pin_report_packet_index_generated_at,
+    pr_actionable_delta_front_panel_from_inputs, pr_body_validation_warning, pr_checks_summary,
+    pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
+    pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
+    pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
+    pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
+    public_contract_rows, read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
+    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
+    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+    repo_badge_artifacts_summary_markdown, repo_exposure_latency_json,
+    repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_trace, repo_exposure_summary_report_timeout_ms_from_env, repo_root,
     repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
     report_index_lane1_readiness_packets, report_index_missing_artifact_count,
     report_index_missing_expected, report_index_next_commands, report_index_repo_ops_packets,
-    report_index_repo_ops_status, report_status_from_text,
-    repository_owned_review_thread_mutation_violations, ripr_command_literals_in_text,
-    ripr_debug_binary, ripr_plus_receipt_from_badge, ripr_plus_receipt_from_options,
-    ripr_plus_receipt_from_repo_badge_json, ripr_plus_receipt_from_repo_exposure_summary_json,
+    report_index_repo_ops_status, report_packet_index_case_id_violation,
+    report_packet_index_generated_at_violation, report_packet_index_render_plan,
+    report_status_from_text, repository_owned_review_thread_mutation_violations,
+    ripr_command_literals_in_text, ripr_debug_binary, ripr_plus_receipt_from_badge,
+    ripr_plus_receipt_from_options, ripr_plus_receipt_from_repo_badge_json,
+    ripr_plus_receipt_from_repo_exposure_summary_json,
     ripr_plus_receipt_from_repo_exposure_summary_json_with_source, ripr_plus_receipt_markdown,
     ripr_pre_commit_hook, ripr_swarm_attempt_allowed_file_line,
     ripr_swarm_attempt_dry_run_from_actionable_gaps_value, ripr_swarm_attempt_dry_run_markdown,
@@ -4859,6 +4863,14 @@ fn write_report_packet_index_corpus(
     gate_authority_present: bool,
 ) {
     write(&base.join("README.md"), "# Report Packet Index Corpus\n");
+    // The corpus contract requires a real packet directory. These guard tests
+    // exercise the declaration checks only, so the tree's contents do not
+    // matter; `write` is this file's owner for creating one.
+    let packet_root = base.join("packet");
+    write(
+        &packet_root.join("README.md"),
+        "# Synthetic packet root for the report-packet-index corpus guard tests\n",
+    );
     let expected = format!(
         r#"{{
         "status": "{expected_status}",
@@ -4884,10 +4896,12 @@ fn write_report_packet_index_corpus(
         format!(
             r#"{{
       "id": "{id}",
+      "packet_root": "{}",
       "expected_report": "{}",
       "expected_markdown": "{}",
       "expected": {expected}
     }}"#,
+            json_path(&packet_root),
             json_path(report),
             json_path(markdown)
         )
@@ -4900,6 +4914,7 @@ fn write_report_packet_index_corpus(
             r#"{{
   "kind": "report_packet_index_corpus",
   "spec": "RIPR-SPEC-0024",
+  "canonical_command": "ripr reports index --root . --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md",
   "cases": [
 {cases}
   ]
@@ -5555,6 +5570,45 @@ fn report_packet_index_fixture_corpus_guard_accepts_complete_contract() -> Resul
     super::validate_report_packet_index_fixture_corpus_at(&base, &mut violations)?;
 
     assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn report_packet_index_fixture_corpus_guard_requires_a_renderable_corpus() -> Result<(), String> {
+    let root = temp_dir("report-packet-index-unrenderable");
+    let base = root.join("report-packet-index");
+    let report = root.join("index.json");
+    let markdown = root.join("index.md");
+    write_report_packet_index_corpus(&base, &report, &markdown, "pass", 0, 0, true);
+
+    // Strip the two fields the dogfood render needs. Without them the gate
+    // falls back to comparing two committed declarations, which is the state
+    // #3972 reports.
+    let corpus_path = base.join("corpus.json");
+    let corpus = fs::read_to_string(&corpus_path)
+        .map_err(|err| format!("failed to read the synthetic corpus: {err}"))?;
+    let stripped = corpus
+        .lines()
+        .filter(|line| !line.contains("\"canonical_command\"") && !line.contains("\"packet_root\""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    write(&corpus_path, &format!("{stripped}\n"));
+
+    let mut violations = Vec::new();
+    super::validate_report_packet_index_fixture_corpus_at(&base, &mut violations)?;
+
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("missing canonical_command")),
+        "a corpus with no canonical_command renders nothing: {violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("is missing packet_root")),
+        "a case with no packet_root has no producer input: {violations:?}"
+    );
     Ok(())
 }
 
@@ -11856,14 +11910,26 @@ fn markdown_link_helpers_skip_fences_and_external_targets() {
     );
     assert_eq!(
         local_markdown_target("docs/README.md#top"),
-        Some("docs/README.md".to_string())
+        Some(LocalMarkdownTarget {
+            path: Some("docs/README.md".to_string()),
+            fragment: Some("top".to_string()),
+        })
     );
     assert_eq!(
         local_markdown_target("<docs/My File.md>"),
-        Some("docs/My File.md".to_string())
+        Some(LocalMarkdownTarget {
+            path: Some("docs/My File.md".to_string()),
+            fragment: None,
+        })
     );
     assert_eq!(local_markdown_target("https://example.com"), None);
-    assert_eq!(local_markdown_target("#section"), None);
+    assert_eq!(
+        local_markdown_target("#section"),
+        Some(LocalMarkdownTarget {
+            path: None,
+            fragment: Some("section".to_string()),
+        })
+    );
 }
 
 #[test]
@@ -12626,7 +12692,13 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
         };
     let report_packet_index_run = DogfoodReportPacketIndexRun {
         name: "complete_packet".to_string(),
-        actual_dir: Path::new("fixtures/boundary_gap/expected/report-packet-index/complete-packet")
+        packet_root: Path::new(
+            "fixtures/boundary_gap/expected/report-packet-index/complete-packet/packet",
+        )
+        .to_path_buf(),
+        render_command: "ripr reports index --root .".to_string(),
+        rendered: true,
+        actual_dir: Path::new("target/ripr/dogfood/report-packet-index/complete_packet")
             .to_path_buf(),
         json_path: Path::new(
             "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.json",
@@ -19661,6 +19733,100 @@ fn dogfood_report_packet_index_scenarios_have_checked_receipts() -> Result<(), S
 }
 
 #[test]
+fn report_packet_index_render_plan_reads_the_documented_command() -> Result<(), String> {
+    let (args, json, markdown) = report_packet_index_render_plan(
+        "ripr reports index --root . --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md",
+    )?;
+    assert_eq!(args.first().map(String::as_str), Some("reports"));
+    assert!(!args.iter().any(|arg| arg == "ripr"));
+    assert_eq!(json, Path::new("target/ripr/reports/index.json"));
+    assert_eq!(markdown, Path::new("target/ripr/reports/index.md"));
+    Ok(())
+}
+
+#[test]
+fn report_packet_index_render_plan_names_a_command_it_cannot_run() {
+    let missing_out_md = report_packet_index_render_plan(
+        "ripr reports index --root . --out target/ripr/reports/index.json",
+    )
+    .expect_err("a command without --out-md names no Markdown to compare");
+    assert!(
+        missing_out_md.contains("--out-md"),
+        "error should name the missing flag: {missing_out_md}"
+    );
+
+    let wrong_program = report_packet_index_render_plan("cargo xtask reports index")
+        .expect_err("only the ripr binary renders this corpus");
+    assert!(
+        wrong_program.contains("must start with `ripr`"),
+        "error should name the expected program: {wrong_program}"
+    );
+
+    let empty = report_packet_index_render_plan("   ")
+        .expect_err("an empty canonical_command renders nothing");
+    assert!(
+        empty.contains("is empty"),
+        "error should say the command is empty: {empty}"
+    );
+}
+
+#[test]
+fn report_packet_index_generated_at_violation_accepts_only_a_live_stamp() {
+    assert_eq!(
+        report_packet_index_generated_at_violation("unix_ms:1758672000000"),
+        None
+    );
+
+    // The pin substitutes the observed stamp, so a renderer that stopped
+    // emitting `unix_ms:<millis>` would otherwise surface only as whole-
+    // document drift. Each of these has to be named.
+    for observed in [
+        "2026-05-10T12:00:00Z",
+        "unix_ms:",
+        "unix_ms:later",
+        // The pinned golden value means the render did not stamp its own
+        // clock, which is how a hand-written golden would look.
+        "unix_ms:0",
+    ] {
+        assert!(
+            report_packet_index_generated_at_violation(observed).is_some(),
+            "`{observed}` should be reported as a generated_at violation"
+        );
+    }
+}
+
+#[test]
+fn report_packet_index_case_id_violation_rejects_anything_but_one_component() {
+    assert_eq!(
+        report_packet_index_case_id_violation("complete_packet"),
+        None
+    );
+
+    // The render clears the scratch directory named by the id, so each of
+    // these would point `remove_dir_all` somewhere the corpus never named.
+    for name in ["", ".", "..", "../other", "a/b", "trailing/"] {
+        assert!(
+            report_packet_index_case_id_violation(name).is_some(),
+            "`{name}` should be rejected as a scratch directory component"
+        );
+    }
+}
+
+#[test]
+fn pin_report_packet_index_generated_at_replaces_only_the_stamp() {
+    let rendered = "{\n  \"generated_at\": \"unix_ms:1758672000000\",\n  \"note\": \"unix_ms:1758672000000 elsewhere\"\n}";
+    let pinned = pin_report_packet_index_generated_at(rendered, "unix_ms:1758672000000");
+    assert!(
+        pinned.contains("\"generated_at\": \"unix_ms:0\""),
+        "the stamp should be pinned: {pinned}"
+    );
+    assert!(
+        pinned.contains("unix_ms:1758672000000 elsewhere"),
+        "only the generated_at field should move: {pinned}"
+    );
+}
+
+#[test]
 fn dogfood_pr_inline_comment_scenarios_have_checked_receipts() -> Result<(), String> {
     with_repo_cwd(|| {
         let scenarios = dogfood_pr_inline_comment_scenarios();
@@ -21895,16 +22061,167 @@ fn local_markdown_target_filters_absolute_urls() {
     assert_eq!(local_markdown_target("https://example.com"), None);
     assert_eq!(local_markdown_target("http://example.com"), None);
     assert_eq!(local_markdown_target("mailto:test@example.com"), None);
-    assert_eq!(local_markdown_target("#anchor"), None);
+}
+
+#[test]
+fn local_markdown_target_keeps_a_same_document_anchor() {
+    assert_eq!(
+        local_markdown_target("#anchor"),
+        Some(LocalMarkdownTarget {
+            path: None,
+            fragment: Some("anchor".to_string()),
+        })
+    );
+    // A bare `#` names no heading, so there is nothing to resolve.
+    assert_eq!(local_markdown_target("#"), None);
 }
 
 #[test]
 fn local_markdown_target_returns_relative_local_paths() {
     let target = local_markdown_target("relative/path.md");
-    assert_eq!(target, Some("relative/path.md".to_string()));
+    assert_eq!(
+        target,
+        Some(LocalMarkdownTarget {
+            path: Some("relative/path.md".to_string()),
+            fragment: None,
+        })
+    );
 
     let target = local_markdown_target("../sibling.md");
-    assert_eq!(target, Some("../sibling.md".to_string()));
+    assert_eq!(
+        target,
+        Some(LocalMarkdownTarget {
+            path: Some("../sibling.md".to_string()),
+            fragment: None,
+        })
+    );
+}
+
+#[test]
+fn a_fragment_with_no_heading_names_the_link_and_the_target() -> Result<(), String> {
+    let target = Path::new("docs/CI.md");
+    let slugs = heading_slugs("# Copyable ripr advisory workflow\n");
+    let resolving = MarkdownLink {
+        line: 118,
+        target: "CI.md#copyable-ripr-advisory-workflow".to_string(),
+    };
+    let broken = MarkdownLink {
+        line: 118,
+        target: "CI.md#this-anchor-does-not-exist".to_string(),
+    };
+
+    let mut failures = Vec::new();
+    if let Some(violation) = missing_anchor_violation(
+        "docs/QUICKSTART.md",
+        &resolving,
+        target,
+        "copyable-ripr-advisory-workflow",
+        &slugs,
+    ) {
+        failures.push(format!("a resolving anchor was reported: {violation}"));
+    }
+    match missing_anchor_violation(
+        "docs/QUICKSTART.md",
+        &broken,
+        target,
+        "this-anchor-does-not-exist",
+        &slugs,
+    ) {
+        None => failures.push("a fragment with no heading was reported as a pass".to_string()),
+        Some(violation) => {
+            for expected in [
+                "docs/QUICKSTART.md:118",
+                "CI.md#this-anchor-does-not-exist",
+                "docs/CI.md",
+            ] {
+                if !violation.contains(expected) {
+                    failures.push(format!("`{violation}` does not name `{expected}`"));
+                }
+            }
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+#[test]
+fn heading_slug_drops_punctuation_without_collapsing_the_spaces_around_it() -> Result<(), String> {
+    let mut failures = Vec::new();
+    // GitHub's own anchors for headings this repository links into. The doubled
+    // dashes are not a typo: the dropped em-dash and slash leave the spaces on
+    // both sides behind.
+    let cases = [
+        (
+            "Coverage / Grip Frontier Report",
+            "coverage--grip-frontier-report",
+        ),
+        (
+            "2026-07-25: A green check is not evidence \u{2014} five ways",
+            "2026-07-25-a-green-check-is-not-evidence--five-ways",
+        ),
+        ("`ripr+ 0`", "ripr-0"),
+        (
+            "Historical Operating Sequence: 0.9.0 Release",
+            "historical-operating-sequence-090-release",
+        ),
+        ("Non-Goals", "non-goals"),
+        ("agent_context_v2", "agent_context_v2"),
+    ];
+    for (heading, expected) in cases {
+        let slug = heading_slug(heading);
+        if slug != expected {
+            failures.push(format!(
+                "`{heading}` slugified to `{slug}`, expected `{expected}`"
+            ));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+#[test]
+fn heading_slugs_number_repeated_headings_the_way_github_does() -> Result<(), String> {
+    let text = "# Added\n\n## Added\n\n### Added\n";
+    let slugs = heading_slugs(text);
+    let expected = ["added", "added-1", "added-2"];
+    let missing: Vec<&str> = expected
+        .into_iter()
+        .filter(|slug| !slugs.contains(*slug))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("heading_slugs did not offer {missing:?}"))
+    }
+}
+
+#[test]
+fn heading_slugs_read_only_real_headings() -> Result<(), String> {
+    let text = "# Title\n\n```md\n# Fenced Heading\n```\n\n#hashtag not a heading\n\n## Closing Hashes ##\n\n####### Seven Hashes\n";
+    let slugs = heading_slugs(text);
+    let mut failures = Vec::new();
+    for offered in ["title", "closing-hashes"] {
+        if !slugs.contains(offered) {
+            failures.push(format!("expected the anchor `{offered}`"));
+        }
+    }
+    for withheld in ["fenced-heading", "hashtag-not-a-heading", "seven-hashes"] {
+        if slugs.contains(withheld) {
+            failures.push(format!("`{withheld}` is not a heading in this document"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 fn write_doc_artifact_fixture(root: &Path, path: &str, id: &str) {
@@ -47121,6 +47438,7 @@ level = "deny"
 name = "clippy::same_length_and_capacity"
 level = "deny"
 activate_when_msrv = "1.94"
+blocked_by = "receipts"
 "#;
     let (entries, violations) = super::parse_clippy_lints_ledger(ledger);
     assert!(
@@ -47138,6 +47456,19 @@ activate_when_msrv = "1.94"
             ("clippy::map_err_ignore", false),
             ("clippy::same_length_and_capacity", true),
         ]
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .find(|entry| entry.is_planned)
+            .and_then(|entry| entry.blocked_by.as_deref()),
+        Some("receipts")
+    );
+    assert!(
+        entries
+            .iter()
+            .filter(|entry| !entry.is_planned)
+            .all(|entry| entry.blocked_by.is_none())
     );
 }
 
@@ -47643,7 +47974,7 @@ activate_when_msrv = "1.93"
 }
 
 #[test]
-fn check_lint_policy_requires_reason_when_activate_when_msrv_already_met() {
+fn check_lint_policy_requires_blocked_by_when_activate_when_msrv_already_met() {
     let cargo = r#"
 [workspace.package]
 rust-version = "1.95"
@@ -47653,14 +47984,16 @@ rust-version = "1.95"
 name = "clippy::indexing_slicing"
 level = "deny"
 activate_when_msrv = "1.93"
+reason = "per-call expect receipts, not MSRV"
 "#;
     let violations = super::collect_lint_policy_violations(cargo, overdue);
     assert!(
         violations.iter().any(|row| {
             row.contains("clippy::indexing_slicing")
                 && row.contains("already met by workspace rust-version `1.95`")
+                && row.contains("`blocked_by`")
         }),
-        "overdue activate_when_msrv without reason must fail: {violations:?}"
+        "overdue activate_when_msrv without blocked_by must fail even when reason names a blocker: {violations:?}"
     );
 
     let recorded = r#"
@@ -47668,12 +48001,12 @@ activate_when_msrv = "1.93"
 name = "clippy::indexing_slicing"
 level = "deny"
 activate_when_msrv = "1.93"
-reason = "per-call expect receipts, not MSRV"
+blocked_by = "per-call expect receipts, not MSRV"
 "#;
     let violations = super::collect_lint_policy_violations(cargo, recorded);
     assert!(
         violations.is_empty(),
-        "non-MSRV reason must keep an overdue planned lint: {violations:?}"
+        "non-MSRV blocked_by must keep an overdue planned lint when reason is empty: {violations:?}"
     );
 
     let msrv_only = r#"
@@ -47681,16 +48014,63 @@ reason = "per-call expect receipts, not MSRV"
 name = "clippy::indexing_slicing"
 level = "deny"
 activate_when_msrv = "1.93"
-reason = "waiting for Rust 1.97"
+reason = "per-call expect receipts, not MSRV"
+blocked_by = "waiting for Rust 1.97"
 "#;
     let violations = super::collect_lint_policy_violations(cargo, msrv_only);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy::indexing_slicing")
+                && row.contains("`blocked_by`")
+                && row.contains("is MSRV-only")
+                && row.contains("waiting for Rust 1.97")
+        }),
+        "overdue activate_when_msrv with an MSRV-only blocked_by must fail even when reason names a blocker: {violations:?}"
+    );
+
+    let escaped_newline = r#"
+[[planned]]
+name = "clippy::indexing_slicing"
+level = "deny"
+activate_when_msrv = "1.93"
+blocked_by = "waiting for Rust 1.97\n"
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, escaped_newline);
     assert!(
         violations.iter().any(|row| {
             row.contains("clippy::indexing_slicing")
                 && row.contains("is MSRV-only")
                 && row.contains("waiting for Rust 1.97")
         }),
-        "overdue activate_when_msrv with an MSRV-only reason must fail: {violations:?}"
+        "an escaped newline must not count as a non-MSRV token: {violations:?}"
+    );
+
+    let escaped_unicode_newline = r#"
+[[planned]]
+name = "clippy::indexing_slicing"
+level = "deny"
+activate_when_msrv = "1.93"
+blocked_by = "waiting for Rust 1.97\u000a"
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, escaped_unicode_newline);
+    assert!(
+        violations.iter().any(|row| {
+            row.contains("clippy::indexing_slicing") && row.contains("is MSRV-only")
+        }),
+        "a unicode newline escape must not count as a non-MSRV token: {violations:?}"
+    );
+
+    let literal_newline = r#"
+[[planned]]
+name = "clippy::indexing_slicing"
+level = "deny"
+activate_when_msrv = "1.93"
+blocked_by = 'waiting for Rust 1.97\n'
+"#;
+    let violations = super::collect_lint_policy_violations(cargo, literal_newline);
+    assert!(
+        violations.is_empty(),
+        "a single-quoted backslash-n is literal TOML and stays a non-MSRV token: {violations:?}"
     );
 
     let clippy_unrecognized = r#"
@@ -47698,12 +48078,12 @@ reason = "waiting for Rust 1.97"
 name = "clippy::manual_pop_if"
 level = "warn"
 activate_when_msrv = "1.95"
-reason = "Rust 1.95.0 Clippy does not recognize this lint; promote only after the pinned toolchain supports it."
+blocked_by = "Rust 1.95.0 Clippy does not recognize this lint; promote only after the pinned toolchain supports it."
 "#;
     let violations = super::collect_lint_policy_violations(cargo, clippy_unrecognized);
     assert!(
         violations.is_empty(),
-        "Clippy-recognition blocker must count as non-MSRV: {violations:?}"
+        "Clippy-recognition blocked_by must count as non-MSRV: {violations:?}"
     );
 
     let future = r#"
@@ -47715,7 +48095,7 @@ activate_when_msrv = "1.97"
     let violations = super::collect_lint_policy_violations(cargo, future);
     assert!(
         violations.is_empty(),
-        "future activate_when_msrv does not require a reason yet: {violations:?}"
+        "future activate_when_msrv does not require a blocked_by yet: {violations:?}"
     );
 
     let single_quoted = r#"
@@ -47723,7 +48103,7 @@ activate_when_msrv = "1.97"
 name = 'clippy::indexing_slicing'
 level = 'deny'
 activate_when_msrv = '1.93'
-reason = 'per-call expect receipts, not MSRV'
+blocked_by = 'per-call expect receipts, not MSRV'
 "#;
     let violations = super::collect_lint_policy_violations(cargo, single_quoted);
     assert!(
@@ -47736,32 +48116,40 @@ reason = 'per-call expect receipts, not MSRV'
 name = 'clippy::indexing_slicing'
 level = 'deny'
 activate_when_msrv = '1.93'
+reason = 'per-call expect receipts, not MSRV'
 "#;
     let violations = super::collect_lint_policy_violations(cargo, single_quoted_overdue);
     assert!(
         violations.iter().any(|row| {
             row.contains("clippy::indexing_slicing")
                 && row.contains("already met by workspace rust-version `1.95`")
+                && row.contains("`blocked_by`")
         }),
-        "single-quoted overdue activate_when_msrv without reason must fail: {violations:?}"
+        "single-quoted overdue activate_when_msrv without blocked_by must fail: {violations:?}"
     );
 }
 
 #[test]
-fn planned_reason_is_msrv_only_strips_version_delays_only() {
-    assert!(super::planned_reason_is_msrv_only(""));
-    assert!(super::planned_reason_is_msrv_only("   "));
-    assert!(super::planned_reason_is_msrv_only("waiting for Rust 1.97"));
-    assert!(super::planned_reason_is_msrv_only("requires Rust 1.97"));
-    assert!(super::planned_reason_is_msrv_only("MSRV"));
-    assert!(super::planned_reason_is_msrv_only("available since 1.93"));
-    assert!(!super::planned_reason_is_msrv_only(
+fn planned_blocker_text_is_msrv_only_strips_version_delays_only() {
+    assert!(super::planned_blocker_text_is_msrv_only(""));
+    assert!(super::planned_blocker_text_is_msrv_only("   "));
+    assert!(super::planned_blocker_text_is_msrv_only(
+        "waiting for Rust 1.97"
+    ));
+    assert!(super::planned_blocker_text_is_msrv_only(
+        "requires Rust 1.97"
+    ));
+    assert!(super::planned_blocker_text_is_msrv_only("MSRV"));
+    assert!(super::planned_blocker_text_is_msrv_only(
+        "available since 1.93"
+    ));
+    assert!(!super::planned_blocker_text_is_msrv_only(
         "per-call expect receipts, not MSRV"
     ));
-    assert!(!super::planned_reason_is_msrv_only(
+    assert!(!super::planned_blocker_text_is_msrv_only(
         "Rust 1.95.0 Clippy does not recognize this lint"
     ));
-    assert!(!super::planned_reason_is_msrv_only(
+    assert!(!super::planned_blocker_text_is_msrv_only(
         "needs a reviewed clippy.toml disallowed-fields list"
     ));
 }

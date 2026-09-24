@@ -6,24 +6,33 @@ Start here:
 - PR review front panel: target/ripr/reports/pr-review-front-panel.md
 
 Packet summary:
-- Available artifacts: 3
+- Available artifacts: 5
 - Missing expected artifacts: 2
 - Warnings: 2
 - Failures: 0
 
+Start here:
+- PR review front panel: target/ripr/reports/pr-review-front-panel.md
+
 PR review story:
-- first useful action: target/ripr/reports/first-useful-action.md
-- review comments: target/ripr/review/comments.md
+- First useful action: target/ripr/reports/first-useful-action.md
+- Review guidance: target/ripr/review/comments.md
+
+Repair and agent handoff:
+- Assistant proof: target/ripr/reports/test-oracle-assistant-proof.md
+- Assistant loop health: target/ripr/reports/assistant-loop-health.md
 
 Validation receipts:
-- agent receipt: missing
+- Agent receipt: missing
   - next: `ripr agent receipt --out target/ripr/reports/agent-receipt.json`
-- check PR: missing
+- Check PR: missing
   - next: `cargo xtask check-pr`
 
 Missing expected:
-- agent receipt: not_generated
-- check PR: not_generated
+- Agent receipt: not_generated
+  - next: `ripr agent receipt --out target/ripr/reports/agent-receipt.json`
+- Check PR: not_generated
+  - next: `cargo xtask check-pr`
 
 Limits:
 - Advisory report-packet index only.

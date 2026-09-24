@@ -56,6 +56,13 @@ map is:
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
 
+`ripr doctor --json` top-level `status` and `runtime_probes[].status` are
+`pass` or `fail`. Each `checks[].status` is `pass`, `fail`, or `skipped`;
+`skipped` (additive in schema `0.2`) marks a check that does not apply to the
+root, such as the `cargo_toml`, `tool_cargo`, and `tool_rustc` checks on a
+root where Rust is not in scope. A skipped check never fails the report, and
+its `evidence` states why it was skipped. See [Exit codes](EXIT_CODES.md).
+
 ## JSON object key ordering
 
 JSON object key order is not part of the semantic contract for ordinary
@@ -126,6 +133,14 @@ The optional `analysis_outcome` block preserves producer-owned completeness;
 the optional `finding_alignment` block is the typed canonical seam projection.
 Unknown top-level fields are rejected by the verification contract. Nested
 finding and seam details may grow additively within the pinned version.
+
+Top-level `base` records the base ref the diff loader actually used (#3940):
+the explicit `--base` when one was given, the resolved default base
+(RIPR-SPEC-0084) for scope-less runs, and absent when no base was involved
+(diff-file/stdin inputs and repo-scope runs). Base-matching consumers (for
+example `review-comments --check-output`, which requires the envelope `base`
+to equal its own `--base`) may rely on a present `base`; an absent `base`
+means the run cannot be attributed to a base.
 
 ```json
 {
@@ -1473,15 +1488,17 @@ requires no disclosure.
 Added as an additive optional top-level boolean. Emitted (as `true`) only when
 ALL of the following are true:
 
-1. `ripr check --base <rev>` was invoked (i.e. `--base` was explicit).
-2. `--diff <file>` was NOT also supplied.
+1. The analyzed diff was committed history: `ripr check --base <rev>`, or a
+   bare `ripr check` that resolved the default base (#3888).
+2. None of `--diff <file>`, `--worktree`, or `--candidate-tree` was supplied,
+   and the format is not repo-scope.
 3. The working tree has at least one uncommitted change to a tracked source
    file, as reported by `git status --porcelain`.
 
 Absent (not emitted) when `false`. Does not bump `schema_version`.
 
-This field closes the false-clean gap where `ripr check --base HEAD` with an
-uncommitted `.rs` edit returns 0 probes and exit 0 — a result that is honest
+This field closes the false-clean gap where `ripr check --base HEAD` (or a bare
+`ripr check` on the default branch) with an uncommitted `.rs` edit returns 0 probes and exit 0 — a result that is honest
 for the committed diff but misleading if the user assumes it covers their
 working-tree change. When `unanalyzed_working_tree: true` is present, the
 result is NOT a clean pass for the uncommitted changes.
@@ -1492,8 +1509,8 @@ Example:
 "unanalyzed_working_tree": true
 ```
 
-The field is absent when the worktree is clean, when `--diff <file>` was used
-instead of `--base`, when `--worktree` was used to include staged and unstaged
+The field is absent when the worktree is clean, when `--diff <file>` or
+`--candidate-tree` was used, when a repo-scope format was requested, when `--worktree` was used to include staged and unstaged
 tracked edits in the analyzed diff, or when `git status --porcelain` cannot be
 run (fail-closed: no fabricated disclosure).
 
@@ -7127,8 +7144,11 @@ Field contract:
 - `comments[].placement` - GitHub-compatible changed-line placement. Items
   without safe placement belong in `summary_only[]`.
 - `comments[].placement.mode` - `"exact_seam_line"`,
-  `"owner_function_changed_line"`, or `"same_file_changed_line"`. The renderer
-  must prefer summary-only guidance over misleading line placement.
+  `"owner_function_changed_line"`, or `"same_file_changed_line"`. The last
+  names a changed line inside the seam owner's span that owner attribution
+  bound to a nested function; a changed line elsewhere in the same file is
+  not a placement. The renderer must prefer summary-only guidance over
+  misleading line placement.
 - `comments[].kind` - seam kind from the existing static evidence.
 - `comments[].grip_class` - seam grip class from the existing static evidence.
 - `comments[].severity` - configured report severity for the recommendation.
@@ -13756,7 +13776,8 @@ target/ripr/pilot/pilot-summary.md
   "next": {
     "inspect_packet": "target/ripr/pilot/agent-seam-packets.json",
     "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json",
-    "outcome_command": "ripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json"
+    "outcome_command": "ripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json",
+    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before"
   }
 }
 ```
@@ -13890,13 +13911,17 @@ Field contract:
   `python_repair_card` using the same advisory card fields emitted by
   `ripr check --json`.
 - `next` — advisory follow-up commands. Complete summaries include the public
-  `ripr outcome` before/after receipt command. Partial summaries include a
-  retry command with a larger explicit timeout.
+  `ripr outcome` before/after receipt command, and `repair_command`: the
+  `ripr agent repair --seam-id <id> --phase before` command for the top seam
+  when its repair-packet eligibility flip holds, otherwise `null` (#3906).
+  Partial summaries include a retry command with a larger explicit timeout.
 
 The Markdown sibling prints the same summary, puts the top recommendation first,
-and includes the inspected seam, why it matters, the focused test to write, the
-top seam's targeted test brief, and the before/after commands for complete
-runs. It remains advisory. On timeout, the Markdown sibling records the partial
+and includes the inspected seam, why it matters, the focused test to write, and
+the top seam's targeted test brief. Its Next Commands block offers one route:
+the repair transaction's `--phase before` command when `repair_command` is
+set, otherwise the before/after snapshot commands. The terminal closes the same
+way, with the repair command as step 1 of three. It remains advisory. On timeout, the Markdown sibling records the partial
 state and the retry command instead of pretending the packet is complete.
 
 ## LSP Seam Diagnostics
@@ -15622,8 +15647,10 @@ start-here carried `selected.repair_command` (a review-card selection, #3906);
 it is copied unchanged, never derived, and pr-summary does not read review
 comments itself. When present it is also the first entry in
 `local_reproduction_commands`, and the Markdown panel shows a `start repair`
-line before `verify`. When `limitations` is empty, `top_limitation`
-is omitted entirely. When delta fields are computed (baseline supplied),
+line before `verify`. When `limitations` is empty or
+`"not_available"`, `top_limitation` is omitted entirely; the Markdown
+panel distinguishes the two, rendering `- none` for the first and
+`- not_available` for the second. When delta fields are computed (baseline supplied),
 `gap_delta_note` is absent.
 
 Field sources:
@@ -15637,7 +15664,7 @@ Field sources:
 | `gaps.total_actionable` | gap-decision-ledger | `summary.repairable_total` |
 | `gaps.total_static_limitation` | gap-decision-ledger | `summary.static_limitation_total` |
 | `gaps.*` delta fields | computed from `--baseline` | before/after `gaps.total_actionable` |
-| `limitations[]` | repo-exposure | `limitations[]` |
+| `limitations` | repo-exposure | `limitations[]` when the artifact was read; `"not_available"` when it is missing, unreadable, or carries a non-array `limitations` value. An empty array means repo-exposure was read and named none, which is a different finding from not having read it. |
 | `missing_receipts` | gap-decision-ledger | `summary.repairable_total - receipt_improved_total` |
 | `receipt_status.receipts_present` | gap-decision-ledger | `summary.receipt_improved_total + summary.receipt_unchanged_after_attempt_total` |
 | `receipt_status.missing_receipts` | gap-decision-ledger | mirrors top-level `missing_receipts` |
