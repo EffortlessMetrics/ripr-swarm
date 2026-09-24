@@ -68,11 +68,7 @@ fn generated_capture_step_uses_pinned_diff_contract() -> Result<(), Box<dyn Erro
     ));
     fs::create_dir_all(&root)?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(["init", "--root"])
-        .arg(&root)
-        .args(["--ci", "github"])
-        .output()?;
+    let output = run_ripr_init(&root)?;
     assert!(
         output.status.success(),
         "ripr init failed: stdout={} stderr={}",
@@ -116,11 +112,7 @@ fn docs_ci_capture_step_matches_generated_template() -> Result<(), Box<dyn Error
     ));
     fs::create_dir_all(&root)?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(["init", "--root"])
-        .arg(&root)
-        .args(["--ci", "github"])
-        .output()?;
+    let output = run_ripr_init(&root)?;
     assert!(
         output.status.success(),
         "ripr init failed: stdout={} stderr={}",
@@ -243,11 +235,7 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
         std::process::id()
     ));
     fs::create_dir_all(&init_root)?;
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(["init", "--root"])
-        .arg(&init_root)
-        .args(["--ci", "github"])
-        .output()?;
+    let output = run_ripr_init(&init_root)?;
     assert!(
         output.status.success(),
         "ripr init failed: {}",
@@ -304,10 +292,7 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
     let script = body
         .join("\n")
         .replace("origin/${{ github.base_ref }}", "main");
-    let run = Command::new("sh")
-        .args(["-c", &script])
-        .current_dir(&repo)
-        .output()?;
+    let run = run_sh(&script, &repo)?;
     assert!(
         run.status.success(),
         "capture step failed: {}",
@@ -333,10 +318,7 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
     let missing = body
         .join("\n")
         .replace("origin/${{ github.base_ref }}", "nonexistent-base-branch");
-    let run = Command::new("sh")
-        .args(["-c", &missing])
-        .current_dir(&repo)
-        .output()?;
+    let run = run_sh(&missing, &repo)?;
     assert!(
         !run.status.success(),
         "capture step must fail when the base cannot be resolved"
@@ -350,6 +332,26 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
     fs::remove_dir_all(init_root)?;
     fs::remove_dir_all(repo)?;
     Ok(())
+}
+
+/// One spawn site for the built-binary `ripr init` invocations below
+/// (process-policy bound).
+fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
+    Ok(Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["init", "--root"])
+        .arg(root)
+        .args(["--ci", "github"])
+        .output()?)
+}
+
+/// One spawn site for executing extracted capture-step shell (process-policy
+/// bound). The generated workflow runs on ubuntu-latest, where `sh` is the
+/// faithful runner.
+fn run_sh(script: &str, cwd: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
+    Ok(Command::new("sh")
+        .args(["-c", script])
+        .current_dir(cwd)
+        .output()?)
 }
 
 fn git(root: &std::path::Path, args: &[&str]) -> Result<String, Box<dyn Error>> {
