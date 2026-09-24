@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_uncalled_owner_same_file_tests (3)
+
+Reason:
+RIPR-SPEC-0084: re-emit this branch's new fixture under the landed None-default base envelope (top-level base omitted, base_revision null, summary-first ordering); findings, reach, classes and confidences unchanged
+
+Command:
+`cargo xtask goldens bless rust_uncalled_owner_same_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
