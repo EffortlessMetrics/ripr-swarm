@@ -61,15 +61,71 @@ fn parse_rustc_version(output: &str) -> Option<RustcVersion> {
         .strip_prefix("rustc ")?
         .split_whitespace()
         .next()?;
-    let mut components = version_token.split('.');
+    let (core, suffix) = match version_token.find(['-', '+']) {
+        Some(index) => (&version_token[..index], &version_token[index..]),
+        None => (version_token, ""),
+    };
+    if !suffix.is_empty() && !valid_rustc_version_suffix(suffix) {
+        return None;
+    }
+    let mut components = core.split('.');
     let major = components.next()?.parse().ok()?;
     let minor = components.next()?.parse().ok()?;
-    let patch = components.next()?.split(['-', '+']).next()?.parse().ok()?;
+    let patch = components.next()?.parse().ok()?;
+    if components.next().is_some() {
+        return None;
+    }
     Some(RustcVersion {
         major,
         minor,
         patch,
     })
+}
+
+fn valid_rustc_version_suffix(suffix: &str) -> bool {
+    if suffix.is_empty() {
+        return false;
+    }
+    let (prerelease, build, has_prerelease) = if let Some(remainder) = suffix.strip_prefix('-') {
+        match remainder.split_once('+') {
+            Some((prerelease, build)) => (prerelease, Some(build), true),
+            None => (remainder, None, true),
+        }
+    } else if let Some(build) = suffix.strip_prefix('+') {
+        ("", Some(build), false)
+    } else {
+        return false;
+    };
+    if prerelease.is_empty() && (has_prerelease || build.is_none())
+        || (!prerelease.is_empty() && !prerelease.split('.').all(valid_prerelease_identifier))
+    {
+        return false;
+    }
+    build.is_none_or(|build| {
+        !build.is_empty()
+            && build
+                .split('.')
+                .all(|identifier| valid_semver_identifier(identifier, false))
+    })
+}
+
+fn valid_prerelease_identifier(identifier: &str) -> bool {
+    valid_semver_identifier(identifier, true)
+        && !identifier.starts_with('-')
+        && !identifier.ends_with('-')
+}
+
+fn valid_semver_identifier(identifier: &str, reject_numeric_leading_zero: bool) -> bool {
+    !identifier.is_empty()
+        && identifier
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        && !(reject_numeric_leading_zero
+            && identifier.len() > 1
+            && identifier.starts_with('0')
+            && identifier
+                .chars()
+                .all(|character| character.is_ascii_digit()))
 }
 
 fn minimum_rustc_version() -> Option<RustcVersion> {
@@ -93,10 +149,10 @@ fn minimum_rustc_version() -> Option<RustcVersion> {
 /// Why the local `rustc` is worth a word, split from whether the check passed.
 ///
 /// `MINIMUM_RUSTC_VERSION` is ripr's own `rust-version`: what it takes to
-/// **build** ripr. Analysis never invokes `rustc` — the only processes ripr
-/// spawns for a `check` are `git` and `cargo` — so a toolchain below that
-/// minimum is not a broken setup for a ripr that is already installed and
-/// running. It is a fact about the next `cargo install ripr`.
+/// **build** or install ripr from source. The already-running ripr binary's
+/// built-in static analysis does not directly run `rustc`. Configured external
+/// producers have their own prerequisites; this advisory does not establish
+/// their compatibility.
 ///
 /// So a version below the minimum is disclosed, not failed. A version that
 /// cannot be parsed still fails: an unreadable `rustc` is a real unknown, and
@@ -124,7 +180,7 @@ fn validate_rustc_version(output: &str) -> RustcVersionVerdict {
     };
     if version < minimum {
         return RustcVersionVerdict::BelowBuildMinimum(format!(
-            "{}; below ripr's build minimum {minimum}. That minimum is what `cargo install ripr` needs; analysis never runs rustc, so it does not limit this install. Run `rustup update stable` before building ripr from source.",
+            "{}; below ripr's build minimum {minimum}. That minimum is what building or installing ripr from source requires. The already-running ripr binary's built-in static analysis does not directly run rustc; configured external producers have their own prerequisites. Run `rustup update stable` before building ripr from source.",
             output.trim()
         ));
     }
@@ -725,6 +781,21 @@ mod tests {
 
     static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    fn below_minimum_rustc_output() -> Result<String, String> {
+        let minimum = minimum_rustc_version()
+            .ok_or_else(|| "minimum rustc version should parse".to_string())?;
+        let below = if minimum.patch > 0 {
+            format!("{}.{}.{}", minimum.major, minimum.minor, minimum.patch - 1)
+        } else if minimum.minor > 0 {
+            format!("{}.{}.0", minimum.major, minimum.minor - 1)
+        } else if minimum.major > 0 {
+            format!("{}.99.0", minimum.major - 1)
+        } else {
+            return Err("cannot construct a version below 0.0.0".to_string());
+        };
+        Ok(format!("rustc {below} (abc 2024-01-01)"))
+    }
+
     fn unique_test_dir(label: &str) -> std::path::PathBuf {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -762,21 +833,36 @@ mod tests {
     }
 
     /// A toolchain below ripr's own `rust-version` is disclosed, not failed:
-    /// that minimum is what building ripr takes, and analysis never invokes
-    /// `rustc`. The discriminators are the pair below the table — the old
-    /// wording carried `Fail` here, and an unreadable version must still fail,
-    /// so a blanket "rustc always passes" cannot satisfy this test.
+    /// that minimum is what building or installing ripr from source takes,
+    /// while the already-running binary's built-in static analysis does not
+    /// directly run `rustc`. The malformed-output and parser controls below
+    /// ensure that this advisory cannot hide an unknown version.
     #[test]
     fn rustc_below_build_minimum_is_disclosed_and_supported_versions_pass() -> Result<(), String> {
+        let minimum = minimum_rustc_version()
+            .ok_or_else(|| {
+                "minimum rustc version should parse for the disclosure test".to_string()
+            })?
+            .to_string();
+        let below = below_minimum_rustc_output()?;
         let cases = [
             (
-                "rustc 1.80.0 (abc 2024-01-01)",
+                below.clone(),
                 DoctorStatus::Pass,
                 "below ripr's build minimum",
             ),
-            ("rustc 1.95.0 (abc 2026-04-14)", DoctorStatus::Pass, ""),
             (
-                "rustc 1.96.1-nightly (abc 2026-05-01)",
+                format!("rustc {minimum} (abc 2026-04-14)"),
+                DoctorStatus::Pass,
+                "",
+            ),
+            (
+                format!("rustc {minimum}-nightly (abc 2026-05-01)"),
+                DoctorStatus::Pass,
+                "",
+            ),
+            (
+                format!("rustc {minimum}+build.1 (abc 2026-05-01)"),
                 DoctorStatus::Pass,
                 "",
             ),
@@ -797,30 +883,37 @@ mod tests {
             }
         }
 
-        // Discriminator 1: the old-version case must keep the actual and
-        // minimum versions, the build/install and running-analysis scopes,
-        // and an action, or the note is not usable.
-        let old_toolchain = doctor_tool_check_success("rustc", b"rustc 1.80.0 (abc 2024-01-01)");
-        let minimum = minimum_rustc_version()
-            .ok_or_else(|| {
-                "minimum rustc version should parse for the disclosure test".to_string()
-            })?
-            .to_string();
-        if !old_toolchain.evidence.contains("1.80.0")
-            || !old_toolchain.evidence.contains(&minimum)
-            || !old_toolchain.evidence.contains("`cargo install ripr`")
-            || !old_toolchain.evidence.contains("analysis never runs rustc")
-            || !old_toolchain.evidence.contains("rustup update stable")
-        {
+        // Discriminator 1: the below-minimum case must keep the actual and
+        // minimum versions, the build/install and built-in-analysis scopes,
+        // external-producer limitation, and an action, or the note is not
+        // usable.
+        let old_toolchain = doctor_tool_check_success("rustc", below.as_bytes());
+        for expected in [
+            "below ripr's build minimum",
+            &minimum,
+            "building or installing ripr from source",
+            "built-in static analysis does not directly run rustc",
+            "configured external producers have their own prerequisites",
+            "rustup update stable",
+        ] {
+            if !old_toolchain.evidence.contains(expected) {
+                return Err(format!(
+                    "the disclosure must contain {expected:?}: {:?}",
+                    old_toolchain.evidence
+                ));
+            }
+        }
+        if !old_toolchain.evidence.contains("rustc ") {
             return Err(format!(
-                "the disclosure must name the actual/minimum versions, build/install and analysis scopes, and an action: {:?}",
+                "the disclosure must name the actual rustc version: {:?}",
                 old_toolchain.evidence
             ));
         }
 
         // Discriminator 2: a current toolchain must not carry the note, so
         // the disclosure cannot be unconditional text.
-        let current = doctor_tool_check_success("rustc", b"rustc 1.95.0 (abc 2026-04-14)");
+        let current = format!("rustc {minimum} (abc 2026-04-14)");
+        let current = doctor_tool_check_success("rustc", current.as_bytes());
         if current.evidence.contains("below ripr's build minimum") {
             return Err(format!(
                 "a supported toolchain must not be disclosed as below the minimum: {:?}",
@@ -832,17 +925,87 @@ mod tests {
 
     #[test]
     fn rustc_version_check_fails_closed_for_malformed_output() -> Result<(), String> {
-        let result = doctor_tool_check_success("rustc", b"rustc unavailable");
-        if result.status != DoctorStatus::Fail {
+        for output in [
+            "rustc unavailable",
+            "rustc 1.80.0-",
+            "rustc 1.80.0+",
+            "rustc 1.80.0-+",
+            "rustc 1.80.0-+build",
+            "rustc 1.80.0--",
+            "rustc 1.80.0+build+extra",
+            "rustc 1.80.0-nightly..1",
+            "rustc 1.80.0+build..1",
+            "rustc 1.80.0-nightly+build.",
+        ] {
+            let result = doctor_tool_check_success("rustc", output.as_bytes());
+            if result.status != DoctorStatus::Fail {
+                return Err(format!(
+                    "malformed rustc output unexpectedly passed for {output:?}: {result:?}"
+                ));
+            }
+            if !result.evidence.contains("could not be parsed") {
+                return Err(format!(
+                    "unexpected malformed-output evidence for {output:?}: {:?}",
+                    result.evidence
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn below_minimum_rustc_advises_through_public_doctor_projection() -> Result<(), String> {
+        let below = below_minimum_rustc_output()?;
+        let rustc = doctor_tool_check_success("rustc", below.as_bytes());
+        let mut report = DoctorReport::new("/workspace");
+        report.add_check("tool_rustc", rustc.status, Some(rustc.evidence.clone()));
+
+        if report.status != DoctorStatus::Pass {
+            return Err(format!("below-minimum advisory must pass: {report:?}"));
+        }
+        if let Err(error) = doctor_report_result(&report) {
+            return Err(format!("doctor result must pass: {error}"));
+        }
+        let text = report.render_text();
+        for expected in [
+            "doctor checks passed",
+            &below,
+            "below ripr's build minimum",
+            "building or installing ripr from source",
+            "built-in static analysis does not directly run rustc",
+            "configured external producers have their own prerequisites",
+            "rustup update stable",
+        ] {
+            if !text.contains(expected) {
+                return Err(format!("rendered text is missing {expected:?}: {text}"));
+            }
+        }
+        let json = report.render_json()?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| format!("invalid JSON: {error}"))?;
+        if parsed["status"] != "pass" || parsed["checks"][0]["name"] != "tool_rustc" {
             return Err(format!(
-                "malformed rustc output unexpectedly passed: {result:?}"
+                "unexpected doctor JSON status projection: {parsed}"
             ));
         }
-        if !result.evidence.contains("could not be parsed") {
-            return Err(format!(
-                "unexpected malformed-output evidence: {:?}",
-                result.evidence
-            ));
+        if parsed["checks"][0]["status"] != "pass" {
+            return Err(format!("rustc check must render as pass: {parsed}"));
+        }
+        let evidence = parsed["checks"][0]["evidence"]
+            .as_str()
+            .ok_or_else(|| format!("rustc evidence must be rendered: {parsed}"))?;
+        for expected in [
+            &below,
+            "building or installing ripr from source",
+            "built-in static analysis does not directly run rustc",
+            "configured external producers have their own prerequisites",
+            "rustup update stable",
+        ] {
+            if !evidence.contains(expected) {
+                return Err(format!(
+                    "rendered JSON evidence is missing {expected:?}: {parsed}"
+                ));
+            }
         }
         Ok(())
     }
@@ -859,13 +1022,32 @@ mod tests {
             "rustc 1.95",
             "rustc 1.95.x",
             "rustc 1.95.-nightly",
+            "rustc 1.95.0-",
+            "rustc 1.95.0+",
+            "rustc 1.95.0-+",
+            "rustc 1.95.0-+build",
+            "rustc 1.95.0--",
+            "rustc 1.95.0+build+extra",
+            "rustc 1.95.0-nightly..1",
+            "rustc 1.95.0+build..1",
+            "rustc 1.95.0-nightly+build.",
         ] {
             assert!(
                 parse_rustc_version(output).is_none(),
                 "malformed rustc output unexpectedly parsed: {output:?}"
             );
         }
-        assert!(parse_rustc_version("rustc 1.95.0-nightly").is_some());
+        for output in [
+            "rustc 1.95.0-nightly",
+            "rustc 1.95.0-beta.1",
+            "rustc 1.95.0+build.1",
+            "rustc 1.95.0-nightly+build.01",
+        ] {
+            assert!(
+                parse_rustc_version(output).is_some(),
+                "valid rustc suffix unexpectedly rejected: {output:?}"
+            );
+        }
         assert_eq!(
             doctor_tool_check_success("cargo", b"cargo 1.95.0").status,
             DoctorStatus::Pass
