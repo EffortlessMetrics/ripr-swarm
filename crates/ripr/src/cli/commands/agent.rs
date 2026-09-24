@@ -369,6 +369,7 @@ fn run_agent_receipt_for_attempt(
 
     match options.out {
         Some(path) => {
+            let path = resolve_agent_receipt_out_path(&options.root, &path)?;
             if let Some(parent) = path
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty())
@@ -388,6 +389,28 @@ fn run_agent_receipt_for_attempt(
             Ok(())
         }
     }
+}
+
+/// Anchor a relative `agent receipt --out` at the resolved `--root` (issue
+/// #3967): the product renders `--out` relative next to an absolute
+/// `--root`, so resolving it at the paste-site process CWD wrote genuine
+/// receipts outside the selected root. An absolute `--out` passes through;
+/// a relative one joins `--root`, resolved against the process working
+/// directory exactly as `--root` itself resolves (mirrors the input-side
+/// `validate_agent_receipt_artifact_path` root join and the #3872 redirect
+/// anchor rule). Sibling `--out` surfaces keep their own contracts.
+fn resolve_agent_receipt_out_path(root: &Path, out: &Path) -> Result<PathBuf, String> {
+    if out.is_absolute() {
+        return Ok(out.to_path_buf());
+    }
+    let base = if root.is_absolute() {
+        root.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|err| format!("resolve agent receipt --out root failed: {err}"))?
+            .join(root)
+    };
+    Ok(base.join(out))
 }
 
 fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
@@ -616,6 +639,9 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                 cage_after.attempt_id.as_str(),
                 cage_after.verdict.status
             );
+            for line in repair_after_cage_recovery_lines(&root, &attempt.seam_id, &cage_after) {
+                eprintln!("ripr: {line}");
+            }
 
             // The receipt can refuse (for example an escape verdict is not
             // receipt-ready). The refusal must not swallow the typed apply
@@ -830,6 +856,63 @@ fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
     }
 }
 
+/// Upper bound on cage violations the after-phase narration lists; the attempt
+/// manifest retains all of them.
+const CAGE_RECOVERY_MAX_VIOLATIONS: usize = 10;
+
+/// Recovery narration for an after phase whose attempt did not finish
+/// compliant and current. Such an attempt is terminal: re-running it, or the
+/// receipt command `agent status` projects from the workflow artifacts,
+/// refuses. The lines name each cage violation (bounded) and the one route
+/// that recovers: a new attempt prepared while the gap still exists.
+fn repair_after_cage_recovery_lines(
+    root: &Path,
+    seam_id: &str,
+    after: &crate::app::repair_attempt::RepairAttemptAfter,
+) -> Vec<String> {
+    use crate::agent::loop_commands::{display_path, shell_arg};
+    use crate::edit_cage::EditCageVerdictStatus;
+
+    if after.current && after.verdict.status == EditCageVerdictStatus::Compliant {
+        return Vec::new();
+    }
+    let attempt_id = after.attempt_id.as_str();
+    let mut lines = Vec::new();
+    if !after.current {
+        lines.push(format!(
+            "attempt `{attempt_id}` is stale: repository HEAD moved after its before phase."
+        ));
+    }
+    let violations = &after.verdict.violations;
+    if !violations.is_empty() {
+        lines.push(format!(
+            "the edit cage refused {} path(s); only the packet's allowed test surface may change:",
+            violations.len()
+        ));
+        for violation in violations.iter().take(CAGE_RECOVERY_MAX_VIOLATIONS) {
+            lines.push(format!(
+                "  {} ({:?}): {}",
+                violation.path, violation.kind, violation.reason
+            ));
+        }
+        if violations.len() > CAGE_RECOVERY_MAX_VIOLATIONS {
+            lines.push(format!(
+                "  ... and {} more; see the `after` block of the attempt manifest.",
+                violations.len() - CAGE_RECOVERY_MAX_VIOLATIONS
+            ));
+        }
+    }
+    let root_arg = shell_arg(&display_path(root));
+    let seam_arg = shell_arg(seam_id);
+    lines.push(format!(
+        "attempt `{attempt_id}` is terminal and cannot produce a receipt; re-running it or `ripr agent receipt` will refuse."
+    ));
+    lines.push(format!(
+        "to recover: undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+    ));
+    lines
+}
+
 /// One-line human result for the repair after phase, read from the receipt
 /// that owns it. The JSON streams on stdout carry the full evidence; this
 /// names the movement so a person does not have to parse them. A receipt
@@ -879,6 +962,47 @@ mod tests {
     use crate::cli::commands_agent_support::{
         agent_brief_lines_from_diff, agent_brief_owners_for_lines, normalize_agent_brief_path,
     };
+
+    /// Issue #3967: a relative `agent receipt --out` anchors at the resolved
+    /// `--root` instead of the paste-site working directory, so the
+    /// product-rendered command writes under the selected root from any
+    /// CWD. An absolute `--out` passes through untouched.
+    #[test]
+    fn agent_receipt_out_path_anchors_relative_out_at_root() -> Result<(), String> {
+        let cwd = std::env::current_dir()
+            .map_err(|err| format!("read test working directory failed: {err}"))?;
+        let absolute_root = cwd.join("receipt-anchor-root");
+        let anchored = resolve_agent_receipt_out_path(
+            &absolute_root,
+            Path::new("target/ripr/reports/agent-receipt.json"),
+        )?;
+        let expected = absolute_root.join("target/ripr/reports/agent-receipt.json");
+        if anchored != expected {
+            return Err(format!(
+                "relative --out must anchor at --root: {}",
+                anchored.display()
+            ));
+        }
+        let absolute_out = cwd.join("elsewhere").join("receipt.json");
+        let passthrough = resolve_agent_receipt_out_path(&absolute_root, &absolute_out)?;
+        if passthrough != absolute_out {
+            return Err(format!(
+                "absolute --out must pass through: {}",
+                passthrough.display()
+            ));
+        }
+        let relative_root = Path::new("some-checkout");
+        let anchored_relative =
+            resolve_agent_receipt_out_path(relative_root, Path::new("out.json"))?;
+        let expected_relative = cwd.join(relative_root).join("out.json");
+        if anchored_relative != expected_relative {
+            return Err(format!(
+                "relative --out under a relative --root must resolve through the process working directory: {}",
+                anchored_relative.display()
+            ));
+        }
+        Ok(())
+    }
 
     #[test]
     fn agent_rejects_unknown_subcommands() {

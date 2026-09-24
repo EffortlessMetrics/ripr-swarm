@@ -662,7 +662,11 @@ mod tests {
         assert!(DOCTOR_HELP.contains("--json"));
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
         assert!(DOCTOR_HELP.contains("Start-here next step:"));
-        assert!(DOCTOR_HELP.contains("ripr start-here --root . --base origin/main --head HEAD"));
+        // The compose commands take whatever base the caller has; this screen
+        // no longer asserts `origin/main`, which does not exist in a repository
+        // whose default branch is not `main`.
+        assert!(DOCTOR_HELP.contains("ripr start-here --root . --base <ref> --head HEAD"));
+        assert!(!DOCTOR_HELP.contains("--base origin/main"));
         assert!(DOCTOR_HELP.contains("safe next action means repair one named gap"));
         assert!(DOCTOR_HELP.contains("missing artifact, stale evidence, wrong root"));
         assert!(DOCTOR_HELP.contains("verify command, receipt command, and receipt path"));

@@ -108,20 +108,22 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
         rebase_finding_paths_to_repository(&mut result, &resolved.root, &options.root);
         return Ok(result);
     }
-    let diff_text = diff::load_diff(
+    let loaded = diff::load_diff_with_effective_base(
         &options.root,
         options.base.as_deref(),
         options.diff_file.as_ref(),
         options.git_timeout,
     )?;
     cancellation::checkpoint()?;
-    run_pipeline_for_diff_text(
+    let mut result = run_pipeline_for_diff_text(
         options,
         oracle_policy,
         languages,
         generated_file_patterns,
-        &diff_text,
-    )
+        &loaded.text,
+    )?;
+    result.effective_base = loaded.effective_base;
+    Ok(result)
 }
 
 pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_generated_file_patterns(
@@ -145,16 +147,21 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_generated_file_patter
         }
         .to_string());
     }
-    let diff_text =
-        diff::load_worktree_diff(&options.root, options.base.as_deref(), options.git_timeout)?;
+    let loaded = diff::load_worktree_diff_with_effective_base(
+        &options.root,
+        options.base.as_deref(),
+        options.git_timeout,
+    )?;
     cancellation::checkpoint()?;
-    run_pipeline_for_diff_text(
+    let mut result = run_pipeline_for_diff_text(
         options,
         oracle_policy,
         languages,
         generated_file_patterns,
-        &diff_text,
-    )
+        &loaded.text,
+    )?;
+    result.effective_base = loaded.effective_base;
+    Ok(result)
 }
 
 /// The docs-only disclosure message (#2304): `Some(message)` when the diff
@@ -581,6 +588,9 @@ fn run_pipeline_for_diff_text(
         preview_language_advisories: preview_advisories,
         language_runs,
         partial_scope,
+        // The diff/worktree entry points overwrite this with the loader's
+        // effective base (#3940); every other path involves no base.
+        effective_base: None,
     })
 }
 
@@ -769,6 +779,8 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
         // Repo-scope analysis indexes the whole workspace; the partial
         // diff-selection budget (RIPR-PROP-0019) does not apply here.
         partial_scope: None,
+        // Repo-scope analysis has no diff denominator and no base (#3940).
+        effective_base: None,
     })
 }
 

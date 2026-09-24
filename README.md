@@ -66,7 +66,7 @@ docs expands on them:
 ```bash
 cargo install ripr
 ripr doctor
-ripr check --base origin/main
+ripr check
 ```
 
 `ripr check` is the ordinary first-value command: it analyzes the current
@@ -192,7 +192,7 @@ and gaps; it does not claim runtime mutation outcomes.
 | --- | --- | --- |
 | VS Code user | Install `EffortlessMetrics.ripr`, open a Rust workspace, use the status bar, Problems, and hover evidence. | [Quickstart](docs/QUICKSTART.md#vs-code-first-hour) |
 | CI owner | `ripr init --ci github` for an advisory PR summary and artifact packet. | [Quickstart](docs/QUICKSTART.md#ci-first-hour) |
-| CLI user | `ripr check --base origin/main`, then repair the selected named gap. | [Quickstart](docs/QUICKSTART.md#cli-first-hour) |
+| CLI user | `ripr check`, then repair the selected named gap. | [Quickstart](docs/QUICKSTART.md#cli-first-hour) |
 | Agent operator | `ripr agent repair --seam-id <id> --phase before`, then finish after the focused test edit. | [LLM operator guide](docs/LLM_OPERATOR_GUIDE.md) |
 | MCP client | `ripr mcp --stdio` for read-only workspace status. | [MCP workspace status server](docs/interop/mcp.md) |
 

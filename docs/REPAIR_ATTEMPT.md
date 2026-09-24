@@ -135,6 +135,18 @@ The before commitment is derived from the prepared manifest. Terminal updates ma
 
 A different attempt for the same seam is a different transaction. Its packet, snapshot, baseline, and terminal state cannot be substituted.
 
+### Build output between the phases
+
+Run the project tests between the phases. For a Rust repair, the retained cage policy declares Cargo's default build directory `target/` as `ignored_build_output`. The Git-ignored contents of that directory are build output from `cargo test` or `cargo build`, so they are not treated as edits. The cage still observes these paths:
+
+- tracked and untracked-but-not-ignored paths, including paths inside `target/`;
+- the command-owned `target/ripr` writes;
+- every other ignored path, such as an ignored `.env` or log file.
+
+Static analysis never reads `target/` as source. A Cargo target directory in a non-default location inside the repository (`CARGO_TARGET_DIR` or `build.target-dir`) is not declared, so writes there remain violations. Python attempts keep observing every ignored path.
+
+If the project does not commit `Cargo.lock`, build once before the before phase. When Cargo first generates a lockfile between the phases, the analysis input identity changes and the after phase refuses the comparison.
+
 ## Terminal state
 
 The after phase records one of these states in `attempt.json`:
@@ -176,7 +188,9 @@ Repair attempts fail closed:
 - a cross-attempt packet is rejected;
 - ambiguous seam-selected after phases are rejected with an instruction to pass `--attempt`;
 - stale `HEAD`, incomparable evidence, and edit-cage violations do not produce a receipt-ready state;
-- unrelated repository changes outside the trusted edit surface block receipt admission.
+- tracked differences from `HEAD` outside the trusted edit surface block receipt admission, and so do untracked paths the attempt wrote outside it; an untracked file that already existed at the before phase and is byte-identical afterwards (for example a generated `Cargo.lock`) was not written by the attempt and does not block admission.
+
+A failed, incomparable, or stale attempt is terminal: re-running its after phase or `ripr agent receipt` refuses. The after phase lists each refused path and the recovery route. Undo the refused changes and set the test edit aside, for example with `git stash`. While the gap still exists, run `ripr agent repair --root . --seam-id <seam-id> --phase before` to prepare a new attempt. Restore the test edit, then run the new `--attempt` command.
 
 RIPR does not select “the latest” attempt, reconstruct an attempt from mutable global files, or continue on partial evidence.
 

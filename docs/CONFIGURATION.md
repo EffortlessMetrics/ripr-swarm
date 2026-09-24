@@ -157,6 +157,7 @@ ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N]
 | `--out PATH` | `target/ripr/pilot` | Directory for `repo-exposure.{json,md}`, `agent-seam-packets.json`, and `pilot-summary.{json,md}`. |
 | `--mode MODE` | `ripr.toml` `analysis.mode`, otherwise `draft` | One of `instant`, `draft`, `fast`, `deep`, `ready`. |
 | `--max-seams N` | `5` | Maximum ranked seams shown in the pilot summary. Must be positive. |
+| `--timeout-ms MS` | `30000` | Maximum analysis budget in milliseconds before pilot writes a partial summary. |
 
 ### `ripr check`
 
@@ -164,13 +165,20 @@ Runs the static exposure analysis and renders findings.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
-| `--root PATH` | current directory | Workspace root used for diff and source discovery. |
-| `--base REV` | `origin/main` | Git revision used as the diff base when `--diff` is not given. |
-| `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. |
+| `--root PATH` | current directory | Workspace root used for diff and source discovery. Walks up to a `Cargo.toml` containing `[workspace]`. |
+| `--base REV` | resolved per repository | Git revision used as the diff base when `--diff` is not given. With no `--base`, ripr resolves the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists; when none does, it says so rather than analyzing nothing. An explicit `--base` is used as given and is never substituted. |
+| `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. `--diff -` reads from stdin. |
+| `--candidate-tree TREE` | _(unset)_ | Analyze exactly this immutable Git tree object, deriving the diff from Git objects alone. Mutually exclusive with `--diff` and `--base`. |
+| `--candidate-base BASE` | repository's empty tree | Base treeish for `--candidate-tree` (a commit, tag, or tree OID). |
+| `--worktree` | _(off)_ | Diff the base against the live working tree instead of `HEAD`, including staged and unstaged tracked edits. Cannot be combined with `--diff`. |
 | `--mode MODE` | `ripr.toml` `analysis.mode`, otherwise `draft` | One of `instant`, `draft`, `fast`, `deep`, `ready`. See the [mode reference](#analysis-modes). |
-| `--format FORMAT` | `human` | One of `human` (alias `text`), `json`, `github`. |
+| `--format FORMAT` | `human` | See [Output formats](#output-formats) for the full set. |
+| `--gap-ledger PATH` | _(unset)_ | For `repo-badge-*` formats only: render badge counts from explicit gap-decision-ledger projection targets. |
 | `--json` | _(off)_ | Shortcut for `--format json`. |
 | `--no-unchanged-tests` | `ripr.toml` `analysis.include_unchanged_tests`, otherwise tests included | Limits the source index to changed Rust files. By default unchanged tests are part of the index so `Reach` evidence can find them. |
+| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. |
+| `--write-artifact PATH` | _(unset)_ | Write a full-fidelity check artifact (`ripr-check-artifact-v1`) for later `ripr explain --from PATH` / `ripr context --from PATH` reuse. Diff-scoped findings runs only. A local, disposable derivative: never a gate, badge, or proof input. |
+| `--git-timeout SECS` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. `0` disables it. Also settable via `RIPR_GIT_TIMEOUT`. |
 
 ### Environment Variables
 
@@ -187,6 +195,10 @@ that needs the tuning.
 | `RIPR_PARTIAL_DIFF_LINE_BUDGET` | `1000` | Added plus removed changed lines a diff-scoped analysis inspects before returning `limited_partial_scope`. A later whole file that would exceed the remaining budget is excluded (never an overshoot); the first selected file is always analyzed even when it alone exceeds the budget (stop reason `line_budget_exceeded_on_first_file`). Values above the effective `RIPR_MAX_DIFF_CHANGED_RUST_LINES` limit (its env override when set, otherwise the `2000` default) are clamped to that effective limit with a disclosure — so a runner that raises the max limit accepts a line budget up to the same ceiling instead of silently truncating it back to the default. Must be a positive integer; invalid values fail closed as `partial_budget_invalid`. |
 | `RIPR_REPO_SEAM_CACHE_LIMIT` | `20000` | Maximum classified seam count per shard in the full repo seam cache for a completed repo-exposure run. Larger cache entries are written as bounded shard files under the cache base directory. Raise this to reduce shard count only when the machine has enough disk and time budget for larger shard writes. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_COMPACT_REPO_SEAM_CACHE_MAX_SEAMS` | `100000` | Maximum seam count per shard in the compact repo seam cache. Larger compact cache entries are written as bounded shard files under the cache base directory. Raise this for large repos when the machine has enough disk and time budget for larger shard writes. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
+| `RIPR_GIT_TIMEOUT` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. A git command that exceeds the deadline is terminated and the error names `git_invocation_timeout`. `0` disables the deadline. `ripr check --git-timeout SECS` sets the same value for one command. |
+| `RIPR_MAX_REPO_INDEX_FILES` | `800` | Maximum Rust files a repo-scoped analysis will load into the index before failing closed as `repo_scope_oversized`. The analysis is not run when the limit is exceeded, so the result is never a silently partial one. Scope the run with `ripr check --diff` or raise the limit. Must be a positive integer. |
+| `RIPR_REPO_EXPOSURE_SEAM_LIMIT` | `10000` | Maximum seams a full-repo `repo-exposure` analysis classifies before capping. When the cap fires, the run reports `run_status = "seam_limit_applied"` with a `limitations[]` entry naming the analyzed and total seam counts, this variable, and a repair route. Set to `0` to analyze all seams. `ripr doctor` reports this cap under its known limitations. |
+| `RIPR_PILOT_SEAM_BUDGET` | `2000` | Maximum seams written to `ripr pilot` artifacts (`repo-exposure.json`, `agent-seam-packets.json`). Set to `0` to disable the budget and write all seams, which may produce very large files. When the budget applies, both artifacts carry a `limitations[]` disclosure naming the variable and a repair route. |
 
 Repo seam cache entries larger than the active limit are stored as a manifest
 plus shard files, with cache-store trace status such as
@@ -699,11 +711,32 @@ not treated as production seams.
 
 ## Output formats
 
+Analysis formats, diff-scoped:
+
 | Format | Selector | When to use |
 | --- | --- | --- |
-| `human` | default, or `--format human` / `--format text` | Local terminal review. |
+| `human` | default, or `--format human` / `--format text` | Local terminal review: one bounded `Start here:` route. |
+| `human-full` | `--format human-full` | Exhaustive evidence, including the findings `human` omits. |
 | `json` | `--json` or `--format json` | Tools, editors, CI, agents. Versioned via `schema_version`. See [Output schema](OUTPUT_SCHEMA.md). |
 | `github` | `--format github` | GitHub Actions annotations. |
+| `sarif` | `--format sarif` | SARIF consumers, including GitHub code scanning. |
+
+Badge formats, diff-scoped, for README status: `badge-json`, `badge-shields`,
+`badge-plus-json`, `badge-plus-shields`.
+
+Badge formats, repo-scoped, rendered from the gap ledger: `repo-badge-json`,
+`repo-badge-shields`, `repo-badge-plus-json`, `repo-badge-plus-shields`.
+
+Repo-scope formats, rendered against the full repo baseline rather than a diff:
+`repo-seams-json`, `repo-seams-md`, `repo-exposure-json`,
+`repo-exposure-summary-json`, `repo-exposure-md`, `repo-sarif`.
+
+Agent format, machine-readable repair evidence: `agent-seam-packets-json`.
+
+The `badge-plus-*` and `repo-badge-plus-*` formats read
+`target/ripr/reports/test-efficiency.json` when present; missing input renders a
+neutral "needs test-efficiency" badge and warns on stderr. See
+[Badge adoption](BADGE_ADOPTION.md).
 
 The `context` command always returns JSON-shaped output regardless of
 `--format`.
@@ -752,7 +785,7 @@ Use suppressions for accepted debt; Finding severities cannot be `off`.
 
 | Key | Default |
 | --- | --- |
-| `exposed` | `info` |
+| `exposed` | `warning` |
 | `weakly_exposed` | `warning` |
 | `reachable_unrevealed` | `warning` |
 | `no_static_path` | `warning` |
