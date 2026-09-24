@@ -56,6 +56,13 @@ map is:
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
 
+`ripr doctor --json` top-level `status` and `runtime_probes[].status` are
+`pass` or `fail`. Each `checks[].status` is `pass`, `fail`, or `skipped`;
+`skipped` (additive in schema `0.2`) marks a check that does not apply to the
+root, such as the `cargo_toml`, `tool_cargo`, and `tool_rustc` checks on a
+root where Rust is not in scope. A skipped check never fails the report, and
+its `evidence` states why it was skipped. See [Exit codes](EXIT_CODES.md).
+
 ## JSON object key ordering
 
 JSON object key order is not part of the semantic contract for ordinary
@@ -2900,13 +2907,17 @@ Field contract:
 - `seams[].evidence_record.canonical_item` - additive finding-alignment
   projection with `gap_state`, class-scoped `actionability`, `why`,
   `recommended_repair`, nullable structured `repair_route`, `related_test`,
-  `verify_command`, nullable `receipt_command`, `confidence`, raw group size,
+  `verify_command`, nullable `receipt_command`, nullable `repair_command`,
+  `confidence`, raw group size,
   nullable `primary_anchor`, and `raw_spans`. Actionable canonical items carry
   `repair_route.repair_kind`, `target_test_type`, and `suggested_assertion`;
   no-action, observed, limitation, and unknown items keep `repair_route: null`.
   Actionable items also carry a safe agent receipt command when the canonical
   repair/verify loop is available, so public-projection readiness can be
-  assessed from canonical evidence rather than raw findings. Downstream
+  assessed from canonical evidence rather than raw findings. `repair_command`
+  is `ripr agent repair --root . --seam-id <id> --phase before` only when the
+  item is actionable and the seam passes the fail-closed repair-packet flip
+  (#3906); every other item carries `null`. Downstream
   surfaces should render this canonical item before treating raw findings as
   separate work.
 - `seams[].evidence_record.canonical_item.command_specs` - additive typed
@@ -7142,8 +7153,11 @@ Field contract:
 - `comments[].placement` - GitHub-compatible changed-line placement. Items
   without safe placement belong in `summary_only[]`.
 - `comments[].placement.mode` - `"exact_seam_line"`,
-  `"owner_function_changed_line"`, or `"same_file_changed_line"`. The renderer
-  must prefer summary-only guidance over misleading line placement.
+  `"owner_function_changed_line"`, or `"same_file_changed_line"`. The last
+  names a changed line inside the seam owner's span that owner attribution
+  bound to a nested function; a changed line elsewhere in the same file is
+  not a placement. The renderer must prefer summary-only guidance over
+  misleading line placement.
 - `comments[].kind` - seam kind from the existing static evidence.
 - `comments[].grip_class` - seam grip class from the existing static evidence.
 - `comments[].severity` - configured report severity for the recommendation.
@@ -7172,6 +7186,14 @@ Field contract:
   when the supplied repair route names only the related test.
 - `comments[].llm_guidance` - bounded handoff command and prompt for one
   focused test. It is not a request for free-form diff review.
+- `comments[].llm_guidance.repair_command` - present only on an actionable
+  working-set card whose seam passes the fail-closed repair-packet flip
+  (`repair_packet_eligibility`, #3906): `ripr agent repair --root . --seam-id
+  <id> --phase before`, the start of the repair transaction. Its before phase
+  prints the `--attempt ... --phase after` command. Absent on limitation,
+  ineligible, and gap-ledger cards; consumers must not derive it from
+  `seam_id`. Inline publish planning closes the comment body with it in place
+  of the bare `ripr agent verify` line.
 - `comments[].repair_card` - optional GapRecord-backed repair card. When
   present, inline publish planning should use this field for the human/LLM
   comment body instead of raw static classes. It carries gap kind, changed
@@ -8108,6 +8130,7 @@ JSON shape:
           "line": 12
         },
         "test_intent": "Exercise the production caller at the equality boundary and assert the returned discount.",
+        "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
         "verify_command": "cargo test -p pricing discounted_total_boundary",
         "receipt_command": "ripr receipt write --gap gap:pricing:threshold",
         "inspection_command": "ripr agent brief --root . --seam-id 67fc764ba37d77bd --json",
@@ -8203,8 +8226,12 @@ Field contract:
   every decision. It carries nullable producer-owned fields for
   `canonical_gap_id`, `seam_id`, `classification`, `changed_owner`,
   `changed_behavior`, `missing_discriminator`, tagged `repair_target`,
-  `test_intent`, `verify_command`, `receipt_command`, and exact producer-owned
-  `inspection_command`. A changed owner is not assumed to be a production
+  `test_intent`, `repair_command`, `verify_command`, `receipt_command`, and
+  exact producer-owned `inspection_command`. `repair_command` is the review
+  card's `llm_guidance.repair_command` carried unchanged (#3906); it is `null`
+  for gap-ledger candidates and for seams that fail the repair-packet flip, and
+  it is not a completeness field. When present, the gate summary names it
+  instead of the inspection command. A changed owner is not assumed to be a production
   caller, generic evidence-vector position is not treated as seam identity,
   and path/line is not manufactured into an exact inspection selector. The
   `authority_boundary` is `static_ripr_evidence_only`.

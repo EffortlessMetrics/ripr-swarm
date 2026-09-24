@@ -56,8 +56,30 @@ pub(crate) fn capture_process_output_isolated(
     removed_envs: &[&str],
     envs: &[(&str, &str)],
 ) -> Result<Vec<u8>, ProcessError> {
+    capture_process_output_in(program, args, None, inherited_envs, removed_envs, envs)
+}
+
+/// `capture_process_output_isolated` with an explicit working directory for the
+/// child.
+///
+/// A caller that needs the child to resolve relative paths from somewhere other
+/// than the xtask process's own directory uses this. It sets the directory on
+/// the child only: `std::env::set_current_dir` is process-wide and the fixture
+/// runs are rayon-parallel, so mutating the xtask process's directory would
+/// race every sibling run.
+pub(crate) fn capture_process_output_in(
+    program: &str,
+    args: &[String],
+    current_dir: Option<&Path>,
+    inherited_envs: &[(&str, &str)],
+    removed_envs: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<Vec<u8>, ProcessError> {
     let mut command = Command::new(program);
     command.args(args);
+    if let Some(current_dir) = current_dir {
+        command.current_dir(current_dir);
+    }
     for (name, value) in inherited_envs {
         command.env(name, value);
     }
@@ -252,6 +274,21 @@ pub(crate) fn run_output(program: &str, args: &[&str]) -> Result<String, String>
 
 pub(crate) fn run_output_owned(program: &str, args: &[String]) -> Result<String, String> {
     run_output_owned_with_envs(program, args, &[])
+}
+
+/// `run_output_owned` with an explicit working directory for the child.
+///
+/// A fixture render that must resolve relative paths from inside a packet tree
+/// runs here rather than mutating the xtask process directory, which the
+/// rayon-parallel fixture runs share.
+pub(crate) fn run_output_owned_in(
+    program: &str,
+    args: &[String],
+    current_dir: &Path,
+) -> Result<String, String> {
+    let output = capture_process_output_in(program, args, Some(current_dir), &[], &[], &[])
+        .map_err(|error| error.message)?;
+    Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
 /// `run_output_owned` with an explicit child environment overlay.
