@@ -295,6 +295,13 @@ are scoped or reviewed.
 
 ### Changed
 
+- Diff load tests no longer discard `remove_dir_all` or `remove_file`
+  with `let _ =`. Directory cleanup matches the `io::Result` in
+  `ignore_remove_dir_all` and still ignores a failure. The one file
+  cleanup matches the same way. `clippy-debt-0001` stays deferred; its
+  `blocked_by` text now counts the remaining `let _ =` sites
+  ([#4038](https://github.com/EffortlessMetrics/ripr-swarm/issues/4038)).
+
 - Gate tests no longer discard `remove_dir_all` or `remove_file` with
   `let _ =`. Directory cleanup matches the `io::Result` in
   `ignore_remove_dir_all` and still ignores a failure. The two probe-file
