@@ -38,8 +38,9 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         return doctor_json(&root);
     }
 
-    // Human-readable path (unchanged behavior).
-    let core_evaluation = output::doctor::evaluate_doctor_core_with_config(&root);
+    // Human-readable path.
+    let core_evaluation =
+        output::doctor::evaluate_doctor_core_with_config(&root, &detect_languages(&root));
     let mut report = core_evaluation.report;
     let core_report = &report;
     let mut ok = matches!(core_report.status, output::doctor::DoctorStatus::Pass);
@@ -78,7 +79,8 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
 /// surfaces) remain on the human-oriented path for a follow-up PR to type
 /// individually. See #1771 / #1614.
 fn doctor_json(root: &Path) -> Result<(), String> {
-    let evaluation = output::doctor::evaluate_doctor_core_with_config(root);
+    let evaluation =
+        output::doctor::evaluate_doctor_core_with_config(root, &detect_languages(root));
     let mut report = evaluation.report;
     let enabled_languages = enabled_languages(&evaluation.config);
     let _ =
@@ -99,15 +101,18 @@ fn report_doctor_core_check(report: &output::doctor::DoctorReport, name: &str) -
         println!("! missing doctor core check: {name}");
         return false;
     };
+    // A skipped check (not applicable to this root) prints as an
+    // informational `-` line carrying its reason and never fails doctor.
     let marker = match check.status {
-        output::doctor::DoctorStatus::Pass => "✓",
-        output::doctor::DoctorStatus::Fail => "!",
+        output::doctor::DoctorCheckStatus::Pass => "✓",
+        output::doctor::DoctorCheckStatus::Fail => "!",
+        output::doctor::DoctorCheckStatus::Skipped => "-",
     };
     println!(
         "{marker} {}",
         check.evidence.as_deref().unwrap_or(check.name.as_str())
     );
-    check.status == output::doctor::DoctorStatus::Pass
+    check.status != output::doctor::DoctorCheckStatus::Fail
 }
 
 fn print_doctor_start_here_guidance(root: &Path) {
@@ -984,8 +989,9 @@ fn report_known_limitations() {
         analysis::DEFAULT_REPO_EXPOSURE_SEAM_LIMIT
     );
     println!(
-        "  Preview-language evidence does not emit public repair packets and \
-        does not block by default"
+        "  Preview-language evidence is advisory and does not block by default; \
+        it yields repair cards or packets only for findings that satisfy the full \
+        actionability, edit, verify, and receipt contract"
     );
 }
 
@@ -1419,7 +1425,7 @@ mod tests {
         std::fs::write(dir.join(CONFIG_FILE_NAME), "[invalid\n")
             .map_err(|err| format!("write invalid config: {err}"))?;
 
-        let report = output::doctor::evaluate_doctor_core(&dir);
+        let report = output::doctor::evaluate_doctor_core(&dir, &detect_languages(&dir));
         if report.status != output::doctor::DoctorStatus::Fail {
             return Err(format!(
                 "invalid config should fail, got {:?}",
@@ -1431,7 +1437,7 @@ mod tests {
             .iter()
             .find(|check| check.name == "config")
             .ok_or_else(|| "missing config check".to_string())?;
-        if config_check.status != output::doctor::DoctorStatus::Fail {
+        if config_check.status != output::doctor::DoctorCheckStatus::Fail {
             return Err(format!(
                 "invalid config check should fail, got {:?}",
                 config_check.status
@@ -1469,7 +1475,7 @@ mod tests {
             return Err(format!("test root unexpectedly exists: {}", root.display()));
         }
 
-        let report = output::doctor::evaluate_doctor_core(&root);
+        let report = output::doctor::evaluate_doctor_core(&root, &detect_languages(&root));
         if report.status != output::doctor::DoctorStatus::Fail {
             return Err(format!("missing root should fail, got {:?}", report.status));
         }
@@ -1478,7 +1484,7 @@ mod tests {
             .iter()
             .find(|check| check.name == "root_directory")
             .ok_or_else(|| "missing root-directory check".to_string())?;
-        if root_check.status != output::doctor::DoctorStatus::Fail {
+        if root_check.status != output::doctor::DoctorCheckStatus::Fail {
             return Err(format!(
                 "missing root check should fail, got {:?}",
                 root_check.status
