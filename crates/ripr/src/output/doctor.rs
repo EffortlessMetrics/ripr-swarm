@@ -797,14 +797,23 @@ mod tests {
             }
         }
 
-        // Discriminator 1: the old-version case must keep the version itself
+        // Discriminator 1: the old-version case must keep the actual and
+        // minimum versions, the build/install and running-analysis scopes,
         // and an action, or the note is not usable.
         let old_toolchain = doctor_tool_check_success("rustc", b"rustc 1.80.0 (abc 2024-01-01)");
+        let minimum = minimum_rustc_version()
+            .ok_or_else(|| {
+                "minimum rustc version should parse for the disclosure test".to_string()
+            })?
+            .to_string();
         if !old_toolchain.evidence.contains("1.80.0")
+            || !old_toolchain.evidence.contains(&minimum)
+            || !old_toolchain.evidence.contains("`cargo install ripr`")
+            || !old_toolchain.evidence.contains("analysis never runs rustc")
             || !old_toolchain.evidence.contains("rustup update stable")
         {
             return Err(format!(
-                "the disclosure must name the version and an action: {:?}",
+                "the disclosure must name the actual/minimum versions, build/install and analysis scopes, and an action: {:?}",
                 old_toolchain.evidence
             ));
         }
