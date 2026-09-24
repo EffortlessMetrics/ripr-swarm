@@ -295,6 +295,13 @@ are scoped or reviewed.
 
 ### Changed
 
+- `seam_cache` tests no longer discard `remove_dir_all` with `let _ =`.
+  Cleanup matches the `io::Result` in `ignore_remove_dir_all` and still
+  ignores a failure. The same file uses its `Iterator::next` and
+  `write!` results. `clippy-debt-0001` stays deferred; its `blocked_by`
+  text now counts the remaining `let _ =` sites
+  ([#4013](https://github.com/EffortlessMetrics/ripr-swarm/issues/4013)).
+
 - `path_dependencies.rs` no longer carries `allow(dead_code)`.
   `cycle_manifests`, `contains_node`, `forward_walk`, and the scope
   expansion `status` accessor are `#[cfg(test)]`. Cycle-set recording

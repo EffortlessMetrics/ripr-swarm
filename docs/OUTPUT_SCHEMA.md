@@ -13773,6 +13773,10 @@ target/ripr/pilot/pilot-summary.md
     }
   ],
   "python_first_use": null,
+  "language_routes": {
+    "state": "not_detected",
+    "routes": []
+  },
   "next": {
     "inspect_packet": "target/ripr/pilot/agent-seam-packets.json",
     "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json",
@@ -13834,6 +13838,38 @@ is populated:
       "Verify success alone is not a gap-closure receipt."
     ]
   }
+}
+```
+
+Pilot ranks Rust repo seams only. When the workspace also contains TypeScript,
+JavaScript, Python or Perl files, `language_routes` names each language and the
+command that analyzes it (#3906). With no Rust seams the state is `required`:
+
+```json
+{
+  "state": "required",
+  "routes": [
+    {
+      "language": "typescript",
+      "file_count": 2,
+      "language_status": "preview",
+      "enabled": false,
+      "route": "check_diff_first",
+      "command": "ripr check --root .",
+      "guidance_category": "typescript_diff_first",
+      "guidance": "TypeScript is analyzed diff-first; run 'ripr check --base origin/main' or '--diff <file>' to evaluate changed TypeScript behavior. Full-repo TypeScript exposure is not yet modeled (named limitation)."
+    },
+    {
+      "language": "perl",
+      "file_count": 1,
+      "language_status": "unavailable",
+      "enabled": false,
+      "route": "unavailable_in_this_binary",
+      "command": null,
+      "guidance_category": null,
+      "guidance": "Perl analysis is not available from this ripr binary. Rebuild ripr with Cargo feature `lang-perl` to analyze Perl files."
+    }
+  ]
 }
 ```
 
@@ -13910,6 +13946,20 @@ Field contract:
   `analysis_unavailable`), counts, supported and deferred features, and the top
   `python_repair_card` using the same advisory card fields emitted by
   `ripr check --json`.
+- `language_routes` — additive; `null` only when not collected. `state` is
+  `not_detected` (no TypeScript, JavaScript, Python or Perl files outside the
+  default-ignored directories), `supplementary` (Rust seams exist; the ranking
+  stands and the terminal and Markdown are unchanged), or `required` (pilot's
+  Rust scan produced no seams, so an empty `top_actionable_seams` is not a clean
+  result for these languages). Each `routes[]` entry carries `language`,
+  `file_count`, `language_status` (`preview` when this binary includes the
+  adapter, otherwise `unavailable`), `enabled` (listed in the effective
+  `[languages] enabled`; JavaScript follows `typescript`), `route`
+  (`check_diff_first` or `unavailable_in_this_binary`), `command` (the diff-first
+  `ripr check --root <root>`, which resolves the default base itself, or `null`),
+  and `guidance_category`/`guidance`: the existing `typescript_diff_first`
+  repair route for TypeScript and JavaScript, the unavailable-adapter notice for
+  a language this binary cannot analyze, otherwise `null`.
 - `next` — advisory follow-up commands. Complete summaries include the public
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam
@@ -13921,7 +13971,13 @@ and includes the inspected seam, why it matters, the focused test to write, and
 the top seam's targeted test brief. Its Next Commands block offers one route:
 the repair transaction's `--phase before` command when `repair_command` is
 set, otherwise the before/after snapshot commands. The terminal closes the same
-way, with the repair command as step 1 of three. It remains advisory. On timeout, the Markdown sibling records the partial
+way, with the repair command as step 1 of three. When `language_routes.state`
+is `required`, the terminal and Markdown replace the plain no-recommendation
+line with one saying pilot found no Rust seams, list each language with its
+route (Markdown adds the reused guidance text), and close with the route
+commands instead of the before/after snapshot pair, or with a line saying no
+follow-up command applies when this binary cannot analyze any listed language.
+It remains advisory. On timeout, the Markdown sibling records the partial
 state and the retry command instead of pretending the packet is complete.
 
 ## LSP Seam Diagnostics

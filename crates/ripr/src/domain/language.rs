@@ -54,6 +54,31 @@ impl LanguageId {
             LanguageId::Perl => "lang-perl",
         }
     }
+
+    /// Plain notice for a language whose adapter is not compiled into this
+    /// binary, or `None` when it is.
+    ///
+    /// This is the single wording owner for "this build cannot analyze these
+    /// files" on surfaces that route a user onward (currently `ripr pilot`).
+    /// The lead sentence and the rebuild recovery match the disabled-adapter
+    /// recovery wording planned in #3954; when that owner lands, this body
+    /// becomes a call to it.
+    pub(crate) fn unavailable_adapter_notice(self) -> Option<String> {
+        if self.is_available() {
+            return None;
+        }
+        let name = match self {
+            LanguageId::Rust => "Rust",
+            LanguageId::TypeScript => "TypeScript",
+            LanguageId::JavaScript => "JavaScript",
+            LanguageId::Python => "Python",
+            LanguageId::Perl => "Perl",
+        };
+        Some(format!(
+            "{name} analysis is not available from this ripr binary. Rebuild ripr with Cargo feature `{}` to analyze {name} files.",
+            self.required_feature()
+        ))
+    }
 }
 
 /// Whether an adapter is the reference (`Stable`) implementation for a
@@ -342,6 +367,31 @@ mod tests {
         assert_eq!(LanguageId::JavaScript.required_feature(), "lang-typescript");
         assert_eq!(LanguageId::Python.required_feature(), "lang-python");
         assert_eq!(LanguageId::Perl.required_feature(), "lang-perl");
+    }
+
+    #[test]
+    fn unavailable_adapter_notice_names_language_and_rebuild_feature_only_when_missing() {
+        for language in [
+            LanguageId::Rust,
+            LanguageId::TypeScript,
+            LanguageId::JavaScript,
+            LanguageId::Python,
+            LanguageId::Perl,
+        ] {
+            assert_eq!(
+                language.unavailable_adapter_notice().is_some(),
+                !language.is_available(),
+                "{language:?}"
+            );
+        }
+        if !cfg!(feature = "lang-perl") {
+            assert_eq!(
+                LanguageId::Perl.unavailable_adapter_notice().as_deref(),
+                Some(
+                    "Perl analysis is not available from this ripr binary. Rebuild ripr with Cargo feature `lang-perl` to analyze Perl files."
+                )
+            );
+        }
     }
 
     #[test]
