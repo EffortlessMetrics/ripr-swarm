@@ -66,6 +66,11 @@ pub(crate) struct AgentBriefResolvedWorkingSet {
     pub(crate) files: Vec<PathBuf>,
     pub(crate) changed_lines: Vec<AgentBriefLine>,
     pub(crate) changed_owners: Vec<AgentBriefChangedOwner>,
+    /// Every owner function whose span contains a changed line, including
+    /// outer owners of a nested function. `changed_owners` keeps only the
+    /// innermost owner per line. Empty when owner spans were not resolved;
+    /// consumers must then treat owner-span overlap as unknown, not as true.
+    pub(crate) enclosing_owners: Vec<AgentBriefChangedOwner>,
     pub(crate) base: Option<String>,
     pub(crate) diff: Option<PathBuf>,
     pub(crate) seam_id: Option<String>,
@@ -79,6 +84,7 @@ impl AgentBriefResolvedWorkingSet {
             files,
             changed_lines,
             changed_owners: Vec::new(),
+            enclosing_owners: Vec::new(),
             base: None,
             diff: Some(diff.into()),
             seam_id: None,
@@ -92,6 +98,7 @@ impl AgentBriefResolvedWorkingSet {
             files,
             changed_lines,
             changed_owners: Vec::new(),
+            enclosing_owners: Vec::new(),
             base: Some(base.into()),
             diff: None,
             seam_id: None,
@@ -104,6 +111,7 @@ impl AgentBriefResolvedWorkingSet {
             files,
             changed_lines: Vec::new(),
             changed_owners: Vec::new(),
+            enclosing_owners: Vec::new(),
             base: None,
             diff: None,
             seam_id: None,
@@ -116,6 +124,7 @@ impl AgentBriefResolvedWorkingSet {
             files: Vec::new(),
             changed_lines: Vec::new(),
             changed_owners: Vec::new(),
+            enclosing_owners: Vec::new(),
             base: None,
             diff: None,
             seam_id: Some(seam_id.into()),
@@ -124,6 +133,11 @@ impl AgentBriefResolvedWorkingSet {
 
     pub(crate) fn with_changed_owners(mut self, owners: Vec<AgentBriefChangedOwner>) -> Self {
         self.changed_owners = owners;
+        self
+    }
+
+    pub(crate) fn with_enclosing_owners(mut self, owners: Vec<AgentBriefChangedOwner>) -> Self {
+        self.enclosing_owners = owners;
         self
     }
 }

@@ -128,6 +128,11 @@ pub(super) const FIRST_ACTION_HELP: &str = r#"Recommend the next focused test to
 
 Usage: ripr first-action [--root PATH] [--pr-guidance PATH] [--assistant-proof PATH] [--gap-ledger PATH] [--ledger PATH] [--baseline-delta PATH] [--receipt PATH] [--gate-decision PATH] [--coverage-frontier PATH] [--editor-context PATH] [--out PATH] [--out-md PATH]
 
+At least one artifact input is required. Each one below is individually
+optional, but `ripr first-action` with none exits 2 rather than guessing where
+artifacts live, so the paths printed in `ripr help --all` are examples of what
+to pass, not defaults that are read for you.
+
 Options:
   --root PATH                Workspace root label. Defaults to current directory.
   --pr-guidance PATH         Optional PR guidance JSON from `ripr review-comments`.

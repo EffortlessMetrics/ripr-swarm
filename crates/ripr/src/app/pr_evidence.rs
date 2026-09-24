@@ -318,8 +318,14 @@ fn changed_files(repo: &Path, options: &PrEvidenceOptions) -> Result<Vec<String>
 
 fn write_diff(repo: &Path, options: &PrEvidenceOptions) -> Result<(), String> {
     let out = repo.join(PR_DIFF);
-    let range = format!("{}...{}", options.base, options.head);
-    let diff = run_git_output(repo, &["diff", "--binary", "--no-ext-diff", range.as_str()])?;
+    // Route the packet diff through the shared pinned Git assembly (issue
+    // #3930) rather than restating flags: ambient presentation helpers
+    // (external diff, textconv, color) must not change what the packet
+    // records. `--binary` stays the caller extra and the evidence path
+    // selects three context lines (the pre-#3930 presentation); the
+    // assembly pins `-c core.quotePath=true`, `--no-ext-diff`,
+    // `--no-textconv`, `--no-color`, and `--inter-hunk-context=0`.
+    let diff = crate::analysis::load_pr_evidence_diff_range(repo, &options.base, &options.head)?;
     write_parented_file(&out, PR_DIFF, diff)
 }
 
@@ -1012,6 +1018,188 @@ mod tests {
             head: "HEAD".to_string(),
             check: false,
         }
+    }
+
+    /// Issue #3930: the PR-evidence diff rides the same pinned Git
+    /// presentation as the analysis loaders. On an ordinary repository the
+    /// packet diff must be byte-identical to the pre-repair argv output;
+    /// non-UTF-8 git output must fail with a named error rather than
+    /// record replacement characters (the pre-#3930 contract); and a
+    /// textconv driver that hides source must not reach the packet
+    /// artifact: the pre-repair argv is the control (an empty patch proves
+    /// the fixture hides the edit), and `write_diff` must retain the
+    /// source edit.
+    #[test]
+    fn write_diff_ignores_textconv_like_analysis_loaders() -> Result<(), String> {
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        /// Scoped cleanup: the unique temporary repository is removed on
+        /// every exit, including early `?` returns and panics (Windows
+        /// readonly Git objects included).
+        struct FixtureGuard<'a> {
+            repo: &'a Path,
+        }
+        impl Drop for FixtureGuard<'_> {
+            fn drop(&mut self) {
+                let _ = remove_fixture_tree(self.repo);
+            }
+        }
+
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("system time before unix epoch: {error}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-pr-evidence-textconv-{}-{stamp}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _guard = FixtureGuard { repo: &repo };
+        fs::create_dir_all(repo.join("src"))
+            .map_err(|error| format!("create fixture src failed: {error}"))?;
+        fixture_git_ok(&repo, &["init", "--initial-branch=main"])?;
+        for (key, value) in [
+            ("user.name", "PR Evidence"),
+            ("user.email", "pr-evidence@example.com"),
+            ("commit.gpgsign", "false"),
+            ("core.autocrlf", "false"),
+        ] {
+            fixture_git_ok(&repo, &["config", "--local", key, value])?;
+        }
+        fs::write(repo.join(".gitattributes"), "src/lib.rs diff=audit\n")
+            .map_err(|error| format!("write gitattributes failed: {error}"))?;
+        // Seven lines with the edit on line 4: three context lines exist
+        // on each side, so `--unified=0` and `--unified=3` produce
+        // different bytes and the byte-identity pin below discriminates
+        // the evidence-path context selection.
+        fs::write(
+            repo.join("src/lib.rs"),
+            "pub const A: u32 = 1;\n\
+             pub const B: u32 = 2;\n\
+             pub const C: u32 = 3;\n\
+             pub const VALUE: u32 = 1;\n\
+             pub const D: u32 = 4;\n\
+             pub const E: u32 = 5;\n\
+             pub const F: u32 = 6;\n",
+        )
+        .map_err(|error| format!("write base source failed: {error}"))?;
+        fixture_git_ok(&repo, &["add", "."])?;
+        fixture_git_ok(&repo, &["commit", "--quiet", "-m", "base"])?;
+        fixture_git_ok(&repo, &["tag", "evidence-base"])?;
+        fs::write(
+            repo.join("src/lib.rs"),
+            "pub const A: u32 = 1;\n\
+             pub const B: u32 = 2;\n\
+             pub const C: u32 = 3;\n\
+             pub const VALUE: u32 = 2;\n\
+             pub const D: u32 = 4;\n\
+             pub const E: u32 = 5;\n\
+             pub const F: u32 = 6;\n",
+        )
+        .map_err(|error| format!("write edited source failed: {error}"))?;
+        fixture_git_ok(&repo, &["add", "src/lib.rs"])?;
+        fixture_git_ok(&repo, &["commit", "--quiet", "-m", "edit"])?;
+        let range = "evidence-base...HEAD";
+        let options = PrEvidenceOptions {
+            root: ".".to_string(),
+            base: "evidence-base".to_string(),
+            head: "HEAD".to_string(),
+            check: false,
+        };
+        // Byte-compatibility: with no ambient diff configuration yet, the
+        // routed packet diff must be byte-identical to the pre-repair argv
+        // output (three context lines, the pre-#3930 presentation). The
+        // baseline states context and color explicitly so ambient
+        // `diff.context` / color configuration cannot move it while the
+        // packet command stays pinned; on ordinary repositories this is
+        // exactly what the pre-repair argv emitted.
+        let baseline = &[
+            "diff",
+            "--binary",
+            "--no-ext-diff",
+            "--unified=3",
+            "--no-color",
+            range,
+        ];
+        let raw = run_git_output(&repo, baseline)?;
+        write_diff(&repo, &options)?;
+        let pinned = fs::read(repo.join(PR_DIFF))
+            .map_err(|error| format!("read packet diff failed: {error}"))?;
+        assert_eq!(
+            pinned,
+            raw.as_bytes(),
+            "packet diff must stay byte-identical to the pre-repair argv on ordinary repositories"
+        );
+        // Strictness: a tracked text file with non-UTF-8 bytes must fail
+        // the packet diff with a named error (the pre-#3930 contract),
+        // never record replacement characters. No textconv driver is
+        // configured yet, so the raw bytes reach the decode. The edit is
+        // restored afterwards for the textconv phases below.
+        fs::write(
+            repo.join("src/lib.rs"),
+            b"pub const VALUE: u32 = 1;\nlatin1: \xe9\n",
+        )
+        .map_err(|error| format!("write non-UTF-8 source failed: {error}"))?;
+        fixture_git_ok(&repo, &["add", "src/lib.rs"])?;
+        fixture_git_ok(&repo, &["commit", "--quiet", "-m", "non-utf8"])?;
+        match write_diff(&repo, &options) {
+            Ok(()) => {
+                return Err("packet diff must reject non-UTF-8 git output".to_string());
+            }
+            Err(err) => assert!(
+                err.contains("UTF-8"),
+                "unexpected strict-decode error: {err}"
+            ),
+        }
+        fs::write(
+            repo.join("src/lib.rs"),
+            "pub const A: u32 = 1;\n\
+             pub const B: u32 = 2;\n\
+             pub const C: u32 = 3;\n\
+             pub const VALUE: u32 = 2;\n\
+             pub const D: u32 = 4;\n\
+             pub const E: u32 = 5;\n\
+             pub const F: u32 = 6;\n",
+        )
+        .map_err(|error| format!("restore edited source failed: {error}"))?;
+        fixture_git_ok(&repo, &["add", "src/lib.rs"])?;
+        fixture_git_ok(&repo, &["commit", "--quiet", "-m", "restore"])?;
+        // Git itself is the constant-output helper on Unix and
+        // Windows; no shell script, executable permission, or global
+        // environment mutation.
+        fixture_git_ok(
+            &repo,
+            &["config", "--local", "diff.audit.textconv", "git --version"],
+        )?;
+        // Control: the pre-repair argv lets the textconv hide the source
+        // edit. Without this control a broken fixture could let the
+        // regression pass. Same isolated baseline as above; the textconv
+        // driver still comes from the fixture-local configuration, so the
+        // control keeps its meaning under ambient git configuration.
+        let raw = run_git_output(&repo, baseline)?;
+        assert!(
+            raw.trim().is_empty(),
+            "the constant textconv must hide the source edit"
+        );
+        write_diff(&repo, &options)?;
+        let diff = fs::read_to_string(repo.join(PR_DIFF))
+            .map_err(|error| format!("read packet diff failed: {error}"))?;
+        assert!(
+            diff.contains("pub const VALUE"),
+            "packet diff must retain the source edit despite textconv"
+        );
+        assert!(
+            diff.contains("pub const C: u32 = 3;") && diff.contains("pub const D: u32 = 4;"),
+            "packet diff must keep the three-line presentation around the edit"
+        );
+        assert!(
+            !diff.contains('\u{1b}'),
+            "packet diff must not contain color"
+        );
+        Ok(())
     }
 
     #[test]

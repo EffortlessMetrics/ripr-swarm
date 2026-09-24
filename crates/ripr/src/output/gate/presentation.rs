@@ -475,18 +475,25 @@ fn push_decision_section(
                     .delta_attribution
                     .map(|attribution| attribution.as_str()),
             );
-            push_repair_route(out, &decision.repair_route);
+            push_repair_route(out, &decision.repair_route, decision.changed_line_anchored);
         }
     }
     out.push('\n');
 }
 
-fn push_repair_route(out: &mut String, route: &GateRepairRoute) {
+fn push_repair_route(out: &mut String, route: &GateRepairRoute, changed_line_anchored: bool) {
+    // A seam outside the PR's changed lines keeps its owner and behavior
+    // visible but is not labeled changed (RIPR-SPEC-0012 placement).
+    let (owner_label, behavior_label) = if changed_line_anchored {
+        ("Changed owner", "Changed behavior")
+    } else {
+        ("Owner", "Behavior")
+    };
     push_optional_code(out, "Gap", route.canonical_gap_id.as_deref());
     push_optional_code(out, "Seam", route.seam_id.as_deref());
     push_optional_code(out, "Classification", route.classification.as_deref());
-    push_optional_code(out, "Changed owner", route.changed_owner.as_deref());
-    push_optional_text(out, "Changed behavior", route.changed_behavior.as_deref());
+    push_optional_code(out, owner_label, route.changed_owner.as_deref());
+    push_optional_text(out, behavior_label, route.changed_behavior.as_deref());
     push_optional_text(
         out,
         "Why it remains open",
@@ -620,7 +627,9 @@ mod tests {
     fn repair_route_leads_with_the_repair_start_when_carried() -> Result<(), String> {
         let command = "ripr agent repair --root . --seam-id seam-a --phase before";
         let mut with = String::new();
-        push_repair_route(&mut with, &route_with_repair(Some(command)));
+        // #3968 added the changed-line flag; the start line is the same
+        // either way, so this pins the changed-line form.
+        push_repair_route(&mut with, &route_with_repair(Some(command)), true);
         let start = with
             .find(&format!("  - Start repair: `{command}`\n"))
             .ok_or_else(|| format!("missing start line:\n{with}"))?;
@@ -632,7 +641,7 @@ mod tests {
         }
 
         let mut without = String::new();
-        push_repair_route(&mut without, &route_with_repair(None));
+        push_repair_route(&mut without, &route_with_repair(None), true);
         if without.contains("Start repair") {
             return Err(format!("no repair start without the field:\n{without}"));
         }
