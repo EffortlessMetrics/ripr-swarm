@@ -189,6 +189,9 @@ fn observed_discriminator_values(
         index,
         workspace_complete,
     );
+    let right_constant = (right_resolved.is_none() && right_parameter.is_none())
+        .then(|| boundary_constant(owner, &right, index))
+        .flatten();
     let mut facts = Vec::new();
 
     for row in call_values {
@@ -204,12 +207,7 @@ fn observed_discriminator_values(
             .and_then(|resolved| {
                 exact_operand_for_row(resolved, &row, &inputs, index, workspace_complete)
             })
-            .or_else(|| {
-                literal_operand_value(&right).map(|value| ExactOperand {
-                    provenance: format!("literal operand {right} = {value}"),
-                    value,
-                })
-            });
+            .or_else(|| visible_operand(&right, right_constant.as_ref()));
         if let (Some(left_value), Some(right_value)) = (&left_exact, &right_exact)
             && left_value.value == right_value.value
         {
@@ -238,7 +236,9 @@ fn observed_discriminator_values(
             .as_deref()
             .and_then(|parameter| parameter_value(&row, parameter))
             .map(|value| value.value)
-            .or_else(|| literal_operand_value(&right));
+            .or_else(|| {
+                visible_operand(&right, right_constant.as_ref()).map(|operand| operand.value)
+            });
         if right_value
             .as_deref()
             .is_some_and(|value| comparable_value(value) == comparable_value(&left_value.value))
@@ -246,6 +246,23 @@ fn observed_discriminator_values(
             facts.push(ValueFact {
                 line: left_value.line,
                 text: left_value.text.clone(),
+                value: format!("{left} == {right}"),
+                context: ValueContext::FunctionArgument,
+            });
+        }
+    }
+    if let (Some(constant), Some(left_parameter)) = (&right_constant, left_parameter.as_deref()) {
+        for (line, text) in owner_calls_passing_constant(
+            related_tests,
+            owner,
+            &parameters,
+            left_parameter,
+            constant,
+            index,
+        ) {
+            facts.push(ValueFact {
+                line,
+                text: format!("{text} | argument names constant {right}"),
                 value: format!("{left} == {right}"),
                 context: ValueContext::FunctionArgument,
             });
@@ -598,6 +615,9 @@ fn missing_boundary_discriminator(
         index,
         workspace_complete,
     );
+    let right_constant = (right_resolved.is_none() && right_parameter.is_none())
+        .then(|| boundary_constant(owner, &right, index))
+        .flatten();
     let exact_rows: Vec<(Vec<ExactOperand>, Vec<ExactOperand>)> = call_values
         .iter()
         .map(|row| {
@@ -617,12 +637,7 @@ fn missing_boundary_discriminator(
                 .and_then(|resolved| {
                     exact_operand_for_row(resolved, row, &inputs, index, workspace_complete)
                 })
-                .or_else(|| {
-                    literal_operand_value(&right).map(|value| ExactOperand {
-                        provenance: format!("literal operand {right} = {value}"),
-                        value,
-                    })
-                })
+                .or_else(|| visible_operand(&right, right_constant.as_ref()))
                 .into_iter()
                 .collect::<Vec<_>>();
             (lefts, rights)
@@ -649,13 +664,41 @@ fn missing_boundary_discriminator(
                     .as_deref()
                     .and_then(|parameter| parameter_value(row, parameter))
                     .map(|value| value.value)
-                    .or_else(|| literal_operand_value(&right));
+                    .or_else(|| {
+                        visible_operand(&right, right_constant.as_ref())
+                            .map(|operand| operand.value)
+                    });
                 right_value.as_deref().is_some_and(|value| {
                     comparable_value(value) == comparable_value(&left_value.value)
                 })
             })
         });
-    if equality_observed {
+    let constant_named = right_constant
+        .as_ref()
+        .zip(left_parameter.as_deref())
+        .is_some_and(|(constant, left_parameter)| {
+            !owner_calls_passing_constant(
+                related_tests,
+                owner,
+                &parameters,
+                left_parameter,
+                constant,
+                index,
+            )
+            .is_empty()
+        });
+    if equality_observed || constant_named {
+        return None;
+    }
+    // A constant ripr cannot pin to one declaration in the owner's file
+    // (imported, or declared twice) can never be matched by a test, so
+    // naming it as the missing discriminator would ask for a repair ripr
+    // cannot confirm. The stage stays unknown instead ("no literal
+    // boundary was visible"), mirroring the repo-seam unresolved route.
+    if right_constant
+        .as_ref()
+        .is_some_and(|constant| !constant.lookup.is_declared_once())
+    {
         return None;
     }
 
@@ -676,7 +719,8 @@ fn missing_boundary_discriminator(
     let right_parameter_values = right_parameter
         .as_deref()
         .and_then(|parameter| parameter_value_set(&call_values, parameter));
-    let right_literal = literal_operand_value(&right);
+    let right_literal =
+        visible_operand(&right, right_constant.as_ref()).map(|operand| operand.value);
     let reason = if let Some(right_values) = right_parameter_values {
         format!(
             "No related test call uses {left} equal to {right}; observed {left} values: {}; observed {right} values: {}",
@@ -687,6 +731,17 @@ fn missing_boundary_discriminator(
         format!(
             "No related test call uses {left} equal to {right}; observed {left} values: {}; target {right} value: {right_value}",
             list_or_unknown(&left_values)
+        )
+    } else if let Some(constant) = right_constant.as_ref() {
+        let symbolic = if constant.lookup.is_declared_once() {
+            format!("; a test that passes {right} itself is recognized")
+        } else {
+            String::new()
+        };
+        format!(
+            "No related test call uses {left} equal to {right}; observed {left} values: {}; ripr cannot see the value of constant {right} statically ({}), so a test that already calls with that value is not recognized{symbolic}",
+            list_or_unknown(&left_values),
+            constant.lookup.limitation()
         )
     } else {
         format!(
@@ -1116,6 +1171,103 @@ fn clean_operand(operand: &str) -> String {
         .map(|(before, _)| before.trim())
         .unwrap_or(cleaned);
     cleaned.to_string()
+}
+
+/// The constant a changed comparison's right-hand operand names
+/// (`amount >= DISCOUNT_THRESHOLD` -> `DISCOUNT_THRESHOLD`), if any.
+pub(in crate::analysis) fn boundary_constant_operand_name(expression: &str) -> Option<String> {
+    let (_, right) = comparison_operands(expression)?;
+    crate::analysis::value_resolution::constant_operand_name(&right).map(str::to_string)
+}
+
+/// A boundary operand that names a constant (`DISCOUNT_THRESHOLD`,
+/// `Self::LIMIT`), with what the owner's source file says about it through
+/// the shared named-constant lookup in `analysis::value_resolution`.
+struct BoundaryConstant {
+    name: String,
+    lookup: crate::analysis::value_resolution::NamedConstant,
+}
+
+/// Resolve a comparison operand that names a constant. Only a
+/// constant-shaped operand is looked up, and only in the owner's own
+/// source file.
+fn boundary_constant(
+    owner: &FunctionSummary,
+    operand: &str,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<BoundaryConstant> {
+    let name = crate::analysis::value_resolution::constant_operand_name(operand)?;
+    let lookup = index.files.get(&owner.file).map_or(
+        crate::analysis::value_resolution::NamedConstant::Undeclared,
+        |facts| crate::analysis::value_resolution::named_constant(&facts.source, name),
+    );
+    Some(BoundaryConstant {
+        name: name.to_string(),
+        lookup,
+    })
+}
+
+/// The statically visible value of the right-hand boundary operand: its
+/// literal, or the literal value of the same-file constant it names.
+fn visible_operand(operand: &str, constant: Option<&BoundaryConstant>) -> Option<ExactOperand> {
+    if let Some(value) = literal_operand_value(operand) {
+        return Some(ExactOperand {
+            provenance: format!("literal operand {operand} = {value}"),
+            value,
+        });
+    }
+    let value = constant?.lookup.value()?.to_string();
+    Some(ExactOperand {
+        provenance: format!("constant {operand} = {value} (same-file const)"),
+        value,
+    })
+}
+
+/// Direct owner calls in related tests whose argument for the compared
+/// parameter names the boundary constant itself (`discounted_total(
+/// DISCOUNT_THRESHOLD)`): that argument is the boundary value by
+/// identity, whatever its value. Requires the owner's file to declare the
+/// constant exactly once, and skips a test whose own file may declare a
+/// constant of the same name.
+fn owner_calls_passing_constant(
+    related_tests: &[&TestSummary],
+    owner: &FunctionSummary,
+    parameters: &[String],
+    left_parameter: &str,
+    constant: &BoundaryConstant,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Vec<(usize, String)> {
+    let Some(position) = parameters
+        .iter()
+        .position(|parameter| parameter == left_parameter)
+    else {
+        return Vec::new();
+    };
+    if !constant.lookup.is_declared_once() {
+        return Vec::new();
+    }
+    related_tests
+        .iter()
+        .filter(|test| {
+            !crate::analysis::value_resolution::test_file_may_shadow_constant(
+                &owner.file,
+                &test.file,
+                index
+                    .files
+                    .get(&test.file)
+                    .map(|facts| facts.source.as_str()),
+                &constant.name,
+            )
+        })
+        .flat_map(|test| test.calls.iter())
+        .filter(|call| call.name == owner.name)
+        .filter_map(|call| {
+            let arguments = call_arguments(&call.text, &call.name)?;
+            let argument = arguments.get(position)?;
+            crate::analysis::value_resolution::argument_names_constant(argument, &constant.name)
+                .then(|| (call.line, call.text.clone()))
+        })
+        .collect()
 }
 
 fn literal_operand_value(operand: &str) -> Option<String> {
@@ -1763,6 +1915,144 @@ mod tests {
                 .reason
                 .contains("observed amount values: unknown")
         );
+    }
+
+    fn constant_boundary_activation(
+        constant_source: &str,
+        calls: &[&str],
+    ) -> (ActivationEvidence, Vec<TestSummary>) {
+        constant_boundary_activation_with_test_file(constant_source, "use app::score;", calls)
+    }
+
+    fn constant_boundary_activation_with_test_file(
+        constant_source: &str,
+        test_file_source: &str,
+        calls: &[&str],
+    ) -> (ActivationEvidence, Vec<TestSummary>) {
+        let owner = function("pub fn score(amount: i32) -> bool {\n    amount > LIMIT\n}");
+        let mut index = crate::analysis::rust_index::RustIndex::default();
+        index.files.insert(
+            PathBuf::from("src/lib.rs"),
+            crate::analysis::facts::FileFacts {
+                path: PathBuf::from("src/lib.rs"),
+                source: format!("{constant_source}\n{}", owner.body),
+                ..Default::default()
+            },
+        );
+        index.files.insert(
+            PathBuf::from("tests/score.rs"),
+            crate::analysis::facts::FileFacts {
+                path: PathBuf::from("tests/score.rs"),
+                source: test_file_source.to_string(),
+                ..Default::default()
+            },
+        );
+        let tests = calls
+            .iter()
+            .map(|call| test_with_call("score_boundary", call))
+            .collect::<Vec<_>>();
+        let related = tests.iter().collect::<Vec<_>>();
+        let activation = activation_evidence(
+            &probe(ProbeFamily::Predicate, "amount > LIMIT"),
+            Some(&owner),
+            &related,
+            &[],
+            None,
+            &index,
+            false,
+        );
+        (activation, tests)
+    }
+
+    #[test]
+    fn same_file_constant_boundary_is_observed_at_its_literal_value() {
+        let (activation, _) =
+            constant_boundary_activation("const LIMIT: i32 = 10;", &["score(5);", "score(10);"]);
+        assert!(has_observed_boundary_equality(&activation));
+        assert!(activation.missing_discriminators.is_empty());
+
+        let (off_boundary, _) =
+            constant_boundary_activation("const LIMIT: i32 = 10;", &["score(5);", "score(11);"]);
+        assert!(!has_observed_boundary_equality(&off_boundary));
+        assert_eq!(off_boundary.missing_discriminators.len(), 1);
+        assert_eq!(
+            off_boundary.missing_discriminators[0].value,
+            "amount == LIMIT"
+        );
+        assert!(
+            off_boundary.missing_discriminators[0]
+                .reason
+                .ends_with("target LIMIT value: 10"),
+            "{:?}",
+            off_boundary.missing_discriminators
+        );
+    }
+
+    #[test]
+    fn argument_naming_the_constant_is_the_boundary_by_identity() {
+        let (activation, _) = constant_boundary_activation(
+            "const LIMIT: i32 = 5 * 2;",
+            &["score(5);", "score(crate::LIMIT);"],
+        );
+        assert!(has_observed_boundary_equality(&activation));
+        assert!(activation.missing_discriminators.is_empty());
+
+        // Opaque value and no argument naming it: the missing boundary is
+        // honest about what ripr cannot see.
+        let (opaque, _) =
+            constant_boundary_activation("const LIMIT: i32 = 5 * 2;", &["score(5);", "score(10);"]);
+        assert!(!has_observed_boundary_equality(&opaque));
+        assert_eq!(opaque.missing_discriminators.len(), 1);
+        assert!(
+            opaque.missing_discriminators[0]
+                .reason
+                .contains("ripr cannot see the value of constant LIMIT statically"),
+            "{:?}",
+            opaque.missing_discriminators
+        );
+    }
+
+    #[test]
+    fn argument_naming_a_test_file_constant_of_the_same_name_is_not_the_boundary() {
+        // `tests/score.rs` declares its own `LIMIT = 3`; `score(LIMIT)` there
+        // passes 3, not the owner's boundary, so identity must not credit it.
+        let (shadowed, _) = constant_boundary_activation_with_test_file(
+            "const LIMIT: i32 = 5 * 2;",
+            "use app::score;\nconst LIMIT: i32 = 3;\n",
+            &["score(5);", "score(LIMIT);"],
+        );
+        assert!(!has_observed_boundary_equality(&shadowed));
+        assert_eq!(shadowed.missing_discriminators.len(), 1);
+
+        // The same call from a test file that only imports the owner's
+        // constant is still the boundary by identity.
+        let (imported, _) = constant_boundary_activation_with_test_file(
+            "const LIMIT: i32 = 5 * 2;",
+            "use app::{score, LIMIT};\n",
+            &["score(5);", "score(LIMIT);"],
+        );
+        assert!(has_observed_boundary_equality(&imported));
+        assert!(imported.missing_discriminators.is_empty());
+    }
+
+    #[test]
+    fn constant_not_pinned_to_the_owner_file_fails_closed() {
+        for constant_source in [
+            "use crate::config::LIMIT;",
+            "mod eu { pub const LIMIT: i32 = 10; }\nmod us { pub const LIMIT: i32 = 20; }",
+        ] {
+            let (activation, _) =
+                constant_boundary_activation(constant_source, &["score(5);", "score(LIMIT);"]);
+            assert!(
+                !has_observed_boundary_equality(&activation),
+                "`{constant_source}` must not credit the boundary"
+            );
+            assert!(
+                activation.missing_discriminators.is_empty(),
+                "`{constant_source}` must not name an unconfirmable repair: {:?}",
+                activation.missing_discriminators
+            );
+        }
     }
 
     #[test]
