@@ -602,7 +602,8 @@ output: repair_packet_ready: false
 ### Heuristic relation only (stays non-actionable, F3)
 
 ```text
-input:  related test only has heuristic name proximity (no direct import)
+input:  related test references the owner only as a value (no owner call), so
+        only a heuristic same-stem proximity relation links it
 output: repair_packet_ready: false
         actionability_category: ambiguous_related_test
 ```
