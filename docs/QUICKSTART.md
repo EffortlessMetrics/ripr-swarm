@@ -57,9 +57,15 @@ Most adopters should choose one of these first-hour paths:
 For TypeScript, JavaScript, or broader Python static-fact evaluation, first read
 [Language adapter preview workflow](LANGUAGE_ADAPTER_PREVIEW.md). Preview
 language evidence is syntax-first, visibly preview/advisory, and not a default
-gate input. The scoped Python repair-routing loop is `usable alpha` for selected
-pytest/unittest repair cards, packets, verify commands, and receipts; it remains
-advisory and does not run imports, execute tests, or generate tests by default.
+gate input. Python findings report `Language status: preview`. Within that
+preview, the scoped Python repair-routing loop is `usable alpha` for selected
+pytest/unittest repair cards, packets, verify commands, and receipts: a repair
+card appears only for a `weakly_exposed` finding whose related test reaches the
+change and for which ripr names the missing discriminator, a test location, and
+a verify command. `exposed`, `no_static_path`, heuristic-only, and
+static-limited findings get no card, and `ripr pilot` then reports
+`repair cards: 0`. The loop remains advisory and does not run imports, execute
+tests, or generate tests by default.
 
 `ripr.toml` is optional. `ripr init` materializes repo-local policy when a team
 wants to review, version, and tune it. It is not activation, and it is not

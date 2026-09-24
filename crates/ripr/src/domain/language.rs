@@ -23,6 +23,35 @@ pub enum LanguageId {
 }
 
 impl LanguageId {
+    /// Every language id, in declaration order.
+    pub(crate) const ALL: [LanguageId; 5] = [
+        LanguageId::Rust,
+        LanguageId::TypeScript,
+        LanguageId::JavaScript,
+        LanguageId::Python,
+        LanguageId::Perl,
+    ];
+
+    /// Human-facing language name for prose (`TypeScript`, `JavaScript`),
+    /// distinct from the lowercase wire string returned by [`Self::as_str`].
+    pub(crate) fn display_name(self) -> &'static str {
+        match self {
+            LanguageId::Rust => "Rust",
+            LanguageId::TypeScript => "TypeScript",
+            LanguageId::JavaScript => "JavaScript",
+            LanguageId::Python => "Python",
+            LanguageId::Perl => "Perl",
+        }
+    }
+
+    /// Display name for a wire string, or `None` for an unknown language.
+    pub(crate) fn display_name_for_wire(wire: &str) -> Option<&'static str> {
+        Self::ALL
+            .into_iter()
+            .find(|language| language.as_str() == wire)
+            .map(Self::display_name)
+    }
+
     /// Stable wire string used when this id is serialized into the additive
     /// optional `language` output field.
     pub fn as_str(&self) -> &'static str {
@@ -606,5 +635,30 @@ mod tests {
                 .contains("depth greater than 5"),
             "transitive-reach limitation text must match RIPR-SPEC-0114's depth-5 bound"
         );
+    }
+
+    #[test]
+    fn display_names_use_product_casing_and_round_trip_wire_strings() {
+        let pairs: Vec<(&str, &str)> = LanguageId::ALL
+            .into_iter()
+            .map(|language| (language.as_str(), language.display_name()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("rust", "Rust"),
+                ("typescript", "TypeScript"),
+                ("javascript", "JavaScript"),
+                ("python", "Python"),
+                ("perl", "Perl"),
+            ]
+        );
+        for language in LanguageId::ALL {
+            assert_eq!(
+                LanguageId::display_name_for_wire(language.as_str()),
+                Some(language.display_name())
+            );
+        }
+        assert_eq!(LanguageId::display_name_for_wire("cobol"), None);
     }
 }

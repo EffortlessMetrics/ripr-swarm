@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_wrong_family_oracle (4)
+
+Reason:
+RIPR-SPEC-0082/RIPR-SPEC-0122 wording owner change (PR #3978): preview notes use language display names with singular file counts (1 TypeScript file); mechanical re-render of unchanged fixture evidence
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
