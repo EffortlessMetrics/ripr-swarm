@@ -1,5 +1,7 @@
 use crate::agent::command_specs::report_regeneration_command_spec_from_display;
-use crate::agent::loop_commands::{check_repo_exposure_command, display_path, shell_arg};
+use crate::agent::loop_commands::{
+    anchored_redirect_target, check_repo_exposure_command, display_path, shell_arg,
+};
 use crate::config::detect_python_project;
 use crate::domain::CommandSpec;
 use crate::output::gap_decision_ledger::projection_eligible_from_value;
@@ -8,6 +10,8 @@ use crate::output::receipt_write::receipt_write_command;
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
 };
+#[cfg(test)]
+use crate::testing::cwd_placeholder::{project_cwd_text, project_renderer_cwd};
 use serde_json::{Map, Value, json};
 use std::env;
 use std::fs;
@@ -1229,7 +1233,14 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
             shell_arg(&options.root),
             shell_arg(&options.gap_ledger),
             shell_arg(&gap_id),
-            shell_arg(&options.agent_packet)
+            // Issue #3872: the shell redirect anchors at --root like every
+            // other funnel redirect, so the pasted packet command reproduces
+            // the validated write location from any working directory (and
+            // the derived PowerShell WriteAllText form inherits the anchor).
+            shell_arg(&anchored_redirect_target(
+                &options.root,
+                &options.agent_packet
+            ))
         ),
     }
 }
@@ -1542,12 +1553,11 @@ fn regenerate_repo_exposure_gap_ledger_command(out: &str) -> String {
 fn regenerate_check_output_gap_ledger_command(options: &FirstPrOptions) -> String {
     let root = shell_arg(&options.root);
     let base = shell_arg(&options.base);
-    let check_output = shell_arg(
-        options
-            .check_output
-            .as_deref()
-            .unwrap_or(DEFAULT_CHECK_OUTPUT),
-    );
+    let check_output_raw = options
+        .check_output
+        .as_deref()
+        .unwrap_or(DEFAULT_CHECK_OUTPUT);
+    let check_output = shell_arg(check_output_raw);
     let out = shell_arg(&options.gap_ledger);
     let out_md = shell_arg(&with_extension(&options.gap_ledger, "md"));
     if options.check_output.is_some() {
@@ -1555,8 +1565,15 @@ fn regenerate_check_output_gap_ledger_command(options: &FirstPrOptions) -> Strin
             "ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
         )
     } else {
+        // The shell redirect target anchors at --root (issue #3872) so the
+        // pasted compound reproduces the validated write location from any
+        // working directory. The paired --check-output read names the same
+        // anchored file: a relative read next to an absolute write would
+        // split the compound across directories when pasted elsewhere.
+        let anchored = anchored_redirect_target(&options.root, check_output_raw);
+        let anchored_arg = shell_arg(&anchored);
         format!(
-            "ripr check --root {root} --base {base} --json > {check_output} && ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
+            "ripr check --root {root} --base {base} --json > {anchored_arg} && ripr reports gap-ledger --check-output {anchored_arg} --root {root} --out {out} --out-md {out_md}"
         )
     }
 }
@@ -2041,7 +2058,7 @@ mod tests {
             markdown.contains(bash_packet),
             "bash agent packet command drifted:\n{markdown}"
         );
-        let powershell_packet = "Agent packet command (PowerShell):\n`$ripr = ((ripr agent packet --root 'repo root' --gap-id gap:pr:pricing --json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }`";
+        let powershell_packet = "Agent packet command (PowerShell):\n`$ripr = ((ripr agent packet --root 'repo root' --gap-id gap:pr:pricing --json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }`";
         assert!(
             markdown.contains(powershell_packet),
             "powershell agent packet command missing or drifted:\n{markdown}"
@@ -2109,11 +2126,17 @@ mod tests {
             packet["selected"]["artifact"]["path"],
             DEFAULT_REPO_EXPOSURE
         );
+        // Issue #3872: the redirect target anchors at the resolved --root, so
+        // the expectation builds the same anchored path instead of pinning a
+        // machine directory.
+        let expected_regeneration = format!(
+            "ripr check --root . --mode instant --format repo-exposure-json > {}",
+            shell_arg(&anchored_redirect_target(".", DEFAULT_REPO_EXPOSURE))
+        );
         assert!(
             packet["selected"]["regeneration_command"]
                 .as_str()
-                .is_some_and(|command| command
-                    == "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json")
+                .is_some_and(|command| command == expected_regeneration)
         );
         let summary = start_here_cli_summary(
             &packet,
@@ -2191,11 +2214,14 @@ mod tests {
         assert_eq!(packet["selected"]["state"], "missing_artifact");
         assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
         assert_eq!(packet["selected"]["artifact"]["id"], "repo_exposure");
+        let expected_regeneration = format!(
+            "ripr check --root . --mode instant --format repo-exposure-json > {}",
+            shell_arg(&anchored_redirect_target(".", DEFAULT_REPO_EXPOSURE))
+        );
         assert!(
             packet["selected"]["regeneration_command"]
                 .as_str()
-                .is_some_and(|command| command
-                    == "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json")
+                .is_some_and(|command| command == expected_regeneration)
         );
         cleanup(&repo)
     }
@@ -2435,12 +2461,15 @@ mod tests {
         let command = packet["selected"]["regeneration_command"]
             .as_str()
             .ok_or_else(|| "selected regeneration command missing".to_string())?;
-        assert!(command.contains(
-            "ripr check --root . --base origin/main --json > target/ripr/reports/check.json"
-        ));
-        assert!(command.contains(
-            "ripr reports gap-ledger --check-output target/ripr/reports/check.json --root . --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md"
-        ));
+        // Issue #3872: both the redirect target and the paired --check-output
+        // read name the same anchored file.
+        let anchored_check = shell_arg(&anchored_redirect_target(".", DEFAULT_CHECK_OUTPUT));
+        assert!(command.contains(&format!(
+            "ripr check --root . --base origin/main --json > {anchored_check}"
+        )));
+        assert!(command.contains(&format!(
+            "ripr reports gap-ledger --check-output {anchored_check} --root . --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md"
+        )));
         assert!(!command.contains("--repo-exposure"));
         assert_eq!(packet["commands"]["regenerate_gap_ledger"], command);
         assert_eq!(packet["artifacts"][0]["regeneration_command"], command);
@@ -3006,9 +3035,16 @@ mod tests {
         // forms must quote it: unquoted, bash truncates the argument at `>`
         // and redirects to a file literally named `=threshold` (PR #3625
         // review round 3, coderabbit).
+        // Issue #3872: the packet redirect anchors at the resolved --root.
         assert_eq!(
             packet["selected"]["agent_packet_command"],
-            "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id 'gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --json > target/ripr/workflow/agent-packet.json"
+            format!(
+                "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id 'gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --json > {}",
+                shell_arg(&anchored_redirect_target(
+                    ".",
+                    "target/ripr/workflow/agent-packet.json"
+                ))
+            )
         );
         let quoted_id = "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold";
         let markdown = render_start_here_markdown(&packet);
@@ -3517,17 +3553,23 @@ mod tests {
             ..FirstPrOptions::default()
         };
         let actual_json = render_start_here_packet(&case, &options);
+        let actual_md = render_start_here_markdown(&actual_json);
+        // Issue #3872: funnel redirect targets anchor at the resolved --root,
+        // so the machine prefix projects to `<cwd>/` before comparing against
+        // the checked-in expectation (placeholder rule: loop_commands).
+        let mut normalized_json = actual_json;
+        project_renderer_cwd(&mut normalized_json);
+        let normalized_md = project_cwd_text(&actual_md);
         let expected_json = read_packet(&case.join("expected/start-here.json"))?;
         assert_eq!(
-            actual_json, expected_json,
+            normalized_json, expected_json,
             "start-here JSON drift in {case_id}"
         );
 
-        let actual_md = render_start_here_markdown(&actual_json);
         let expected_md = fs::read_to_string(case.join("expected/start-here.md"))
             .map_err(|err| format!("read expected start-here markdown for {case_id}: {err}"))?;
         assert_eq!(
-            actual_md.replace("\r\n", "\n"),
+            normalized_md.replace("\r\n", "\n"),
             expected_md.replace("\r\n", "\n"),
             "start-here Markdown drift in {case_id}"
         );

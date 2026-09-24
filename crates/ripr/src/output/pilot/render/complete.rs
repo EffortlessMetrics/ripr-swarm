@@ -2,7 +2,6 @@ use super::render_helpers::{
     push_markdown_recommendation, push_path_field, push_top_seam_json, yes_no,
 };
 use super::why_line;
-use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
@@ -10,7 +9,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::json::escape as json_escape;
 use crate::output::markdown::powershell_command;
 use crate::output::path::{display_path, display_path_text};
-use crate::output::pilot::commands::PilotCommands;
+use crate::output::pilot::commands::{PilotCommands, repair_start_command};
 use crate::output::pilot::ranking::{actionable_total, top_actionable_seams};
 use crate::output::pilot::{
     PILOT_SUMMARY_SCHEMA_VERSION, PilotPythonFirstUse, PilotSummaryContext,
@@ -137,9 +136,19 @@ pub(crate) fn render_pilot_summary_json(
         json_escape(&commands.after_snapshot)
     ));
     out.push_str(&format!(
-        "    \"outcome_command\": \"{}\"\n",
+        "    \"outcome_command\": \"{}\",\n",
         json_escape(&commands.outcome)
     ));
+    match top
+        .first()
+        .and_then(|entry| repair_start_command(context.root, entry))
+    {
+        Some(command) => out.push_str(&format!(
+            "    \"repair_command\": \"{}\"\n",
+            json_escape(&command)
+        )),
+        None => out.push_str("    \"repair_command\": null\n"),
+    }
     out.push_str("  }\n");
     out.push_str("}\n");
     out
@@ -230,18 +239,35 @@ pub(crate) fn render_pilot_summary_md(
     ));
 
     out.push_str("## Next Commands\n\n");
-    out.push_str(
-        "After adding one focused test, rerun repo exposure and compare the snapshots:\n\n",
-    );
+    let repair = top
+        .first()
+        .and_then(|entry| repair_start_command(context.root, entry));
+    // One ordinary route (#3906): when the top seam can be repaired, the
+    // repair transaction replaces the manual before/after snapshot pair.
+    let next_commands: Vec<&String> = match repair.as_ref() {
+        Some(command) => {
+            out.push_str(
+                "Start the repair transaction for the top seam, add one focused test (test files only), then run the `--attempt ... --phase after` command it prints:\n\n",
+            );
+            vec![command]
+        }
+        None => {
+            out.push_str(
+                "After adding one focused test, rerun repo exposure and compare the snapshots:\n\n",
+            );
+            vec![&commands.after_snapshot, &commands.outcome]
+        }
+    };
     out.push_str(super::COMMAND_SHELL_DISCLOSURE);
     out.push_str("```bash\n");
-    out.push_str(&commands.after_snapshot);
-    out.push('\n');
-    out.push_str(&commands.outcome);
-    out.push_str("\n```\n");
+    for command in &next_commands {
+        out.push_str(command);
+        out.push('\n');
+    }
+    out.push_str("```\n");
     let mut unavailable: Vec<&String> = Vec::new();
     let mut translations: Vec<String> = Vec::new();
-    for command in [&commands.after_snapshot, &commands.outcome] {
+    for command in next_commands {
         match powershell_command(command) {
             Some(line) => translations.push(line),
             None => unavailable.push(command),
@@ -320,20 +346,13 @@ pub(crate) fn render_pilot_terminal(
             out.push_str(&format!("  candidate value: {value}\n"));
         }
         out.push_str(&format!("  assertion: {}\n", outline.assertion_shape));
-        // Only a seam whose repair route is actionable gets the paste-ready
-        // command. When the route is limited, the line above says so and the
-        // closing block already says what to run instead; offering a repair
-        // transaction there would promise a target the route does not have.
-        if !outline.is_not_applicable() {
-            // Built here rather than in `agent::loop_commands`: xtask includes
-            // that file into its own tree, so a template only the pilot
-            // renderer calls reads as dead code there and fails
-            // `-D warnings`. `shell_arg` still owns the quoting.
-            out.push_str(&format!(
-                "  repair this seam: ripr agent repair --root {} --seam-id {} --phase before\n",
-                loop_commands::shell_path(context.root),
-                loop_commands::shell_arg(entry.seam.id().as_str()),
-            ));
+        // Only a seam that passes the fail-closed repair-packet flip gets the
+        // paste-ready command. Route readiness alone is weaker: a ready seam
+        // can still be ineligible, and offering a repair transaction there
+        // would promise a target `agent repair` refuses. The closing block
+        // uses the same builder, so the two lines cannot disagree (#3906).
+        if let Some(command) = repair_start_command(context.root, entry) {
+            out.push_str(&format!("  repair this seam: {command}\n"));
         }
         out.push('\n');
         outline.is_not_applicable()
@@ -362,6 +381,16 @@ pub(crate) fn render_pilot_terminal(
         "  {}\n\n",
         display_path(&context.artifacts.agent_seam_packets_json)
     ));
+    if let Some(command) = top
+        .first()
+        .and_then(|entry| repair_start_command(context.root, entry))
+    {
+        out.push_str("Next, in order:\n");
+        out.push_str(&format!("  1. {command}\n"));
+        out.push_str("  2. add the focused test named above (test files only)\n");
+        out.push_str("  3. run the `--attempt ... --phase after` command that step 1 prints\n");
+        return out;
+    }
     if route_not_applicable {
         out.push_str("Run after producer evidence makes a repair route actionable:\n");
     } else {

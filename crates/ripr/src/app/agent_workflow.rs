@@ -551,10 +551,14 @@ mod tests {
                     command.step.as_str(),
                     command.artifact.as_str(),
                     command.purpose.as_str(),
-                    command.command.as_str(),
+                    command.command.clone(),
                 )
             })
             .collect::<Vec<_>>();
+        // Issue #3872: redirect targets anchor at the resolved --root, so the
+        // expected commands build from the same builders the manifest uses
+        // (the anchor math itself is pinned in loop_commands tests).
+        let seam_id = "67fc764ba37d77bd";
         assert_eq!(
             command_rows,
             vec![
@@ -562,55 +566,81 @@ mod tests {
                     "workflow_manifest",
                     WORKFLOW_MANIFEST_ARTIFACT,
                     "Regenerate this source-edit-free workflow manifest.",
-                    "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow",
+                    agent_start_command(".", seam_id, "target/ripr/workflow"),
                 ),
                 (
                     "before_snapshot",
                     "target/ripr/workflow/before.repo-exposure.json",
                     "Capture static seam evidence before editing tests.",
-                    "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json",
+                    check_repo_exposure_command(
+                        ".",
+                        "draft",
+                        "target/ripr/workflow/before.repo-exposure.json"
+                    ),
                 ),
                 (
                     "agent_seam_packets",
                     "target/ripr/workflow/agent-seam-packets.json",
                     "Render the full agent seam packet set for reference.",
-                    "ripr check --root . --mode draft --format agent-seam-packets-json > target/ripr/workflow/agent-seam-packets.json",
+                    agent_seam_packets_command(
+                        ".",
+                        "draft",
+                        "target/ripr/workflow/agent-seam-packets.json"
+                    ),
                 ),
                 (
                     "agent_packet",
                     "target/ripr/workflow/agent-packet.json",
                     "Expand the selected seam into a bounded agent packet.",
-                    "ripr agent packet --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-packet.json",
+                    agent_packet_command(".", seam_id, "target/ripr/workflow/agent-packet.json"),
                 ),
                 (
                     "agent_brief",
                     "target/ripr/workflow/agent-brief.json",
                     "Refresh this seam's working-set brief.",
-                    "ripr agent brief --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-brief.json",
+                    agent_brief_command(".", seam_id, "target/ripr/workflow/agent-brief.json"),
                 ),
                 (
                     "after_snapshot",
                     "target/ripr/workflow/after.repo-exposure.json",
                     "Capture static seam evidence after adding one focused test.",
-                    "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
+                    check_repo_exposure_command(
+                        ".",
+                        "draft",
+                        "target/ripr/workflow/after.repo-exposure.json"
+                    ),
                 ),
                 (
                     "analysis_outcome",
                     "target/ripr/workflow/analysis-outcome.json",
                     "Capture the producer-backed diff completeness outcome after the focused test change.",
-                    "ripr check --root . --mode draft --format json > target/ripr/workflow/analysis-outcome.json",
+                    check_analysis_outcome_command(
+                        ".",
+                        "draft",
+                        "target/ripr/workflow/analysis-outcome.json"
+                    ),
                 ),
                 (
                     "agent_verify",
                     "target/ripr/workflow/agent-verify.json",
                     "Compare before and after static evidence for the agent loop.",
-                    "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > target/ripr/workflow/agent-verify.json",
+                    agent_verify_command(
+                        ".",
+                        "target/ripr/workflow/before.repo-exposure.json",
+                        "target/ripr/workflow/after.repo-exposure.json",
+                        Some("target/ripr/workflow/agent-verify.json"),
+                    ),
                 ),
                 (
                     "agent_receipt",
                     WORKFLOW_AGENT_RECEIPT_ARTIFACT,
                     "Write a review handoff receipt for the selected seam.",
-                    "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json --out target/ripr/reports/agent-receipt.json",
+                    agent_receipt_command(
+                        ".",
+                        "target/ripr/workflow/agent-verify.json",
+                        seam_id,
+                        Some("target/ripr/reports/agent-receipt.json"),
+                    ),
                 ),
             ]
         );
