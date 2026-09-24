@@ -375,3 +375,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_repair_packet_complete (5)
+
+Reason:
+RIPR-SPEC-0079: TypeScript preview receipt_command is the canonical ripr receipt write command from the shared receipt-write owner, not ripr outcome (#3906)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_complete --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
