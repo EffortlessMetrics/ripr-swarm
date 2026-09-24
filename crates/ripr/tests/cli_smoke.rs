@@ -8616,6 +8616,69 @@ fn outcome_prints_markdown_receipt_by_default() -> Result<(), String> {
     Ok(())
 }
 
+/// Give a snapshot the artifact identity that `ripr check --format
+/// repo-exposure-json` writes, so the process-boundary behaviour can be
+/// observed without running an analysis.
+fn stamp_outcome_snapshot_head(path: &Path, head: &str) -> Result<(), String> {
+    let raw = std::fs::read_to_string(path).map_err(|e| format!("read snapshot: {e}"))?;
+    let mut value: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("parse snapshot: {e}"))?;
+    value["artifact"] = serde_json::json!({
+        "kind": "repo_exposure",
+        "repository": { "root": "/workspace", "head": head },
+    });
+    std::fs::write(path, value.to_string()).map_err(|e| format!("write snapshot: {e}"))
+}
+
+/// `ripr outcome`'s stderr disclosure must follow the artifacts it was handed,
+/// through the real binary rather than the helper alone. Before this, the line
+/// asserted unconditionally that the artifacts carry no head SHA, which is
+/// false for any snapshot written through the artifact-identity path.
+///
+/// Both arms run in one test so the identity-free pair is a discriminating
+/// control for the identity-carrying pair: a regression that hardcoded either
+/// sentence fails here.
+#[test]
+fn outcome_disclosure_follows_the_artifacts_it_was_given() -> Result<(), String> {
+    let workspace = unique_temp_workspace("outcome-head-disclosure");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create outcome workspace: {e}"))?;
+    write_outcome_snapshots(&workspace)?;
+    let before = workspace.join("before.json").display().to_string();
+    let after = workspace.join("after.json").display().to_string();
+
+    // Control: the shape `ripr pilot` writes, with no artifact identity.
+    let without_identity = run_ripr(&["outcome", "--before", &before, "--after", &after]);
+    assert_success(&without_identity);
+    let stderr = String::from_utf8_lossy(&without_identity.stderr).to_string();
+    let missing_head_is_disclosed = stderr.contains("does not carry a head SHA");
+
+    let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+    stamp_outcome_snapshot_head(&workspace.join("before.json"), head)?;
+    stamp_outcome_snapshot_head(&workspace.join("after.json"), head)?;
+    let with_identity = run_ripr(&["outcome", "--before", &before, "--after", &after]);
+    assert_success(&with_identity);
+    let identity_stderr = String::from_utf8_lossy(&with_identity.stderr).to_string();
+
+    let _ = std::fs::remove_dir_all(&workspace);
+
+    if !missing_head_is_disclosed {
+        return Err(format!(
+            "identity-free snapshots must still disclose the missing head: {stderr}"
+        ));
+    }
+    if !identity_stderr.contains(head) {
+        return Err(format!(
+            "a snapshot carrying a head must have it named: {identity_stderr}"
+        ));
+    }
+    if identity_stderr.contains("carry a head SHA") {
+        return Err(format!(
+            "must not claim the artifacts lack a head they carry: {identity_stderr}"
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn outcome_writes_json_receipt_when_requested() -> Result<(), String> {
     let workspace = unique_temp_workspace("outcome-json");

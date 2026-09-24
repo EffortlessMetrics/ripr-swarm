@@ -91,11 +91,14 @@ inspect or avoid inferring. It does not run analysis, edit source, generate
 tests, run mutation testing, claim runtime correctness or coverage adequacy,
 approve merges, or decide CI policy.
 
-Limitation: the comparison matches seams/findings by id only. The before/after
-artifacts do not carry a head SHA, so ripr cannot verify they came from the
-same repository or adjacent commits. Ensure the before snapshot is from the
-same repo's base and the after snapshot is from the same repo's head before
-trusting the movement report.
+Limitation: the comparison matches seams/findings by id. Whether ripr can say
+anything about provenance depends on the artifacts. A snapshot written through
+the artifact-identity path, such as `ripr check --format repo-exposure-json`,
+carries the repository head, and ripr reports on stderr whether the two
+snapshots name the same head. A snapshot written without that identity,
+including the `repo-exposure.json` that `ripr pilot` writes, carries no head;
+ripr then says so and cannot verify the pair came from the same repository or
+adjacent commits. Matching heads still do not mean matching working trees.
 "#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
