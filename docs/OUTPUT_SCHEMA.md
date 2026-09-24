@@ -11821,6 +11821,7 @@ JSON shape:
       "modified_unix_ms": 1778179200000
     }
   ],
+  "repair_attempts": [],
   "missing_commands": [
     {
       "step": "agent_packet",
@@ -11842,10 +11843,10 @@ JSON shape:
 Field contract:
 
 - `schema_version` - currently `"0.1"`.
-- `status` - `"complete"` when every required artifact is present and there
-  are no warnings; `"warning"` when every artifact is present but a
-  stale-looking condition exists; `"incomplete"` when any required artifact is
-  missing.
+- `status` - `"complete"` when every required artifact is present, no next
+  command is selected, and there are no warnings; `"warning"` when every
+  artifact is present but a stale-looking condition exists; `"incomplete"`
+  when any required artifact is missing or a next command is selected.
 - `root` - the `--root` argument normalized to forward slashes for reporting.
 - `seam` - recovered seam identity when available. The current recovery order
   is receipt, verify, packet, then brief. It is `null` when no existing
@@ -11856,8 +11857,26 @@ Field contract:
 - `missing_commands[]` - one command for each missing artifact in workflow
   order: before snapshot, packet, brief, after snapshot, verify, receipt. If no
   seam can be recovered, packet, brief, and receipt commands use `<seam-id>`.
-- `next_command` - the first entry from `missing_commands`, or `null` when no
-  required artifact is missing.
+- `repair_attempts[]` - every repair attempt under
+  `target/ripr/repair-attempts/`, validated by the attempt authority and
+  ordered by attempt ID (not by age): `attempt_id`, `seam_id`, `state` (the
+  manifest state), `head_current` (whether the attempt's `HEAD` is the current
+  one; `null` when `HEAD` cannot be read), `disposition` (`resumable`,
+  `prepared_at_other_head`, `head_unknown`, `not_published`, `finished`, or
+  `ended`), `manifest`, and `command` (the command that would move this attempt
+  or its seam forward, or `null`).
+- `next_command` - selected in the order RIPR-SPEC-0011 documents (#3906): the
+  one current awaiting repair attempt's recorded after command
+  (`repair_attempt_after`); otherwise a new attempt for the one seam whose
+  attempts ended without a receipt (`repair_attempt_before`); otherwise the
+  first `missing_commands` entry, except that an unknown seam routes to
+  `ripr pilot --root <root>` (`select_seam`) and a missing workflow directory
+  routes to a new repair attempt. It is `null` when nothing is missing, and
+  also when status cannot choose honestly: an unreadable attempt manifest,
+  several current awaiting attempts, several open seams, or an unreadable
+  `HEAD`. A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
+  `multiple_open_repair_seams`, `repair_attempt_head_unknown`) then names the
+  choices.
 - `warnings[]` - stale-looking or unreadable-artifact hints. Timestamp warnings
   are emitted when `agent verify` is older than a before/after snapshot or
   `agent receipt` is older than `agent verify`. Hash mismatch warnings remain a

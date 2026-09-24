@@ -12063,6 +12063,16 @@ fn agent_status_next_command_uses_the_workspace_root() -> Result<(), String> {
         "[package]\nname = \"agent-status-root\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )
     .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    // A known seam in an existing workflow directory keeps the legacy
+    // before-snapshot route selected; a fresh workspace routes to `ripr pilot`
+    // instead (#3906, `agent_status_routes_a_fresh_workspace_to_pilot`).
+    std::fs::create_dir_all(root.join("target/ripr/workflow"))
+        .map_err(|err| format!("create workflow dir: {err}"))?;
+    std::fs::write(
+        root.join("target/ripr/workflow/agent-packet.json"),
+        r#"{"packets":[{"seam_id":"seam-a"}]}"#,
+    )
+    .map_err(|err| format!("write packet: {err}"))?;
     let root_str = root.to_string_lossy().into_owned();
 
     let json = run_ripr(&["agent", "status", "--root", &root_str, "--json"]);
@@ -12070,8 +12080,8 @@ fn agent_status_next_command_uses_the_workspace_root() -> Result<(), String> {
     let stdout = String::from_utf8_lossy(&json.stdout);
     let report: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|err| format!("parse agent status JSON: {err}\n{stdout}"))?;
-    // Fixture precondition: a fresh workspace has no loop artifacts, so the
-    // first next command is the before snapshot.
+    // Fixture precondition: only the packet exists, so the first next command
+    // is the before snapshot.
     let next = report
         .pointer("/next_command/command")
         .and_then(serde_json::Value::as_str)
@@ -12159,6 +12169,374 @@ fn agent_status_refuses_non_default_out_dir() -> Result<(), String> {
     assert_success(&default);
 
     ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+// ── #3906: agent status routes into the repair transaction ──
+
+/// A committed boundary-gap workspace ready for `agent repair`. The label is
+/// part of the directory name, so callers can put spaces and non-ASCII
+/// characters in the path.
+fn repair_route_workspace(label: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::create_dir_all(root.join("tests"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"boundary_gap_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\nname = \"boundary_gap_fixture\"\npath = \"src/lib.rs\"\n",
+    )?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n",
+    )?;
+    std::fs::write(root.join("tests/pricing.rs"), REPAIR_ROUTE_WEAK_TEST)?;
+    init_git_fixture_repo(&root)?;
+    run_git(&root, &["add", "Cargo.toml", "src", "tests"])?;
+    repair_route_commit(&root, "fixture source")?;
+    Ok(root)
+}
+
+const REPAIR_ROUTE_SEAM: &str = "67fc764ba37d77bd";
+const REPAIR_ROUTE_WEAK_TEST: &str = "use boundary_gap_fixture::discounted_total;\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n";
+
+fn repair_route_commit(root: &Path, message: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let commit = run_command(
+        "git",
+        Some(root),
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            message,
+        ],
+    )?;
+    if !commit.status.success() {
+        return Err(format!("commit `{message}` failed: {commit:?}").into());
+    }
+    Ok(())
+}
+
+fn repair_route_status(root: &Path) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let root_arg = root.to_string_lossy().into_owned();
+    let status = run_ripr(&["agent", "status", "--root", &root_arg, "--json"]);
+    assert_success(&status);
+    Ok(serde_json::from_slice(&status.stdout)?)
+}
+
+/// Runs the before phase and returns the `--attempt ... --phase after`
+/// command it printed.
+fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(&[
+        "agent",
+        "repair",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        REPAIR_ROUTE_SEAM,
+        "--phase",
+        "before",
+    ]);
+    assert_success(&before);
+    let stderr = String::from_utf8_lossy(&before.stderr);
+    stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
+        .map(str::to_string)
+        .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}").into())
+}
+
+fn repair_route_next(report: &serde_json::Value) -> (String, String) {
+    let text = |pointer: &str| {
+        report
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    (text("/next_command/step"), text("/next_command/command"))
+}
+
+fn repair_route_warning_kinds(report: &serde_json::Value) -> Vec<String> {
+    report["warnings"]
+        .as_array()
+        .map(|warnings| {
+            warnings
+                .iter()
+                .filter_map(|warning| warning["kind"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn repair_route_attempt_ids(root: &Path) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut ids = std::fs::read_dir(root.join("target/ripr/repair-attempts"))?
+        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+        .collect::<Result<Vec<_>, _>>()?;
+    ids.sort();
+    Ok(ids)
+}
+
+/// The next command status prints must run from an installed `ripr`: never a
+/// `cargo run` or a path into a source checkout, never a placeholder seam.
+fn assert_installed_command(command: &str) -> Result<(), String> {
+    if !command.starts_with("ripr ")
+        || command.contains("cargo ")
+        || command.contains("target/debug")
+        || command.contains("<seam-id>")
+    {
+        return Err(format!(
+            "next command must be an installed `ripr` command with no placeholder; got `{command}`"
+        ));
+    }
+    Ok(())
+}
+
+/// Fresh workspace, path with a space and non-ASCII characters: no seam is
+/// known and `target/ripr/workflow/` does not exist, so status routes to the
+/// product command that selects a seam instead of a Bash redirect into a
+/// missing directory. The printed command is then run as printed.
+#[test]
+fn agent_status_routes_a_fresh_workspace_to_pilot() -> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status route é")?;
+    let report = repair_route_status(&root)?;
+    let (step, command) = repair_route_next(&report);
+    assert_eq!(step, "select_seam", "{report:#}");
+    assert_installed_command(&command)?;
+    let root_display = root.to_string_lossy().replace('\\', "/");
+    assert_eq!(command, format!("ripr pilot --root '{root_display}'"));
+    assert!(!command.contains('>'), "no redirect expected: {command}");
+    assert!(!root.join("target/ripr/workflow").exists());
+    assert_eq!(report["status"], "incomplete");
+
+    // The route runs: pilot accepts the root and writes its summary. Pilot's
+    // default `--out` is relative to the working directory, so run it from
+    // the workspace the way a user following `--root .` would.
+    let root_arg = root.to_string_lossy().into_owned();
+    let pilot = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["pilot", "--root", &root_arg],
+    )?;
+    assert_success(&pilot);
+    assert!(root.join("target/ripr/pilot/pilot-summary.json").is_file());
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// One awaiting attempt at the current HEAD: status names exactly the command
+/// the before phase printed, even though the legacy artifact loop would have
+/// asked for an after snapshot. A path with a space and non-ASCII characters
+/// keeps the recorded quoting.
+#[test]
+fn agent_status_resumes_the_current_awaiting_repair_attempt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status resume ü")?;
+    let printed = repair_route_before(&root)?;
+    let report = repair_route_status(&root)?;
+    let (step, command) = repair_route_next(&report);
+    assert_eq!(step, "repair_attempt_after", "{report:#}");
+    assert_eq!(command, printed);
+    assert_installed_command(&command)?;
+    assert_eq!(report["repair_attempts"][0]["disposition"], "resumable");
+    assert_eq!(report["repair_attempts"][0]["state"], "awaiting_edit");
+    assert_eq!(report["repair_attempts"][0]["head_current"], true);
+
+    // The workflow directory is only a compatibility projection: removing it
+    // does not change which transaction status resumes.
+    std::fs::remove_dir_all(root.join("target/ripr/workflow"))?;
+    let report = repair_route_status(&root)?;
+    assert_eq!(repair_route_next(&report).1, printed, "{report:#}");
+
+    // The same command in the Markdown view.
+    let root_arg = root.to_string_lossy().into_owned();
+    let markdown = run_ripr(&["agent", "status", "--root", &root_arg]);
+    assert_success(&markdown);
+    let rendered = String::from_utf8_lossy(&markdown.stdout);
+    assert!(
+        rendered.contains(&format!("```bash\n{printed}\n```")),
+        "{rendered}"
+    );
+    assert!(rendered.contains("## Repair Attempts"), "{rendered}");
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// Two attempts, one current: the attempt prepared before HEAD moved cannot
+/// be resumed, so status resumes the one prepared at the current HEAD. Two
+/// current attempts are ambiguous, and status then selects nothing and lists
+/// both commands rather than guessing the newest.
+#[test]
+fn agent_status_resumes_only_the_current_attempt_and_refuses_to_guess()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status several")?;
+    let earlier = repair_route_before(&root)?;
+    repair_route_commit(&root, "move HEAD")?;
+    let current = repair_route_before(&root)?;
+
+    let report = repair_route_status(&root)?;
+    let (step, command) = repair_route_next(&report);
+    assert_eq!(step, "repair_attempt_after", "{report:#}");
+    assert_eq!(command, current);
+    assert_ne!(command, earlier);
+    let dispositions = report["repair_attempts"]
+        .as_array()
+        .map(|attempts| {
+            attempts
+                .iter()
+                .filter_map(|attempt| attempt["disposition"].as_str())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    assert!(
+        dispositions.contains(&"prepared_at_other_head"),
+        "{report:#}"
+    );
+    assert!(dispositions.contains(&"resumable"), "{report:#}");
+
+    let second_current = repair_route_before(&root)?;
+    let report = repair_route_status(&root)?;
+    assert_eq!(
+        report["next_command"],
+        serde_json::Value::Null,
+        "{report:#}"
+    );
+    assert!(repair_route_warning_kinds(&report).contains(&"ambiguous_repair_attempts".to_string()));
+    let message = report["warnings"]
+        .as_array()
+        .and_then(|warnings| {
+            warnings
+                .iter()
+                .find(|warning| warning["kind"] == "ambiguous_repair_attempts")
+        })
+        .and_then(|warning| warning["message"].as_str())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        message.contains(&current) && message.contains(&second_current),
+        "{message}"
+    );
+    assert!(
+        !message.contains(&earlier),
+        "a stale attempt is not a choice: {message}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// A failed attempt must not be routed into the legacy `agent receipt` step
+/// (which is what the artifact loop alone selected, because the failed after
+/// phase leaves verify output but no receipt); status starts a new attempt.
+/// Once an attempt for the seam finishes, the loop is complete.
+#[test]
+fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status failed")?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let focused_test = format!(
+        "{REPAIR_ROUTE_WEAK_TEST}\n#[test]\nfn at_threshold_discounts() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+    );
+
+    let failed_command = repair_route_before(&root)?;
+    std::fs::write(root.join("tests/pricing.rs"), &focused_test)?;
+    std::fs::write(root.join("stray.txt"), "outside the edit cage\n")?;
+    let failed_attempt = failed_command
+        .split_whitespace()
+        .skip_while(|word| *word != "--attempt")
+        .nth(1)
+        .unwrap_or_default()
+        .trim_matches('\'')
+        .to_string();
+    let after = run_ripr(&[
+        "agent",
+        "repair",
+        "--root",
+        &root_arg,
+        "--attempt",
+        &failed_attempt,
+        "--phase",
+        "after",
+    ]);
+    assert!(
+        !after.status.success(),
+        "stray file must violate the edit cage"
+    );
+    // Fixture precondition: the attempt recorded a terminal failure.
+    let report = repair_route_status(&root)?;
+    assert_eq!(
+        report["repair_attempts"][0]["state"], "failed",
+        "{report:#}"
+    );
+    let (step, command) = repair_route_next(&report);
+    assert_eq!(step, "repair_attempt_before", "{report:#}");
+    assert_installed_command(&command)?;
+    assert!(!command.contains("agent receipt"), "{command}");
+    assert_eq!(
+        command,
+        format!(
+            "ripr agent repair --root '{}' --seam-id {REPAIR_ROUTE_SEAM} --phase before",
+            root_arg.replace('\\', "/")
+        )
+    );
+
+    std::fs::remove_file(root.join("stray.txt"))?;
+    std::fs::write(root.join("tests/pricing.rs"), REPAIR_ROUTE_WEAK_TEST)?;
+    let finishing = repair_route_before(&root)?;
+    std::fs::write(root.join("tests/pricing.rs"), &focused_test)?;
+    let finishing_attempt = repair_route_attempt_ids(&root)?
+        .into_iter()
+        .find(|id| id != &failed_attempt && finishing.contains(id.as_str()))
+        .ok_or("expected the second attempt id")?;
+    let after = run_ripr(&[
+        "agent",
+        "repair",
+        "--root",
+        &root_arg,
+        "--attempt",
+        &finishing_attempt,
+        "--phase",
+        "after",
+    ]);
+    assert_success(&after);
+    let report = repair_route_status(&root)?;
+    assert_eq!(
+        report["next_command"],
+        serde_json::Value::Null,
+        "{report:#}"
+    );
+    assert_eq!(report["status"], "complete", "{report:#}");
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// An attempt manifest status cannot validate is not skipped: status selects
+/// no command and says which attempt it refused.
+#[test]
+fn agent_status_selects_nothing_past_an_unreadable_attempt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status unreadable")?;
+    repair_route_before(&root)?;
+    let broken = root.join("target/ripr/repair-attempts/repair-attempt-000000000000000000000000");
+    std::fs::create_dir_all(&broken)?;
+    std::fs::write(broken.join("attempt.json"), "{ not json")?;
+
+    let report = repair_route_status(&root)?;
+    assert_eq!(
+        report["next_command"],
+        serde_json::Value::Null,
+        "{report:#}"
+    );
+    assert!(repair_route_warning_kinds(&report).contains(&"repair_attempt_unreadable".to_string()));
+
+    let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }
 
