@@ -1,3 +1,4 @@
+use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::discriminators::python_missing_discriminators;
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
@@ -159,6 +160,25 @@ pub(super) fn classify_change_with_context(
         changed_default_overridden_params(old_line_text, line_text, owner, &related_candidates);
     let changed_default_exercised_ok = changed_default_override.is_none();
 
+    // A changed relational predicate (`qty > on_hand` -> `qty >= on_hand`) only
+    // behaves differently when its operands are equal, so a strong exact-value
+    // oracle that calls the owner away from that boundary still passes after
+    // the change. Mirror the Rust activation rule: once a strong related test
+    // calls the owner with literal arguments, `exposed` requires one of those
+    // calls to bind both operands to equal values. Unresolved operands
+    // (attributes, computed expressions) never count as observed, so this fails
+    // closed to `weakly_exposed` and names the missing `left == right`
+    // boundary. With no literal owner inputs at all the gate cannot see the
+    // activation either way; that case keeps the oracle verdict and carries a
+    // named `boundary_activation_unresolved` limitation instead.
+    let boundary = (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
+        .then(|| python_boundary_evidence(line_text, owner, &related_candidates))
+        .flatten();
+    let boundary_gap = boundary
+        .as_ref()
+        .filter(|evidence| evidence.activation == BoundaryActivation::Missing);
+    let mut boundary_downgraded = false;
+
     let (class, reach_state, observe_state, discriminate_state, mut missing) = if static_limit
         .is_some()
     {
@@ -211,6 +231,7 @@ pub(super) fn classify_change_with_context(
         && alignment.observes()
         && error_path_oracle_ok
         && changed_default_exercised_ok
+        && boundary_gap.is_none()
     {
         (
             ExposureClass::Exposed,
@@ -243,6 +264,30 @@ pub(super) fn classify_change_with_context(
                 format_param_name_list(params),
                 owner.name,
                 format_param_name_list(params),
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && error_path_oracle_ok
+        && let Some(gap) = boundary_gap
+    {
+        // A strong oracle observes the owner's output, but no strong related
+        // call places the comparison operands on the changed boundary, so the
+        // changed predicate is never activated where old and new disagree.
+        boundary_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but static evidence does not place a related test input at the changed predicate boundary{}. {}.",
+                owner.name,
+                gap.discriminator
+                    .as_deref()
+                    .map(|value| format!(" `{value}`"))
+                    .unwrap_or_default(),
+                gap.reason,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() {
@@ -339,6 +384,8 @@ pub(super) fn classify_change_with_context(
     let infect = StageEvidence::new(
         if static_limit.is_some() {
             StageState::Unknown
+        } else if boundary_downgraded {
+            StageState::Weak
         } else {
             StageState::Yes
         },
@@ -348,6 +395,8 @@ pub(super) fn classify_change_with_context(
                 "Static limit `{}` prevents a safe Python infection claim.",
                 limit.kind.as_str()
             )
+        } else if boundary_downgraded {
+            "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
         } else {
             python_infection_evidence(&family, line_text).summary
         },
@@ -361,7 +410,23 @@ pub(super) fn classify_change_with_context(
         && matches!(class, ExposureClass::WeaklyExposed)
         && has_oracle_eligible_relation
     {
-        if let Some(params) = &changed_default_override {
+        if boundary_downgraded {
+            // The boundary downgrade names the equality that would activate the
+            // changed predicate, with the reason listing the operand values the
+            // strong related calls actually bind.
+            boundary_gap
+                .and_then(|gap| {
+                    gap.discriminator
+                        .as_ref()
+                        .map(|value| MissingDiscriminatorFact {
+                            value: value.clone(),
+                            reason: gap.reason.clone(),
+                            flow_sink: flow_sink.clone(),
+                        })
+                })
+                .into_iter()
+                .collect()
+        } else if let Some(params) = &changed_default_override {
             // The override downgrade names a specific, actionable missing
             // discriminator — "call the owner WITHOUT the changed-default
             // parameter(s)" — that the generic `python_missing_discriminators`
@@ -453,6 +518,18 @@ pub(super) fn classify_change_with_context(
     }
     if let Some(limit) = &static_limit {
         evidence.push(limit.evidence.clone());
+    }
+    // Name the unresolved boundary activation only where it qualifies a credited
+    // `exposed` verdict; a finding that is already weak gains nothing from it.
+    if matches!(class, ExposureClass::Exposed)
+        && let Some(unresolved) = boundary
+            .as_ref()
+            .filter(|evidence| evidence.activation == BoundaryActivation::Unresolved)
+    {
+        evidence.push(format!(
+            "boundary_activation_unresolved: {}",
+            unresolved.reason
+        ));
     }
     for discriminator in &missing_discriminators {
         evidence.push(format!("missing_discriminator: {}", discriminator.value));
@@ -565,7 +642,9 @@ pub(super) fn classify_change_with_context(
         missing,
         flow_sinks: flow_sink.into_iter().collect(),
         activation: crate::domain::ActivationEvidence {
-            observed_values: Vec::new(),
+            observed_values: boundary
+                .map(|evidence| evidence.observed_values)
+                .unwrap_or_default(),
             missing_discriminators,
         },
         stop_reasons: static_limit

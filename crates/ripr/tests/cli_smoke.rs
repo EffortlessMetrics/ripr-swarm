@@ -3206,6 +3206,12 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
             "write_focused_test",
         ),
         (
+            "repair-start",
+            "repair_start_carried",
+            "actionable",
+            "write_focused_test",
+        ),
+        (
             "stale",
             "stale_editor_evidence",
             "stale",
@@ -3561,6 +3567,28 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
             assert!(
                 report.pointer("/fallback").is_some_and(|v| !v.is_null()),
                 "`{case_id}` should include a fallback report object"
+            );
+        }
+
+        if case_id == "repair_start_carried" {
+            // #3906: the carried command is the card's own string, byte for byte.
+            let guidance_artifact = json_pointer_str(case, "/inputs/pr_guidance/artifact")?;
+            let guidance: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                workspace_root().join(guidance_artifact),
+            )?)?;
+            assert_eq!(
+                json_pointer_str(&report, "/commands/repair")?,
+                json_pointer_str(&guidance, "/comments/0/llm_guidance/repair_command")?
+            );
+            assert_eq!(
+                json_pointer_str(&report, "/selected/seam_id")?,
+                json_pointer_str(&guidance, "/comments/0/seam_id")?
+            );
+            assert!(
+                report
+                    .pointer("/inputs/assistant_proof")
+                    .is_some_and(serde_json::Value::is_null),
+                "`{case_id}` must lead before any assistant proof exists"
             );
         }
 
@@ -7156,6 +7184,131 @@ fn doctor_reports_perl_preview_section_when_perl_markers_present() -> Result<(),
     Ok(())
 }
 
+/// Build a mixed Rust+Perl workspace and a shim directory holding a
+/// `perllsp` stub with the given shell body, plus a `perl-ripr-facts` stub
+/// that fails `--version` so a host-installed canonical exporter cannot
+/// shadow the scenario. Returns (workspace, shim_dir).
+#[cfg(unix)]
+fn perl_doctor_workspace_with_exporter_stub(
+    label: &str,
+    perllsp_body: &str,
+) -> Result<(PathBuf, PathBuf), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mixed-perl\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(root.join("Makefile.PL"), "use ExtUtils::MakeMaker;\n")
+        .map_err(|err| err.to_string())?;
+    std::fs::write(root.join("lib/Pricing.pm"), "package Pricing;\n1;\n")
+        .map_err(|err| err.to_string())?;
+    let shim_dir = root.join("exporter-shims");
+    std::fs::create_dir_all(&shim_dir).map_err(|err| err.to_string())?;
+    for (name, body) in [
+        ("perl-ripr-facts", "#!/bin/sh\nexit 127\n"),
+        ("perllsp", perllsp_body),
+    ] {
+        let path = shim_dir.join(name);
+        std::fs::write(&path, body).map_err(|err| format!("write {name} stub: {err}"))?;
+        let mut permissions = std::fs::metadata(&path)
+            .map_err(|err| format!("stat {name} stub: {err}"))?
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions)
+            .map_err(|err| format!("chmod {name} stub: {err}"))?;
+    }
+    Ok((root, shim_dir))
+}
+
+#[cfg(unix)]
+fn run_doctor_with_shims_first(root: &Path, shim_dir: &Path) -> Result<Output, String> {
+    let mut entries = vec![shim_dir.to_path_buf()];
+    if let Some(path) = std::env::var_os("PATH") {
+        entries.extend(std::env::split_paths(&path));
+    }
+    let search_path =
+        std::env::join_paths(entries).map_err(|err| format!("build shim-first PATH: {err}"))?;
+    let search_path = search_path.to_string_lossy().into_owned();
+    let root_str = root.display().to_string();
+    run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        root,
+        &["doctor", "--root", &root_str],
+        &[("PATH", &search_path)],
+    )
+    .map_err(|err| format!("run doctor: {err}"))
+}
+
+#[test]
+#[cfg(unix)]
+fn doctor_reports_version_only_perl_exporter_as_incompatible() -> Result<(), String> {
+    // The published perllsp 0.17.0 answers `--version` but rejects the
+    // managed `ripr-facts` argv with a usage error. Doctor must not call it
+    // a found exporter or route the user to `ripr check` through it, and
+    // the Perl section must stay advisory (doctor still succeeds).
+    let (root, shim_dir) = perl_doctor_workspace_with_exporter_stub(
+        "doctor-perl-incompatible-exporter",
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'perllsp 0.17.0'; exit 0; fi\necho 'error: unexpected argument' >&2\nexit 1\n",
+    )?;
+    let output = run_doctor_with_shims_first(&root, &shim_dir)?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let exporter_line = stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with("exporter:"))
+        .unwrap_or("");
+    assert!(
+        exporter_line.contains("perllsp 0.17.0")
+            && exporter_line.contains("does not accept `ripr-facts`")
+            && exporter_line.contains("not a compatible exporter"),
+        "version-only exporter must be reported incompatible: {exporter_line}\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("exporter: found at") && !stdout.contains("exporter: compatible"),
+        "incompatible exporter must not read as found/working:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("install perllsp"),
+        "doctor must not recommend installing perllsp:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn doctor_reports_ripr_facts_capable_exporter_as_compatible() -> Result<(), String> {
+    // Discriminating control for the incompatible case: the same `perllsp`
+    // name, but the stub accepts `ripr-facts --help` and documents
+    // `--schema`, so the probe must report it compatible.
+    let (root, shim_dir) = perl_doctor_workspace_with_exporter_stub(
+        "doctor-perl-compatible-exporter",
+        "#!/bin/sh\ncase \"$1\" in\n  --version) echo 'perllsp 9.9.9' ;;\n  ripr-facts) echo 'Usage: perllsp ripr-facts --schema <SCHEMA> --root <ROOT> --out <OUT>' ;;\n  *) exit 2 ;;\nesac\n",
+    )?;
+    let output = run_doctor_with_shims_first(&root, &shim_dir)?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let exporter_line = stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with("exporter:"))
+        .unwrap_or("");
+    assert!(
+        exporter_line.contains("exporter: compatible")
+            && exporter_line.contains("perllsp 9.9.9")
+            && exporter_line.contains("exporter-shims/perllsp"),
+        "ripr-facts-capable exporter must be reported compatible: {exporter_line}\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("not a compatible exporter"),
+        "compatible control must not be reported incompatible:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
 #[test]
 fn doctor_omits_perl_preview_when_no_perl_markers() -> Result<(), String> {
     // A Rust-only workspace must NOT emit a Perl preview section.
@@ -9260,7 +9413,7 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
             serde_json::json!(format!("ripr check --root {}", root.display()))
         );
     } else {
-        let notice = "Perl analysis is not available from this ripr binary. Rebuild ripr with Cargo feature `lang-perl` to analyze Perl files.";
+        let notice = "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it.";
         assert_eq!(route["language_status"], "unavailable");
         assert_eq!(route["route"], "unavailable_in_this_binary");
         assert_eq!(route["command"], serde_json::Value::Null);
@@ -11937,21 +12090,21 @@ fn agent_receipt_legacy_alias_still_dispatches_smoke() {
 
 // RIPR-SPEC-0083 regression guards: --mode is a speed tier, not a scope provider.
 
-/// Bug 1 regression guard: `ripr check --mode fast` with no --diff/--base must
-/// show the no-scope disclosure. --mode is a speed tier on the diff path; it does
-/// NOT provide analysis scope. Before the fix, the --mode arm set
-/// scope_explicitly_provided = true, suppressing the disclosure.
+/// Bug 1 regression guard: `ripr check --mode fast` with no --diff/--base on an
+/// empty range must name the compared base instead of claiming no scope was
+/// provided (#4012). --mode is a speed tier on the diff path; it does NOT
+/// provide analysis scope. The range is established (default base resolved)
+/// but empty, so the honest disclosure is "nothing changed", not "no scope".
 #[test]
-fn check_mode_fast_alone_shows_no_scope_disclosure_smoke() {
+fn check_mode_fast_alone_on_empty_range_names_compared_base_smoke() {
     // Run in a temp git repo with one commit and HEAD up-to-date, so
     // resolve_default_base succeeds but the diff against HEAD is empty.
-    // With --mode fast and no --diff/--base, the result is empty and the
-    // no-scope disclosure must fire on stdout (Bug 1 regression guard).
-    // Before the fix, the --mode arm set scope_explicitly_provided = true,
-    // suppressing the disclosure.
     let root = unique_temp_workspace("mode-fast-no-scope");
     std::fs::create_dir_all(root.join("src")).unwrap();
-    run_git(&root, &["init"]).unwrap();
+    // Pin the initial branch: `resolve_default_base` only recognizes
+    // origin/HEAD, origin/main, origin/master, main, and master, so a bare
+    // `init` under an exotic `init.defaultBranch` would fail base resolution.
+    run_git(&root, &["init", "-b", "main"]).unwrap();
     run_git(&root, &["config", "user.email", "test@test.com"]).unwrap();
     run_git(&root, &["config", "user.name", "Test"]).unwrap();
     std::fs::write(
@@ -11967,28 +12120,78 @@ fn check_mode_fast_alone_shows_no_scope_disclosure_smoke() {
     run_git(&root, &["add", "."]).unwrap();
     run_git(&root, &["commit", "-m", "initial"]).unwrap();
     // HEAD is now up-to-date — diff against HEAD is empty.
-    // With --mode fast and no --diff/--base, scope_explicitly_provided is false,
-    // so the no-scope disclosure must fire.
-    let bin = env!("CARGO_BIN_EXE_ripr");
+    // Route through the shared spawn helper (process-policy budget).
     let root_str = root.to_string_lossy().into_owned();
-    let output = std::process::Command::new(bin)
-        .args(["check", "--root", &root_str, "--mode", "fast"])
-        .output()
-        .unwrap();
+    let output = run_ripr(&["check", "--root", &root_str, "--mode", "fast"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // The output must contain the no-scope disclosure note, not be silently empty.
+    // The empty range must be disclosed as nothing-changed, not as no-scope.
     assert!(
-        stdout.contains("no analysis scope was provided"),
-        "check --mode fast alone must show no-scope disclosure (Bug 1); got stdout:\n{stdout}\nstderr:\n{}",
+        stdout.contains("nothing to analyze") || stdout.contains("no changed files"),
+        "empty range must disclose nothing-changed; got stdout:\n{stdout}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        stdout.contains("--format repo-exposure-md"),
-        "no-scope guidance must recommend --format repo-exposure-md (Bug 2); got:\n{stdout}"
+        !stdout.contains("no analysis scope was provided"),
+        "empty range must NOT claim no scope was provided; got:\n{stdout}"
     );
     assert!(
-        !stdout.contains("--mode fast"),
-        "no-scope guidance must NOT recommend --mode fast; got:\n{stdout}"
+        stdout.contains("The compared base was `"),
+        "empty range must name the compared base; got:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// #4012: a bare `ripr check` that resolves a default base and analyzes
+/// changed files with no probes is an ordinary analyzed-empty result — it
+/// must NOT claim no scope was provided, report missing_scope, or offer a
+/// scope repair.
+#[test]
+fn check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke() {
+    // Temp repo with an edit commit on a branch off the base branch, so the
+    // resolved default range (`<base>...HEAD`) analyzes exactly one changed
+    // file with zero probes regardless of the local `git init` default branch
+    // name. (Committing the edit on the init branch itself leaves HEAD == the
+    // compared base, i.e. an empty range, which is the other test's subject.)
+    let root = unique_temp_workspace("bare-check-analyzed-empty");
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    // Pin the initial branch (see mode-fast-no-scope fixture above): the base
+    // commit must land on a branch `resolve_default_base` recognizes.
+    run_git(&root, &["init", "-b", "main"]).unwrap();
+    run_git(&root, &["config", "user.email", "test@test.com"]).unwrap();
+    run_git(&root, &["config", "user.name", "Test"]).unwrap();
+    std::fs::write(root.join("src/lib.rs"), "pub const VALUE: u32 = 1;\n").unwrap();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"analyzed-empty-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .unwrap();
+    run_git(&root, &["add", "."]).unwrap();
+    run_git(&root, &["commit", "-m", "base"]).unwrap();
+    run_git(&root, &["checkout", "-b", "work"]).unwrap();
+    std::fs::write(root.join("src/lib.rs"), "pub const VALUE: u32 = 2;\n").unwrap();
+    run_git(&root, &["add", "src/lib.rs"]).unwrap();
+    run_git(&root, &["commit", "-m", "edit"]).unwrap();
+    // Route through the shared spawn helper (process-policy budget).
+    let root_str = root.to_string_lossy().into_owned();
+    let output = run_ripr(&["check", "--root", &root_str]);
+    assert!(
+        output.status.success(),
+        "bare check on changed files must succeed; got:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("no analysis scope was provided"),
+        "analyzed run must NOT claim no scope was provided; got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("missing_scope"),
+        "analyzed run must NOT report missing_scope; got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("provide an analysis scope"),
+        "analyzed run must NOT offer a scope repair; got:\n{stdout}"
     );
     ignore_remove_dir_all(&root);
 }
@@ -12358,6 +12561,11 @@ fn check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclo
 /// RIPR-SPEC-0112 (default base, clean): a bare `ripr check` on a clean
 /// worktree must not claim uncommitted edits were excluded, and keeps the
 /// no-scope disclosure for its empty committed diff.
+/// #4012: the disclosure on an established-but-empty default range names the
+/// compared base instead of the legacy "no analysis scope was provided" note —
+/// a scope WAS established (the default base was resolved and compared), so
+/// the legacy wording would be the dishonest claim #4012 repairs. The
+/// disclosure-only shape (no working-tree note) is what this test pins.
 #[test]
 fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(), String> {
     let root = unique_temp_workspace("unanalyzed-wt-default-base-clean");
@@ -12391,9 +12599,9 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "clean tracked worktree must not disclose uncommitted edits; got:\n{stdout}"
         ));
     }
-    if !stdout.contains("no analysis scope was provided") {
+    if !stdout.contains("contains no changed files") {
         return Err(format!(
-            "empty default-base run must keep the no-scope disclosure; got:\n{stdout}"
+            "empty default-base run must keep the no-scope disclosure (base-naming form per #4012); got:\n{stdout}"
         ));
     }
 

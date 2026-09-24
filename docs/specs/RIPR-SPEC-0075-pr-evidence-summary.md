@@ -84,7 +84,7 @@ when no baseline is available.
 | `target/ripr/reports/diff-report.json` | `run_status`, `changed_surfaces`, `local_reproduction_commands` base/head |
 | `target/ripr/reports/repo-exposure.json` | `limitations[]` |
 | `target/ripr/reports/gap-decision-ledger.json` | `gaps.total_actionable`, `gaps.total_static_limitation`, `missing_receipts`, `receipt_status.receipts_present`, `receipt_status.missing_receipts` |
-| `target/ripr/reports/start-here.json` | `top_repair` (when `selected.state == "top_gap"`), `top_repair_state`, `local_reproduction_commands` verify command |
+| `target/ripr/reports/start-here.json` | `top_repair` (when `selected.state == "top_gap"`), `top_repair_state`, `local_reproduction_commands` repair start and verify command |
 | `target/ripr/reports/swarm-attempt-ledger.json` | `receipt_status.verify_failed_receipts` — count of `attempts[].verify_result` ∈ `{"fail","failed","error"}` (RIPR-SPEC-0057, PR7 of #1123); `not_available` when artifact absent |
 | `--baseline <path>` | gap delta computation (optional) |
 
@@ -205,15 +205,17 @@ none. The Markdown panel keeps the two apart under `## Limitations` and
 | `receipt_status.gap_mismatch_receipts` | `"not_available"` | not yet derivable | Unlock: read each receipt's own `canonical_gap_id` and compare. |
 | `receipt_status.verify_failed_receipts` | u64 or `"not_available"` | attempt-ledger `attempts[].verify_result` ∈ `{"fail","failed","error"}` | `"not_available"` when `swarm-attempt-ledger.json` is absent (honest-absent rule). Integer count when present. `0` is honest because a failed entry would have been counted (PR7 of #1123, RIPR-SPEC-0057). |
 | `top_repair` | object or null | start-here `selected` when `state == "top_gap"` | null when no actionable gap. |
+| `top_repair.repair_command` | string or absent | start-here `selected.repair_command` | Present only when start-here carried it (review-card selection, #3906); copied unchanged, never derived. |
 | `top_repair_state` | string or absent | start-here `selected.state` | Present only when `top_repair` is null. |
 | `top_limitation` | object or absent | first entry in `limitations[]` | Omitted when limitations are empty or `"not_available"`. |
-| `local_reproduction_commands` | string[] | diff-report base/head + start-here verify_command | Always present; at least two commands. |
+| `local_reproduction_commands` | string[] | start-here repair_command (first, when present) + diff-report base/head + start-here verify_command | Always present; at least two commands. |
 
 ## Required Evidence
 
 - Unit tests in `crates/ripr/src/app/pr_summary/json.rs`:
   - `missing_all_artifacts_yields_unknown_run_status`
   - `present_top_gap_populates_top_repair`
+  - `start_here_repair_command_is_carried_into_top_repair`
   - `typed_incomplete_diff_outcome_is_preserved_and_not_reported_complete`
   - `gap_ledger_counts_are_surfaced`
   - `repo_exposure_limitations_are_aggregated`

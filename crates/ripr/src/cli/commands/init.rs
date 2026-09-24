@@ -485,7 +485,31 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           mkdir -p target/ripr/reports
-          git diff --binary "origin/${{ github.base_ref }}...HEAD" > target/ripr/reports/pr.diff
+          # Pinned diff contract (#4005): the same presentation pins as the
+          # production loaders. Ambient external-diff, textconv, color,
+          # context, and path-quoting configuration must not change the
+          # bytes RIPR analyzes.
+          base_ref="origin/${{ github.base_ref }}"
+          base_sha="$(git rev-parse --verify "${base_ref}^{commit}")" || { echo "ripr: cannot resolve base ref $base_ref" >&2; exit 1; }
+          head_sha="$(git rev-parse --verify "HEAD^{commit}")" || { echo "ripr: cannot resolve HEAD" >&2; exit 1; }
+          git -c core.quotePath=true diff --binary --no-ext-diff --no-textconv --no-color --unified=3 --inter-hunk-context=0 "${base_sha}...${head_sha}" > target/ripr/reports/pr.diff || { echo "ripr: git diff failed for ${base_sha}...${head_sha}" >&2; exit 1; }
+          byte_count="$(wc -c < target/ripr/reports/pr.diff | tr -d ' ')"
+          digest="$(sha256sum target/ripr/reports/pr.diff)" || {
+            echo "ripr: failed to compute SHA-256 for patch" >&2
+            exit 1
+          }
+          digest="${digest%% *}"
+          jq -n --arg base_ref "$base_ref" --arg base_sha "$base_sha" --arg head_sha "$head_sha" --argjson byte_count "$byte_count" --arg digest "$digest" '{tool:"ripr",kind:"pr-diff-receipt",base_ref:$base_ref,base_sha:$base_sha,head_sha:$head_sha,byte_count:$byte_count,sha256:$digest}' > target/ripr/reports/pr-diff.receipt.json
+          if [ "$byte_count" -eq 0 ]; then
+            name_list="$(mktemp)" || { echo "ripr: cannot create temp file for path inventory" >&2; exit 1; }
+            git -c core.quotePath=true diff --name-only -z "${base_sha}...${head_sha}" > "$name_list" || { echo "ripr: git diff --name-only failed for ${base_sha}...${head_sha}" >&2; exit 1; }
+            changed_paths="$(tr -cd '\0' < "$name_list" | wc -c | tr -d ' ')"
+            rm -f "$name_list"
+            if [ "$changed_paths" -ne 0 ]; then
+              echo "ripr: empty patch but $changed_paths changed path(s); refusing an absent result" >&2
+              exit 1
+            fi
+          fi
 
       - name: Run RIPR PR guidance report
         if: github.event_name == 'pull_request'
@@ -1420,6 +1444,7 @@ jobs:
               first_proof="$(jq -r '.selected.focused_proof_intent // .target.suggested_assertion // .title // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
               first_gap="$(jq -r 'if .selected == null then "none" else ((.selected.path // "unknown") + (if .selected.line then ":" + (.selected.line|tostring) else "" end) + " " + (.selected.missing_discriminator // .selected.classification // .selected.seam_id // "gap")) end' "$first_json" 2>/dev/null || echo unknown)"
               first_target="$(jq -r 'if .target == null then "none" else ((.target.file // "not_available") + (if .target.related_test then " related_test=" + .target.related_test else "" end) + (if .target.suggested_test_name then " suggested=" + .target.suggested_test_name else "" end)) end' "$first_json" 2>/dev/null || echo unknown)"
+              first_repair="$(jq -r '.commands.repair // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
               first_packet="$(jq -r '.commands.context_packet // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
               first_verify="$(jq -r '.commands.verify // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
               first_receipt="$(jq -r '.commands.receipt // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
@@ -1435,6 +1460,7 @@ jobs:
               first_proof="$(markdown_inline "$first_proof")"
               first_gap="$(markdown_inline "$first_gap")"
               first_target="$(markdown_inline "$first_target")"
+              first_repair="$(markdown_inline "$first_repair")"
               first_packet="$(markdown_inline "$first_packet")"
               first_verify="$(markdown_inline "$first_verify")"
               first_receipt="$(markdown_inline "$first_receipt")"
@@ -1450,6 +1476,7 @@ jobs:
               echo "- Focused proof intent: \`$first_proof\`"
               echo "- Gap: \`$first_gap\`"
               echo "- Repair target: \`$first_target\`"
+              echo "- Repair start: \`$first_repair\`"
               echo "- Agent packet: \`$first_packet\`"
               echo "- Verify command: \`$first_verify\`"
               echo "- Receipt command: \`$first_receipt\`"
@@ -1647,6 +1674,7 @@ jobs:
                 action_why="$(jq -r '.why // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_seam="$(jq -r '.selected.seam_id // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_target="$(jq -r '(.target.file // "not_available") + (if .target.related_test then " related_test=" + .target.related_test else "" end)' "$action_json" 2>/dev/null || echo unknown)"
+                action_repair="$(jq -r '.commands.repair // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_verify="$(jq -r '.commands.verify // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_receipt="$(jq -r '.commands.receipt // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_fallback="$(jq -r '.fallback.kind // "none"' "$action_json" 2>/dev/null || echo unknown)"
@@ -1657,6 +1685,7 @@ jobs:
                 action_why="$(markdown_inline "$action_why")"
                 action_seam="$(markdown_inline "$action_seam")"
                 action_target="$(markdown_inline "$action_target")"
+                action_repair="$(markdown_inline "$action_repair")"
                 action_verify="$(markdown_inline "$action_verify")"
                 action_receipt="$(markdown_inline "$action_receipt")"
                 action_fallback="$(markdown_inline "$action_fallback")"
@@ -1668,6 +1697,7 @@ jobs:
                 echo "- Why: \`$action_why\`"
                 echo "- Seam: \`$action_seam\`"
                 echo "- Target: \`$action_target\`"
+                echo "- Repair start: \`$action_repair\`"
                 echo "- Verify command: \`$action_verify\`"
                 echo "- Receipt command: \`$action_receipt\`"
                 echo "- Fallback: \`$action_fallback\`"
