@@ -413,21 +413,60 @@ fn recover_check_repo_exposure_spec(words: &[String], command: &str) -> Option<C
     if !CHECK_MODE_VALUES.contains(&words[5].as_str()) {
         return None;
     }
+    // Issue #3872: the rendered redirect target is absolute; recovery keeps
+    // the root-relative expected write when it falls under --root.
+    let expected_write = relativize_write_against_root(&words[3], &words[9])?;
     let spec = command_spec(
         "ripr:check:repo-exposure",
         CommandRole::Regeneration,
         CommandExecutionMode::ShellRequired,
         words[1..8].to_vec(),
-        vec![words[9].clone()],
+        vec![expected_write],
         command.to_string(),
     );
-    // A traversing or absolute redirect target fails validation, so the
-    // route stays legacy-string-only (same fail-closed rule as the agent
-    // artifact routes).
+    // A traversing or otherwise unvalidatable redirect target fails
+    // validation, so the route stays legacy-string-only (same fail-closed
+    // rule as the agent artifact routes).
     if spec.validate().is_err() {
         return None;
     }
     Some(spec)
+}
+
+/// Relativize an absolute funnel write target against the command's own
+/// `--root` value (issue #3872): guidance renders redirect targets rooted at
+/// `--root` as absolute paths, but typed recovery keeps root-relative
+/// expected writes under the shared validator. When the absolute target
+/// falls under the absolutized `--root`, the relative remainder is the
+/// expected write; anything else (unaligned roots, traversal, unresolvable
+/// working directory) stays legacy-string-only. Relative targets pass
+/// through untouched.
+fn relativize_write_against_root(root: &str, target: &str) -> Option<String> {
+    if !std::path::Path::new(target).is_absolute() {
+        return Some(target.to_string());
+    }
+    // Review #3938: the rendered target is lexically cleaned, so the anchor
+    // is cleaned the same way — otherwise a `--root` carrying traversal
+    // segments can never prefix-match its own rendered target.
+    let anchor = if std::path::Path::new(root).is_absolute() {
+        super::loop_commands::lexically_clean(std::path::Path::new(root))
+    } else {
+        super::loop_commands::lexically_clean(&std::env::current_dir().ok()?.join(root))
+    };
+    let relative = std::path::Path::new(target).strip_prefix(&anchor).ok()?;
+    if relative.as_os_str().is_empty()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::Prefix(_)
+                    | std::path::Component::RootDir
+            )
+        })
+    {
+        return None;
+    }
+    Some(relative.to_string_lossy().replace('\\', "/"))
 }
 
 /// The exact `ripr reports gap-ledger` shapes the first-pr recovery
@@ -509,10 +548,30 @@ pub(crate) fn agent_command_spec_from_display(command: &str) -> Option<CommandSp
                         return None;
                     }
                     let out_path = words.get(redirect + 1)?.as_str();
+                    // Issue #3872: the rendered redirect target is absolute;
+                    // recovery keeps the root-relative write when it falls
+                    // under the command's own --root value.
+                    // Review #3938: the value must sit strictly before the
+                    // redirect — a `--root` with no value falls back to `.`
+                    // instead of parsing `>` as the root.
+                    let root = words
+                        .get(1..redirect)?
+                        .iter()
+                        .position(|word| word == "--root")
+                        .and_then(|at| {
+                            if 1 + at + 1 < redirect {
+                                words.get(1 + at + 1)
+                            } else {
+                                None
+                            }
+                        })
+                        .map(String::as_str)
+                        .unwrap_or(".");
+                    let expected_write = relativize_write_against_root(root, out_path)?;
                     (
                         words.get(1..redirect)?.to_vec(),
                         CommandExecutionMode::ShellRequired,
-                        vec![out_path.to_string()],
+                        vec![expected_write],
                     )
                 }
                 None => (
@@ -563,11 +622,31 @@ pub(crate) fn agent_command_spec_from_display(command: &str) -> Option<CommandSp
                         return None;
                     }
                     let out_path = words.get(redirect + 1)?.as_str();
+                    // Issue #3872: the rendered redirect target is absolute;
+                    // recovery keeps the root-relative write when it falls
+                    // under the command's own --root value.
+                    // Review #3938: the value must sit strictly before the
+                    // redirect — a `--root` with no value falls back to `.`
+                    // instead of parsing `>` as the root.
+                    let root = words
+                        .get(1..redirect)?
+                        .iter()
+                        .position(|word| word == "--root")
+                        .and_then(|at| {
+                            if 1 + at + 1 < redirect {
+                                words.get(1 + at + 1)
+                            } else {
+                                None
+                            }
+                        })
+                        .map(String::as_str)
+                        .unwrap_or(".");
+                    let expected_write = relativize_write_against_root(root, out_path)?;
                     (
                         CommandRole::Regeneration,
                         CommandExecutionMode::ShellRequired,
                         words.get(1..redirect)?.to_vec(),
-                        vec![out_path.to_string()],
+                        vec![expected_write],
                     )
                 }
                 None => (
@@ -765,6 +844,86 @@ mod tests {
                     "content-free command list was accepted: {invalid:?}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// Issue #3872: absolute funnel write targets relativize against the
+    /// command's own `--root`, keeping root-relative expected writes under
+    /// the shared validator; anything unresolvable stays legacy-string-only
+    /// (`None` here).
+    #[test]
+    fn relativize_write_against_root_keeps_typed_recovery_fail_closed() -> Result<(), String> {
+        let cwd = std::env::current_dir().map_err(|err| format!("read test cwd: {err}"))?;
+        let display = |path: &std::path::Path| path.to_string_lossy().replace('\\', "/");
+        let under_cwd = display(&cwd.join("target/ripr/workflow/agent-verify.json"));
+        if super::relativize_write_against_root(".", &under_cwd).as_deref()
+            != Some("target/ripr/workflow/agent-verify.json")
+        {
+            return Err("absolute target under --root must relativize".to_string());
+        }
+        if super::relativize_write_against_root(".", "target/ripr/workflow/agent-verify.json")
+            .as_deref()
+            != Some("target/ripr/workflow/agent-verify.json")
+        {
+            return Err("relative target must pass through untouched".to_string());
+        }
+        // A target outside the resolved root cannot gain typed authority.
+        // The unaligned path derives from the working directory (never a
+        // hardcoded machine path) so the local-context policy gate stays
+        // clean on every checkout.
+        let parent = cwd
+            .parent()
+            .ok_or_else(|| "test working directory must have a parent".to_string())?;
+        let outside = format!(
+            "{}/outside-scope/out.json",
+            parent.to_string_lossy().replace('\\', "/")
+        );
+        if super::relativize_write_against_root(".", &outside).is_some() {
+            return Err(format!(
+                "unaligned absolute target must stay legacy-string-only: {outside}"
+            ));
+        }
+        // Traversal out of the root fails closed even when the lexical
+        // prefix lines up.
+        let traversal = display(&cwd.join("../escape.json"));
+        if super::relativize_write_against_root(".", &traversal).is_some() {
+            return Err("traversing target must stay legacy-string-only".to_string());
+        }
+        // The anchor itself names no file.
+        let bare_anchor = display(&cwd);
+        if super::relativize_write_against_root(".", &bare_anchor).is_some() {
+            return Err("bare-anchor target must stay legacy-string-only".to_string());
+        }
+        // An absolute --root anchors without the working directory.
+        let absolute_root = display(&cwd.join("workspace-root"));
+        let absolute_target = format!("{absolute_root}/out.json");
+        if super::relativize_write_against_root(&absolute_root, &absolute_target).as_deref()
+            != Some("out.json")
+        {
+            return Err("absolute root must anchor directly".to_string());
+        }
+        // Review #3938: the anchor is cleaned like the rendered target, so
+        // a `--root` carrying traversal segments still prefix-matches.
+        let base = display(&cwd);
+        let traversing_root = format!("{base}/sub/../tail");
+        let traversing_target = format!("{base}/tail/out.json");
+        if super::relativize_write_against_root(&traversing_root, &traversing_target).as_deref()
+            != Some("out.json")
+        {
+            return Err("traversing root must still anchor its own target".to_string());
+        }
+        // Review #3938: a `--root` with no value (immediately before the
+        // redirect) falls back to `.` instead of parsing `>` as the root.
+        let dangling = super::agent_command_spec_from_display(
+            "ripr agent verify --before a.json --after b.json --root > out.json",
+        )
+        .ok_or_else(|| "dangling --root display must still recover".to_string())?;
+        if dangling.expected_writes != ["out.json".to_string()] {
+            return Err(format!(
+                "dangling --root must recover the redirect write: {:?}",
+                dangling.expected_writes
+            ));
         }
         Ok(())
     }

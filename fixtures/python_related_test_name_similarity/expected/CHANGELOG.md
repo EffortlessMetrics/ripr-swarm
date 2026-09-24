@@ -299,3 +299,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_related_test_name_similarity (2)
+
+Reason:
+RIPR-SPEC-0028: a heuristic Python relation requires the test to reference the owner; the fixture test now references the owner without a call, so the heuristic link is kept
+
+Command:
+`cargo xtask goldens bless python_related_test_name_similarity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_related_test_name_similarity (3)
+
+Reason:
+RIPR-SPEC-0084: CheckInput default base is now None (was origin/main); --diff fixture envelopes honestly omit the inapplicable top-level base and record base_revision null. Only base/base_revision changed; findings, counts, and input_identity byte-identical.
+
+Command:
+`cargo xtask goldens bless python_related_test_name_similarity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

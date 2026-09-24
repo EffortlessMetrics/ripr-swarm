@@ -142,7 +142,9 @@ fn heuristic_name_test_for(owner_name: &str) -> TypeScriptTest {
         describe_names: Vec::new(),
         file: PathBuf::from("tests/lib.test.ts"),
         line: 1,
-        body_text: "expect(90).toBe(90);".to_string(),
+        // References the owner without a recognized call shape: a heuristic
+        // link requires a reference (RIPR-SPEC-0027).
+        body_text: format!("const subject = {owner_name};\nexpect(90).toBe(90);"),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
             argument_count: 1,
@@ -2641,9 +2643,13 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
         decorated: false,
         imports: Vec::new(),
     };
+    // Each test references the owner without a recognized call shape, so the
+    // proximity/name heuristics only rank an existing reference
+    // (RIPR-SPEC-0027).
     let mut tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
         r#"test("threshold documented elsewhere", () => {
+    const discount = applyDiscount;
     expect(90).toBe(90);
 });
 "#,
@@ -2652,6 +2658,7 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
         Path::new("tests/checkout.test.ts"),
         r#"describe("applyDiscount", () => {
     test("threshold documented elsewhere", () => {
+        expect(applyDiscount).toBeDefined();
         expect(90).toBe(90);
     });
 });
@@ -2660,6 +2667,7 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
     tests.extend(extract_tests(
         Path::new("tests/cart.test.ts"),
         r#"test("applyDiscount boundary", () => {
+    [100].map(applyDiscount);
     expect(90).toBe(90);
 });
 "#,
@@ -2736,6 +2744,7 @@ fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
         r#"test("threshold documented elsewhere", () => {
+    const discount = applyDiscount;
     expect(90).toBe(90);
 });
 "#,
@@ -7715,4 +7724,249 @@ fn oracle_metadata_is_kept_for_a_matching_family_assertion() -> Result<(), Strin
         finding.evidence
     );
     Ok(())
+}
+// ── F5-9: a test is related to an owner only when it references the owner ────
+
+/// Owners from the F5-9 re-walk shape: `discountedTotal` (tested) and a new
+/// `loyaltyPrice` (no test references it) in the same `src/pricing.ts`.
+fn f5_9_owners() -> Vec<TypeScriptOwner> {
+    vec![
+        TypeScriptOwner {
+            start_line: 3,
+            end_line: 8,
+            ..test_owner("discountedTotal", "src/pricing.ts")
+        },
+        TypeScriptOwner {
+            start_line: 10,
+            end_line: 15,
+            ..test_owner("loyaltyPrice", "src/pricing.ts")
+        },
+    ]
+}
+
+const F5_9_SIBLING_ONLY_TESTS: &str = r#"import { describe, it, expect } from "vitest";
+import { discountedTotal } from "../src/pricing";
+
+describe("discountedTotal", () => {
+  it("no discount below threshold", () => {
+    expect(discountedTotal(5000)).toBe(5000);
+  });
+  it("discounts far above threshold", () => {
+    expect(discountedTotal(20000)).toBe(18000);
+  });
+});
+"#;
+
+fn classify_f5_9_loyalty_line(tests: &[TypeScriptTest]) -> Result<Finding, String> {
+    classify_change(
+        Path::new("src/pricing.ts"),
+        11,
+        "  if (years >= 5) {",
+        &f5_9_owners(),
+        tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a loyaltyPrice finding".to_string())
+}
+
+#[test]
+fn same_stem_tests_that_only_call_a_sibling_owner_are_not_related() -> Result<(), String> {
+    let tests = extract_tests(Path::new("test/pricing.test.ts"), F5_9_SIBLING_ONLY_TESTS);
+    assert_eq!(tests.len(), 2, "fixture must parse both sibling tests");
+    assert!(
+        tests
+            .iter()
+            .all(|test| test.body_text.contains("discountedTotal(")),
+        "both parsed tests must call the sibling owner"
+    );
+
+    let finding = classify_f5_9_loyalty_line(&tests)?;
+
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert!(finding.related_tests.is_empty());
+    assert_eq!(
+        finding.ripr.reach.summary,
+        "0 related test(s) found for owner `loyaltyPrice`"
+    );
+    assert!(
+        finding.missing.iter().any(|line| line
+            == "No test references `loyaltyPrice(` — add a test that calls the changed owner."),
+        "no_static_path must name the missing owner reference: {:?}",
+        finding.missing
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation:")),
+        "no heuristic relation may be disclosed: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn same_stem_tests_still_relate_the_sibling_owner_they_call() -> Result<(), String> {
+    let tests = extract_tests(Path::new("test/pricing.test.ts"), F5_9_SIBLING_ONLY_TESTS);
+    let finding = classify_change(
+        Path::new("src/pricing.ts"),
+        4,
+        "  if (amount >= DISCOUNT_THRESHOLD) {",
+        &f5_9_owners(),
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a discountedTotal finding".to_string())?;
+
+    assert_eq!(finding.ripr.reach.state, StageState::Yes);
+    assert_eq!(finding.related_tests.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn a_test_that_calls_the_owner_is_related_and_sibling_only_tests_are_not() -> Result<(), String> {
+    let source = r#"import { describe, it, expect } from "vitest";
+import { discountedTotal, loyaltyPrice } from "../src/pricing";
+
+describe("pricing", () => {
+  it("no discount below threshold", () => {
+    expect(discountedTotal(5000)).toBe(5000);
+  });
+  it("loyal customers get five percent off", () => {
+    expect(loyaltyPrice(1000, 5)).toBe(950);
+  });
+});
+"#;
+    let tests = extract_tests(Path::new("test/pricing.test.ts"), source);
+    assert_eq!(tests.len(), 2);
+
+    let finding = classify_f5_9_loyalty_line(&tests)?;
+
+    assert_eq!(finding.ripr.reach.state, StageState::Yes);
+    let names: Vec<&str> = finding
+        .related_tests
+        .iter()
+        .map(|test| test.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["pricing loyal customers get five percent off"]);
+    Ok(())
+}
+
+#[test]
+fn a_non_call_reference_keeps_a_weak_heuristic_link() -> Result<(), String> {
+    let source = r#"import { expect, it } from "vitest";
+import { loyaltyPrice } from "../src/pricing";
+
+it("prices every tier", () => {
+  const prices = [1000, 2000].map((amount) => amount);
+  expect(prices.map((amount) => amount)).toEqual([1000, 2000]);
+  expect(loyaltyPrice).toBeTypeOf("function");
+});
+"#;
+    let tests = extract_tests(Path::new("test/pricing.test.ts"), source);
+    assert_eq!(tests.len(), 1);
+
+    let finding = classify_f5_9_loyalty_line(&tests)?;
+
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.ripr.reach.state, StageState::Weak);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line == "related_test_relation: same_file_proximity (prices every tier)")
+    );
+    Ok(())
+}
+
+#[test]
+fn owner_names_in_titles_comments_strings_and_keys_are_not_references() {
+    let owner = &f5_9_owners()[1];
+    let source = r#"describe("loyaltyPrice", () => {
+  it("loyaltyPrice is documented", () => {
+    // loyaltyPrice(1000, 5) is covered elsewhere
+    /* loyaltyPrice */
+    const label = "loyaltyPrice";
+    const config = { loyaltyPrice: 5, other: 1 };
+    const also = { other: 1, loyaltyPrice: 5 };
+    expect(label.length + config.other + also.other).toBe(14);
+  });
+});
+"#;
+    let tests = extract_tests(Path::new("test/pricing.test.ts"), source);
+    assert_eq!(tests.len(), 1);
+
+    let candidates = related_test_candidates(owner, &tests, None, &ReExportIndex::empty(), None);
+
+    assert!(
+        candidates.is_empty(),
+        "title, describe, comment, string and object-key mentions are not references: {:?}",
+        candidates
+            .iter()
+            .map(|candidate| candidate.relation)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn renamed_and_namespace_references_relate_the_owner_but_member_calls_do_not() {
+    let owner = &f5_9_owners()[1];
+    let renamed = extract_tests(
+        Path::new("test/pricing.test.ts"),
+        r#"import { loyaltyPrice as lp } from "../src/pricing";
+it("tiers", () => {
+  const price = lp;
+  expect(typeof price).toBe("function");
+});
+"#,
+    );
+    let namespace = extract_tests(
+        Path::new("test/pricing.test.ts"),
+        r#"import * as pricing from "../src/pricing";
+it("tiers", () => {
+  const price = pricing.loyaltyPrice;
+  expect(typeof price).toBe("function");
+});
+"#,
+    );
+    let member_call = extract_tests(
+        Path::new("test/pricing.test.ts"),
+        r#"it("tiers", () => {
+  const result = (globalThis as any).pricing?.loyaltyPrice(1000, 5) ?? 950;
+  expect(result).toBe(950);
+});
+"#,
+    );
+    let shadowed = extract_tests(
+        Path::new("test/pricing.test.ts"),
+        r#"it("tiers", () => {
+  const loyaltyPrice = (amount: number) => amount;
+  expect(typeof loyaltyPrice).toBe("function");
+});
+"#,
+    );
+
+    for (label, tests, related) in [
+        ("renamed import", &renamed, true),
+        ("namespace member", &namespace, true),
+        ("object member call", &member_call, false),
+        ("locally shadowed", &shadowed, false),
+    ] {
+        assert_eq!(tests.len(), 1, "{label}: fixture must parse one test");
+        let candidates = related_test_candidates(owner, tests, None, &ReExportIndex::empty(), None);
+        assert_eq!(
+            !candidates.is_empty(),
+            related,
+            "{label}: unexpected relation set {:?}",
+            candidates
+                .iter()
+                .map(|candidate| candidate.relation)
+                .collect::<Vec<_>>()
+        );
+    }
 }

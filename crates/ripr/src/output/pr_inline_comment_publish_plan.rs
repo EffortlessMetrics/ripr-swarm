@@ -432,6 +432,9 @@ pub(crate) fn render_comment_publish_plan_markdown(report: &CommentPublishPlanRe
                 if let Some(repair) = repair_from_body(Some(body)) {
                     out.push_str(&format!("  - repair: {repair}\n"));
                 }
+                if let Some(start) = start_repair_from_body(Some(body)) {
+                    out.push_str(&format!("  - start the repair: `{start}`\n"));
+                }
                 if let Some(verify) = verify_from_body(Some(body)) {
                     out.push_str(&format!("  - verify: `{verify}`\n"));
                 }
@@ -812,20 +815,29 @@ fn comment_body(item: &Value) -> String {
             why,
             repair_route.as_deref(),
             repair,
-            verify,
+            NextStep::Verify(verify),
         );
     }
     if let Some(missing) = string_field(item, "missing_discriminator") {
         let changed = normalize_missing_discriminator(&missing);
         let why = "A related test reaches this code, but no equality-boundary assertion was found.";
         let repair = format!("Add one focused boundary assertion for `{changed}`.");
+        // A seam that passed the repair-packet flip carries the transaction's
+        // start (#3906). It replaces the bare verify line: the before phase
+        // prints the after-phase command that verifies the new test.
+        let next = item
+            .pointer("/llm_guidance/repair_command")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+            .map_or(NextStep::Verify("ripr agent verify"), NextStep::StartRepair);
         return repair_card_body(
             "missing boundary assertion",
             Some(&changed),
             why,
             Some("add boundary assertion"),
             &repair,
-            "ripr agent verify",
+            next,
         );
     }
     let reason = string_field(item, "reason")
@@ -836,8 +848,17 @@ fn comment_body(item: &Value) -> String {
         &reason,
         None,
         "Regenerate PR guidance from a gap ledger so this comment has a repair route.",
-        "ripr review-comments --root . --base <base> --head <head>",
+        NextStep::Verify("ripr review-comments --root . --base <base> --head <head>"),
     )
+}
+
+/// The command a repair card closes with.
+#[derive(Clone, Copy)]
+enum NextStep<'a> {
+    Verify(&'a str),
+    /// `ripr agent repair ... --phase before` for a seam past the
+    /// repair-packet flip (#3906).
+    StartRepair(&'a str),
 }
 
 fn repair_card_body(
@@ -846,7 +867,7 @@ fn repair_card_body(
     why: &str,
     repair_route: Option<&str>,
     repair: &str,
-    verify: &str,
+    next: NextStep<'_>,
 ) -> String {
     let mut body = format!("### ripr gap: {gap_title}\n\n");
     if let Some(changed) = changed_behavior {
@@ -861,8 +882,19 @@ fn repair_card_body(
     }
     body.push_str("\n\nRepair:\n");
     body.push_str(repair.trim());
-    body.push_str("\n\nVerify:\n");
-    body.push_str(&format!("`{}`", verify.trim()));
+    match next {
+        NextStep::Verify(verify) => {
+            body.push_str("\n\nVerify:\n");
+            body.push_str(&format!("`{}`", verify.trim()));
+        }
+        NextStep::StartRepair(command) => {
+            body.push_str("\n\nStart the repair:\n");
+            body.push_str(&format!("`{}`", command.trim()));
+            body.push_str(
+                "\n\nIt prints the `--attempt ... --phase after` command that verifies the new test.",
+            );
+        }
+    }
     body
 }
 
@@ -945,6 +977,10 @@ fn repair_from_body(body: Option<&str>) -> Option<String> {
 
 fn repair_route_from_body(body: Option<&str>) -> Option<String> {
     section_from_comment_body(body?, "Repair route")
+}
+
+fn start_repair_from_body(body: Option<&str>) -> Option<String> {
+    section_from_comment_body(body?, "Start the repair")
 }
 
 fn verify_from_body(body: Option<&str>) -> Option<String> {
@@ -1064,6 +1100,32 @@ mod tests {
         assert!(body.contains("Repair:\nAdd one focused boundary assertion"));
         assert!(body.contains("Verify:\n`ripr agent verify`"));
         assert!(!body.contains("RIPR advisory: static evidence"));
+    }
+
+    /// #3906: a card that carries the repair start closes with it instead of
+    /// the bare verify line; the card without it keeps the verify line.
+    #[test]
+    fn inline_comment_body_starts_the_repair_when_the_card_carries_it() {
+        let command = "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before";
+        let body = comment_body(&serde_json::json!({
+            "missing_discriminator": "input that hits the boundary: amount == threshold",
+            "llm_guidance": { "repair_command": command }
+        }));
+
+        assert!(body.contains("Repair:\nAdd one focused boundary assertion"));
+        assert!(
+            body.contains(&format!("Start the repair:\n`{command}`")),
+            "{body}"
+        );
+        assert!(body.contains("--phase after"), "{body}");
+        assert!(!body.contains("Verify:"), "{body}");
+
+        let blank = comment_body(&serde_json::json!({
+            "missing_discriminator": "input that hits the boundary: amount == threshold",
+            "llm_guidance": { "repair_command": "  " }
+        }));
+        assert!(blank.contains("Verify:\n`ripr agent verify`"), "{blank}");
+        assert!(!blank.contains("Start the repair"), "{blank}");
     }
 
     #[test]
@@ -1445,7 +1507,7 @@ mod tests {
             "A related test reaches this path.",
             Some("add boundary assertion"),
             "Add an exact assertion.",
-            "cargo xtask fixtures boundary_gap",
+            NextStep::Verify("cargo xtask fixtures boundary_gap"),
         );
         assert_eq!(
             gap_title_from_comment_body(&body).as_deref(),

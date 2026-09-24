@@ -56,6 +56,13 @@ map is:
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
 
+`ripr doctor --json` top-level `status` and `runtime_probes[].status` are
+`pass` or `fail`. Each `checks[].status` is `pass`, `fail`, or `skipped`;
+`skipped` (additive in schema `0.2`) marks a check that does not apply to the
+root, such as the `cargo_toml`, `tool_cargo`, and `tool_rustc` checks on a
+root where Rust is not in scope. A skipped check never fails the report, and
+its `evidence` states why it was skipped. See [Exit codes](EXIT_CODES.md).
+
 ## JSON object key ordering
 
 JSON object key order is not part of the semantic contract for ordinary
@@ -126,6 +133,14 @@ The optional `analysis_outcome` block preserves producer-owned completeness;
 the optional `finding_alignment` block is the typed canonical seam projection.
 Unknown top-level fields are rejected by the verification contract. Nested
 finding and seam details may grow additively within the pinned version.
+
+Top-level `base` records the base ref the diff loader actually used (#3940):
+the explicit `--base` when one was given, the resolved default base
+(RIPR-SPEC-0084) for scope-less runs, and absent when no base was involved
+(diff-file/stdin inputs and repo-scope runs). Base-matching consumers (for
+example `review-comments --check-output`, which requires the envelope `base`
+to equal its own `--base`) may rely on a present `base`; an absent `base`
+means the run cannot be attributed to a base.
 
 ```json
 {
@@ -1473,15 +1488,17 @@ requires no disclosure.
 Added as an additive optional top-level boolean. Emitted (as `true`) only when
 ALL of the following are true:
 
-1. `ripr check --base <rev>` was invoked (i.e. `--base` was explicit).
-2. `--diff <file>` was NOT also supplied.
+1. The analyzed diff was committed history: `ripr check --base <rev>`, or a
+   bare `ripr check` that resolved the default base (#3888).
+2. None of `--diff <file>`, `--worktree`, or `--candidate-tree` was supplied,
+   and the format is not repo-scope.
 3. The working tree has at least one uncommitted change to a tracked source
    file, as reported by `git status --porcelain`.
 
 Absent (not emitted) when `false`. Does not bump `schema_version`.
 
-This field closes the false-clean gap where `ripr check --base HEAD` with an
-uncommitted `.rs` edit returns 0 probes and exit 0 — a result that is honest
+This field closes the false-clean gap where `ripr check --base HEAD` (or a bare
+`ripr check` on the default branch) with an uncommitted `.rs` edit returns 0 probes and exit 0 — a result that is honest
 for the committed diff but misleading if the user assumes it covers their
 working-tree change. When `unanalyzed_working_tree: true` is present, the
 result is NOT a clean pass for the uncommitted changes.
@@ -1492,8 +1509,8 @@ Example:
 "unanalyzed_working_tree": true
 ```
 
-The field is absent when the worktree is clean, when `--diff <file>` was used
-instead of `--base`, when `--worktree` was used to include staged and unstaged
+The field is absent when the worktree is clean, when `--diff <file>` or
+`--candidate-tree` was used, when a repo-scope format was requested, when `--worktree` was used to include staged and unstaged
 tracked edits in the analyzed diff, or when `git status --porcelain` cannot be
 run (fail-closed: no fabricated disclosure).
 
@@ -2887,13 +2904,17 @@ Field contract:
 - `seams[].evidence_record.canonical_item` - additive finding-alignment
   projection with `gap_state`, class-scoped `actionability`, `why`,
   `recommended_repair`, nullable structured `repair_route`, `related_test`,
-  `verify_command`, nullable `receipt_command`, `confidence`, raw group size,
+  `verify_command`, nullable `receipt_command`, nullable `repair_command`,
+  `confidence`, raw group size,
   nullable `primary_anchor`, and `raw_spans`. Actionable canonical items carry
   `repair_route.repair_kind`, `target_test_type`, and `suggested_assertion`;
   no-action, observed, limitation, and unknown items keep `repair_route: null`.
   Actionable items also carry a safe agent receipt command when the canonical
   repair/verify loop is available, so public-projection readiness can be
-  assessed from canonical evidence rather than raw findings. Downstream
+  assessed from canonical evidence rather than raw findings. `repair_command`
+  is `ripr agent repair --root . --seam-id <id> --phase before` only when the
+  item is actionable and the seam passes the fail-closed repair-packet flip
+  (#3906); every other item carries `null`. Downstream
   surfaces should render this canonical item before treating raw findings as
   separate work.
 - `seams[].evidence_record.canonical_item.command_specs` - additive typed
@@ -7123,8 +7144,11 @@ Field contract:
 - `comments[].placement` - GitHub-compatible changed-line placement. Items
   without safe placement belong in `summary_only[]`.
 - `comments[].placement.mode` - `"exact_seam_line"`,
-  `"owner_function_changed_line"`, or `"same_file_changed_line"`. The renderer
-  must prefer summary-only guidance over misleading line placement.
+  `"owner_function_changed_line"`, or `"same_file_changed_line"`. The last
+  names a changed line inside the seam owner's span that owner attribution
+  bound to a nested function; a changed line elsewhere in the same file is
+  not a placement. The renderer must prefer summary-only guidance over
+  misleading line placement.
 - `comments[].kind` - seam kind from the existing static evidence.
 - `comments[].grip_class` - seam grip class from the existing static evidence.
 - `comments[].severity` - configured report severity for the recommendation.
@@ -7153,6 +7177,14 @@ Field contract:
   when the supplied repair route names only the related test.
 - `comments[].llm_guidance` - bounded handoff command and prompt for one
   focused test. It is not a request for free-form diff review.
+- `comments[].llm_guidance.repair_command` - present only on an actionable
+  working-set card whose seam passes the fail-closed repair-packet flip
+  (`repair_packet_eligibility`, #3906): `ripr agent repair --root . --seam-id
+  <id> --phase before`, the start of the repair transaction. Its before phase
+  prints the `--attempt ... --phase after` command. Absent on limitation,
+  ineligible, and gap-ledger cards; consumers must not derive it from
+  `seam_id`. Inline publish planning closes the comment body with it in place
+  of the bare `ripr agent verify` line.
 - `comments[].repair_card` - optional GapRecord-backed repair card. When
   present, inline publish planning should use this field for the human/LLM
   comment body instead of raw static classes. It carries gap kind, changed
@@ -8089,6 +8121,7 @@ JSON shape:
           "line": 12
         },
         "test_intent": "Exercise the production caller at the equality boundary and assert the returned discount.",
+        "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
         "verify_command": "cargo test -p pricing discounted_total_boundary",
         "receipt_command": "ripr receipt write --gap gap:pricing:threshold",
         "inspection_command": "ripr agent brief --root . --seam-id 67fc764ba37d77bd --json",
@@ -8184,8 +8217,12 @@ Field contract:
   every decision. It carries nullable producer-owned fields for
   `canonical_gap_id`, `seam_id`, `classification`, `changed_owner`,
   `changed_behavior`, `missing_discriminator`, tagged `repair_target`,
-  `test_intent`, `verify_command`, `receipt_command`, and exact producer-owned
-  `inspection_command`. A changed owner is not assumed to be a production
+  `test_intent`, `repair_command`, `verify_command`, `receipt_command`, and
+  exact producer-owned `inspection_command`. `repair_command` is the review
+  card's `llm_guidance.repair_command` carried unchanged (#3906); it is `null`
+  for gap-ledger candidates and for seams that fail the repair-packet flip, and
+  it is not a completeness field. When present, the gate summary names it
+  instead of the inspection command. A changed owner is not assumed to be a production
   caller, generic evidence-vector position is not treated as seam identity,
   and path/line is not manufactured into an exact inspection selector. The
   `authority_boundary` is `static_ripr_evidence_only`.
@@ -13714,10 +13751,15 @@ target/ripr/pilot/pilot-summary.md
     }
   ],
   "python_first_use": null,
+  "language_routes": {
+    "state": "not_detected",
+    "routes": []
+  },
   "next": {
     "inspect_packet": "target/ripr/pilot/agent-seam-packets.json",
     "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json",
-    "outcome_command": "ripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json"
+    "outcome_command": "ripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json",
+    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before"
   }
 }
 ```
@@ -13774,6 +13816,38 @@ is populated:
       "Verify success alone is not a gap-closure receipt."
     ]
   }
+}
+```
+
+Pilot ranks Rust repo seams only. When the workspace also contains TypeScript,
+JavaScript, Python or Perl files, `language_routes` names each language and the
+command that analyzes it (#3906). With no Rust seams the state is `required`:
+
+```json
+{
+  "state": "required",
+  "routes": [
+    {
+      "language": "typescript",
+      "file_count": 2,
+      "language_status": "preview",
+      "enabled": false,
+      "route": "check_diff_first",
+      "command": "ripr check --root .",
+      "guidance_category": "typescript_diff_first",
+      "guidance": "TypeScript is analyzed diff-first; run 'ripr check --base origin/main' or '--diff <file>' to evaluate changed TypeScript behavior. Full-repo TypeScript exposure is not yet modeled (named limitation)."
+    },
+    {
+      "language": "perl",
+      "file_count": 1,
+      "language_status": "unavailable",
+      "enabled": false,
+      "route": "unavailable_in_this_binary",
+      "command": null,
+      "guidance_category": null,
+      "guidance": "Perl analysis is not available from this ripr binary. Rebuild ripr with Cargo feature `lang-perl` to analyze Perl files."
+    }
+  ]
 }
 ```
 
@@ -13850,14 +13924,38 @@ Field contract:
   `analysis_unavailable`), counts, supported and deferred features, and the top
   `python_repair_card` using the same advisory card fields emitted by
   `ripr check --json`.
+- `language_routes` — additive; `null` only when not collected. `state` is
+  `not_detected` (no TypeScript, JavaScript, Python or Perl files outside the
+  default-ignored directories), `supplementary` (Rust seams exist; the ranking
+  stands and the terminal and Markdown are unchanged), or `required` (pilot's
+  Rust scan produced no seams, so an empty `top_actionable_seams` is not a clean
+  result for these languages). Each `routes[]` entry carries `language`,
+  `file_count`, `language_status` (`preview` when this binary includes the
+  adapter, otherwise `unavailable`), `enabled` (listed in the effective
+  `[languages] enabled`; JavaScript follows `typescript`), `route`
+  (`check_diff_first` or `unavailable_in_this_binary`), `command` (the diff-first
+  `ripr check --root <root>`, which resolves the default base itself, or `null`),
+  and `guidance_category`/`guidance`: the existing `typescript_diff_first`
+  repair route for TypeScript and JavaScript, the unavailable-adapter notice for
+  a language this binary cannot analyze, otherwise `null`.
 - `next` — advisory follow-up commands. Complete summaries include the public
-  `ripr outcome` before/after receipt command. Partial summaries include a
-  retry command with a larger explicit timeout.
+  `ripr outcome` before/after receipt command, and `repair_command`: the
+  `ripr agent repair --seam-id <id> --phase before` command for the top seam
+  when its repair-packet eligibility flip holds, otherwise `null` (#3906).
+  Partial summaries include a retry command with a larger explicit timeout.
 
 The Markdown sibling prints the same summary, puts the top recommendation first,
-and includes the inspected seam, why it matters, the focused test to write, the
-top seam's targeted test brief, and the before/after commands for complete
-runs. It remains advisory. On timeout, the Markdown sibling records the partial
+and includes the inspected seam, why it matters, the focused test to write, and
+the top seam's targeted test brief. Its Next Commands block offers one route:
+the repair transaction's `--phase before` command when `repair_command` is
+set, otherwise the before/after snapshot commands. The terminal closes the same
+way, with the repair command as step 1 of three. When `language_routes.state`
+is `required`, the terminal and Markdown replace the plain no-recommendation
+line with one saying pilot found no Rust seams, list each language with its
+route (Markdown adds the reused guidance text), and close with the route
+commands instead of the before/after snapshot pair, or with a line saying no
+follow-up command applies when this binary cannot analyze any listed language.
+It remains advisory. On timeout, the Markdown sibling records the partial
 state and the retry command instead of pretending the packet is complete.
 
 ## LSP Seam Diagnostics
@@ -15578,8 +15676,10 @@ JSON shape (schema version `0.1`):
 ```
 
 When `top_repair` is absent, `top_repair_state` appears in its place
-and `top_repair` is `null`. When `limitations` is empty, `top_limitation`
-is omitted entirely. When delta fields are computed (baseline supplied),
+and `top_repair` is `null`. When `limitations` is empty or
+`"not_available"`, `top_limitation` is omitted entirely; the Markdown
+panel distinguishes the two, rendering `- none` for the first and
+`- not_available` for the second. When delta fields are computed (baseline supplied),
 `gap_delta_note` is absent.
 
 Field sources:
@@ -15593,7 +15693,7 @@ Field sources:
 | `gaps.total_actionable` | gap-decision-ledger | `summary.repairable_total` |
 | `gaps.total_static_limitation` | gap-decision-ledger | `summary.static_limitation_total` |
 | `gaps.*` delta fields | computed from `--baseline` | before/after `gaps.total_actionable` |
-| `limitations[]` | repo-exposure | `limitations[]` |
+| `limitations` | repo-exposure | `limitations[]` when the artifact was read; `"not_available"` when it is missing, unreadable, or carries a non-array `limitations` value. An empty array means repo-exposure was read and named none, which is a different finding from not having read it. |
 | `missing_receipts` | gap-decision-ledger | `summary.repairable_total - receipt_improved_total` |
 | `receipt_status.receipts_present` | gap-decision-ledger | `summary.receipt_improved_total + summary.receipt_unchanged_after_attempt_total` |
 | `receipt_status.missing_receipts` | gap-decision-ledger | mirrors top-level `missing_receipts` |

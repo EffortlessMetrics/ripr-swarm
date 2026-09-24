@@ -58,7 +58,11 @@ ripr doctor --root .
 ```
 
 `doctor` should show the loaded config and enabled languages. Missing
-`ripr.toml` remains healthy. With no Python project markers, the built-in
+`ripr.toml` remains healthy. On a root with no Rust markers (no `Cargo.toml`
+or `.rs` files), the `Cargo.toml`, `cargo`, and `rustc` checks are reported as
+skipped with the reason instead of failing, so a Python-only or
+TypeScript-only repository does not need a Rust toolchain for `doctor` to
+pass. With no Python project markers, the built-in
 Rust-only default is active. With Python project markers such as
 `pyproject.toml`, `setup.py`, `requirements.txt`, `pytest.ini`, `tox.ini`,
 `noxfile.py`, or Python files under `src/` or `tests/`, `ripr` enables Python

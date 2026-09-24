@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 pub(crate) const AGENT_LOOP_COMMAND_TEMPLATE_VERSION: &str = "0.1";
 
@@ -41,6 +41,58 @@ pub(crate) fn agent_start_command(root: &str, seam_id: &str, out_dir: &str) -> S
     )
 }
 
+/// Render a shell-redirect target rooted at `--root` (issue #3872): the
+/// target is absolute with stable separators, so a pasted funnel command
+/// reproduces the validated write location from any working directory under
+/// both shells and both .NET/provider resolution rules. An already absolute
+/// target passes through (normalized); a relative target joins the --root
+/// value, resolved against the renderer process working directory exactly as
+/// the `--root` argument itself resolves. `--root` values are left untouched.
+pub(crate) fn anchored_redirect_target(root: &str, out_path: &str) -> String {
+    let out = Path::new(out_path);
+    if out.is_absolute() {
+        return display_path(&lexically_clean(out));
+    }
+    let root_path = Path::new(root);
+    let joined = if root_path.is_absolute() {
+        root_path.join(out)
+    } else {
+        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        base.join(root_path).join(out)
+    };
+    display_path(&lexically_clean(&joined))
+}
+
+/// Drop `.` segments and resolve `..` lexically (no filesystem I/O: the
+/// target usually does not exist yet when guidance is rendered). Keeps the
+/// anchored target free of `/./` noise when `--root` is `.`. A leading
+/// `..` on a relative path is preserved (there is nothing to pop); an
+/// absolute path never carries one past the root.
+pub(crate) fn lexically_clean(path: &Path) -> PathBuf {
+    let mut cleaned = PathBuf::new();
+    let is_absolute = path.is_absolute();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(cleaned.components().next_back(), Some(Component::Normal(_))) {
+                    cleaned.pop();
+                } else if !is_absolute {
+                    cleaned.push(component.as_os_str());
+                }
+            }
+            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => {
+                cleaned.push(component.as_os_str());
+            }
+        }
+    }
+    if cleaned.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        cleaned
+    }
+}
+
 pub(crate) fn check_repo_exposure_command(root: &str, mode: &str, out_path: &str) -> String {
     check_repo_exposure_command_with_base(root, None, mode, out_path)
 }
@@ -59,7 +111,7 @@ pub(crate) fn check_repo_exposure_command_with_base(
         shell_arg(root),
         base_arg,
         shell_arg(mode),
-        shell_arg(out_path)
+        shell_arg(&anchored_redirect_target(root, out_path))
     )
 }
 
@@ -68,7 +120,7 @@ pub(crate) fn agent_seam_packets_command(root: &str, mode: &str, out_path: &str)
         "ripr check --root {} --mode {} --format agent-seam-packets-json > {}",
         shell_arg(root),
         shell_arg(mode),
-        shell_arg(out_path)
+        shell_arg(&anchored_redirect_target(root, out_path))
     )
 }
 
@@ -77,7 +129,7 @@ pub(crate) fn check_analysis_outcome_command(root: &str, mode: &str, out_path: &
         "ripr check --root {} --mode {} --format json > {}",
         shell_arg(root),
         shell_arg(mode),
-        shell_arg(out_path)
+        shell_arg(&anchored_redirect_target(root, out_path))
     )
 }
 
@@ -86,7 +138,7 @@ pub(crate) fn agent_packet_command(root: &str, seam_id: &str, out_path: &str) ->
         "ripr agent packet --root {} --seam-id {} --json > {}",
         shell_arg(root),
         shell_arg(seam_id),
-        shell_arg(out_path)
+        shell_arg(&anchored_redirect_target(root, out_path))
     )
 }
 
@@ -95,7 +147,7 @@ pub(crate) fn agent_brief_command(root: &str, seam_id: &str, out_path: &str) -> 
         "ripr agent brief --root {} --seam-id {} --json > {}",
         shell_arg(root),
         shell_arg(seam_id),
-        shell_arg(out_path)
+        shell_arg(&anchored_redirect_target(root, out_path))
     )
 }
 
@@ -111,7 +163,7 @@ pub(crate) fn agent_verify_command(
         shell_arg(before_path),
         shell_arg(after_path)
     );
-    append_redirect(command, out_path)
+    append_redirect(root, command, out_path)
 }
 
 pub(crate) fn agent_receipt_command(
@@ -134,6 +186,7 @@ pub(crate) fn agent_receipt_command(
 
 pub(crate) fn agent_status_command(root: &str, out_path: Option<&str>) -> String {
     append_redirect(
+        root,
         format!("ripr agent status --root {} --json", shell_arg(root)),
         out_path,
     )
@@ -141,6 +194,7 @@ pub(crate) fn agent_status_command(root: &str, out_path: Option<&str>) -> String
 
 pub(crate) fn agent_status_markdown_command(root: &str, out_path: Option<&str>) -> String {
     append_redirect(
+        root,
         format!("ripr agent status --root {}", shell_arg(root)),
         out_path,
     )
@@ -148,6 +202,7 @@ pub(crate) fn agent_status_markdown_command(root: &str, out_path: Option<&str>) 
 
 pub(crate) fn agent_review_summary_command(root: &str, out_path: Option<&str>) -> String {
     append_redirect(
+        root,
         format!(
             "ripr agent review-summary --root {} --json",
             shell_arg(root)
@@ -158,6 +213,7 @@ pub(crate) fn agent_review_summary_command(root: &str, out_path: Option<&str>) -
 
 pub(crate) fn agent_review_summary_markdown_command(root: &str, out_path: Option<&str>) -> String {
     append_redirect(
+        root,
         format!("ripr agent review-summary --root {}", shell_arg(root)),
         out_path,
     )
@@ -238,9 +294,12 @@ pub(crate) fn shell_arg(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 
-fn append_redirect(command: String, out_path: Option<&str>) -> String {
+fn append_redirect(root: &str, command: String, out_path: Option<&str>) -> String {
     match out_path {
-        Some(path) => format!("{command} > {}", shell_arg(path)),
+        Some(path) => format!(
+            "{command} > {}",
+            shell_arg(&anchored_redirect_target(root, path))
+        ),
         None => command,
     }
 }
@@ -248,6 +307,54 @@ fn append_redirect(command: String, out_path: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Render the expected redirect target for a `--root .` tail: the anchor
+    /// rule resolves through the renderer working directory, so expectations
+    /// build the same absolute path dynamically instead of pinning a machine
+    /// directory (issue #3872).
+    fn anchored_expectation(tail: &str) -> String {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        shell_arg(&display_path(&cwd.join(tail)))
+    }
+
+    #[test]
+    fn anchored_redirect_target_roots_relative_outputs_at_root() {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let base = display_path(&cwd);
+        assert_eq!(
+            anchored_redirect_target(".", "target/ripr/workflow/before.repo-exposure.json"),
+            format!("{base}/target/ripr/workflow/before.repo-exposure.json")
+        );
+        assert_eq!(
+            anchored_redirect_target("repo root", "target/ripr/work flow/before.json"),
+            format!("{base}/repo root/target/ripr/work flow/before.json")
+        );
+        let absolute_root = display_path(&cwd.join("workspace-root"));
+        assert_eq!(
+            anchored_redirect_target(&absolute_root, "target/out.json"),
+            format!("{absolute_root}/target/out.json")
+        );
+        let absolute_out = format!("{base}/elsewhere/out.json");
+        assert_eq!(anchored_redirect_target(".", &absolute_out), absolute_out);
+        assert!(
+            !anchored_redirect_target(".", "target/out.json").contains("/./"),
+            "anchored target must not carry a `/./` segment"
+        );
+        // Review #3938: a leading `..` on a relative path survives
+        // lexical cleaning (there is nothing to pop).
+        assert_eq!(
+            lexically_clean(Path::new("../ws/target/out.json")),
+            PathBuf::from("../ws/target/out.json")
+        );
+        assert_eq!(
+            lexically_clean(&cwd.join("a").join("..").join("b")),
+            cwd.join("b")
+        );
+        assert!(
+            Path::new(&anchored_redirect_target(".", "target/out.json")).is_absolute(),
+            "anchored target must be absolute"
+        );
+    }
 
     #[test]
     fn workflow_commands_match_existing_status_templates() {
@@ -257,23 +364,38 @@ mod tests {
         );
         assert_eq!(
             check_repo_exposure_command(".", "draft", WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT),
-            "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json"
+            format!(
+                "ripr check --root . --mode draft --format repo-exposure-json > {}",
+                anchored_expectation("target/ripr/workflow/before.repo-exposure.json")
+            )
         );
         assert_eq!(
             check_repo_exposure_command(".", "draft", WORKFLOW_AFTER_SNAPSHOT_ARTIFACT),
-            "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json"
+            format!(
+                "ripr check --root . --mode draft --format repo-exposure-json > {}",
+                anchored_expectation("target/ripr/workflow/after.repo-exposure.json")
+            )
         );
         assert_eq!(
             check_analysis_outcome_command(".", "draft", WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
-            "ripr check --root . --mode draft --format json > target/ripr/workflow/analysis-outcome.json"
+            format!(
+                "ripr check --root . --mode draft --format json > {}",
+                anchored_expectation("target/ripr/workflow/analysis-outcome.json")
+            )
         );
         assert_eq!(
             agent_packet_command(".", "seam-a", WORKFLOW_AGENT_PACKET_ARTIFACT),
-            "ripr agent packet --root . --seam-id seam-a --json > target/ripr/workflow/agent-packet.json"
+            format!(
+                "ripr agent packet --root . --seam-id seam-a --json > {}",
+                anchored_expectation("target/ripr/workflow/agent-packet.json")
+            )
         );
         assert_eq!(
             agent_brief_command(".", "seam-a", WORKFLOW_AGENT_BRIEF_ARTIFACT),
-            "ripr agent brief --root . --seam-id seam-a --json > target/ripr/workflow/agent-brief.json"
+            format!(
+                "ripr agent brief --root . --seam-id seam-a --json > {}",
+                anchored_expectation("target/ripr/workflow/agent-brief.json")
+            )
         );
         assert_eq!(
             agent_verify_command(
@@ -282,7 +404,10 @@ mod tests {
                 WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
                 Some(WORKFLOW_AGENT_VERIFY_ARTIFACT),
             ),
-            "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > target/ripr/workflow/agent-verify.json"
+            format!(
+                "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > {}",
+                anchored_expectation("target/ripr/workflow/agent-verify.json")
+            )
         );
         assert_eq!(
             agent_receipt_command(
@@ -295,22 +420,34 @@ mod tests {
         );
         assert_eq!(
             agent_status_command(".", Some(WORKFLOW_AGENT_STATUS_ARTIFACT)),
-            "ripr agent status --root . --json > target/ripr/workflow/agent-status.json"
+            format!(
+                "ripr agent status --root . --json > {}",
+                anchored_expectation("target/ripr/workflow/agent-status.json")
+            )
         );
         assert_eq!(
             agent_status_markdown_command(".", Some(WORKFLOW_AGENT_STATUS_MARKDOWN_ARTIFACT)),
-            "ripr agent status --root . > target/ripr/workflow/agent-status.md"
+            format!(
+                "ripr agent status --root . > {}",
+                anchored_expectation("target/ripr/workflow/agent-status.md")
+            )
         );
         assert_eq!(
             agent_review_summary_command(".", Some(WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT)),
-            "ripr agent review-summary --root . --json > target/ripr/workflow/agent-review-summary.json"
+            format!(
+                "ripr agent review-summary --root . --json > {}",
+                anchored_expectation("target/ripr/workflow/agent-review-summary.json")
+            )
         );
         assert_eq!(
             agent_review_summary_markdown_command(
                 ".",
                 Some(WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT),
             ),
-            "ripr agent review-summary --root . > target/ripr/workflow/agent-review-summary.md"
+            format!(
+                "ripr agent review-summary --root . > {}",
+                anchored_expectation("target/ripr/workflow/agent-review-summary.md")
+            )
         );
     }
 
@@ -318,11 +455,17 @@ mod tests {
     fn editor_commands_match_existing_lsp_templates() {
         assert_eq!(
             agent_packet_command(".", "seam-a", EDITOR_AGENT_PACKET_ARTIFACT),
-            "ripr agent packet --root . --seam-id seam-a --json > target/ripr/agent/agent-packet.json"
+            format!(
+                "ripr agent packet --root . --seam-id seam-a --json > {}",
+                anchored_expectation("target/ripr/agent/agent-packet.json")
+            )
         );
         assert_eq!(
             check_repo_exposure_command(".", "ready", PILOT_AFTER_SNAPSHOT_ARTIFACT),
-            "ripr check --root . --mode ready --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json"
+            format!(
+                "ripr check --root . --mode ready --format repo-exposure-json > {}",
+                anchored_expectation("target/ripr/pilot/after.repo-exposure.json")
+            )
         );
         assert_eq!(
             agent_verify_command(
@@ -331,7 +474,10 @@ mod tests {
                 PILOT_AFTER_SNAPSHOT_ARTIFACT,
                 Some(EDITOR_AGENT_VERIFY_ARTIFACT),
             ),
-            "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > target/ripr/agent/agent-verify.json"
+            format!(
+                "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > {}",
+                anchored_expectation("target/ripr/agent/agent-verify.json")
+            )
         );
     }
 
@@ -345,15 +491,23 @@ mod tests {
         );
         assert_eq!(
             agent_seam_packets_command(".", "draft mode", "target/ripr/workflow/packets.json"),
-            "ripr check --root . --mode 'draft mode' --format agent-seam-packets-json > target/ripr/workflow/packets.json"
+            format!(
+                "ripr check --root . --mode 'draft mode' --format agent-seam-packets-json > {}",
+                anchored_expectation("target/ripr/workflow/packets.json")
+            )
         );
         assert_eq!(
             agent_start_command("repo root", "seam a", "target/ripr/work flow"),
             "ripr agent start --root 'repo root' --seam-id 'seam a' --out 'target/ripr/work flow'"
         );
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let rooted = |tail: &str| shell_arg(&display_path(&cwd.join("repo root").join(tail)));
         assert_eq!(
             check_repo_exposure_command("repo root", "draft", "target/ripr/work flow/before.json"),
-            "ripr check --root 'repo root' --mode draft --format repo-exposure-json > 'target/ripr/work flow/before.json'"
+            format!(
+                "ripr check --root 'repo root' --mode draft --format repo-exposure-json > {}",
+                rooted("target/ripr/work flow/before.json")
+            )
         );
         assert_eq!(
             check_repo_exposure_command_with_base(
@@ -362,7 +516,10 @@ mod tests {
                 "draft",
                 "target/ripr/work flow/before.json",
             ),
-            "ripr check --root 'repo root' --base 'origin/main with space' --mode draft --format repo-exposure-json > 'target/ripr/work flow/before.json'"
+            format!(
+                "ripr check --root 'repo root' --base 'origin/main with space' --mode draft --format repo-exposure-json > {}",
+                rooted("target/ripr/work flow/before.json")
+            )
         );
         assert_eq!(
             agent_verify_command(
@@ -371,7 +528,10 @@ mod tests {
                 "target/ripr/work flow/after.json",
                 Some("target/ripr/work flow/verify.json"),
             ),
-            "ripr agent verify --root 'repo root' --before 'target/ripr/work flow/before.json' --after 'target/ripr/work flow/after.json' --json > 'target/ripr/work flow/verify.json'"
+            format!(
+                "ripr agent verify --root 'repo root' --before 'target/ripr/work flow/before.json' --after 'target/ripr/work flow/after.json' --json > {}",
+                rooted("target/ripr/work flow/verify.json")
+            )
         );
         assert_eq!(
             agent_receipt_command(

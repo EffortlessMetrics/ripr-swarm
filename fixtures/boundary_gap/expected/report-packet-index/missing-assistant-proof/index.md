@@ -12,15 +12,16 @@ Packet summary:
 - Failures: 0
 
 PR review story:
-- first useful action: target/ripr/reports/first-useful-action.md
-- review comments: target/ripr/review/comments.md
+- First useful action: target/ripr/reports/first-useful-action.md
+- Review guidance: target/ripr/review/comments.md
 
 Repair and agent handoff:
-- assistant proof: missing
+- Assistant proof: missing
   - next: `ripr assistant-loop proof --out target/ripr/reports/test-oracle-assistant-proof.json --out-md target/ripr/reports/test-oracle-assistant-proof.md`
 
 Missing expected:
-- assistant proof: missing_required_input
+- Assistant proof: missing_required_input
+  - next: `ripr assistant-loop proof --out target/ripr/reports/test-oracle-assistant-proof.json --out-md target/ripr/reports/test-oracle-assistant-proof.md`
 
 Limits:
 - Advisory report-packet index only.
