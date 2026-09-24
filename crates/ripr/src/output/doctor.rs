@@ -805,7 +805,7 @@ mod tests {
                 ));
                 continue;
             }
-            let report = evaluate_doctor_core_with_config(fixture).report;
+            let report = evaluate_doctor_core_with_config(fixture, &[]).report;
             match report
                 .checks
                 .iter()
@@ -816,7 +816,7 @@ mod tests {
                     fixture.display()
                 )),
                 Some(check) => {
-                    if check.status != DoctorStatus::Fail {
+                    if check.status != DoctorStatus::Fail.into() {
                         failures.push(format!(
                             "{}: a root outside a work tree reported {:?}",
                             fixture.display(),
@@ -844,13 +844,13 @@ mod tests {
         // must pass here. Without it the test would also pass against a check
         // that always fails.
         let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        match evaluate_doctor_core_with_config(checkout)
+        match evaluate_doctor_core_with_config(checkout, &[])
             .report
             .checks
             .iter()
             .find(|check| check.name == "git_repository")
         {
-            Some(check) if check.status == DoctorStatus::Pass => {}
+            Some(check) if check.status == DoctorStatus::Pass.into() => {}
             other => failures.push(format!(
                 "this checkout should report a work tree, reported {other:?}"
             )),
