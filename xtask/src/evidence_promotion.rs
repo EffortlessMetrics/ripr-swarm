@@ -348,9 +348,7 @@ fn run_evidence_promotion_pinned_external_cases(
         write_evidence_promotion_external_report(&runs, std::slice::from_ref(&err))?;
         return Ok(runs);
     }
-    let binary = PathBuf::from("target")
-        .join("debug")
-        .join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
+    let binary = ripr_debug_binary();
     let mut runs = Vec::new();
     let mut all_violations = Vec::new();
     for case in &cases {
