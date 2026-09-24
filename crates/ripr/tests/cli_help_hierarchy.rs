@@ -306,7 +306,8 @@ fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     for needle in [
         "`check` is ordinary first value, `pilot` is guided repo adoption, `agent repair` is the repair transaction, and `first-pr` composes PR evidence.",
         "use the primary repair command",
-        "Ask RIPR what local artifacts already exist when resuming or diagnosing: ```bash ripr agent status --root .",
+        "When resuming, ask RIPR where you are.",
+        "or a warning listing the choices when it would have to guess: ```bash ripr agent status --root .",
     ] {
         assert_contains("docs/QUICKSTART.md", &quickstart, needle)?;
     }

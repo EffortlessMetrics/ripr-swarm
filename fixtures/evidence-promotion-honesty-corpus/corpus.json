@@ -377,7 +377,8 @@
         { "type": "must_not_emit_repair_packet" },
         { "type": "must_not_have_receipt_command" },
         { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "exposed" }
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -573,7 +574,7 @@
           "source_file": "src/discount.ts",
           "source_line": 2,
           "target_test": "tests/discount.test.ts::applyDiscount applies discount when amount meets threshold",
-          "assertion_shape": "expect(result).toBe(50)",
+          "assertion_shape": "expect(result).toBe(expected)",
           "authority_boundary": "preview_advisory_only",
           "repair_kind": "AddBoundaryAssertion",
           "verify_command": "jest tests/discount.test.ts",
@@ -989,7 +990,7 @@
         { "type": "must_not_have_verify_command" },
         { "type": "must_not_have_receipt_command" },
         { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_class", "class": "no_static_path" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
@@ -1023,7 +1024,7 @@
         { "type": "must_not_have_verify_command" },
         { "type": "must_not_have_receipt_command" },
         { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_class", "class": "no_static_path" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
@@ -1040,7 +1041,7 @@
         { "type": "must_not_have_verify_command" },
         { "type": "must_not_have_receipt_command" },
         { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_class", "class": "no_static_path" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },

@@ -179,3 +179,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_tothrow_exact_oracle (3)
+
+Reason:
+RIPR-SPEC-0104: oracle metadata evidence is only borrowed from assertions whose kind matches the probe family, so a toThrow assertion is no longer surfaced as the oracle for this predicate probe; class, category and readiness unchanged
+
+Command:
+`cargo xtask goldens bless typescript_tothrow_exact_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

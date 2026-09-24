@@ -503,9 +503,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )?;
     }
     // RIPR-SPEC-0083: disclose when no scope was provided and the result is empty.
-    // The guidance fires only when scope was NOT explicitly provided — it must
-    // NOT fire when --diff/--base/--mode produced a real analyzed-empty result.
-    if !scope_explicitly_provided && output.findings.is_empty() {
+    // #4012: gate on what was actually analyzed, not on what was typed. A
+    // resolved default branch that analyzed changed files is a real
+    // analyzed-empty result (ordinary no_behavioral_candidates), not
+    // missing scope — so the producer outcome's changed_file_count is the
+    // discriminator. Repo-scope formats analyze the whole repo by
+    // definition, so the diff-scope disclosure never applies to them.
+    let analyzed_changed_files = output
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.counts.changed_file_count > 0);
+    if !scope_explicitly_provided
+        && output.findings.is_empty()
+        && !analyzed_changed_files
+        && !format.is_repo_scope()
+    {
         output.no_scope_provided = true;
     }
     // #2425: when --diff was explicitly provided but produced zero findings
