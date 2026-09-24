@@ -11,9 +11,74 @@ use crate::app::analysis_outcome_artifact::{
 };
 use serde_json::Value;
 
-use super::receipt_lifecycle::receipt_lifecycle_state_from_movement;
+use super::receipt_lifecycle::{
+    RECEIPT_MOVEMENT_IMPROVED, receipt_lifecycle_state_from_movement,
+    receipt_lifecycle_state_from_receipt_value,
+};
 
 pub(crate) const AGENT_RECEIPT_SCHEMA_VERSION: &str = "0.5";
+
+/// Receipt `status` for a receipt issued over a complete, valid producer
+/// analysis outcome. `incomplete` and `invalid` receipts carry static movement
+/// but no completeness evidence.
+pub(crate) const AGENT_RECEIPT_STATUS_ADVISORY: &str = "advisory";
+
+/// Static movements for a seam present in both snapshots whose grip class did
+/// not rise: the gap the receipt names is still open.
+const GAP_OPEN_MOVEMENTS: &[&str] = &["unchanged", "changed", "regressed"];
+
+/// An issued agent receipt read back through the vocabulary this module
+/// renders, so consumers such as `ripr agent status` do not re-derive what a
+/// receipt means. It reads recorded fields only; it does not re-validate the
+/// receipt's inputs.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AgentReceiptReading {
+    pub(crate) status: Option<String>,
+    pub(crate) movement: Option<String>,
+    pub(crate) receipt_state: String,
+    pub(crate) recommended_action: Option<String>,
+    pub(crate) analysis_outcome_error: Option<String>,
+}
+
+impl AgentReceiptReading {
+    pub(crate) fn from_value(receipt: &Value) -> Self {
+        let text = |pointer: &str| {
+            receipt
+                .pointer(pointer)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        Self {
+            status: text("/status"),
+            movement: text("/provenance/movement").or_else(|| text("/seam/change")),
+            receipt_state: receipt_lifecycle_state_from_receipt_value(receipt),
+            recommended_action: text("/summary/next_action/recommended_action"),
+            analysis_outcome_error: text("/analysis_outcome_error"),
+        }
+    }
+
+    /// The receipt was issued over a complete, valid producer analysis outcome.
+    pub(crate) fn is_advisory(&self) -> bool {
+        self.status.as_deref() == Some(AGENT_RECEIPT_STATUS_ADVISORY)
+    }
+
+    /// The only reading that shows the targeted gap closed: an advisory
+    /// receipt whose static grip improved. Anything else (an `invalid` or
+    /// `incomplete` receipt, or any other movement) does not.
+    pub(crate) fn shows_gap_closed(&self) -> bool {
+        self.is_advisory() && self.receipt_state == RECEIPT_MOVEMENT_IMPROVED
+    }
+
+    /// The seam is in both snapshots and its grip class did not rise, so the
+    /// gap is still open whatever the receipt's status.
+    pub(crate) fn leaves_gap_open(&self) -> bool {
+        self.movement
+            .as_deref()
+            .is_some_and(|movement| GAP_OPEN_MOVEMENTS.contains(&movement))
+    }
+}
 
 pub(crate) use crate::app::analysis_outcome_artifact::AnalysisOutcomeUnavailableStatus as AgentReceiptUnavailableStatus;
 
@@ -119,7 +184,9 @@ pub(crate) fn render_agent_receipt_value_json(
         }
     };
     let status = match &analysis_outcome {
-        AgentReceiptAnalysisOutcome::Present(outcome) if outcome.kind.is_complete() => "advisory",
+        AgentReceiptAnalysisOutcome::Present(outcome) if outcome.kind.is_complete() => {
+            AGENT_RECEIPT_STATUS_ADVISORY
+        }
         AgentReceiptAnalysisOutcome::Present(_) => "incomplete",
         AgentReceiptAnalysisOutcome::Unavailable {
             status: AgentReceiptUnavailableStatus::Missing,
@@ -875,6 +942,72 @@ mod tests {
         assert_eq!(value["status"], "invalid");
         assert_eq!(value["analysis_outcome_status"], status.as_str());
         assert_eq!(value["analysis_outcome"], Value::Null);
+        Ok(())
+    }
+
+    /// The reading consumers use to call a repair loop complete is tied to the
+    /// fields this module renders: only an `advisory` receipt whose grip
+    /// improved shows the gap closed; an `invalid` one with the same movement
+    /// does not, and unchanged, changed, or regressed movement leaves the gap
+    /// open whatever the status. A new or resolved seam is neither.
+    #[test]
+    fn agent_receipt_reading_ties_gap_closure_to_status_and_movement() -> Result<(), String> {
+        let verify: Value =
+            serde_json::from_str(agent_verify_json()).map_err(|error| error.to_string())?;
+        let render = |seam_id: &str, analysis_outcome| -> Result<AgentReceiptReading, String> {
+            let rendered = render_agent_receipt_value_json(
+                &verify,
+                "target/ripr/workflow/agent-verify.json".to_string(),
+                seam_id,
+                None,
+                &[],
+                fixed_provenance(),
+                analysis_outcome,
+            )?;
+            let value: Value =
+                serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+            Ok(AgentReceiptReading::from_value(&value))
+        };
+        let complete = || -> Result<AgentReceiptAnalysisOutcome, String> {
+            Ok(AgentReceiptAnalysisOutcome::Present(Box::new(
+                test_complete_analysis_outcome()?,
+            )))
+        };
+        let invalid = || AgentReceiptAnalysisOutcome::Unavailable {
+            status: AgentReceiptUnavailableStatus::Invalid,
+            reason: "producer identity is stale".to_string(),
+        };
+
+        let improved = render("seam-a", complete()?)?;
+        assert_eq!(
+            improved.status.as_deref(),
+            Some(AGENT_RECEIPT_STATUS_ADVISORY)
+        );
+        assert_eq!(improved.movement.as_deref(), Some("improved"));
+        assert!(improved.shows_gap_closed());
+        assert!(!improved.leaves_gap_open());
+
+        let improved_invalid = render("seam-a", invalid())?;
+        assert_eq!(improved_invalid.status.as_deref(), Some("invalid"));
+        assert_eq!(
+            improved_invalid.analysis_outcome_error.as_deref(),
+            Some("producer identity is stale")
+        );
+        assert!(!improved_invalid.shows_gap_closed());
+        assert!(!improved_invalid.leaves_gap_open());
+
+        for seam_id in ["seam-b", "seam-d", "seam-e"] {
+            let open = render(seam_id, complete()?)?;
+            assert!(open.is_advisory(), "{seam_id}");
+            assert!(!open.shows_gap_closed(), "{seam_id}");
+            assert!(open.leaves_gap_open(), "{seam_id}");
+            assert!(open.recommended_action.is_some(), "{seam_id}");
+        }
+        for seam_id in ["seam-c", "seam-f"] {
+            let neither = render(seam_id, complete()?)?;
+            assert!(!neither.shows_gap_closed(), "{seam_id}");
+            assert!(!neither.leaves_gap_open(), "{seam_id}");
+        }
         Ok(())
     }
 

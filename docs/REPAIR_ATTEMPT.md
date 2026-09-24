@@ -121,6 +121,8 @@ The manifest schema is `schemas/ripr/repair-attempt.schema.json` (`schema_versio
 
 The before commitment is derived from the prepared manifest. Terminal updates may add after-phase evidence, but they cannot silently rewrite the retained before identity or artifacts.
 
+When an after phase refuses after it selected the attempt (for example `agent verify` finds the pair incomparable or without movement, or the receipt is refused), the manifest gains an optional `last_after_refusal` object (`reason`, `repository_head`, `recorded_unix_ms`). The `reason` is the final error followed by the cause and recovery the after phase printed (the changed analysis inputs, or the rewritten history and its reset), bounded to 4096 bytes. It is an observation, not a state: it never changes `state` or `after`, the before commitment excludes it, and the next after phase that reaches the durable finish removes it. `ripr agent status` reports it instead of repeating the refused command unannotated. Manifests without a refusal omit the field.
+
 ## After-phase authority
 
 `--attempt <id>` resolves one manifest directly. Before producing a receipt, RIPR verifies that:
@@ -164,6 +166,8 @@ A `HEAD` that does not descend from the prepared head (after `git commit --amend
 
 Trust-bound Python attempts keep the exact-head rule: their selection pins the head, and any movement records `stale`.
 
+`ripr agent status` applies the same rule through the attempt authority (`after_phase_head_admission`): an attempt whose test was committed on top of its prepared head stays resumable with its `--attempt` command, rewritten history is reported with the reset recovery above, and a finished attempt is current while `HEAD` is the head its after phase recorded.
+
 Why this rule rather than always refusing: a developer who commits the test has made no edit outside the cage, and the cage can check the committed range with the same rules. Rewritten history cannot be attributed that way: the prepared head is no longer part of it, so the lineage check refuses it.
 
 ## Terminal state
@@ -178,6 +182,10 @@ The after phase records one of these states in `attempt.json`:
 | `failed` | The edit-cage or another terminal invariant failed. |
 
 Only `ready_to_finish` with a current, compliant after verdict can authorize the attempt-bound receipt.
+
+A terminal attempt's after phase does not run again. Rerunning it is refused with the state (`ready_to_finish`: already finished; `stale`, `incomparable`, `failed`: ended), the receipt path, and the next step: `ripr agent status`, or a new `--phase before` while the gap is still open.
+
+`target/ripr/reports/agent-receipt.json` holds one receipt, so the next attempt's after phase replaces the previous attempt's receipt. `ripr agent status` then reports the earlier attempt's receipt as superseded by the later attempt (`receipt.superseded_by`) rather than as never issued.
 
 ## Compatibility outputs
 

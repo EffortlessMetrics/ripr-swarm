@@ -605,6 +605,28 @@ fn extract_let_bindings(body: &str) -> BTreeMap<String, String> {
     out
 }
 
+/// The literal a test body binds to `ident` through `let IDENT = LITERAL;`
+/// (the same scan [`ValueEnvFacts`] uses), for consumers that resolve one
+/// owner-call argument without a repo seam (the check-path activation
+/// stage). That consumer can promote a finding to `exposed`, so it fails
+/// closed where the seam scan is permissive: `None` when the identifier
+/// has no literal `let` binding, is declared `mut`, or is declared by more
+/// than one `let` in the body (a shadow may rebind it to a computed value).
+pub(crate) fn test_let_bound_literal(body: &str, ident: &str) -> Option<String> {
+    let cleaned = strip_comments_and_strings(body);
+    let mut declarations = find_all(&cleaned, "let ").into_iter().filter_map(|start| {
+        let after_let = &cleaned[start + 4..];
+        let stmt = &after_let[..top_level_semicolon(after_let).unwrap_or(after_let.len())];
+        let lhs = &stmt[..first_single_eq(stmt).unwrap_or(stmt.len())];
+        let_binding_ident(lhs).filter(|(name, _)| *name == ident)
+    });
+    let (_, is_mut) = declarations.next()?;
+    if is_mut || declarations.next().is_some() {
+        return None;
+    }
+    extract_let_bindings(body).remove(ident)
+}
+
 /// What one source file says about a named constant, for consumers that
 /// compare a changed boundary against a `const` operand
 /// (`amount >= DISCOUNT_THRESHOLD`). Reuses the same-file declaration scan
