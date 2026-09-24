@@ -281,10 +281,7 @@ pub(crate) fn build_diff_report(
                 why: if analyzed {
                     "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean".to_string()
                 } else if !advisory.enabled {
-                    format!(
-                        "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"{}\"]",
-                        advisory.language
-                    )
+                    advisory.not_enabled_why()
                 } else if let Some(run) = failed_run {
                     format!(
                         "preview adapter did not complete successfully ({}); files detected but not analyzed; empty result is not Rust-grade clean",

@@ -61,15 +61,71 @@ fn parse_rustc_version(output: &str) -> Option<RustcVersion> {
         .strip_prefix("rustc ")?
         .split_whitespace()
         .next()?;
-    let mut components = version_token.split('.');
+    let (core, suffix) = match version_token.find(['-', '+']) {
+        Some(index) => (&version_token[..index], &version_token[index..]),
+        None => (version_token, ""),
+    };
+    if !suffix.is_empty() && !valid_rustc_version_suffix(suffix) {
+        return None;
+    }
+    let mut components = core.split('.');
     let major = components.next()?.parse().ok()?;
     let minor = components.next()?.parse().ok()?;
-    let patch = components.next()?.split(['-', '+']).next()?.parse().ok()?;
+    let patch = components.next()?.parse().ok()?;
+    if components.next().is_some() {
+        return None;
+    }
     Some(RustcVersion {
         major,
         minor,
         patch,
     })
+}
+
+fn valid_rustc_version_suffix(suffix: &str) -> bool {
+    if suffix.is_empty() {
+        return false;
+    }
+    let (prerelease, build, has_prerelease) = if let Some(remainder) = suffix.strip_prefix('-') {
+        match remainder.split_once('+') {
+            Some((prerelease, build)) => (prerelease, Some(build), true),
+            None => (remainder, None, true),
+        }
+    } else if let Some(build) = suffix.strip_prefix('+') {
+        ("", Some(build), false)
+    } else {
+        return false;
+    };
+    if prerelease.is_empty() && (has_prerelease || build.is_none())
+        || (!prerelease.is_empty() && !prerelease.split('.').all(valid_prerelease_identifier))
+    {
+        return false;
+    }
+    build.is_none_or(|build| {
+        !build.is_empty()
+            && build
+                .split('.')
+                .all(|identifier| valid_semver_identifier(identifier, false))
+    })
+}
+
+fn valid_prerelease_identifier(identifier: &str) -> bool {
+    valid_semver_identifier(identifier, true)
+        && !identifier.starts_with('-')
+        && !identifier.ends_with('-')
+}
+
+fn valid_semver_identifier(identifier: &str, reject_numeric_leading_zero: bool) -> bool {
+    !identifier.is_empty()
+        && identifier
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        && !(reject_numeric_leading_zero
+            && identifier.len() > 1
+            && identifier.starts_with('0')
+            && identifier
+                .chars()
+                .all(|character| character.is_ascii_digit()))
 }
 
 fn minimum_rustc_version() -> Option<RustcVersion> {
@@ -90,24 +146,45 @@ fn minimum_rustc_version() -> Option<RustcVersion> {
     })
 }
 
-fn validate_rustc_version(output: &str) -> Result<(), String> {
-    let minimum = minimum_rustc_version().ok_or_else(|| {
-        format!(
+/// Why the local `rustc` is worth a word, split from whether the check passed.
+///
+/// `MINIMUM_RUSTC_VERSION` is ripr's own `rust-version`: what it takes to
+/// **build** or install ripr from source. The already-running ripr binary's
+/// built-in static analysis does not directly run `rustc`. Configured external
+/// producers have their own prerequisites; this advisory does not establish
+/// their compatibility.
+///
+/// So a version below the minimum is disclosed, not failed. A version that
+/// cannot be parsed still fails: an unreadable `rustc` is a real unknown, and
+/// an unknown must not read as a pass.
+enum RustcVersionVerdict {
+    /// Parsed and at or above ripr's build minimum.
+    Current,
+    /// Parsed and below ripr's build minimum, with the line to disclose.
+    BelowBuildMinimum(String),
+    /// Not parseable, with the failure to report.
+    Unreadable(String),
+}
+
+fn validate_rustc_version(output: &str) -> RustcVersionVerdict {
+    let Some(minimum) = minimum_rustc_version() else {
+        return RustcVersionVerdict::Unreadable(format!(
             "declared package rust-version `{MINIMUM_RUSTC_VERSION}` could not be parsed; update Cargo.toml"
-        )
-    })?;
-    let version = parse_rustc_version(output).ok_or_else(|| {
-        format!(
+        ));
+    };
+    let Some(version) = parse_rustc_version(output) else {
+        return RustcVersionVerdict::Unreadable(format!(
             "rustc version could not be parsed from `{}`; install Rust {minimum}+",
             output.trim()
-        )
-    })?;
+        ));
+    };
     if version < minimum {
-        return Err(format!(
-            "rustc {version} is below the minimum supported Rust version {minimum}; run `rustup update stable` or install Rust {minimum}+"
+        return RustcVersionVerdict::BelowBuildMinimum(format!(
+            "{}; below ripr's build minimum {minimum}. That minimum is what building or installing ripr from source requires. The already-running ripr binary's built-in static analysis does not directly run rustc; configured external producers have their own prerequisites. Run `rustup update stable` before building ripr from source.",
+            output.trim()
         ));
     }
-    Ok(())
+    RustcVersionVerdict::Current
 }
 
 /// How long a tool probe may run before it is terminated (#2183 review): a
@@ -411,6 +488,27 @@ pub(crate) fn rust_toolchain_scope(
     ))
 }
 
+/// Whether `root` is inside a Git work tree, or `None` when the probe could
+/// not run at all.
+///
+/// A probe that never ran may not assert that a directory is not a
+/// repository: git missing from `PATH`, or a spawn that times out, is a
+/// different state from git running and reporting no work tree, and only the
+/// second one has a repair the user can act on. `rev-parse` exiting nonzero
+/// is git answering, so that arm reports `false` rather than the unknown.
+fn is_inside_work_tree(root: &Path) -> Option<bool> {
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--is-inside-work-tree"],
+        Some(DOCTOR_TOOL_TIMEOUT),
+    )
+    .ok()?;
+    if !output.status.success() {
+        return Some(false);
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim() == "true")
+}
+
 /// Evaluate the doctor core checks and also return the raw config load
 /// result, so the human-readable projection can print full local detail
 /// without going through the redacted JSON evidence. `detected` is the
@@ -464,6 +562,33 @@ fn evaluate_doctor_core_with_probe(
             DoctorStatus::Fail,
             Some(format!("no Cargo.toml found at {}", root.display())),
         );
+    }
+    match is_inside_work_tree(root) {
+        Some(true) => report.add_check(
+            "git_repository",
+            DoctorStatus::Pass,
+            Some(format!("inside a Git work tree at {}", root.display())),
+        ),
+        Some(false) => report.add_check(
+            "git_repository",
+            DoctorStatus::Fail,
+            Some(format!(
+                "not inside a Git work tree at {}; the diff-scoped commands read committed \
+                 history and cannot run here. For a repository-free scan, run `ripr check --root \
+                 {} --format repo-exposure-md`",
+                root.display(),
+                root.display()
+            )),
+        ),
+        None => report.add_check(
+            "git_repository",
+            DoctorStatus::Fail,
+            Some(format!(
+                "could not determine whether {} is inside a Git work tree; the git tool check \
+                 below carries the reason",
+                root.display()
+            )),
+        ),
     }
     match &config {
         Ok(config) => report.add_check(
@@ -578,8 +703,9 @@ fn doctor_tool_check_success(tool: &str, stdout: &[u8]) -> DoctorToolCheckResult
         return DoctorToolCheckResult::pass(evidence);
     }
     match validate_rustc_version(&evidence) {
-        Ok(()) => DoctorToolCheckResult::pass(evidence),
-        Err(error) => DoctorToolCheckResult::failure(error),
+        RustcVersionVerdict::Current => DoctorToolCheckResult::pass(evidence),
+        RustcVersionVerdict::BelowBuildMinimum(note) => DoctorToolCheckResult::pass(note),
+        RustcVersionVerdict::Unreadable(error) => DoctorToolCheckResult::failure(error),
     }
 }
 
@@ -703,6 +829,21 @@ mod tests {
 
     static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    fn below_minimum_rustc_output() -> Result<String, String> {
+        let minimum = minimum_rustc_version()
+            .ok_or_else(|| "minimum rustc version should parse".to_string())?;
+        let below = if minimum.patch > 0 {
+            format!("{}.{}.{}", minimum.major, minimum.minor, minimum.patch - 1)
+        } else if minimum.minor > 0 {
+            format!("{}.{}.0", minimum.major, minimum.minor - 1)
+        } else if minimum.major > 0 {
+            format!("{}.99.0", minimum.major - 1)
+        } else {
+            return Err("cannot construct a version below 0.0.0".to_string());
+        };
+        Ok(format!("rustc {below} (abc 2024-01-01)"))
+    }
+
     fn unique_test_dir(label: &str) -> std::path::PathBuf {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -713,6 +854,108 @@ mod tests {
             std::process::id(),
             TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    /// Run `git` in `dir` and return its trimmed stdout.
+    fn git_in(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+        let output = crate::git::run_git_output_with_deadline(dir, args, Some(DOCTOR_TOOL_TIMEOUT))
+            .map_err(|error| format!("git {args:?} in {}: {error}", dir.display()))?;
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    #[test]
+    fn a_root_outside_a_git_work_tree_is_named_as_such() -> Result<(), String> {
+        // A bare repository is not a work tree wherever the fixture lands.
+        // `std::env::temp_dir()` resolves inside this checkout in some
+        // environments, so a plain empty directory would be a work tree and
+        // this test would prove nothing. The construction check below is what
+        // catches that, and it is the reason the fixture is a bare repository.
+        let mut failures = Vec::new();
+
+        // Two fixtures, because git answers this question two different ways
+        // and the reported case is the second. A bare repository prints
+        // `false` and exits 0; a directory git cannot read as a repository
+        // exits nonzero, which is the arm a plain directory outside any
+        // checkout takes. A plain directory is not usable as a fixture here:
+        // the temp root resolves inside this checkout in some environments,
+        // where it would be a work tree.
+        let bare = unique_test_dir("outside-work-tree-bare");
+        std::fs::create_dir_all(&bare).map_err(|error| format!("create fixture: {error}"))?;
+        git_in(&bare, &["init", "--bare", "."])?;
+
+        let gitfile = unique_test_dir("outside-work-tree-gitfile");
+        std::fs::create_dir_all(&gitfile).map_err(|error| format!("create fixture: {error}"))?;
+        std::fs::write(gitfile.join(".git"), "not a gitfile\n")
+            .map_err(|error| format!("write fixture gitfile: {error}"))?;
+
+        for fixture in [&bare, &gitfile] {
+            let inside =
+                git_in(fixture, &["rev-parse", "--is-inside-work-tree"]).unwrap_or_default();
+            if inside == "true" {
+                failures.push(format!(
+                    "fixture {} is inside a work tree, so it proves nothing",
+                    fixture.display()
+                ));
+                continue;
+            }
+            let report = evaluate_doctor_core_with_config(fixture, &[]).report;
+            match report
+                .checks
+                .iter()
+                .find(|check| check.name == "git_repository")
+            {
+                None => failures.push(format!(
+                    "{}: no git_repository check was reported",
+                    fixture.display()
+                )),
+                Some(check) => {
+                    if check.status != DoctorStatus::Fail.into() {
+                        failures.push(format!(
+                            "{}: a root outside a work tree reported {:?}",
+                            fixture.display(),
+                            check.status
+                        ));
+                    }
+                    let evidence = check.evidence.as_deref().unwrap_or_default();
+                    // The line has to carry the state, the consequence, and a
+                    // command that works where the user is standing. Advice
+                    // that cannot run there is what this check replaces.
+                    for expected in [
+                        "not inside a Git work tree",
+                        "cannot run here",
+                        "--format repo-exposure-md",
+                    ] {
+                        if !evidence.contains(expected) {
+                            failures.push(format!("`{evidence}` does not say `{expected}`"));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Positive control: this checkout is a work tree, so the same check
+        // must pass here. Without it the test would also pass against a check
+        // that always fails.
+        let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        match evaluate_doctor_core_with_config(checkout, &[])
+            .report
+            .checks
+            .iter()
+            .find(|check| check.name == "git_repository")
+        {
+            Some(check) if check.status == DoctorStatus::Pass.into() => {}
+            other => failures.push(format!(
+                "this checkout should report a work tree, reported {other:?}"
+            )),
+        }
+
+        let _ = std::fs::remove_dir_all(&bare);
+        let _ = std::fs::remove_dir_all(&gitfile);
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
     }
 
     #[test]
@@ -739,17 +982,37 @@ mod tests {
         assert_eq!(report.status, DoctorStatus::Fail);
     }
 
+    /// A toolchain below ripr's own `rust-version` is disclosed, not failed:
+    /// that minimum is what building or installing ripr from source takes,
+    /// while the already-running binary's built-in static analysis does not
+    /// directly run `rustc`. The malformed-output and parser controls below
+    /// ensure that this advisory cannot hide an unknown version.
     #[test]
-    fn rustc_version_check_fails_below_msrv_and_passes_supported_versions() -> Result<(), String> {
+    fn rustc_below_build_minimum_is_disclosed_and_supported_versions_pass() -> Result<(), String> {
+        let minimum = minimum_rustc_version()
+            .ok_or_else(|| {
+                "minimum rustc version should parse for the disclosure test".to_string()
+            })?
+            .to_string();
+        let below = below_minimum_rustc_output()?;
         let cases = [
             (
-                "rustc 1.80.0 (abc 2024-01-01)",
-                DoctorStatus::Fail,
-                "below the minimum supported Rust version",
+                below.clone(),
+                DoctorStatus::Pass,
+                "below ripr's build minimum",
             ),
-            ("rustc 1.95.0 (abc 2026-04-14)", DoctorStatus::Pass, ""),
             (
-                "rustc 1.96.1-nightly (abc 2026-05-01)",
+                format!("rustc {minimum} (abc 2026-04-14)"),
+                DoctorStatus::Pass,
+                "",
+            ),
+            (
+                format!("rustc {minimum}-nightly (abc 2026-05-01)"),
+                DoctorStatus::Pass,
+                "",
+            ),
+            (
+                format!("rustc {minimum}+build.1 (abc 2026-05-01)"),
                 DoctorStatus::Pass,
                 "",
             ),
@@ -769,22 +1032,130 @@ mod tests {
                 ));
             }
         }
+
+        // Discriminator 1: the below-minimum case must keep the actual and
+        // minimum versions, the build/install and built-in-analysis scopes,
+        // external-producer limitation, and an action, or the note is not
+        // usable.
+        let old_toolchain = doctor_tool_check_success("rustc", below.as_bytes());
+        for expected in [
+            "below ripr's build minimum",
+            &minimum,
+            "building or installing ripr from source",
+            "built-in static analysis does not directly run rustc",
+            "configured external producers have their own prerequisites",
+            "rustup update stable",
+        ] {
+            if !old_toolchain.evidence.contains(expected) {
+                return Err(format!(
+                    "the disclosure must contain {expected:?}: {:?}",
+                    old_toolchain.evidence
+                ));
+            }
+        }
+        if !old_toolchain.evidence.contains("rustc ") {
+            return Err(format!(
+                "the disclosure must name the actual rustc version: {:?}",
+                old_toolchain.evidence
+            ));
+        }
+
+        // Discriminator 2: a current toolchain must not carry the note, so
+        // the disclosure cannot be unconditional text.
+        let current = format!("rustc {minimum} (abc 2026-04-14)");
+        let current = doctor_tool_check_success("rustc", current.as_bytes());
+        if current.evidence.contains("below ripr's build minimum") {
+            return Err(format!(
+                "a supported toolchain must not be disclosed as below the minimum: {:?}",
+                current.evidence
+            ));
+        }
         Ok(())
     }
 
     #[test]
     fn rustc_version_check_fails_closed_for_malformed_output() -> Result<(), String> {
-        let result = doctor_tool_check_success("rustc", b"rustc unavailable");
-        if result.status != DoctorStatus::Fail {
+        for output in [
+            "rustc unavailable",
+            "rustc 1.80.0-",
+            "rustc 1.80.0+",
+            "rustc 1.80.0-+",
+            "rustc 1.80.0-+build",
+            "rustc 1.80.0--",
+            "rustc 1.80.0+build+extra",
+            "rustc 1.80.0-nightly..1",
+            "rustc 1.80.0+build..1",
+            "rustc 1.80.0-nightly+build.",
+        ] {
+            let result = doctor_tool_check_success("rustc", output.as_bytes());
+            if result.status != DoctorStatus::Fail {
+                return Err(format!(
+                    "malformed rustc output unexpectedly passed for {output:?}: {result:?}"
+                ));
+            }
+            if !result.evidence.contains("could not be parsed") {
+                return Err(format!(
+                    "unexpected malformed-output evidence for {output:?}: {:?}",
+                    result.evidence
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn below_minimum_rustc_advises_through_public_doctor_projection() -> Result<(), String> {
+        let below = below_minimum_rustc_output()?;
+        let rustc = doctor_tool_check_success("rustc", below.as_bytes());
+        let mut report = DoctorReport::new("/workspace");
+        report.add_check("tool_rustc", rustc.status, Some(rustc.evidence.clone()));
+
+        if report.status != DoctorStatus::Pass {
+            return Err(format!("below-minimum advisory must pass: {report:?}"));
+        }
+        if let Err(error) = doctor_report_result(&report) {
+            return Err(format!("doctor result must pass: {error}"));
+        }
+        let text = report.render_text();
+        for expected in [
+            "doctor checks passed",
+            &below,
+            "below ripr's build minimum",
+            "building or installing ripr from source",
+            "built-in static analysis does not directly run rustc",
+            "configured external producers have their own prerequisites",
+            "rustup update stable",
+        ] {
+            if !text.contains(expected) {
+                return Err(format!("rendered text is missing {expected:?}: {text}"));
+            }
+        }
+        let json = report.render_json()?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| format!("invalid JSON: {error}"))?;
+        if parsed["status"] != "pass" || parsed["checks"][0]["name"] != "tool_rustc" {
             return Err(format!(
-                "malformed rustc output unexpectedly passed: {result:?}"
+                "unexpected doctor JSON status projection: {parsed}"
             ));
         }
-        if !result.evidence.contains("could not be parsed") {
-            return Err(format!(
-                "unexpected malformed-output evidence: {:?}",
-                result.evidence
-            ));
+        if parsed["checks"][0]["status"] != "pass" {
+            return Err(format!("rustc check must render as pass: {parsed}"));
+        }
+        let evidence = parsed["checks"][0]["evidence"]
+            .as_str()
+            .ok_or_else(|| format!("rustc evidence must be rendered: {parsed}"))?;
+        for expected in [
+            &below,
+            "building or installing ripr from source",
+            "built-in static analysis does not directly run rustc",
+            "configured external producers have their own prerequisites",
+            "rustup update stable",
+        ] {
+            if !evidence.contains(expected) {
+                return Err(format!(
+                    "rendered JSON evidence is missing {expected:?}: {parsed}"
+                ));
+            }
         }
         Ok(())
     }
@@ -801,13 +1172,32 @@ mod tests {
             "rustc 1.95",
             "rustc 1.95.x",
             "rustc 1.95.-nightly",
+            "rustc 1.95.0-",
+            "rustc 1.95.0+",
+            "rustc 1.95.0-+",
+            "rustc 1.95.0-+build",
+            "rustc 1.95.0--",
+            "rustc 1.95.0+build+extra",
+            "rustc 1.95.0-nightly..1",
+            "rustc 1.95.0+build..1",
+            "rustc 1.95.0-nightly+build.",
         ] {
             assert!(
                 parse_rustc_version(output).is_none(),
                 "malformed rustc output unexpectedly parsed: {output:?}"
             );
         }
-        assert!(parse_rustc_version("rustc 1.95.0-nightly").is_some());
+        for output in [
+            "rustc 1.95.0-nightly",
+            "rustc 1.95.0-beta.1",
+            "rustc 1.95.0+build.1",
+            "rustc 1.95.0-nightly+build.01",
+        ] {
+            assert!(
+                parse_rustc_version(output).is_some(),
+                "valid rustc suffix unexpectedly rejected: {output:?}"
+            );
+        }
         assert_eq!(
             doctor_tool_check_success("cargo", b"cargo 1.95.0").status,
             DoctorStatus::Pass
@@ -855,10 +1245,10 @@ mod tests {
         // (a retryable launch failure flips the verdict without proving
         // anything about root selection), and the 5s production timeout can
         // elapse on a loaded host before /bin/sh even starts. Both produce
-        // the same observable — evidence without the MSRV string — so the
-        // oracle is made load-independent: the spawn goes through the shared
-        // bounded retry (only a retryable launch failure is retried, never a
-        // real verdict) under a generous test ceiling instead of the
+        // the same observable — evidence without the selected root's marker —
+        // so the oracle is made load-independent: the spawn goes through the
+        // shared bounded retry (only a retryable launch failure is retried,
+        // never a real verdict) under a generous test ceiling instead of the
         // production constant.
         let result = probe_published_tool_with_command(
             "rustc",
@@ -868,17 +1258,30 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
 
+        // The subject here is which directory the probe ran in, so the oracle
+        // is the shim's own per-directory marker rather than the verdict: the
+        // selected root prints `target-root`, the caller root `caller-root`.
+        // A version below ripr's build minimum is now a disclosure rather than
+        // a failure, so a status assertion would no longer discriminate.
+        assert!(
+            result.evidence.contains("target-root"),
+            "probe must run in the selected root; evidence: {}",
+            result.evidence
+        );
+        assert!(
+            !result.evidence.contains("caller-root"),
+            "probe must not run in the caller root; evidence: {}",
+            result.evidence
+        );
         assert_eq!(
             result.status,
-            DoctorStatus::Fail,
+            DoctorStatus::Pass,
             "evidence: {}",
             result.evidence
         );
         assert!(
-            result
-                .evidence
-                .contains("below the minimum supported Rust version"),
-            "evidence: {}",
+            result.evidence.contains("below ripr's build minimum"),
+            "the selected root's 1.94.0 must still be disclosed; evidence: {}",
             result.evidence
         );
         Ok(())
