@@ -3506,6 +3506,17 @@ mod tests {
         other_root["root"] = json!("crates/other");
         let mut other_head = review_comments_report(vec![eligible()]);
         other_head["head"] = json!("feature-tip");
+        // The malformed branches: another tool's report, and reports that
+        // do not record their status, root, or head.
+        let mut other_tool = review_comments_report(vec![eligible()]);
+        other_tool["tool"] = json!("not-ripr");
+        let unrecorded = |field: &str| {
+            let mut report = review_comments_report(vec![eligible()]);
+            if let Some(object) = report.as_object_mut() {
+                object.remove(field);
+            }
+            report
+        };
         let seam_route = "ripr review-comments --root . --base origin/main --head HEAD --out target/ripr/review/comments.json";
         for (name, report, state, needle) in [
             (
@@ -3531,6 +3542,30 @@ mod tests {
                 Some(other_head),
                 "stale_artifact",
                 "generated for head `feature-tip`, not `HEAD`",
+            ),
+            (
+                "tool",
+                Some(other_tool),
+                "malformed_artifact",
+                "the file is not a RIPR review-comments report",
+            ),
+            (
+                "unrecorded status",
+                Some(unrecorded("status")),
+                "malformed_artifact",
+                "the report does not record a status",
+            ),
+            (
+                "unrecorded root",
+                Some(unrecorded("root")),
+                "malformed_artifact",
+                "the report does not record its root",
+            ),
+            (
+                "unrecorded head",
+                Some(unrecorded("head")),
+                "malformed_artifact",
+                "the report does not record its head",
             ),
             (
                 "missing",
