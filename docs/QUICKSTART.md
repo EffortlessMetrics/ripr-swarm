@@ -272,7 +272,9 @@ ripr agent repair --root . --seam-id <seam_id> --phase before
 ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
-Ask RIPR what local artifacts already exist when resuming or diagnosing:
+When resuming, ask RIPR where you are. `agent status` prints the waiting
+attempt's `--attempt ... --phase after` command, `ripr pilot` when no seam is
+known yet, or a warning listing the choices when it would have to guess:
 
 ```bash
 ripr agent status --root .

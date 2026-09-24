@@ -171,6 +171,18 @@ Updated:
 ## Pending — python_substring_sink_alignment (3)
 
 Reason:
+RIPR-SPEC-0028: predicate boundary activation rule populates observed_values with literal owner-call arguments from strong related tests; classification unchanged
+
+Command:
+`cargo xtask goldens bless python_substring_sink_alignment --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_substring_sink_alignment (4)
+
+Reason:
 RIPR-SPEC-0084: CheckInput default base is now None (was origin/main); --diff fixture envelopes honestly omit the inapplicable top-level base and record base_revision null. Only base/base_revision changed; findings, counts, and input_identity byte-identical.
 
 Command:
