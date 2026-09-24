@@ -11048,7 +11048,12 @@ Field contract:
   `top_issue.missing_discriminator`, `top_issue.focused_proof_intent`,
   `top_issue.verify_command`, `top_issue.receipt_command`, and
   `top_issue.static_evidence_boundary` are the typed one-screen repair
-  vocabulary.
+  vocabulary. They mirror the CLI first screen when the supplied artifacts
+  carry the field. For `first_useful_action` inputs, current evidence strength
+  must come from `selected.current_evidence_strength`. Legacy PR guidance,
+  gate, baseline, and assistant-health inputs may normalize existing typed
+  class/status fields, but must not infer the value from Markdown prose or code
+  inspection.
 - `top_issue.repair_command` is present only when an input carries the repair
   start (#3906): first-action `commands.repair`, a review card's
   `llm_guidance.repair_command`, or an acknowledged gate route's
@@ -11056,12 +11061,7 @@ Field contract:
   when present, else a carried read-only inspection command (first-action
   `commands.context_packet`, a card's `llm_guidance.command`, or a gate
   route's `inspection_command`), else `null`. The panel never builds an
-  `agent start` or `agent repair` command from a bare seam id. They mirror the CLI first screen when the supplied artifacts
-  carry the field. For `first_useful_action` inputs, current evidence strength
-  must come from `selected.current_evidence_strength`. Legacy PR guidance,
-  gate, baseline, and assistant-health inputs may normalize existing typed
-  class/status fields, but must not infer the value from Markdown prose or code
-  inspection.
+  `agent start` or `agent repair` command from a bare seam id.
 - `movement.*` preserves before/after static movement when supplied. It is not
   runtime mutation confirmation.
 - `debt_delta.*` carries PR-local movement from baseline, RIPR Zero, gate, or
