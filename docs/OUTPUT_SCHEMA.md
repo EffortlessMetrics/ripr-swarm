@@ -7142,8 +7142,11 @@ Field contract:
 - `comments[].placement` - GitHub-compatible changed-line placement. Items
   without safe placement belong in `summary_only[]`.
 - `comments[].placement.mode` - `"exact_seam_line"`,
-  `"owner_function_changed_line"`, or `"same_file_changed_line"`. The renderer
-  must prefer summary-only guidance over misleading line placement.
+  `"owner_function_changed_line"`, or `"same_file_changed_line"`. The last
+  names a changed line inside the seam owner's span that owner attribution
+  bound to a nested function; a changed line elsewhere in the same file is
+  not a placement. The renderer must prefer summary-only guidance over
+  misleading line placement.
 - `comments[].kind` - seam kind from the existing static evidence.
 - `comments[].grip_class` - seam grip class from the existing static evidence.
 - `comments[].severity` - configured report severity for the recommendation.

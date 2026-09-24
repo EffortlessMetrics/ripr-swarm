@@ -153,7 +153,7 @@ pins the current behavior for:
 
 - exact changed seam line;
 - changed owner-function line;
-- same-file changed line;
+- changed line inside the seam owner's span (nested function);
 - summary-only fallback;
 - cap suppression;
 - configured-off suppression;
