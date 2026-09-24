@@ -1576,8 +1576,7 @@ mod tests {
         };
         let probe = probe("src/owner.rs", "target_owner(value)");
 
-        let related =
-            find_related_tests(&probe, Some(&owner), &index, true, Some(&chain), None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, Some(&chain), None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "reaches_through_helper");
