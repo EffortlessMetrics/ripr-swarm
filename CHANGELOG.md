@@ -295,6 +295,14 @@ are scoped or reviewed.
 
 ### Changed
 
+- Eval-sweep refresh no longer discards cleanup or sealed-dir restore
+  `Result`s with `let _ =`. `discard_partial_dir` matches `remove_dir_all`
+  and still ignores a failure. `remove_file`, the unix permission restore,
+  and the windows `icacls` restore match the same way.
+  `clippy-debt-0001` stays deferred; its `blocked_by` text now counts
+  the remaining `let _ =` sites
+  ([#4040](https://github.com/EffortlessMetrics/ripr-swarm/issues/4040)).
+
 - Diff load tests no longer discard `remove_dir_all` or `remove_file`
   with `let _ =`. Directory cleanup matches the `io::Result` in
   `ignore_remove_dir_all` and still ignores a failure. The one file
