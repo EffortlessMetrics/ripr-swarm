@@ -90,24 +90,45 @@ fn minimum_rustc_version() -> Option<RustcVersion> {
     })
 }
 
-fn validate_rustc_version(output: &str) -> Result<(), String> {
-    let minimum = minimum_rustc_version().ok_or_else(|| {
-        format!(
+/// Why the local `rustc` is worth a word, split from whether the check passed.
+///
+/// `MINIMUM_RUSTC_VERSION` is ripr's own `rust-version`: what it takes to
+/// **build** ripr. Analysis never invokes `rustc` — the only processes ripr
+/// spawns for a `check` are `git` and `cargo` — so a toolchain below that
+/// minimum is not a broken setup for a ripr that is already installed and
+/// running. It is a fact about the next `cargo install ripr`.
+///
+/// So a version below the minimum is disclosed, not failed. A version that
+/// cannot be parsed still fails: an unreadable `rustc` is a real unknown, and
+/// an unknown must not read as a pass.
+enum RustcVersionVerdict {
+    /// Parsed and at or above ripr's build minimum.
+    Current,
+    /// Parsed and below ripr's build minimum, with the line to disclose.
+    BelowBuildMinimum(String),
+    /// Not parseable, with the failure to report.
+    Unreadable(String),
+}
+
+fn validate_rustc_version(output: &str) -> RustcVersionVerdict {
+    let Some(minimum) = minimum_rustc_version() else {
+        return RustcVersionVerdict::Unreadable(format!(
             "declared package rust-version `{MINIMUM_RUSTC_VERSION}` could not be parsed; update Cargo.toml"
-        )
-    })?;
-    let version = parse_rustc_version(output).ok_or_else(|| {
-        format!(
+        ));
+    };
+    let Some(version) = parse_rustc_version(output) else {
+        return RustcVersionVerdict::Unreadable(format!(
             "rustc version could not be parsed from `{}`; install Rust {minimum}+",
             output.trim()
-        )
-    })?;
+        ));
+    };
     if version < minimum {
-        return Err(format!(
-            "rustc {version} is below the minimum supported Rust version {minimum}; run `rustup update stable` or install Rust {minimum}+"
+        return RustcVersionVerdict::BelowBuildMinimum(format!(
+            "{}; below ripr's build minimum {minimum}. That minimum is what `cargo install ripr` needs; analysis never runs rustc, so it does not limit this install. Run `rustup update stable` before building ripr from source.",
+            output.trim()
         ));
     }
-    Ok(())
+    RustcVersionVerdict::Current
 }
 
 /// How long a tool probe may run before it is terminated (#2183 review): a
@@ -578,8 +599,9 @@ fn doctor_tool_check_success(tool: &str, stdout: &[u8]) -> DoctorToolCheckResult
         return DoctorToolCheckResult::pass(evidence);
     }
     match validate_rustc_version(&evidence) {
-        Ok(()) => DoctorToolCheckResult::pass(evidence),
-        Err(error) => DoctorToolCheckResult::failure(error),
+        RustcVersionVerdict::Current => DoctorToolCheckResult::pass(evidence),
+        RustcVersionVerdict::BelowBuildMinimum(note) => DoctorToolCheckResult::pass(note),
+        RustcVersionVerdict::Unreadable(error) => DoctorToolCheckResult::failure(error),
     }
 }
 
@@ -739,13 +761,18 @@ mod tests {
         assert_eq!(report.status, DoctorStatus::Fail);
     }
 
+    /// A toolchain below ripr's own `rust-version` is disclosed, not failed:
+    /// that minimum is what building ripr takes, and analysis never invokes
+    /// `rustc`. The discriminators are the pair below the table — the old
+    /// wording carried `Fail` here, and an unreadable version must still fail,
+    /// so a blanket "rustc always passes" cannot satisfy this test.
     #[test]
-    fn rustc_version_check_fails_below_msrv_and_passes_supported_versions() -> Result<(), String> {
+    fn rustc_below_build_minimum_is_disclosed_and_supported_versions_pass() -> Result<(), String> {
         let cases = [
             (
                 "rustc 1.80.0 (abc 2024-01-01)",
-                DoctorStatus::Fail,
-                "below the minimum supported Rust version",
+                DoctorStatus::Pass,
+                "below ripr's build minimum",
             ),
             ("rustc 1.95.0 (abc 2026-04-14)", DoctorStatus::Pass, ""),
             (
@@ -768,6 +795,28 @@ mod tests {
                     result.evidence
                 ));
             }
+        }
+
+        // Discriminator 1: the old-version case must keep the version itself
+        // and an action, or the note is not usable.
+        let old_toolchain = doctor_tool_check_success("rustc", b"rustc 1.80.0 (abc 2024-01-01)");
+        if !old_toolchain.evidence.contains("1.80.0")
+            || !old_toolchain.evidence.contains("rustup update stable")
+        {
+            return Err(format!(
+                "the disclosure must name the version and an action: {:?}",
+                old_toolchain.evidence
+            ));
+        }
+
+        // Discriminator 2: a current toolchain must not carry the note, so
+        // the disclosure cannot be unconditional text.
+        let current = doctor_tool_check_success("rustc", b"rustc 1.95.0 (abc 2026-04-14)");
+        if current.evidence.contains("below ripr's build minimum") {
+            return Err(format!(
+                "a supported toolchain must not be disclosed as below the minimum: {:?}",
+                current.evidence
+            ));
         }
         Ok(())
     }
@@ -855,10 +904,10 @@ mod tests {
         // (a retryable launch failure flips the verdict without proving
         // anything about root selection), and the 5s production timeout can
         // elapse on a loaded host before /bin/sh even starts. Both produce
-        // the same observable — evidence without the MSRV string — so the
-        // oracle is made load-independent: the spawn goes through the shared
-        // bounded retry (only a retryable launch failure is retried, never a
-        // real verdict) under a generous test ceiling instead of the
+        // the same observable — evidence without the selected root's marker —
+        // so the oracle is made load-independent: the spawn goes through the
+        // shared bounded retry (only a retryable launch failure is retried,
+        // never a real verdict) under a generous test ceiling instead of the
         // production constant.
         let result = probe_published_tool_with_command(
             "rustc",
@@ -868,17 +917,30 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
 
+        // The subject here is which directory the probe ran in, so the oracle
+        // is the shim's own per-directory marker rather than the verdict: the
+        // selected root prints `target-root`, the caller root `caller-root`.
+        // A version below ripr's build minimum is now a disclosure rather than
+        // a failure, so a status assertion would no longer discriminate.
+        assert!(
+            result.evidence.contains("target-root"),
+            "probe must run in the selected root; evidence: {}",
+            result.evidence
+        );
+        assert!(
+            !result.evidence.contains("caller-root"),
+            "probe must not run in the caller root; evidence: {}",
+            result.evidence
+        );
         assert_eq!(
             result.status,
-            DoctorStatus::Fail,
+            DoctorStatus::Pass,
             "evidence: {}",
             result.evidence
         );
         assert!(
-            result
-                .evidence
-                .contains("below the minimum supported Rust version"),
-            "evidence: {}",
+            result.evidence.contains("below ripr's build minimum"),
+            "the selected root's 1.94.0 must still be disclosed; evidence: {}",
             result.evidence
         );
         Ok(())
