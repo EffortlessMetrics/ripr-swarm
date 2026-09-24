@@ -489,12 +489,24 @@ pub(super) fn imported_module_matches_owner(import: &PythonImport, owner: &Pytho
         .is_some_and(|stem| import.imported.rsplit('.').next() == Some(stem))
 }
 
-/// The dotted module path of the owner file itself: `src/handler.py` →
-/// `src.handler`, `src/pkg/__init__.py` → `src.pkg`. Identity comparisons must
-/// use this full path — a bare file stem is the token-coincidence family
-/// (`src/tests/test_handler.py` importing `.handler` resolves to
-/// `src.tests.handler`, a different module with the same stem).
-fn owner_module_path(file: &Path) -> String {
+/// The dotted module paths under which the owner file can be imported.
+///
+/// The first entry is the owner file's full repository-relative module path:
+/// `src/handler.py` → `src.handler`, `src/pkg/__init__.py` → `src.pkg`.
+/// Identity comparisons must use a full dotted path — a bare file stem is the
+/// token-coincidence family (`src/tests/test_handler.py` importing `.handler`
+/// resolves to `src.tests.handler`, a different module with the same stem).
+///
+/// A directory named `src` is the PyPA *src layout* import root: with
+/// `src/pricing/discounts.py`, tests import `pricing.discounts` (pytest
+/// `pythonpath = ["src"]` or an installed package), never `src.pricing...`. So
+/// for every `src` directory segment the dotted path *below* it is also an
+/// importable name of the same file (`pricing.discounts`, and in a monorepo
+/// `packages/foo/src/foo/bar.py` → `foo.bar`). The full path is kept too, so
+/// projects that really write `from src.pricing.discounts import ...` still
+/// match. Each form is a complete module path compared by exact equality; no
+/// stem or suffix matching is introduced.
+fn owner_module_paths(file: &Path) -> Vec<String> {
     let normalized = normalized_path(file);
     let mut parts = normalized
         .split('/')
@@ -508,15 +520,29 @@ fn owner_module_path(file: &Path) -> String {
             parts.pop();
         }
     }
-    parts.join(".")
+    let mut paths = vec![parts.join(".")];
+    // Only directory segments are import roots: the final segment is the module
+    // itself (`src.py` / `src/__init__.py` is a module named `src`).
+    let directory_count = parts.len().saturating_sub(1);
+    for (idx, part) in parts.iter().enumerate().take(directory_count) {
+        if *part == "src" {
+            let below = parts.get(idx + 1..).unwrap_or_default().join(".");
+            if !below.is_empty() && !paths.contains(&below) {
+                paths.push(below);
+            }
+        }
+    }
+    paths
 }
 
-/// Whether a `from M import Y` statement's source module `M` points at the owner's
-/// module. Compares the import's `source_module` last segment against the owner
-/// file stem (`from src.handler import validate`, `from handler import validate`,
-/// and a resolved `from .handler import validate` all match an owner in
-/// `src/handler.py`). A plain `import X` has an empty `source_module` and so
-/// never matches — fail closed.
+/// Whether a `from M import Y` statement's source module `M` is the owner's
+/// module. `M` must equal one of the owner's full dotted module paths (see
+/// [`owner_module_paths`]): `from src.handler import validate`, a resolved
+/// `from .handler import validate` in a sibling file, and — for the src layout
+/// — `from handler import validate` all match an owner in `src/handler.py`;
+/// `from src.checker import validate` or `from other.handler import validate`
+/// do not. A plain `import X` has an empty `source_module` and so never
+/// matches — fail closed.
 pub(super) fn import_source_module_matches_owner(
     import: &PythonImport,
     owner: &PythonOwner,
@@ -524,7 +550,7 @@ pub(super) fn import_source_module_matches_owner(
     if import.source_module.is_empty() {
         return false;
     }
-    import.source_module == owner_module_path(&owner.file)
+    owner_module_paths(&owner.file).contains(&import.source_module)
 }
 
 /// Free-function module-identity evidence: a strong observing test imports the

@@ -4085,20 +4085,26 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         commands[2].2[0]["target_artifact"],
         "target/ripr/agent/agent-packet.json"
     );
+    // Issue #3872: pasted redirect targets anchor at the resolved --root
+    // (the anchor math itself is pinned in loop_commands tests).
     assert_eq!(
         commands[2].2[0]["command"],
-        format!(
-            "ripr agent packet --root . --seam-id {} --json > target/ripr/agent/agent-packet.json",
-            seam.seam.id().as_str()
+        crate::agent::loop_commands::agent_packet_command(
+            ".",
+            seam.seam.id().as_str(),
+            "target/ripr/agent/agent-packet.json",
         )
+        .as_str()
     );
     assert_eq!(commands[3].0, "Agent handoff: copy brief command");
     assert_eq!(
         commands[3].2[0]["command"],
-        format!(
-            "ripr agent brief --root . --seam-id {} --json > target/ripr/agent/agent-brief.json",
-            seam.seam.id().as_str()
+        crate::agent::loop_commands::agent_brief_command(
+            ".",
+            seam.seam.id().as_str(),
+            "target/ripr/agent/agent-brief.json",
         )
+        .as_str()
     );
     assert_eq!(
         commands[4].0,
@@ -4106,12 +4112,24 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     );
     assert_eq!(
         commands[4].2[0]["command"],
-        "ripr check --root . --base origin/main --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json"
+        crate::agent::loop_commands::check_repo_exposure_command_with_base(
+            ".",
+            Some("origin/main"),
+            "draft",
+            "target/ripr/pilot/after.repo-exposure.json",
+        )
+        .as_str()
     );
     assert_eq!(commands[5].0, "Verify after test: copy verify command");
     assert_eq!(
         commands[5].2[0]["command"],
-        "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > target/ripr/agent/agent-verify.json"
+        crate::agent::loop_commands::agent_verify_command(
+            ".",
+            "target/ripr/pilot/repo-exposure.json",
+            "target/ripr/pilot/after.repo-exposure.json",
+            Some("target/ripr/agent/agent-verify.json"),
+        )
+        .as_str()
     );
     assert_eq!(commands[6].0, "Review result: copy receipt command");
     assert_eq!(
@@ -5972,7 +5990,9 @@ fn seam_code_actions_fail_closed_for_cross_language_target_unresolved() -> Resul
 }
 
 #[test]
-fn agent_loop_command_payloads_stay_workspace_relative_for_platform_roots() -> Result<(), String> {
+fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result<(), String> {
+    use crate::agent::loop_commands::{anchored_redirect_target, shell_arg};
+
     let seam = sample_classified_seam();
     let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
         .ok_or_else(|| "expected seam diagnostic".to_string())?;
@@ -5992,6 +6012,10 @@ fn agent_loop_command_payloads_stay_workspace_relative_for_platform_roots() -> R
         &vscode_client_features()?,
     );
 
+    // Issue #3872: pasted redirect targets anchor at the resolved --root, so
+    // the expectations name the anchored absolute target (never a machine
+    // directory literally: the anchor builds from the renderer prefix).
+    let anchored = |tail: &str| shell_arg(&anchored_redirect_target(".", tail));
     let commands = code_action_commands(&actions)?;
     let expected_commands = [
         (
@@ -5999,8 +6023,9 @@ fn agent_loop_command_payloads_stay_workspace_relative_for_platform_roots() -> R
             "agent_packet",
             "target/ripr/agent/agent-packet.json",
             format!(
-                "ripr agent packet --root . --seam-id {} --json > target/ripr/agent/agent-packet.json",
-                seam.seam.id().as_str()
+                "ripr agent packet --root . --seam-id {} --json > {}",
+                seam.seam.id().as_str(),
+                anchored("target/ripr/agent/agent-packet.json"),
             ),
         ),
         (
@@ -6008,23 +6033,28 @@ fn agent_loop_command_payloads_stay_workspace_relative_for_platform_roots() -> R
             "agent_brief",
             "target/ripr/agent/agent-brief.json",
             format!(
-                "ripr agent brief --root . --seam-id {} --json > target/ripr/agent/agent-brief.json",
-                seam.seam.id().as_str()
+                "ripr agent brief --root . --seam-id {} --json > {}",
+                seam.seam.id().as_str(),
+                anchored("target/ripr/agent/agent-brief.json"),
             ),
         ),
         (
             COPY_AFTER_SNAPSHOT_COMMAND,
             "after_snapshot",
             "target/ripr/pilot/after.repo-exposure.json",
-            "ripr check --root . --base 'origin/main with space' --mode ready --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json"
-                .to_string(),
+            format!(
+                "ripr check --root . --base 'origin/main with space' --mode ready --format repo-exposure-json > {}",
+                anchored("target/ripr/pilot/after.repo-exposure.json"),
+            ),
         ),
         (
             COPY_AGENT_VERIFY_COMMAND,
             "agent_verify",
             "target/ripr/agent/agent-verify.json",
-            "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > target/ripr/agent/agent-verify.json"
-                .to_string(),
+            format!(
+                "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > {}",
+                anchored("target/ripr/agent/agent-verify.json"),
+            ),
         ),
         (
             COPY_AGENT_RECEIPT_COMMAND,
@@ -6058,12 +6088,22 @@ fn agent_loop_command_payloads_stay_workspace_relative_for_platform_roots() -> R
             .ok_or_else(|| "expected command string".to_string())?;
         assert!(
             !copied.contains('\\'),
-            "copied commands should use workspace-relative slash paths, got {copied}"
+            "copied commands should use slash-separated paths, got {copied}"
         );
         assert!(
             !copied.contains("ripr workspace"),
             "copied commands should not leak platform-specific workspace roots, got {copied}"
         );
+        // Shell redirects must carry an absolute anchor so the pasted command
+        // reproduces the validated location from any working directory; the
+        // `--out` receipt form stays root-relative (ripr resolves it).
+        if let Some(target) = copied.split("> ").nth(1) {
+            let unquoted = target.trim_matches('\'');
+            assert!(
+                Path::new(unquoted).is_absolute(),
+                "redirect target must be absolute, got {copied}"
+            );
+        }
     }
     Ok(())
 }
@@ -7152,7 +7192,9 @@ fn default_lsp_analysis_config_matches_check_input_defaults() {
     let input = config.check_input(Path::new("/workspace"));
 
     assert_eq!(input.root, PathBuf::from("/workspace"));
-    assert_eq!(input.base.as_deref(), Some("origin/main"));
+    // #3952: the library default carries no base; parity with
+    // `CheckInput::default()` is what this test pins.
+    assert_eq!(input.base.as_deref(), None);
     assert_eq!(input.mode, Mode::Draft);
     assert!(input.include_unchanged_tests);
     assert!(config.enable_seam_diagnostics);
@@ -9773,7 +9815,9 @@ fn backend_starts_with_default_lsp_analysis_config() -> Result<(), String> {
         return Err("expected backend analysis config".to_string());
     };
 
-    assert_eq!(config.base_ref.as_deref(), Some("origin/main"));
+    // #3952: the LSP default inherits the baseless library default so
+    // refreshes resolve the workspace default branch.
+    assert_eq!(config.base_ref.as_deref(), None);
     assert_eq!(config.mode, Mode::Draft);
     assert!(config.include_unchanged_tests);
     assert!(config.enable_seam_diagnostics);
@@ -11207,6 +11251,11 @@ fn normalize_lsp_action_argument(
     let Some(object) = argument.as_object() else {
         return Ok(argument.clone());
     };
+    // Issue #3872: copied command strings carry root-anchored absolute
+    // redirect targets, so the renderer working-directory prefix projects to
+    // `<cwd>/` — the same placeholder rule as the corpus and fixture
+    // projections (loop_commands) — keeping the golden machine-independent
+    // while still pinning the anchored shape.
     let mut normalized = serde_json::Map::new();
     for (key, value) in object {
         if key == "uri"
@@ -11219,6 +11268,11 @@ fn normalize_lsp_action_argument(
             normalized.insert(
                 key.clone(),
                 serde_json::json!(relative_uri_path(root, &parsed)?),
+            );
+        } else if let Some(text) = value.as_str() {
+            normalized.insert(
+                key.clone(),
+                serde_json::json!(crate::testing::cwd_placeholder::project_cwd_text(text)),
             );
         } else {
             normalized.insert(key.clone(), value.clone());
@@ -12215,10 +12269,7 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
             packet["related_test"],
             "tests/pricing.rs::below_threshold_has_no_discount"
         );
-        assert_eq!(
-            packet["related_test_location"]["oracle_strength"],
-            "strong"
-        );
+        assert_eq!(packet["related_test_location"]["oracle_strength"], "strong");
         assert_eq!(packet["suggested_test"]["file"], "tests/pricing.rs");
         assert!(
             packet["suggested_assertion"]
@@ -12230,22 +12281,33 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
                 .as_str()
                 .is_some_and(|value| value.starts_with("ripr agent brief --root . --seam-id "))
         );
+        // Issue #3872: pasted redirect targets anchor at the resolved
+        // --root (the anchor math itself is pinned in loop_commands tests).
         assert_eq!(
             packet["after_snapshot_command"],
-            "ripr check --root . --base origin/main --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json"
+            crate::agent::loop_commands::check_repo_exposure_command_with_base(
+                ".",
+                Some("origin/main"),
+                "draft",
+                "target/ripr/pilot/after.repo-exposure.json",
+            )
+            .as_str()
         );
         assert_eq!(
             packet["verify_command"],
-            "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > target/ripr/agent/agent-verify.json"
+            crate::agent::loop_commands::agent_verify_command(
+                ".",
+                "target/ripr/pilot/repo-exposure.json",
+                "target/ripr/pilot/after.repo-exposure.json",
+                Some("target/ripr/agent/agent-verify.json"),
+            )
+            .as_str()
         );
-        assert!(
-            packet["receipt_command"]
-                .as_str()
-                .is_some_and(|value| {
-                    value.contains("ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json")
-                        && value.contains("--out target/ripr/agent/agent-receipt.json")
-                })
-        );
+        assert!(packet["receipt_command"].as_str().is_some_and(|value| {
+            value.contains(
+                "ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json",
+            ) && value.contains("--out target/ripr/agent/agent-receipt.json")
+        }));
         assert_eq!(
             packet["limits_note"],
             "Static evidence only; no runtime mutation execution."
@@ -13074,8 +13136,16 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
             current_input["session_options_identity"],
             serde_json::Value::Null
         );
-        assert_eq!(current_input["requested_base"], "origin/main");
-        assert_eq!(current_input["resolved_base"], serde_json::Value::Null);
+        // #3952: no base is requested by default; resolution happens
+        // downstream of the status projection.
+        assert_eq!(
+            current_input.get("requested_base"),
+            Some(&serde_json::Value::Null)
+        );
+        assert_eq!(
+            current_input.get("resolved_base"),
+            Some(&serde_json::Value::Null)
+        );
         assert_eq!(current_input["mode"], "draft");
         assert_eq!(current_input["profile"], "actionable");
         assert_eq!(

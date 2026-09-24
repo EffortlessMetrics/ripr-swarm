@@ -39,6 +39,7 @@ pub(super) fn build_gate_repair_route(candidate: &GateCandidate) -> GateRepairRo
         missing_discriminator: facts.missing_discriminator.clone(),
         repair_target: facts.repair_target.clone(),
         test_intent: facts.test_intent.clone(),
+        repair_command: facts.repair_command.clone(),
         verify_command: facts.verify_command.clone(),
         receipt_command: facts.receipt_command.clone(),
         inspection_command: facts.inspection_command.clone(),
@@ -111,6 +112,7 @@ fn review_card_route_facts(item: &Value) -> GateRouteFacts {
         repair_target: review_card_repair_target(item),
         test_intent: string_field(item.pointer("/llm_guidance/prompt"))
             .or_else(|| string_field(item.pointer("/suggested_test/intent"))),
+        repair_command: string_field(item.pointer("/llm_guidance/repair_command")),
         verify_command: string_field(item.pointer("/llm_guidance/verify_command")),
         receipt_command: string_field(item.get("receipt_command")),
         inspection_command: string_field(item.pointer("/llm_guidance/command")),
@@ -147,6 +149,12 @@ fn gap_record_route_facts(record: &GapRecord) -> GateRouteFacts {
             .and_then(|route| route.assertion_shape.as_deref())
             .and_then(non_empty_str)
             .map(ToString::to_string),
+        // Gap records carry no repair start (#3906). Repo-scoped records are
+        // never gate candidates, and PR-local ones come from check findings
+        // (probe ids, not seam ids) or presentation-text items, none of which
+        // passed the seam repair-packet flip. The route under-emits and keeps
+        // its verify and inspection commands.
+        repair_command: None,
         verify_command: record
             .verification_commands
             .first()
@@ -269,6 +277,7 @@ mod tests {
                     line: 42,
                 }),
                 test_intent: Some("Exercise foo::dispatch and assert Event::Ready".to_string()),
+                repair_command: None,
                 verify_command: Some("cargo test -p foo dispatches_ready_event".to_string()),
                 receipt_command: Some("ripr receipt write --gap gap:shared".to_string()),
                 inspection_command: Some(
@@ -302,6 +311,43 @@ mod tests {
             .and_then(|comments| comments.first())
             .cloned()
             .ok_or_else(|| "current comments fixture has no review card".to_string())
+    }
+
+    /// #3906: the gate carries a review card's repair start unchanged and
+    /// never derives one; a card without it projects `None`, and the route's
+    /// completeness does not depend on it.
+    #[test]
+    fn review_card_repair_start_is_carried_not_derived() -> Result<(), String> {
+        let command = "ripr agent repair --root . --seam-id seam-a --phase before";
+        let with = review_card_route_facts(&json!({
+            "seam_id": "seam-a",
+            "gap_state": "actionable",
+            "llm_guidance": {
+                "prompt": "p",
+                "command": "ripr agent brief --root . --seam-id seam-a --json",
+                "verify_command": "ripr agent verify --root . --json",
+                "repair_command": command,
+            },
+        }));
+        require_equal(with.repair_command.as_deref(), Some(command), "carried")?;
+
+        let without = review_card_route_facts(&json!({
+            "seam_id": "seam-a",
+            "gap_state": "actionable",
+            "llm_guidance": {
+                "prompt": "p",
+                "command": "ripr agent brief --root . --seam-id seam-a --json",
+                "verify_command": "ripr agent verify --root . --json",
+            },
+        }));
+        require_equal(without.repair_command, None, "not derived from seam_id")?;
+
+        let mut candidate = complete_candidate();
+        candidate.route_facts.repair_command = None;
+        require(
+            gate_repair_route_is_complete(&candidate),
+            "a missing repair start must not make the route incomplete",
+        )
     }
 
     #[test]

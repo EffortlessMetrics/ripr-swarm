@@ -194,6 +194,7 @@
         "missing_discriminator",
         "repair_target",
         "test_intent",
+        "repair_command",
         "verify_command",
         "receipt_command",
         "inspection_command",
@@ -215,6 +216,13 @@
           ]
         },
         "test_intent": { "$ref": "#/$defs/nullable_string" },
+        "repair_command": {
+          "description": "`ripr agent repair --root <root> --seam-id <id> --phase before` for a seam that passed the fail-closed repair-packet flip upstream (#3906); null otherwise. Not a completeness field: a complete route may have none.",
+          "anyOf": [
+            { "type": "null" },
+            { "type": "string", "minLength": 1 }
+          ]
+        },
         "verify_command": { "$ref": "#/$defs/nullable_string" },
         "receipt_command": { "$ref": "#/$defs/nullable_string" },
         "inspection_command": { "$ref": "#/$defs/nullable_string" },

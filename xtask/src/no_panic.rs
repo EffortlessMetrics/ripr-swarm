@@ -1696,13 +1696,12 @@ fn check_old_panic_allowlist_exists() -> Result<(), String> {
 }
 
 #[derive(Debug, Clone)]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "V2 grows with exact-identity snippet/count fields; boxing is a post-0.5.1 refactor"
-)]
 enum PanicAllowEntryVersioned {
     V1(PanicAllowEntry),
-    V2(PanicAllowEntryV2),
+    // #3995: V2 carries the selector/count payload. Boxing keeps the enum
+    // from tripping clippy::large_enum_variant; the allow and
+    // clippy-exception-0001 recorded that deferral and are gone.
+    V2(Box<PanicAllowEntryV2>),
 }
 
 fn parse_no_panic_allowlist_toml_v2(path: &str) -> Result<Vec<PanicAllowEntryVersioned>, String> {
@@ -1836,7 +1835,7 @@ fn parse_no_panic_allowlist_toml_v2(path: &str) -> Result<Vec<PanicAllowEntryVer
                 count: e_count,
             };
             validate_panic_allow_entry_v2(&entry, path, start_line, schema_version)?;
-            Ok(Some(PanicAllowEntryVersioned::V2(entry)))
+            Ok(Some(PanicAllowEntryVersioned::V2(Box::new(entry))))
         } else if e_line > 0 {
             // v0.1 entry with line number
             let entry = PanicAllowEntry {

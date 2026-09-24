@@ -6,6 +6,7 @@ mod presentation;
 mod repair_route;
 
 use super::gap_decision_ledger::{self, GapRecord};
+use super::review_comments::SUMMARY_REASON_NO_SAFE_PLACEMENT;
 use crate::domain::DeltaAttribution;
 use causal::CausalDeltaAuthority;
 #[cfg(test)]
@@ -589,6 +590,7 @@ fn gate_decision(
         &policy.acknowledgement_labels,
     );
     let repair_route = build_gate_repair_route(candidate);
+    let changed_line_anchored = !candidate_lacks_changed_line_placement(candidate);
     GateDecision {
         id: format!("ripr-gate-{}", stable_identity(candidate)),
         source: if candidate.source == "summary_only" {
@@ -629,6 +631,7 @@ fn gate_decision(
             mutation_calibration,
         },
         repair_route,
+        changed_line_anchored,
         is_baseline_new,
         baseline_match_kind,
         delta_attribution: causal_attribution,
@@ -689,6 +692,15 @@ fn candidate_is_policy_eligible_without_route(candidate: &GateCandidate) -> bool
         && candidate.placement.path.is_some()
         && candidate.placement.line.is_some()
         && !placement_excluded
+}
+
+/// A PR-guidance summary item the review producer demoted because it found
+/// no safe changed-line placement (RIPR-SPEC-0012). The seam is not anchored
+/// to this PR's changed lines, so it stays advisory and is never presented
+/// as changed code.
+fn candidate_lacks_changed_line_placement(candidate: &GateCandidate) -> bool {
+    candidate.source == "summary_only"
+        && candidate.summary_reason.as_deref() == Some(SUMMARY_REASON_NO_SAFE_PLACEMENT)
 }
 
 fn candidate_class_is_policy_eligible(class: Option<&str>) -> bool {
@@ -872,6 +884,9 @@ fn gate_reason(
                 return "gap decision ledger record is missing a stable file and line anchor"
                     .to_string();
             }
+        }
+        if candidate_lacks_changed_line_placement(candidate) {
+            return "seam is outside this PR's changed lines, so the summary-only recommendation remains visible and advisory".to_string();
         }
         if candidate.source == "summary_only" {
             return "summary-only recommendation remains visible and advisory".to_string();
