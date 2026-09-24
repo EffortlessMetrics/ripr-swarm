@@ -24,6 +24,11 @@ pub(crate) mod test_grip_evidence;
 mod value_resolution;
 mod workspace;
 
+/// Shared NUL-delimited Git path-record authority (#4006), consumed by the
+/// product and xtask routes alike.
+pub use diff::records::{
+    PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
+};
 pub(crate) use diff::{
     load_diff, load_diff_range, load_pr_evidence_diff_range, load_worktree_diff,
     parse_unified_diff, resolve_base_commit, resolve_default_base_commit,
