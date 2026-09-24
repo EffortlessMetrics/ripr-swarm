@@ -11336,7 +11336,142 @@ fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosur
         human.contains("uncommitted changes to tracked source were not analyzed"),
         "check --base HEAD with uncommitted edit must show Note in human output; got:\n{human}"
     );
+    // The note must name the remedy that works. Staging does not change a
+    // committed-history diff, so "commit or stage" was a false remedy.
+    assert!(
+        human.contains("add `--worktree`"),
+        "the disclosure must name --worktree as the remedy; got:\n{human}"
+    );
+    assert!(
+        !human.contains("commit or stage"),
+        "the disclosure must not suggest staging, which leaves a --base diff unchanged; got:\n{human}"
+    );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// RIPR-SPEC-0112 (default base): bare `ripr check` resolves the default base
+/// and diffs committed history exactly like an explicit `--base`, so an
+/// uncommitted tracked edit is excluded there too and must be disclosed. This
+/// is the first-run path: edit a file, run `ripr check`, see nothing.
+#[test]
+fn check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure()
+-> Result<(), String> {
+    let root = unique_temp_workspace("unanalyzed-wt-default-base");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+    )
+    .map_err(|err| format!("write base lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"spec-0112-default-base-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+    )
+    .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    // Fixture precondition: the default base resolves to `main` == HEAD, so
+    // the committed diff is empty while the edit exists only in the worktree.
+    let worktree = run_ripr(&["check", "--root", &root_str, "--worktree", "--json"]);
+    assert_success(&worktree);
+    let worktree_stdout = String::from_utf8_lossy(&worktree.stdout);
+    let worktree_report: serde_json::Value = serde_json::from_str(&worktree_stdout)
+        .map_err(|err| format!("parse --worktree JSON: {err}\n{worktree_stdout}"))?;
+    let worktree_findings = worktree_report
+        .pointer("/findings")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    if worktree_findings == 0 {
+        return Err(format!(
+            "fixture must carry an analyzable uncommitted edit; --worktree found none:\n{worktree_stdout}"
+        ));
+    }
+
+    let json = run_ripr(&["check", "--root", &root_str, "--json"]);
+    assert_success(&json);
+    let json_stdout = String::from_utf8_lossy(&json.stdout);
+    if !json_stdout.contains("\"unanalyzed_working_tree\": true") {
+        return Err(format!(
+            "bare check with an uncommitted edit must emit unanalyzed_working_tree: true; got:\n{json_stdout}"
+        ));
+    }
+
+    let human = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&human);
+    let human_stdout = String::from_utf8_lossy(&human.stdout);
+    if !human_stdout.contains("uncommitted changes to tracked source were not analyzed")
+        || !human_stdout.contains("add `--worktree`")
+    {
+        return Err(format!(
+            "bare check must disclose the excluded edit and name --worktree; got:\n{human_stdout}"
+        ));
+    }
+    // The generic no-scope note recommends `--base origin/main`, which would
+    // exclude the same edit; the specific worktree note replaces it.
+    if human_stdout.contains("no analysis scope was provided") {
+        return Err(format!(
+            "bare check must not pair the worktree note with the no-scope remedy; got:\n{human_stdout}"
+        ));
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// RIPR-SPEC-0112 (default base, clean): a bare `ripr check` on a clean
+/// worktree must not claim uncommitted edits were excluded, and keeps the
+/// no-scope disclosure for its empty committed diff.
+#[test]
+fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(), String> {
+    let root = unique_temp_workspace("unanalyzed-wt-default-base-clean");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"spec-0112-default-base-clean\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    // An untracked file is outside every diff source and must not trigger the
+    // tracked-edit disclosure.
+    std::fs::write(root.join("notes.txt"), "scratch\n")
+        .map_err(|err| format!("write untracked file: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let human = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&human);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    if stdout.contains("uncommitted changes") {
+        return Err(format!(
+            "clean tracked worktree must not disclose uncommitted edits; got:\n{stdout}"
+        ));
+    }
+    if !stdout.contains("no analysis scope was provided") {
+        return Err(format!(
+            "empty default-base run must keep the no-scope disclosure; got:\n{stdout}"
+        ));
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
 }
 
 /// RIPR-SPEC-0112: `ripr check --base HEAD` with a CLEAN worktree (no uncommitted changes)

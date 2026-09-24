@@ -3,6 +3,14 @@ use crate::config::RiprConfig;
 use crate::domain::Finding;
 use std::collections::BTreeSet;
 
+/// RIPR-SPEC-0112 disclosure. Committed-history diffs (an explicit `--base`
+/// or the resolved default base) exclude staged and unstaged tracked edits;
+/// `--worktree` (RIPR-SPEC-0116) is the remedy that actually includes them.
+/// Committing works too, but staging alone does not change a `--base` diff.
+const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted changes to tracked source were not analyzed. \
+`ripr check` compares committed history only; add `--worktree` to include staged \
+and unstaged tracked edits (for example `ripr check --worktree`).\n";
+
 /// Render the bounded triage report in the default human-readable CLI format.
 pub fn render(output: &CheckOutput) -> String {
     render_bounded_with_config(output, &RiprConfig::default())
@@ -34,7 +42,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, navigation);
         }
-        if output.no_scope_provided {
+        if output.no_scope_provided && !output.unanalyzed_working_tree {
             out.push_str(
                 "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
 Run `ripr check --base origin/main` to analyze your changes, or \
@@ -43,11 +51,7 @@ An empty result here does NOT mean your changed behavior is covered.\n",
             );
         }
         if output.unanalyzed_working_tree {
-            out.push_str(
-                "\nNote: uncommitted changes to tracked source were not analyzed. \
-`--base` compares committed history only — commit or stage these changes and re-run, \
-or analyze a committed branch with `ripr check --base origin/main`.\n",
-            );
+            out.push_str(UNANALYZED_WORKING_TREE_NOTE);
         }
         render_preview_language_advisories(&mut out, output);
         render_language_runs(&mut out, output);
@@ -58,11 +62,7 @@ or analyze a committed branch with `ripr check --base origin/main`.\n",
     triage::render_human_triage(&mut out, &triage, output, config, navigation);
     render_all_no_path_disclosure(&mut out, output);
     if output.unanalyzed_working_tree {
-        out.push_str(
-            "\nNote: uncommitted changes to tracked source were not analyzed. \
-`--base` compares committed history only; run `ripr check` (no --base) to analyze \
-your working tree.\n",
-        );
+        out.push_str(UNANALYZED_WORKING_TREE_NOTE);
     }
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);
@@ -81,7 +81,7 @@ pub(crate) fn render_full_with_config(output: &CheckOutput, config: &RiprConfig)
         // RIPR-SPEC-0083: disclose when no analysis scope was provided.
         // This fires only when the caller passed no --diff/--base/--mode, so
         // an empty result here means "nothing was analyzed", not "tests pass".
-        if output.no_scope_provided {
+        if output.no_scope_provided && !output.unanalyzed_working_tree {
             out.push_str(
                 "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
 Run `ripr check --base origin/main` to analyze your changes, or \
@@ -89,15 +89,11 @@ Run `ripr check --base origin/main` to analyze your changes, or \
 An empty result here does NOT mean your changed behavior is covered.\n",
             );
         }
-        // RIPR-SPEC-0112: disclose when --base was used but uncommitted working-tree
+        // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
         // changes were NOT analyzed. An empty result here does NOT mean those changes
         // are covered — they were excluded from the committed-history diff.
         if output.unanalyzed_working_tree {
-            out.push_str(
-                "\nNote: uncommitted changes to tracked source were not analyzed. \
-`--base` compares committed history only — commit or stage these changes and re-run, \
-or analyze a committed branch with `ripr check --base origin/main`.\n",
-            );
+            out.push_str(UNANALYZED_WORKING_TREE_NOTE);
         }
         render_preview_language_advisories(&mut out, output);
         render_language_runs(&mut out, output);
@@ -122,15 +118,11 @@ or analyze a committed branch with `ripr check --base origin/main`.\n",
         out.push('\n');
     }
     render_all_no_path_disclosure(&mut out, output);
-    // RIPR-SPEC-0112: disclose when --base was used but uncommitted working-tree
+    // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
     // changes were NOT analyzed. Fires whether or not the committed diff had findings —
     // those uncommitted edits are still unanalyzed regardless.
     if output.unanalyzed_working_tree {
-        out.push_str(
-            "\nNote: uncommitted changes to tracked source were not analyzed. \
-`--base` compares committed history only; run `ripr check` (no --base) to analyze \
-your working tree.\n",
-        );
+        out.push_str(UNANALYZED_WORKING_TREE_NOTE);
     }
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);

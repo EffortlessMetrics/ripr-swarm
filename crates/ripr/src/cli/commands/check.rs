@@ -534,18 +534,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             suppression.warnings.len()
         );
     }
-    // RIPR-SPEC-0112: disclose when --base was explicitly provided (committed-history
-    // diff) AND the working tree has uncommitted changes to tracked source files.
-    // Those changes were NOT analyzed. A zero-finding result in this state must NOT
-    // be read as a clean pass — the user's uncommitted edits were excluded from the diff.
-    // Fires independent of findings.is_empty() (honest whether or not committed diff
-    // had findings), but the false-clean risk is highest when findings are empty.
-    // Does NOT fire when --diff was used (file-based diff; no live worktree scope).
-    if base_explicitly_provided
-        && !worktree_explicitly_provided
+    // RIPR-SPEC-0112: disclose when the analyzed diff was committed history (an
+    // explicit --base or the resolved default base; both run `git diff
+    // <base>...HEAD`) AND the working tree has uncommitted changes to tracked
+    // source files. Those changes were NOT analyzed. A zero-finding result in this
+    // state must NOT be read as a clean pass — the user's uncommitted edits were
+    // excluded from the diff. Fires independent of findings.is_empty() (honest
+    // whether or not committed diff had findings), but the false-clean risk is
+    // highest when findings are empty. Does NOT fire for --diff (file-based
+    // diff), --worktree (edits included), --candidate-tree (exact trees, no live
+    // worktree), or repo-scope formats (they read the live files).
+    let committed_history_diff = !worktree_explicitly_provided
         && !input_diff_file_is_some
-        && analysis::working_tree_has_tracked_changes(&input_root)
-    {
+        && candidate_tree.is_none()
+        && !format.is_repo_scope();
+    if committed_history_diff && analysis::working_tree_has_tracked_changes(&input_root) {
         output.unanalyzed_working_tree = true;
     }
     let navigation = if worktree_explicitly_provided && write_artifact.is_none() {
