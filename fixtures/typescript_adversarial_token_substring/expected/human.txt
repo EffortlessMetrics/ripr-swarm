@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/typescript_adversarial_token_substring/input
 
-Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
+Summary: 1 probe(s), 0 exposed, 0 weak, 0 unrevealed, 1 no path, 0 unknown
 
 Changed file(s) by language: rust: 0, typescript: 1.
 
@@ -15,16 +15,15 @@ Start here:
   File: src/stream.ts:2
   Language: typescript
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: no_static_path (warning, confidence 0.40)
+  Why no_static_path: the changed behavior could not be traced to an observable output
   Changed behavior: return chunks.join("|");
-  Missing discriminator: Only heuristic TypeScript test links were found for `buffer`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
-  Related test: tests/stream.test.ts:3 counts the chunks in the stream
-  Next step: TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.
+  Missing discriminator: No test references `buffer(` — add a test that calls the changed owner.
+  Next step: TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet…
   Evidence:
-    - reach weak: 1 related test(s) found for owner `buffer`
+    - reach no: 0 related test(s) found for owner `buffer`
     - infection unknown: TypeScript preview adapter does not yet model infection.
-    - 5 more evidence line(s) hidden
+    - 4 more evidence line(s) hidden
 
 Next: drill into the top finding:
   ripr explain --root fixtures/typescript_adversarial_token_substring/input --diff fixtures/typescript_adversarial_token_substring/diff.patch --mode fast probe:src_stream.ts:typescript_preview:5430a07e
@@ -34,5 +33,11 @@ More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
+
+Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
+  analyzed: 1 changed expression(s) and 0 statically linked related test(s). This is not a coverage
+  assessment. A test may already exercise these changes through macros, helper-call chains, or
+  integration tests that ripr's static model does not yet trace; if none does, add co-located tests
+  that observe the changed behavior.
 
 Note: 1 Typescript(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
