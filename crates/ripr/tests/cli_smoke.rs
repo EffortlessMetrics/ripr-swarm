@@ -11424,7 +11424,10 @@ fn check_mode_fast_alone_on_empty_range_names_compared_base_smoke() {
     // resolve_default_base succeeds but the diff against HEAD is empty.
     let root = unique_temp_workspace("mode-fast-no-scope");
     std::fs::create_dir_all(root.join("src")).unwrap();
-    run_git(&root, &["init"]).unwrap();
+    // Pin the initial branch: `resolve_default_base` only recognizes
+    // origin/HEAD, origin/main, origin/master, main, and master, so a bare
+    // `init` under an exotic `init.defaultBranch` would fail base resolution.
+    run_git(&root, &["init", "-b", "main"]).unwrap();
     run_git(&root, &["config", "user.email", "test@test.com"]).unwrap();
     run_git(&root, &["config", "user.name", "Test"]).unwrap();
     std::fs::write(
@@ -11454,6 +11457,10 @@ fn check_mode_fast_alone_on_empty_range_names_compared_base_smoke() {
         !stdout.contains("no analysis scope was provided"),
         "empty range must NOT claim no scope was provided; got:\n{stdout}"
     );
+    assert!(
+        stdout.contains("The compared base was `"),
+        "empty range must name the compared base; got:\n{stdout}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -11470,7 +11477,9 @@ fn check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke() {
     // compared base, i.e. an empty range, which is the other test's subject.)
     let root = unique_temp_workspace("bare-check-analyzed-empty");
     std::fs::create_dir_all(root.join("src")).unwrap();
-    run_git(&root, &["init"]).unwrap();
+    // Pin the initial branch (see mode-fast-no-scope fixture above): the base
+    // commit must land on a branch `resolve_default_base` recognizes.
+    run_git(&root, &["init", "-b", "main"]).unwrap();
     run_git(&root, &["config", "user.email", "test@test.com"]).unwrap();
     run_git(&root, &["config", "user.name", "Test"]).unwrap();
     std::fs::write(root.join("src/lib.rs"), "pub const VALUE: u32 = 1;\n").unwrap();
