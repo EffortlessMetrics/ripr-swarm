@@ -158,7 +158,11 @@ pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
     collect_output_with_deadline_and_limit(&mut command, timeout, max_output_bytes, &describe)
 }
 
-fn collect_output_with_deadline_and_limit(
+/// Spawn an arbitrary prepared `command` under the shared deadline,
+/// cancellation and bounded-capture contract. Git callers reach it through
+/// the wrappers above; the doctor's Perl exporter capability probe uses it
+/// directly so an unknown PATH binary can neither hang nor flood the doctor.
+pub(crate) fn collect_output_with_deadline_and_limit(
     command: &mut Command,
     timeout: Duration,
     max_output_bytes: usize,

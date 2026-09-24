@@ -3946,7 +3946,12 @@ mod tests {
                 }
             }
         }
-        if (direct, no_strong, orthogonal) != (2, 28, 11) {
+        // RIPR-SPEC-0028 boundary rule: downgrading the src-layout
+        // `bulk_discount` finding from `exposed` to `weakly_exposed` gives it a
+        // repair card it previously could not carry, raising the direct-aligned
+        // repair-card inventory from 2 to 3 (the boundary-downgraded card in
+        // `python_src_layout_package_import`).
+        if (direct, no_strong, orthogonal) != (3, 28, 11) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
             ));

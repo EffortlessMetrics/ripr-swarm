@@ -129,8 +129,8 @@ The before commitment is derived from the prepared manifest. Terminal updates ma
 2. the manifest is still in `awaiting_edit`;
 3. the retained before snapshot, packet, and edit-cage baseline still match their recorded byte counts and digests;
 4. the after phase uses that attempt's retained packet rather than a repository-global or another attempt's packet;
-5. repository `HEAD` still matches the prepared head;
-6. the observed edit delta is compliant with the retained packet's allowed, forbidden, and expected operational-write surfaces;
+5. repository `HEAD` is the prepared head, or a descendant reached only by commits on top of it (see [Committing between the phases](#committing-between-the-phases));
+6. the observed edit delta, including every path those commits changed, is compliant with the retained packet's allowed, forbidden, and expected operational-write surfaces;
 7. verify output, packet digest, delta digest, and receipt all bind to the same attempt.
 
 A different attempt for the same seam is a different transaction. Its packet, snapshot, baseline, and terminal state cannot be substituted.
@@ -145,7 +145,26 @@ Run the project tests between the phases. For a Rust repair, the retained cage p
 
 Static analysis never reads `target/` as source. A Cargo target directory in a non-default location inside the repository (`CARGO_TARGET_DIR` or `build.target-dir`) is not declared, so writes there remain violations. Python attempts keep observing every ignored path.
 
-If the project does not commit `Cargo.lock`, build once before the before phase. When Cargo first generates a lockfile between the phases, the analysis input identity changes and the after phase refuses the comparison.
+### Cargo.lock between the phases
+
+A library crate often does not commit `Cargo.lock`, so the first `cargo test` between the phases creates it. That lockfile does not stop the transaction:
+
+- The analysis input identity (`input:v4`, [RIPR-SPEC-0134](specs/RIPR-SPEC-0134-repair-artifact-provenance.md)) counts only Cargo lockfiles that Git tracks. The static seam inventory never reads lockfile content, so an untracked or ignored lockfile cannot change the evidence the before and after snapshots compare.
+- For a Rust repair, the retained cage policy declares the workspace-root `Cargo.lock` as `untracked_build_lockfile`. While Git tracks it neither at the before phase nor at the after phase, creating or rewriting it is build state, not an edit.
+
+A tracked `Cargo.lock` is an analysis input and an edit. If it changes between the phases (for example `cargo update`), or a generated one is staged or committed, the after phase refuses before it finishes the attempt. The refusal names the changed inputs and the route: restore them (for example `git checkout <before-head> -- Cargo.lock`, or `git rm --cached Cargo.lock` for a lockfile that became tracked; when a commit made after the before phase changed them, run `git reset --soft <before-head>` first) and rerun the same `--attempt` command. The same applies to Cargo manifests and `ripr.toml`. When no input file changed, the refusal says so: the analyzer build or configuration differs, and a new attempt is needed.
+
+Why tracked lockfiles still count: a committed lockfile belongs to the reviewed change, so a dependency change between the phases must not be attributed to the focused test. Why untracked ones do not: generating the lockfile yourself in the before phase (`cargo generate-lockfile`) would write your tree, and asking every newcomer to build before the before phase was the old workaround this rule replaces.
+
+### Committing between the phases
+
+Committing the focused test before the after phase is accepted. The after phase admits a `HEAD` that moved only forward, by commits on top of the prepared head. The edit cage evaluates the tree diff from the prepared head together with the worktree and index, so a committed production change is refused exactly like an uncommitted one, even when the worktree was restored afterwards. The receipt records both heads (`before_head`, `after_head`), and its tracked-surface check compares the tree with the prepared head, not with the new `HEAD`.
+
+A `HEAD` that does not descend from the prepared head (after `git commit --amend`, a rebase, a reset, or a checkout) is refused before the attempt is finished, so the attempt keeps waiting for the edit. If only your own test commit was rewritten, `git reset --soft <before-head>` restores the prepared head and keeps the edit staged; then rerun the same `--attempt` command. Otherwise, prepare a new attempt at the current head.
+
+Trust-bound Python attempts keep the exact-head rule: their selection pins the head, and any movement records `stale`.
+
+Why this rule rather than always refusing: a developer who commits the test has made no edit outside the cage, and the cage can check the committed range with the same rules. Rewritten history cannot be attributed that way: the prepared head is no longer part of it, so the lineage check refuses it.
 
 ## Terminal state
 
@@ -154,7 +173,7 @@ The after phase records one of these states in `attempt.json`:
 | State | Meaning |
 | --- | --- |
 | `ready_to_finish` | Current, comparable, and edit-cage compliant; receipt admission may proceed. |
-| `stale` | Repository `HEAD` changed after the attempt was prepared. |
+| `stale` | Repository `HEAD` moved after the attempt was prepared to a commit the attempt does not admit (any movement for a trust-bound attempt; a non-descendant for an ordinary one, when the move happened after the lineage check). |
 | `incomparable` | The retained and current evidence cannot support a valid comparison. |
 | `failed` | The edit-cage or another terminal invariant failed. |
 
@@ -174,6 +193,16 @@ target/ripr/workflow/            # status input
 
 Those paths keep existing review and cockpit integrations working. Their evidence is admitted only after the exact attempt's retained before snapshot and packet have been resolved and validated.
 
+### Rerunning the receipt
+
+`ripr agent receipt` can be rerun after the after phase, with or without `--out target/ripr/reports/agent-receipt.json`, and `ripr agent status` can be run in between. Each rerun recomputes the edit-cage delta and requires it, and the verdict it yields, to equal what the after phase bound. The receipt the after phase wrote, and any other file a later `ripr` command writes under `target/ripr`, appears only after that binding. A change is left out of the recomputation only when all three of these hold:
+
+- its path matches an expected operational write;
+- the path is not the selected target, an authored edit surface, or a forbidden path;
+- the bound verdict did not list the path.
+
+Such a path cannot satisfy or violate the cage. Any other movement after the after phase still refuses the rerun with `after verdict binding is tampered or stale`. That includes a new or edited source, test, or root file, a changed kind for a bound path, and a bound change that disappeared. Leaving out every operational write would also hide the disappearance of a bound change, so that alternative was rejected. Recording a second digest in the manifest would change the published manifest schema and the Python binding's `patch_sha256`, so that alternative was rejected too.
+
 ## Failure behavior
 
 Repair attempts fail closed:
@@ -188,9 +217,12 @@ Repair attempts fail closed:
 - a cross-attempt packet is rejected;
 - ambiguous seam-selected after phases are rejected with an instruction to pass `--attempt`;
 - stale `HEAD`, incomparable evidence, and edit-cage violations do not produce a receipt-ready state;
-- tracked differences from `HEAD` outside the trusted edit surface block receipt admission, and so do untracked paths the attempt wrote outside it; an untracked file that already existed at the before phase and is byte-identical afterwards (for example a generated `Cargo.lock`) was not written by the attempt and does not block admission.
+- tracked differences from the prepared head outside the trusted edit surface block receipt admission, committed or not, and so do untracked paths the attempt wrote outside it; an untracked file that already existed at the before phase and is byte-identical afterwards was not written by the attempt and does not block admission;
+- only a receipt whose `status` is `advisory` recommends including it in review. For an `incomplete` or `invalid` receipt, the receipt's own `summary.next_action.recommended_action` and `summary.next_recommendation` state the status and reason, say the receipt is not review evidence, and name the recovery; the after phase prints that same field as its `next:` line.
 
-A failed, incomparable, or stale attempt is terminal: re-running its after phase or `ripr agent receipt` refuses. The after phase lists each refused path and the recovery route. Undo the refused changes and set the test edit aside, for example with `git stash`. While the gap still exists, run `ripr agent repair --root . --seam-id <seam-id> --phase before` to prepare a new attempt. Restore the test edit, then run the new `--attempt` command.
+Two refusals happen before the attempt is finished, so the attempt stays `awaiting_edit` and the printed rerun works: changed analysis inputs ([Cargo.lock between the phases](#cargolock-between-the-phases)) and a `HEAD` that no longer descends from the prepared head ([Committing between the phases](#committing-between-the-phases)).
+
+A failed, incomparable, or stale attempt is terminal: re-running its after phase or `ripr agent receipt` refuses. The after phase lists each refused path and the recovery route. If you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree). Undo the refused changes and set the test edit aside, for example with `git stash`. While the gap still exists, run `ripr agent repair --root . --seam-id <seam-id> --phase before` to prepare a new attempt. Restore the test edit, then run the new `--attempt` command.
 
 RIPR does not select “the latest” attempt, reconstruct an attempt from mutable global files, or continue on partial evidence.
 

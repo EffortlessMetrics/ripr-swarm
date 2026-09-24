@@ -260,6 +260,27 @@ spine as other languages:
   downgrades to `weakly_exposed` with a typed reason. Reach plus a strong oracle
   alone must not credit `exposed`, or the classification degrades into coverage.
 
+A changed relational predicate (`<`, `<=`, `>`, `>=`) additionally follows the
+Rust activation boundary rule. When a strong related test calls the owner with
+at least one literal argument, `exposed` requires one of those calls to bind
+both comparison operands to equal values: each operand is a literal or an owner
+parameter bound to a literal argument or literal default (positional, keyword,
+import-alias, and method calls after `self`). Literal owner arguments, and the
+boundary equality when observed, are recorded in `observed_values`. Otherwise
+the finding fails closed to `weakly_exposed` and the infection stage reads
+`weak`. When every non-literal operand is bound by some call, the boundary is
+named as the missing discriminator (`amount == threshold`, with the observed
+operand values in its reason). An operand ripr cannot bind (an attribute such
+as `item.on_hand`, a computed `len(name)`, a comprehension local, or a line
+with several comparisons) never counts as observed, and such a boundary is not
+named as a typed repair target: the test input may already sit on it at runtime
+(`reserve(Item("a", 3), 3)`), so the finding states the unresolved operand
+instead of producing a repair card. When no strong related call binds a literal
+argument (test locals, `*args`, a construct-call passing a dict), static
+evidence cannot see the activating input either way: the oracle verdict stands
+and an `exposed` finding carries a `boundary_activation_unresolved` evidence
+line naming that limitation.
+
 Static-limit findings must fail closed. They keep any observed reachability and
 oracle facts, but their infection and propagation stages remain `unknown`, the
 finding class is `static_unknown`, a typed stop reason is emitted, and no
