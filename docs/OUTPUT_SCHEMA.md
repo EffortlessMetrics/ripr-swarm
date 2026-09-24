@@ -11615,6 +11615,23 @@ Field contract:
 - `selected.static_limit_kind` and `selected.static_limit_detail` are optional;
   surfaces must show them before suggested action language when they are
   present.
+- `selected.repair_command` is present only when the top gap was selected from
+  a review card (#3906): when the gap ledger yields no top gap, first-pr reads
+  `inputs.review_comments` and selects the first card in `comments[]`, then
+  `summary_only[]`, that is actionable and carries
+  `llm_guidance.repair_command` (`ripr agent repair ... --phase before`).
+  The command is that card's value carried unchanged; first-pr never builds it
+  from a seam, gap, or probe id. Every other selected field then comes from
+  that same card, never mixed with a ledger record: `source_artifact` is the
+  review-comments path, `repair.route` is `AgentRepairTransaction`,
+  `verify_command` and `receipt_command` are the card's
+  (`receipt_command_source = "review_comments.receipt_command"`), and
+  `receipt_path` and `agent_packet_command` are `null` because the card is not
+  a gap-ledger record. The card is used only when the review-comments report
+  is `tool = "ripr"`, `status = "advisory"`, and names the same root, base,
+  and head as the first-pr invocation. Ledger-selected top gaps never carry
+  `repair_command`. `commands` does not repeat the repair start, so editor
+  projections that allowlist `commands` values are unaffected.
 - `selected.verify_command`, `selected.receipt_command`,
   `selected.receipt_path`, `selected.receipt_command_source`, and
   `selected.receipt_state` are the static movement proof path. When the source
@@ -11632,7 +11649,12 @@ Field contract:
   missing git worktree, missing base ref, missing head ref, or invalid diff
   range.
 - `empty_diff` and `no_action` require `status = "no_action"` and must not
-  produce a repair interruption.
+  produce a repair interruption. When the gap ledger selected nothing,
+  `selected.reason` also says why no review card supplied a repair start
+  (missing, unreadable, stale, or no card carrying `repair_command`) and, when
+  the cards are missing or were rendered from the gap ledger, names the
+  seam-level `ripr review-comments --root <root> --base <base> --head <head>
+  --out <review_comments>` route.
 - `preflight` is present for the public `ripr first-pr` command path. It
   records read-only front-door checks for root, Git worktree, base/head refs,
   diff presence, supported project marker, `ripr.toml` defaulting, output
@@ -15706,7 +15728,12 @@ JSON shape (schema version `0.1`):
 ```
 
 When `top_repair` is absent, `top_repair_state` appears in its place
-and `top_repair` is `null`. When `limitations` is empty or
+and `top_repair` is `null`. `top_repair.repair_command` is present only when
+start-here carried `selected.repair_command` (a review-card selection, #3906);
+it is copied unchanged, never derived, and pr-summary does not read review
+comments itself. When present it is also the first entry in
+`local_reproduction_commands`, and the Markdown panel shows a `start repair`
+line before `verify`. When `limitations` is empty or
 `"not_available"`, `top_limitation` is omitted entirely; the Markdown
 panel distinguishes the two, rendering `- none` for the first and
 `- not_available` for the second. When delta fields are computed (baseline supplied),
@@ -15734,7 +15761,8 @@ Field sources:
 | `top_repair` | start-here | `selected` (when `state == "top_gap"`) |
 | `top_repair_state` | start-here | `selected.state` (when not `"top_gap"`) |
 | `top_limitation` | first entry in `limitations[]` | derived |
-| `local_reproduction_commands` | diff-report + start-here | base/head + `selected.verify_command` |
+| `top_repair.repair_command` | start-here | `selected.repair_command` (present only when start-here carried it) |
+| `local_reproduction_commands` | diff-report + start-here | `selected.repair_command` first when present, then base/head + `selected.verify_command` |
 
 The `receipt_status` object is additive — existing consumers reading `missing_receipts`
 at the top level continue to work unchanged (`schema_version` stays `"0.1"`; additive
