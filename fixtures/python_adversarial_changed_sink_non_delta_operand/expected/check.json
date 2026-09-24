@@ -24,16 +24,16 @@
         "owner": "python:src/account.py::Account.balance"
        },
       "ripr": {
-        "reach": {"state":"weak","confidence":"low","summary":"1 heuristic Python test link(s) found for owner `balance`; relation is uncertain"},
+        "reach": {"state":"no","confidence":"low","summary":"0 related Python test(s) found for owner `balance`"},
         "infect": {"state":"unknown","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python infection claim."},
         "propagate": {"state":"unknown","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python propagation claim."},
-        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
-        "discriminate": {"state":"unknown","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python discriminator claim."}
+        "observe": {"state":"no","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 0)"},
+        "discriminate": {"state":"no","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python discriminator claim."}
        },
-      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `balance`; relation is uncertain", "infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim.", "propagation unknown: Static limit `decorator_indirection` prevents a safe Python propagation claim.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator unknown: Static limit `decorator_indirection` prevents a safe Python discriminator claim.", "related test tests/test_account.py:4 test_account_init uses unknown unknown oracle"],
+      "evidence_path": ["reach no: 0 related Python test(s) found for owner `balance`", "infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim.", "propagation unknown: Static limit `decorator_indirection` prevents a safe Python propagation claim.", "observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)", "discriminator no: Static limit `decorator_indirection` prevents a safe Python discriminator claim."],
       "flow_sinks": [
       ],
-      "evidence": ["owner: Account.balance", "owner_kind: method", "owner_decorators: property", "static_limit decorator_indirection: `property`", "test_framework: pytest (test_account_init)", "test_verify_command: pytest tests/test_account.py::test_account_init (test_account_init)", "related_test_relation: same_stem (test_account_init)", "related_test_uncertain: same_stem (test_account_init)"],
+      "evidence": ["owner: Account.balance", "owner_kind: method", "owner_decorators: property", "static_limit decorator_indirection: `property`"],
       "missing": ["Static limit `decorator_indirection`: owner `Account.balance` is decorated with `property`; syntax-first preview evidence does not resolve decorator-modified call behavior."],
       "assertion_texts": {
       },
@@ -47,20 +47,12 @@
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 1,
+      "related_tests_total": 0,
       "related_tests": [
-        {
-          "name": "test_account_init",
-          "file": "tests/test_account.py",
-          "line": 4,
-          "oracle_strength": "unknown",
-          "oracle_kind": "unknown",
-          "oracle": ""
-        }
       ],
       "stop_reasons": ["static_probe_unknown"],
       "oracle_kind": "unknown",
-      "oracle_strength": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "",
       "suggested_next_action": "",
       "language": "python",
