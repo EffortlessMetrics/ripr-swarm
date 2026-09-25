@@ -305,7 +305,9 @@ mod tests {
             || options.will_save != Some(false)
             || options.will_save_wait_until != Some(false)
         {
-            return Err("textDocumentSync options drifted from the saved-workspace contract".into());
+            return Err(
+                "textDocumentSync options drifted from the saved-workspace contract".into(),
+            );
         }
         let Some(TextDocumentSyncSaveOptions::SaveOptions(save)) = options.save else {
             return Err("expected explicit save options".to_string());
