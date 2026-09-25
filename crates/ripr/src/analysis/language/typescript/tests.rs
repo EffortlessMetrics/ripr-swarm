@@ -7428,6 +7428,116 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
     Ok(())
 }
 
+/// RIPR-SPEC-0099 test 5 — DEFAULT-IMPORT NEGATIVE CONTROL:
+/// `import React from 'react'` is recorded as `imported: "default"`, which is
+/// NOT the owner's exported name. The limitation must NOT fire: a default
+/// import only plausibly targets the owner when the LOCAL binding name matches
+/// (`React` != `applyDiscount`). Before the local-binding check, any default
+/// import from any non-relative package false-fired this limitation.
+#[test]
+fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/owner.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    // Test only imports the React default binding — unrelated to the owner.
+    let test = TypeScriptTest {
+        name: "renders the app".to_string(),
+        local_name: "renders the app".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("src/app.test.tsx"),
+        line: 1,
+        body_text: "const view = renderApp();\nexpect(view).toBeTruthy();".to_string(),
+        assertions: vec![strong_be_assertion()],
+        mocks_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "react".to_string(),
+            imported: Some("default".to_string()),
+            local: "React".to_string(),
+            namespace: false,
+        }],
+    };
+    let all_owners = [owner];
+    let all_tests = [test];
+
+    let finding = classify_change(
+        Path::new("src/owner.ts"),
+        1,
+        "return a - b;",
+        &all_owners,
+        &all_tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // `React` (local) != `applyDiscount` (owner) → no alias-gap limitation.
+    assert_evidence_lacks(&finding, "typescript_path_alias_unresolved");
+    Ok(())
+}
+
+/// RIPR-SPEC-0099 test 6 — DEFAULT-IMPORT POSITIVE CONTROL:
+/// `import applyDiscount from '@/applyDiscount'` records `imported: "default"`
+/// but the LOCAL binding name matches the owner — the import plausibly targets
+/// the owner, so the limitation MUST still fire when resolution fails.
+#[test]
+fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/owner.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "default import test".to_string(),
+        local_name: "default import test".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("src/owner.test.ts"),
+        line: 1,
+        body_text: "const result = applyDiscount(100);\nexpect(result).toBe(90);".to_string(),
+        assertions: vec![strong_be_assertion()],
+        mocks_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "@/owner".to_string(),
+            imported: Some("default".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
+    };
+    let all_owners = [owner];
+    let all_tests = [test];
+
+    let finding = classify_change(
+        Path::new("src/owner.ts"),
+        1,
+        "return a - b;",
+        &all_owners,
+        &all_tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // Local binding == owner name → alias-gap limitation must fire.
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_path_alias_unresolved",
+    );
+    Ok(())
+}
+
 // ── RIPR-SPEC-0104: family↔oracle-kind matching (4 controls) ─────────────────
 
 /// RIPR-SPEC-0104 control 1 (REPRO — headline fix):
@@ -8113,6 +8223,108 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
                 "runner unresolved: verify_command should be in missing_actionability_fields, but got: {line:?}"
             ));
         }
+    }
+
+    Ok(())
+}
+
+/// Mocha fail-closed control: a detected mocha framework has NO file-target
+/// command mapping, so with no lockfile/runner evidence the inferred command
+/// is `None`. The evidence MUST carry
+/// `typescript_package_limitation: typescript_test_runner_unresolved` (the
+/// limitation fires whenever the command is unresolved — even though a
+/// framework WAS detected) and MUST NOT invent a `typescript_verify_command`.
+#[test]
+fn mocha_no_lockfile_emits_runner_unresolved_limitation() -> Result<(), String> {
+    let root = ts_unique_tempdir("mocha-no-lockfile")?;
+
+    // package.json with mocha in devDependencies; NO lockfile → no runner
+    // evidence and no file-target mocha command.
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"pkg","scripts":{"test":"mocha"},"devDependencies":{"mocha":"^10.0.0"}}"#,
+    )?;
+
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/lib.test.ts"),
+        "import { applyDiscount } from '../src/lib';\ntest('applies discount', () => {\n  const result = applyDiscount(50, 100);\n  expect(result).toBeTruthy();\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/lib.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "  if (amount >= threshold) {".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    if result.findings.is_empty() {
+        return Err(format!(
+            "expected at least one finding; got none (changed_files={})",
+            result.changed_files
+        ));
+    }
+    let finding = &result.findings[0];
+
+    // Framework WAS detected — the runner name line must be present.
+    let has_runner_name = finding
+        .evidence
+        .iter()
+        .any(|ev| ev == "typescript_test_runner: mocha");
+    if !has_runner_name {
+        return Err(format!(
+            "expected typescript_test_runner: mocha evidence; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    // No command must be invented.
+    let invented_cmd = finding
+        .evidence
+        .iter()
+        .find(|ev| ev.starts_with("typescript_verify_command:"));
+    if let Some(cmd) = invented_cmd {
+        return Err(format!(
+            "mocha without lockfile: no command should be invented, but got: {cmd:?}"
+        ));
+    }
+
+    // The unresolved limitation MUST fire even though a framework was detected.
+    let has_limitation = finding
+        .evidence
+        .iter()
+        .any(|ev| ev == "typescript_package_limitation: typescript_test_runner_unresolved");
+    if !has_limitation {
+        return Err(format!(
+            "expected typescript_test_runner_unresolved limitation when the inferred command is None; evidence={:?}",
+            finding.evidence
+        ));
     }
 
     Ok(())
