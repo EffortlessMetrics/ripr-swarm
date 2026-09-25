@@ -298,12 +298,12 @@ mod tests {
     fn under_limit_file_reads_and_reports_budget() {
         let dir = TempDir::new("under-limit");
         dir.write("ok.ts", b"export const value = 1;\n");
-        let mut remaining = 10u64;
+        let mut remaining = 100u64;
         let outcome = read_source_capped(&dir.0.join("ok.ts"), 1024, Some(&mut remaining));
         assert!(outcome.is_ok(), "under-limit read must succeed");
         let text = outcome.unwrap_or_default();
         assert!(text.contains("value = 1"));
-        assert_eq!(remaining, 10 - text.len() as u64);
+        assert_eq!(remaining, 100 - text.len() as u64);
     }
 
     #[test]
