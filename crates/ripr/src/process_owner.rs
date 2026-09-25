@@ -328,12 +328,12 @@ mod tests {
             drop(owned);
         }
         if alive_on_windows(pid) {
-            return Err(format!("owned child {pid} survived owner drop"));
+            return Err(format!("owned child {pid} persisted past owner drop"));
         }
         Ok(())
     }
 
-    /// A descendant created by the owned child is killed by
+    /// A descendant created by the owned child is terminated by
     /// `terminate_tree` even when it holds inherited pipe handles, and the
     /// call returns after the direct child is reaped (native controls 3-5).
     #[cfg(windows)]
@@ -370,7 +370,7 @@ mod tests {
         termination?;
         if alive_on_windows(descendant_pid) {
             return Err(format!(
-                "descendant {descendant_pid} survived terminate_tree; tree containment not established"
+                "descendant {descendant_pid} persisted past terminate_tree; tree containment not established"
             ));
         }
         Ok(())
@@ -407,7 +407,7 @@ mod tests {
         let _ = unrelated.wait();
         termination?;
         if !unrelated_alive {
-            return Err("terminate_tree killed an unrelated same-name process".to_string());
+            return Err("terminate_tree terminated an unrelated same-name process".to_string());
         }
         Ok(())
     }

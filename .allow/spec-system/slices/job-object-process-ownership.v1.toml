@@ -35,7 +35,7 @@ non_goals = [
 ]
 
 return_conditions = [
-  "Return to root if the Job Object assignment cannot be proven to precede any child user code on Windows.",
+  "Return to root if the Job Object assignment cannot be shown to precede any child user code on Windows.",
   "Return to root if a retained deadline/timeout/descendant test changes its established error text or exit semantics.",
   "Return to root if the xtask bounded runners regress on Linux process-group termination.",
 ]
