@@ -32,8 +32,8 @@ use super::state::{
     WorkspaceRootAuthority, WorkspaceRootState, content_digest, format_duration,
 };
 use super::uri::{
-    absolute_join, display_path, file_uri_for_path, file_uri_is_within_root, file_uris_match,
-    path_from_file_uri, path_is_within_root,
+    CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uri_is_within_root,
+    file_uris_match, path_from_file_uri, path_is_within_root, read_artifact_capped,
 };
 use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
@@ -6132,8 +6132,27 @@ fn collect_gap_record_context_packet(
         .filter(|value| !value.is_empty())
         .unwrap_or(DEFAULT_GAP_DECISION_LEDGER_OUT);
     let ledger_path = absolute_join(root, Path::new(ledger_arg));
-    let contents = fs::read_to_string(&ledger_path).ok()?;
-    let records = parse_gap_records_json(&contents).ok()?;
+    // Client-supplied path: confine reads to the workspace root so a client
+    // message cannot make the long-running server read arbitrary files.
+    // `absolute_join` passes absolute paths through unchanged, so an
+    // out-of-root absolute path or a symlink escape is rejected here
+    // (canonicalizing both sides, like `validate_agent_brief_diff_path`).
+    if !path_is_within_root(root, &ledger_path) {
+        return None;
+    }
+    let contents = match read_artifact_capped(&ledger_path) {
+        CappedArtifactRead::Contents(contents) => contents,
+        // Absent ledger: no packet is available, which is a normal state.
+        CappedArtifactRead::Missing => return None,
+        // Present but oversize/unreadable: typed sentinel, not a silent None.
+        CappedArtifactRead::Unusable => {
+            return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
+        }
+    };
+    let records = match parse_gap_records_json(&contents) {
+        Ok(records) => records,
+        Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
+    };
     let record = records
         .iter()
         .find(|record| gap_record_matches(record, gap_id))?;
@@ -6542,8 +6561,20 @@ fn workspace_receipt_status_report_paths() -> serde_json::Value {
 }
 
 fn collect_repair_packet_from_actionable_gaps(path: &Path, gap_id: Option<&str>) -> Option<LSPAny> {
-    let contents = fs::read_to_string(path).ok()?;
-    let report: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let contents = match read_artifact_capped(path) {
+        CappedArtifactRead::Contents(contents) => contents,
+        // Absent artifact: falling back to the next packet source is honest.
+        CappedArtifactRead::Missing => return None,
+        // Present but oversize/unreadable: typed sentinel so the client can
+        // distinguish a corrupt source from "no packet"; no fallback.
+        CappedArtifactRead::Unusable => {
+            return Some(repair_packet_sentinel(MALFORMED_ACTIONABLE_GAPS_REASON));
+        }
+    };
+    let report: serde_json::Value = match serde_json::from_str(&contents) {
+        Ok(report) => report,
+        Err(_) => return Some(repair_packet_sentinel(MALFORMED_ACTIONABLE_GAPS_REASON)),
+    };
     let packets = report.get("packets").and_then(|v| v.as_array())?;
     let packet = if let Some(id) = gap_id {
         packets
@@ -6705,8 +6736,19 @@ fn validate_and_render_actionable_gap_packet(packet: &serde_json::Value) -> Opti
 }
 
 fn collect_repair_packet_from_ledger(path: &Path, gap_id: Option<&str>) -> Option<LSPAny> {
-    let contents = fs::read_to_string(path).ok()?;
-    let records = parse_gap_records_json(&contents).ok()?;
+    let contents = match read_artifact_capped(path) {
+        CappedArtifactRead::Contents(contents) => contents,
+        // Absent artifact: no packet is available, which is a normal state.
+        CappedArtifactRead::Missing => return None,
+        // Present but oversize/unreadable: typed sentinel, not a silent None.
+        CappedArtifactRead::Unusable => {
+            return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
+        }
+    };
+    let records = match parse_gap_records_json(&contents) {
+        Ok(records) => records,
+        Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
+    };
     let record = if let Some(id) = gap_id {
         records
             .iter()
@@ -6783,6 +6825,13 @@ fn repair_packet_sentinel(reason: &str) -> LSPAny {
         "reason": reason,
     })
 }
+
+/// Typed-degradation reasons for a present-but-unparseable packet source.
+/// Vocabulary mirrors `limitation_non_claims("malformed_artifact")`: the
+/// client must be able to tell "no packet" apart from "packet source corrupt;
+/// artifact regeneration required before exposure can be assessed".
+const MALFORMED_ACTIONABLE_GAPS_REASON: &str = "actionable-gaps.json is malformed; artifact regeneration required before exposure can be assessed";
+const MALFORMED_GAP_LEDGER_REASON: &str = "gap-decision-ledger.json is malformed; artifact regeneration required before exposure can be assessed";
 
 fn gap_record_matches(record: &GapRecord, gap_id: &str) -> bool {
     record.gap_id == gap_id || record.canonical_gap_id == gap_id
@@ -7112,8 +7161,8 @@ mod gap_record_context_tests {
     }
 
     #[test]
-    fn collect_gap_record_context_packet_with_malformed_ledger_returns_none() -> Result<(), String>
-    {
+    fn collect_gap_record_context_packet_with_malformed_ledger_returns_sentinel()
+    -> Result<(), String> {
         let root = temp_root()?;
         let path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
         fs::write(path, "{ not valid json")
@@ -7127,11 +7176,128 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
+        let packet =
+            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
+                .ok_or_else(|| "expected malformed-artifact sentinel, not null".to_string())?;
+        assert_eq!(packet["kind"], "repair_packet");
+        assert_eq!(packet["status"], "not_actionable_or_incomplete");
+        assert_eq!(packet["reason"], MALFORMED_GAP_LEDGER_REASON);
+
+        fs::remove_dir_all(&root)
+            .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn collect_gap_record_context_packet_rejects_out_of_root_ledger() -> Result<(), String> {
+        let root = temp_root()?;
+        // A client-supplied absolute path outside the workspace root must not
+        // be read, even when the file exists and is a valid ledger.
+        let outside = std::env::temp_dir().join(format!(
+            "ripr-lsp-gap-record-outside-{}-{}",
+            std::process::id(),
+            TEMP_ROOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&outside)
+            .map_err(|err| format!("create outside dir {} failed: {err}", outside.display()))?;
+        let outside_ledger = outside.join("gap-decision-ledger.json");
+        fs::write(&outside_ledger, gap_ledger_json()).map_err(|err| {
+            format!(
+                "write outside ledger {} failed: {err}",
+                outside_ledger.display()
+            )
+        })?;
+        let args_value = serde_json::json!({
+            "gap_id": "gap:pr:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
+            "gap_ledger": outside_ledger,
+        });
+        let args = args_value
+            .as_object()
+            .ok_or_else(|| "expected object args".to_string())?;
+
         assert!(
             collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
                 .is_none()
         );
 
+        fs::remove_dir_all(&outside)
+            .map_err(|err| format!("remove outside dir {} failed: {err}", outside.display()))?;
+        fs::remove_dir_all(&root)
+            .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn collect_gap_record_context_packet_accepts_in_root_absolute_ledger() -> Result<(), String> {
+        let root = temp_root()?;
+        write_gap_ledger(&root)?;
+        // An absolute path that stays at-or-below the root remains readable.
+        let absolute_ledger = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
+        let args_value = serde_json::json!({
+            "gap_id": "gap:pr:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
+            "gap_ledger": absolute_ledger,
+        });
+        let args = args_value
+            .as_object()
+            .ok_or_else(|| "expected object args".to_string())?;
+
+        let packet =
+            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
+                .ok_or_else(|| "expected gap packet".to_string())?;
+        assert_eq!(packet["source"], "gap_decision_ledger");
+
+        fs::remove_dir_all(&root)
+            .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn collect_gap_record_context_packet_rejects_symlink_escape_ledger() -> Result<(), String> {
+        let root = temp_root()?;
+        let outside = std::env::temp_dir().join(format!(
+            "ripr-lsp-gap-record-symlink-outside-{}-{}",
+            std::process::id(),
+            TEMP_ROOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&outside)
+            .map_err(|err| format!("create outside dir {} failed: {err}", outside.display()))?;
+        let outside_ledger = outside.join("gap-decision-ledger.json");
+        fs::write(&outside_ledger, gap_ledger_json()).map_err(|err| {
+            format!(
+                "write outside ledger {} failed: {err}",
+                outside_ledger.display()
+            )
+        })?;
+        let link = root.join("linked-ledger");
+        #[cfg(unix)]
+        let link_result = std::os::unix::fs::symlink(&outside_ledger, &link);
+        #[cfg(windows)]
+        let link_result = std::os::windows::fs::symlink_file(&outside_ledger, &link);
+        if let Err(err) = link_result {
+            eprintln!("skipping symlink escape test: {err}");
+            let _ = fs::remove_dir_all(&outside);
+            let _ = fs::remove_dir_all(&root);
+            return Ok(());
+        }
+        let args_value = serde_json::json!({
+            "gap_id": "gap:pr:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
+            "gap_ledger": "linked-ledger",
+        });
+        let args = args_value
+            .as_object()
+            .ok_or_else(|| "expected object args".to_string())?;
+
+        assert!(
+            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
+                .is_none(),
+            "symlink escape out of the workspace root must be rejected"
+        );
+
+        fs::remove_dir_all(&outside)
+            .map_err(|err| format!("remove outside dir {} failed: {err}", outside.display()))?;
         fs::remove_dir_all(&root)
             .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
         Ok(())

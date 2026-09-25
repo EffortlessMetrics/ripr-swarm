@@ -1,5 +1,6 @@
 use super::HOVER_TEXT;
 use super::state::{AnalysisSnapshot, format_duration};
+use super::uri::{CappedArtifactRead, read_artifact_capped};
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
 use crate::domain::{DiagnosticWitness, Finding, StageEvidence, StageState};
@@ -875,7 +876,12 @@ struct FirstUsefulActionHover {
 
 fn first_useful_action_for_seam(root: &Path, seam_id: &str) -> Option<FirstUsefulActionHover> {
     let report_path = root.join(DEFAULT_FIRST_USEFUL_ACTION_OUT);
-    let raw = std::fs::read_to_string(report_path).ok()?;
+    // A missing or unusable (oversize/unreadable) report degrades the same
+    // way the previous `read_to_string(...).ok()?` did: no hover section.
+    let raw = match read_artifact_capped(&report_path) {
+        CappedArtifactRead::Contents(contents) => contents,
+        _ => return None,
+    };
     let report = serde_json::from_str::<Value>(&raw).ok()?;
     let object = report.as_object()?;
     if string_value(object.get("schema_version")?)? != "0.1" {
