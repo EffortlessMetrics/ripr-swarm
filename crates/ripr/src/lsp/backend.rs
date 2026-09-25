@@ -663,8 +663,9 @@ impl Backend {
                         .await;
                     return cancellation_outcome(request);
                 }
+                let version = self.document_version_for_push(uri);
                 self.client
-                    .publish_diagnostics(uri.clone(), Vec::new(), None)
+                    .publish_diagnostics(uri.clone(), Vec::new(), version)
                     .await;
             }
             // Documents that enter quarantine under this transaction's
@@ -690,6 +691,7 @@ impl Backend {
                     .await;
                     return cancellation_outcome(request);
                 }
+                let version = self.document_version_for_push(uri);
                 if !snapshot.served_diagnostics_for_uri(uri).is_empty()
                     && let Some((path, reason)) =
                         self.document_quarantine_for_pending(uri, &pending_analyzed)
@@ -702,7 +704,7 @@ impl Backend {
                         .await;
                 }
                 self.client
-                    .publish_diagnostics(uri.clone(), Vec::new(), None)
+                    .publish_diagnostics(uri.clone(), Vec::new(), version)
                     .await;
             }
         }
@@ -960,9 +962,17 @@ impl Backend {
             .collect::<BTreeSet<_>>();
         uris.extend(plan.current_uris.iter().cloned());
         for uri in uris {
-            let diagnostics = previous_diagnostics.get(&uri).cloned().unwrap_or_default();
+            let version = self.document_version_for_push(&uri);
+            // Rollback restores the committed push view, not stale line-local
+            // diagnostics over a buffer that became dirty while the failed
+            // transaction was in flight.
+            let diagnostics = if self.document_quarantine(&uri).is_some() {
+                Vec::new()
+            } else {
+                previous_diagnostics.get(&uri).cloned().unwrap_or_default()
+            };
             self.client
-                .publish_diagnostics(uri, diagnostics, None)
+                .publish_diagnostics(uri, diagnostics, version)
                 .await;
         }
     }
@@ -1798,7 +1808,10 @@ impl Backend {
             let uris = self.clear_all_diagnostic_uris();
             if !self.pull_diagnostics_enabled() {
                 for uri in uris {
-                    self.client.publish_diagnostics(uri, Vec::new(), None).await;
+                    let version = self.document_version_for_push(&uri);
+                    self.client
+                        .publish_diagnostics(uri, Vec::new(), version)
+                        .await;
                 }
             }
             self.reset_health_for_input_change();
