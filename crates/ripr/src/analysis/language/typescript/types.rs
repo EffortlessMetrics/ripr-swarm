@@ -73,6 +73,31 @@ pub(crate) struct TypeScriptParseLimit {
     pub(crate) reason: String,
 }
 
+/// A workspace file that could not be read at all (permissions, encoding,
+/// transient I/O). Unlike a parse limit the adapter has no syntax facts at
+/// all for this path; the file silently vanished from both the owner index
+/// and the test index before this record existed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TypeScriptReadFailure {
+    pub(crate) file: PathBuf,
+    pub(crate) error: String,
+}
+
+/// One concrete, observed gap between the tests a recognized test file
+/// registers and the tests the syntax-first extractor actually indexed.
+/// Produced by `detect_partial_test_extraction`; consumed by the
+/// `typescript_test_extraction_partial` named-limitation producer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TypeScriptTestExtractionGap {
+    pub(crate) file: PathBuf,
+    pub(crate) sample_line: usize,
+    /// Detected shape, one of `template-literal title`, `tagged-template .each`,
+    /// or `test/it call in loop/callback/nested body`.
+    pub(crate) shape: &'static str,
+    /// Source snippet (single-line, bounded) of the unextracted registration.
+    pub(crate) snippet: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypeScriptRelationKind {
     DirectOwnerCall,

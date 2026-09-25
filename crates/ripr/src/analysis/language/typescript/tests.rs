@@ -8892,3 +8892,269 @@ it("tiers", () => {
         );
     }
 }
+
+// ── Silent-gap disclosure: unreadable files, test-file parse errors, ────────
+// ── and partial test extraction (typescript_test_extraction_partial) ────────
+//
+// Spec: a workspace file that cannot be read, a changed test file that cannot
+// be parsed, or a recognized test file whose registrations the extractor
+// silently drops must produce typed limitations (or at least a real
+// `skipped_files` count) instead of vanishing with zero disclosure. Without
+// this, owners whose only tests live in those files get a confident false
+// `no_static_path` and the advice "add a test that calls the changed owner"
+// points at tests that already exist.
+
+fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
+    AnalysisOptions {
+        root,
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    }
+}
+
+/// (a) An unreadable CHANGED file must be disclosed with its path and the
+/// read failure, and `skipped_files` must report the real count — including
+/// unreadable files that are not part of the diff (counted, not disclosed).
+#[test]
+fn analyze_diff_discloses_unreadable_changed_file_with_real_skipped_count() -> Result<(), String> {
+    let root = ts_unique_tempdir("readfail")?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    // Invalid UTF-8 CHANGED file: its added lines can never be classified.
+    std::fs::write(
+        root.join("src/evil.ts"),
+        b"export function evil(): number {\n  \xff\xfe\n}\n",
+    )
+    .map_err(|err| format!("write invalid-utf8 changed file: {err}"))?;
+    // Invalid UTF-8 UNCHANGED file: counted in skipped_files, no limitation.
+    std::fs::write(
+        root.join("src/stale.ts"),
+        b"export function stale(): number {\n  \xff\xfe\n}\n",
+    )
+    .map_err(|err| format!("write invalid-utf8 unchanged file: {err}"))?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/evil.ts")],
+    )?;
+    assert_eq!(
+        result.skipped_files, 2,
+        "both unreadable files must be counted in skipped_files"
+    );
+    let read_limits = result
+        .limitations
+        .iter()
+        .filter(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with("read failed:"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        read_limits.len(),
+        1,
+        "only the CHANGED unreadable file is disclosed, got {:?}",
+        result.limitations
+    );
+    let limitation = read_limits[0];
+    assert_eq!(limitation.path.as_deref(), Some("src/evil.ts"));
+    let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("read failed:"),
+        "detail must name the read failure, got {detail:?}"
+    );
+    Ok(())
+}
+
+/// A CHANGED test file with a parse error must produce a limitation just like
+/// a changed production file — its tests would otherwise vanish from
+/// `all_tests` and flip owners to false `no_static_path` with no trace.
+#[test]
+fn analyze_diff_discloses_changed_test_file_parse_error() -> Result<(), String> {
+    let root = ts_unique_tempdir("testparse")?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    // Unclosed arrow body → parser error.
+    ts_write_file(
+        &root.join("tests/lib.test.ts"),
+        "test(\"adds\", () => {\n  expect(add(1, 2)).toBe(3);\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("tests/lib.test.ts")],
+    )?;
+    assert!(
+        result.limitations.iter().any(|limitation| {
+            limitation.path.as_deref() == Some("tests/lib.test.ts")
+                && limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("parser error"))
+        }),
+        "expected a parse-error limitation naming the changed test file, got {:?}",
+        result.limitations
+    );
+    Ok(())
+}
+
+/// (b) A recognized test file that parses but registers a test with a
+/// template-literal title must emit `typescript_test_extraction_partial`.
+#[test]
+fn analyze_diff_emits_test_extraction_partial_for_template_literal_title() -> Result<(), String> {
+    let root = ts_unique_tempdir("tmpltitle")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/calc.test.ts"),
+        "import { add } from '../src/calc';\nit(`adds ${1} and ${2}`, () => {\n  expect(add(1, 2)).toBe(3);\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/calc.ts")],
+    )?;
+    assert!(
+        result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        }),
+        "expected a typescript_test_extraction_partial limitation, got {:?}",
+        result.limitations
+    );
+    Ok(())
+}
+
+/// (c) Negative control: a normal, fully extracted test file (plain titles,
+/// describe nesting, array-form `.each`) must NOT emit the new limitation.
+#[test]
+fn analyze_diff_no_extraction_partial_for_fully_extracted_test_file() -> Result<(), String> {
+    let root = ts_unique_tempdir("full-extract")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/calc.test.ts"),
+        "import { add } from '../src/calc';\n\
+         describe(\"add\", () => {\n\
+         \x20 it(\"adds two numbers\", () => {\n\
+         \x20   expect(add(1, 2)).toBe(3);\n\
+         \x20 });\n\
+         \x20 test.each([[1, 2, 3]])(\"row %#\", (row) => {\n\
+         \x20   expect(add(row[0], row[1])).toBe(row[2]);\n\
+         \x20 });\n\
+         });\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/calc.ts")],
+    )?;
+    assert!(
+        !result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        }),
+        "fully extracted test file must NOT emit typescript_test_extraction_partial, got {:?}",
+        result.limitations
+    );
+    Ok(())
+}
+
+/// Detector unit shape: tagged-template `.each` in callee position is flagged.
+#[test]
+fn detect_partial_flags_tagged_template_each() -> Result<(), String> {
+    let file = Path::new("tests/table.test.ts");
+    let source =
+        "test.each`\n a | b\n 1 | 2\n`('row %#', ({ a, b }) => {\n  expect(a).toBe(b);\n});\n";
+    let extracted = extract_tests(file, source);
+    assert!(
+        extracted.is_empty(),
+        "tagged-template .each is not extractable by design, got {extracted:?}"
+    );
+    let gap = detect_partial_test_extraction(file, source, &extracted)
+        .ok_or_else(|| "tagged-template .each must be disclosed".to_string())?;
+    assert_eq!(gap.shape, "tagged-template .each");
+    assert_eq!(gap.sample_line, 1);
+    Ok(())
+}
+
+/// Detector unit shape: `it(...)` generated inside a loop body is flagged.
+#[test]
+fn detect_partial_flags_test_registered_in_loop() -> Result<(), String> {
+    let file = Path::new("tests/loop.test.ts");
+    let source = "for (const n of [1, 2]) {\n  it(\"case \" + n, () => {\n    expect(n).toBe(1);\n  });\n}\n";
+    let extracted = extract_tests(file, source);
+    assert!(
+        extracted.is_empty(),
+        "loop-generated tests are not extractable by design, got {extracted:?}"
+    );
+    let gap = detect_partial_test_extraction(file, source, &extracted)
+        .ok_or_else(|| "loop-generated test must be disclosed".to_string())?;
+    assert_eq!(gap.shape, "test/it call in loop/callback/nested body");
+    assert_eq!(gap.sample_line, 2);
+    Ok(())
+}
+
+/// Detector unit shape: template-literal `it(`/`test(` titles are flagged.
+#[test]
+fn detect_partial_flags_template_literal_title() -> Result<(), String> {
+    let file = Path::new("tests/tmpl.test.ts");
+    let source = "it(`adds ${1}`, () => {\n  expect(1 + 1).toBe(2);\n});\n";
+    let extracted = extract_tests(file, source);
+    assert!(
+        extracted.is_empty(),
+        "template-literal titles are not extractable by design, got {extracted:?}"
+    );
+    let gap = detect_partial_test_extraction(file, source, &extracted)
+        .ok_or_else(|| "template-literal title must be disclosed".to_string())?;
+    assert_eq!(gap.shape, "template-literal title");
+    assert_eq!(gap.sample_line, 1);
+    Ok(())
+}
+
+/// Detector negative control: a fully extracted file reports no gap.
+#[test]
+fn detect_partial_none_when_every_test_extracted() {
+    let file = Path::new("tests/plain.test.ts");
+    let source = "describe(\"suite\", () => {\n  it(\"works\", () => {\n    expect(1).toBe(1);\n  });\n  test.each([[1]])(\"row %#\", (n) => {\n    expect(n).toBe(1);\n  });\n});\n";
+    let extracted = extract_tests(file, source);
+    assert_eq!(extracted.len(), 2, "both registrations extract");
+    assert!(
+        detect_partial_test_extraction(file, source, &extracted).is_none(),
+        "fully extracted file must not report a partial-extraction gap"
+    );
+}
