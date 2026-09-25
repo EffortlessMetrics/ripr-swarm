@@ -201,6 +201,8 @@ target/ripr/workflow/            # status input
 
 Those paths keep existing review and cockpit integrations working. Their evidence is admitted only after the exact attempt's retained before snapshot and packet have been resolved and validated.
 
+The after phase's stdout is exactly one JSON document, like every other agent command: the verify outcome — every existing field, including its own top-level `status` — with the status report embedded under `agent_status`, so a caller can parse stdout once. Narration stays on stderr. When the after phase refuses after the verify render (for example the receipt is not receipt-ready), stdout is the verify document alone, still one document.
+
 ### Rerunning the receipt
 
 `ripr agent receipt` can be rerun after the after phase, with or without `--out target/ripr/reports/agent-receipt.json`, and `ripr agent status` can be run in between. Each rerun recomputes the edit-cage delta and requires it, and the verdict it yields, to equal what the after phase bound. The receipt the after phase wrote, and any other file a later `ripr` command writes under `target/ripr`, appears only after that binding. A change is left out of the recomputation only when all three of these hold:

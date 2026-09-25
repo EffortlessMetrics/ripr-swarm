@@ -77,7 +77,10 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 
 The before phase writes the before snapshot, brief, packet, and workflow files
 and prints the exact `--attempt` command for the after phase. The after phase
-writes the after snapshot, analysis outcome, verify JSON, and receipt. For the
+writes the after snapshot, analysis outcome, verify JSON, and receipt. Its
+stdout is exactly one JSON document — the verify outcome with the status
+report embedded under `agent_status` — so an orchestrator can `JSON.parse`
+stdout once; narration stays on stderr. For the
 separately authorized `verify` phase of a trust-bound Python attempt, see
 [Repair attempt identity](REPAIR_ATTEMPT.md). The numbered steps below are the
 lower-level manual equivalent, kept for explicit control and debugging.
