@@ -2,7 +2,7 @@
   "schema_version": "0.1",
   "tool": "ripr",
   "kind": "report_packet_index",
-  "status": "pass",
+  "status": "warn",
   "root": ".",
   "generated_at": "unix_ms:0",
   "inputs": {
@@ -36,7 +36,7 @@
           "kind": "markdown",
           "path": "target/ripr/reports/pr-review-front-panel.md",
           "json_path": "target/ripr/reports/pr-review-front-panel.json",
-          "status": "available",
+          "status": "warn",
           "available": true,
           "required": true,
           "authority": false,

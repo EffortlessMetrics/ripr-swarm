@@ -7994,6 +7994,96 @@ fn initialize_surfaces_poisoned_client_features_store_as_a_session_failure() -> 
 }
 
 #[test]
+fn poisoned_initialize_failure_commit_survives_a_wedged_client_channel() -> Result<(), String> {
+    // #3802: once the session is initialized (client deliveries are no
+    // longer suppressed by the library's pre-initialize gate), a root change
+    // pre-fills the capacity-1 client egress channel while the peer socket
+    // stays undriven. The poisoned-profile branch must commit the owning
+    // session failure and return within its bounded disclosure window
+    // instead of hanging on the wedged client log/status await.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        use tower::Service as _;
+        let root_first = unique_lsp_test_root("poisoned-initialize-wedged-first")?;
+        let root_second = unique_lsp_test_root("poisoned-initialize-wedged-second")?;
+        let (mut service, _socket) = build_service(PathBuf::from("."));
+        // Flip the service state to Initialized by driving one healthy
+        // initialize through the service layers; the direct backend call
+        // below then reaches the real capacity-1 client channel instead of
+        // being suppressed pre-initialize.
+        let healthy = tower::ServiceExt::ready(&mut service)
+            .await
+            .map_err(|err| format!("service never became ready: {err:?}"))?
+            .call(
+                tower_lsp_server::jsonrpc::Request::build("initialize")
+                    .params(
+                        serde_json::to_value(initialize_params(
+                            None,
+                            Some(file_uri_for_path(root_first.path())?),
+                        ))
+                        .map_err(|err| format!("initialize params serialize failed: {err}"))?,
+                    )
+                    .id(1)
+                    .finish(),
+            )
+            .await
+            .map_err(|err| format!("healthy framed initialize failed: {err:?}"))?;
+        if healthy
+            .as_ref()
+            .and_then(|response| response.error())
+            .is_some()
+        {
+            return Err("healthy framed initialize must succeed".to_string());
+        }
+        let backend = service.inner();
+        backend.poison_client_features_for_test();
+        // The changed root exercises the transition path whose analysis
+        // status publication fills the capacity-1 client channel before the
+        // poisoned branch runs.
+        let poisoned = tokio::time::timeout(
+            Duration::from_secs(10),
+            backend.initialize(initialize_params(
+                None,
+                Some(file_uri_for_path(root_second.path())?),
+            )),
+        )
+        .await
+        .map_err(|_elapsed| {
+            // Discriminates the issue's middle state: the failure path was
+            // entered, but the undriven client delivery deadlocked it
+            // before the owning state transition could complete.
+            "poisoned initialize did not return within the inner bound; \
+             the failure commit is blocked behind an undriven client \
+             delivery await (#3802)"
+                .to_string()
+        })?;
+        poisoned.map_err(|err| format!("poisoned initialize failed: {err}"))?;
+        // The owning failure must be committed even though client delivery
+        // never completed.
+        let failure = backend
+            .configuration_failure()
+            .ok_or_else(|| "poisoned profile store must surface a session failure".to_string())?;
+        if failure.kind != AnalysisFailureKind::SessionStateInconsistent {
+            return Err(format!(
+                "poisoned profile store surfaced the wrong failure kind: {}",
+                failure.kind.as_str()
+            ));
+        }
+        if !backend.initialize_failure_disclosure_omitted() {
+            return Err(
+                "wedged client delivery must be recorded as omitted, not silently dropped"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn pull_mode_is_pending_until_the_first_pull_resolves() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -13710,6 +13800,60 @@ fn write_actionable_gaps_report(
     Ok(())
 }
 
+/// A complete, agent-packet-eligible gap decision ledger record used to
+/// exercise the repair-packet ledger fallback path.
+fn write_gap_decision_ledger(root: &std::path::Path) -> Result<(), String> {
+    let reports_dir = root.join("target/ripr/reports");
+    std::fs::create_dir_all(&reports_dir)
+        .map_err(|err| format!("create reports dir failed: {err}"))?;
+    let path = reports_dir.join("gap-decision-ledger.json");
+    std::fs::write(&path, complete_gap_decision_ledger_json())
+        .map_err(|err| format!("write gap-decision-ledger.json failed: {err}"))?;
+    Ok(())
+}
+
+fn complete_gap_decision_ledger_json() -> &'static str {
+    r#"{
+  "records": [
+    {
+      "gap_id": "gap:pr:pricing:threshold-boundary",
+      "source_currentness": "candidate_current",
+      "canonical_gap_id": "gap:rust:pricing:threshold-boundary",
+      "kind": "MissingBoundaryAssertion",
+      "language": "rust",
+      "language_status": "stable",
+      "scope": "pr_local",
+      "evidence_class": "static_exposure",
+      "gap_state": "actionable",
+      "policy_state": "new",
+      "repairability": "repairable",
+      "repair_route": {
+        "route_kind": "AddBoundaryAssertion",
+        "target_file": "tests/pricing.rs",
+        "target_line": 33,
+        "related_test": "tests/pricing.rs::discount_threshold",
+        "assertion_shape": "assert_eq!(price(threshold), expected)",
+        "changed_behavior": "amount >= threshold",
+        "stop_conditions": ["Stop if the target owner moved."]
+      },
+      "anchor": {
+        "file": "src/pricing.rs",
+        "line": 42,
+        "owner": "pricing::discounted_total",
+        "dedupe_fingerprint": "gap:rust:pricing:threshold-boundary"
+      },
+      "evidence_ids": ["evidence:pricing"],
+      "projection_eligibility": {
+        "agent_packet": { "eligible": true, "reason": "bounded_repair_route" }
+      },
+      "verification_commands": ["cargo xtask fixtures boundary_gap"],
+      "receipt_command": "ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-pr-pricing.targeted-test-outcome.json",
+      "authority_boundary": "advisory"
+    }
+  ]
+}"#
+}
+
 fn seed_successful_snapshot(backend: &Backend) -> Result<(), String> {
     backend.initialize_test_workspace_root();
     let finding = sample_finding();
@@ -13955,6 +14099,99 @@ fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> R
                 "repair packet must not contain mutation-runtime term '{term}'"
             );
         }
+        Ok(())
+    })
+}
+
+#[test]
+fn execute_command_collect_repair_packet_malformed_actionable_gaps_returns_sentinel()
+-> Result<(), String> {
+    // A present-but-unparseable actionable-gaps.json must surface a typed
+    // malformed-source sentinel — not a silent null and not a fallback to the
+    // ledger — even when the ledger fallback source is valid.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-malformed-actionable")?;
+        let reports_dir = root.path().join("target/ripr/reports");
+        std::fs::create_dir_all(&reports_dir)
+            .map_err(|err| format!("create reports dir failed: {err}"))?;
+        std::fs::write(reports_dir.join("actionable-gaps.json"), "{ not valid json")
+            .map_err(|err| format!("write malformed actionable-gaps.json failed: {err}"))?;
+        write_gap_decision_ledger(root.path())?;
+
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let result = backend
+            .execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments: vec![],
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected malformed-source sentinel, not null".to_string())?;
+        assert_eq!(result["kind"], "repair_packet");
+        assert_eq!(result["status"], "not_actionable_or_incomplete");
+        let reason = result["reason"]
+            .as_str()
+            .ok_or_else(|| "sentinel must carry a string reason".to_string())?;
+        assert!(
+            reason.contains("actionable-gaps.json is malformed"),
+            "malformed actionable-gaps.json must be named in the reason, got {result}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn execute_command_collect_repair_packet_missing_actionable_gaps_falls_back_to_ledger()
+-> Result<(), String> {
+    // Absence of actionable-gaps.json is a normal state: the ledger fallback
+    // must still produce the full repair packet.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-ledger-fallback")?;
+        write_gap_decision_ledger(root.path())?;
+
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let packet = backend
+            .execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments: vec![],
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected ledger fallback repair packet".to_string())?;
+        assert_eq!(packet["kind"], "repair_packet");
+        assert_eq!(
+            packet["canonical_gap_id"], "gap:rust:pricing:threshold-boundary",
+            "ledger fallback must carry canonical_gap_id"
+        );
+        assert_eq!(
+            packet["repair_kind"], "AddBoundaryAssertion",
+            "ledger fallback must carry repair_kind"
+        );
+        assert_eq!(
+            packet["verify_command"], "cargo xtask fixtures boundary_gap",
+            "ledger fallback must carry verify_command"
+        );
+        assert_eq!(
+            packet["source_location"]["line"].as_u64(),
+            Some(42),
+            "ledger fallback must resolve a real anchor line"
+        );
         Ok(())
     })
 }

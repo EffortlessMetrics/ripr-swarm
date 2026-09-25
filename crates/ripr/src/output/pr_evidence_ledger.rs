@@ -92,6 +92,11 @@ struct Movement {
     blocking_candidates: usize,
     visible_unresolved: usize,
     ripr_zero_state: String,
+    /// Which artifact the gap counts were read from: `baseline_delta`,
+    /// `ripr_zero_status`, or `not_measured` when neither was supplied
+    /// (F60-4). Without a source the counts default to zero, and a zero
+    /// that was never measured must not read as "no visible gaps".
+    count_source: &'static str,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -417,19 +422,33 @@ pub(crate) fn render_pr_evidence_ledger_markdown(report: &PrEvidenceLedgerReport
     }
 
     out.push_str("\nSupporting movement counts:\n");
+    // F60-4: counts read from no baseline delta and no RIPR Zero status were
+    // never measured; printing their zero defaults would read as "no
+    // visible gaps" beside an actionable gap.
+    let measured = report.movement.count_source != "not_measured";
+    if !measured {
+        out.push_str("- Gap counts not measured: no baseline debt delta or RIPR Zero status was supplied, so the gap rows below are not evidence of zero gaps.\n");
+    }
+    let gap_count = |count: usize| {
+        if measured {
+            count.to_string()
+        } else {
+            "not measured".to_string()
+        }
+    };
     out.push_str("| Measure | Count |\n");
     out.push_str("| --- | ---: |\n");
     out.push_str(&format!(
         "| New policy-eligible gaps | {} |\n",
-        report.movement.new_policy_eligible
+        gap_count(report.movement.new_policy_eligible)
     ));
     out.push_str(&format!(
         "| Existing baseline gaps still present | {} |\n",
-        report.movement.baseline_still_present
+        gap_count(report.movement.baseline_still_present)
     ));
     out.push_str(&format!(
         "| Baseline gaps resolved | {} |\n",
-        report.movement.baseline_resolved
+        gap_count(report.movement.baseline_resolved)
     ));
     out.push_str(&format!(
         "| Acknowledged gaps | {} |\n",
@@ -445,7 +464,7 @@ pub(crate) fn render_pr_evidence_ledger_markdown(report: &PrEvidenceLedgerReport
     ));
     out.push_str(&format!(
         "| Visible unresolved gaps | {} |\n",
-        report.movement.visible_unresolved
+        gap_count(report.movement.visible_unresolved)
     ));
 
     out.push_str("\nReceipts:\n");
@@ -756,6 +775,13 @@ fn movement_from_sources(
     let ripr_zero_state = zero_status
         .and_then(|value| string_path(value, &["ripr_zero", "state"]))
         .unwrap_or_else(|| "unknown".to_string());
+    let count_source = if baseline_delta.is_some() {
+        "baseline_delta"
+    } else if zero_status.is_some() {
+        "ripr_zero_status"
+    } else {
+        "not_measured"
+    };
     Movement {
         new_policy_eligible,
         baseline_still_present,
@@ -765,6 +791,7 @@ fn movement_from_sources(
         blocking_candidates,
         visible_unresolved,
         ripr_zero_state,
+        count_source,
     }
 }
 
@@ -1339,6 +1366,7 @@ fn movement_json(movement: &Movement) -> Value {
         "blocking_candidates": movement.blocking_candidates,
         "visible_unresolved": movement.visible_unresolved,
         "ripr_zero_state": movement.ripr_zero_state,
+        "count_source": movement.count_source,
     })
 }
 
@@ -1567,6 +1595,78 @@ mod tests {
     };
     use crate::output::first_pr::{REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
     use std::path::{Path, PathBuf};
+
+    /// F60-4: with no baseline debt delta and no RIPR Zero status the gap
+    /// counts were never measured. Their zero defaults must not render as
+    /// "0 visible unresolved gaps" beside an actionable gap; a supplied
+    /// baseline delta still renders its numbers.
+    #[test]
+    fn unmeasured_gap_counts_do_not_render_as_zero() -> Result<(), String> {
+        let gate =
+            r#"{"status":"blocked","summary":{"blocking":1,"acknowledged":0,"suppressed":0}}"#;
+        let delta = r#"{"delta":{"new_policy_eligible":2,"still_present":1,"resolved":0,"acknowledged":0,"suppressed":0}}"#;
+        let input = |delta_json: Option<&str>| PrEvidenceLedgerInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:1000".to_string(),
+            pr_number: "1".to_string(),
+            base: "base".to_string(),
+            head: "head".to_string(),
+            labels: Vec::new(),
+            gate_path: Some("gate.json".to_string()),
+            baseline_delta_path: delta_json.map(|_| "delta.json".to_string()),
+            zero_status_path: None,
+            pr_guidance_path: None,
+            gap_ledger_path: None,
+            recommendation_calibration_path: None,
+            agent_receipt_path: None,
+            coverage_path: None,
+            history_path: None,
+            gate_json: Some(Ok(gate.to_string())),
+            baseline_delta_json: delta_json.map(|json| Ok(json.to_string())),
+            zero_status_json: None,
+            pr_guidance_json: None,
+            gap_ledger_json: None,
+            recommendation_calibration_json: None,
+            agent_receipt_json: None,
+            coverage_json: None,
+            history_json: None,
+        };
+
+        let unmeasured = build_pr_evidence_ledger_report(input(None));
+        // Fixture construction: a gate blocks, and no count source exists.
+        if unmeasured.movement.blocking_candidates != 1 {
+            return Err("fixture gate must block one candidate".to_string());
+        }
+        let json = render_pr_evidence_ledger_json(&unmeasured)?;
+        if !json.contains("\"count_source\": \"not_measured\"") {
+            return Err(format!("JSON must name the missing source:\n{json}"));
+        }
+        let markdown = render_pr_evidence_ledger_markdown(&unmeasured);
+        for row in [
+            "| New policy-eligible gaps | not measured |",
+            "| Visible unresolved gaps | not measured |",
+        ] {
+            if !markdown.contains(row) {
+                return Err(format!("missing `{row}`:\n{markdown}"));
+            }
+        }
+        if markdown.contains("| Visible unresolved gaps | 0 |") {
+            return Err(format!("an unmeasured count rendered as zero:\n{markdown}"));
+        }
+
+        let measured = build_pr_evidence_ledger_report(input(Some(delta)));
+        let json = render_pr_evidence_ledger_json(&measured)?;
+        if !json.contains("\"count_source\": \"baseline_delta\"") {
+            return Err(format!("JSON must name the baseline delta:\n{json}"));
+        }
+        let markdown = render_pr_evidence_ledger_markdown(&measured);
+        if !markdown.contains("| New policy-eligible gaps | 2 |")
+            || markdown.contains("not measured")
+        {
+            return Err(format!("measured counts render as numbers:\n{markdown}"));
+        }
+        Ok(())
+    }
 
     #[test]
     fn pr_evidence_ledger_joins_primary_artifacts() -> Result<(), String> {

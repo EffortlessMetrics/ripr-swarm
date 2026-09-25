@@ -98,6 +98,9 @@ pub(crate) struct ReceiptCheckOptions {
     /// the receipt's `canonical_gap_id` is cross-referenced against the live
     /// gap set.  When absent, cross-reference result is `not_available`.
     pub(crate) ledger: Option<PathBuf>,
+    /// Emit the machine-readable JSON verdict envelope instead of the human
+    /// sentence.  Opt-in only; the prose output remains the default.
+    pub(crate) json: bool,
 }
 
 /// Write a receipt JSON according to RIPR-SPEC-0079 and return the rendered
@@ -736,6 +739,7 @@ mod tests {
             gap: None,
             path: Some(path.clone()),
             ledger: None,
+            json: false,
         };
         let (result, cross_ref) = check_receipt(&check_opts)?;
         assert!(
@@ -763,6 +767,7 @@ mod tests {
                 "target/ripr/receipts/nonexistent-receipt.json",
             )),
             ledger: None,
+            json: false,
         };
         match check_receipt(&opts) {
             Ok(_) => Err("check_receipt should have failed for missing file".to_string()),
@@ -793,6 +798,7 @@ mod tests {
             gap: None,
             path: Some(path),
             ledger: None,
+            json: false,
         };
         match check_receipt(&check_opts) {
             Ok(_) => {
@@ -833,6 +839,7 @@ mod tests {
             gap: None,
             path: Some(path),
             ledger: None,
+            json: false,
         };
         match check_receipt(&check_opts) {
             Ok(_) => {
@@ -873,6 +880,7 @@ mod tests {
             gap: None,
             path: Some(path),
             ledger: None,
+            json: false,
         });
         let _ = std::fs::remove_dir_all(&dir);
         match result {
@@ -906,6 +914,7 @@ mod tests {
             gap: None,
             path: Some(path),
             ledger: None,
+            json: false,
         });
         let _ = std::fs::remove_dir_all(&dir);
         match result {
@@ -939,6 +948,7 @@ mod tests {
             gap: None,
             path: Some(path),
             ledger: None,
+            json: false,
         };
         match check_receipt(&check_opts) {
             Ok(_) => {
@@ -964,6 +974,7 @@ mod tests {
             gap: None,
             path: None,
             ledger: None,
+            json: false,
         };
         match check_receipt(&opts) {
             Ok(_) => Err("check_receipt should have failed with no path and no gap".to_string()),
@@ -1039,6 +1050,7 @@ mod tests {
             gap: None,
             path: Some(receipt_path),
             ledger: Some(ledger_path),
+            json: false,
         };
         let (msg, cross_ref) = check_receipt(&opts)?;
         assert_eq!(
@@ -1069,6 +1081,7 @@ mod tests {
             gap: None,
             path: Some(receipt_path),
             ledger: None, // ← no ledger
+            json: false,
         };
         let (msg, cross_ref) = check_receipt(&opts)?;
 
@@ -1108,6 +1121,7 @@ mod tests {
             gap: None,
             path: Some(receipt_path),
             ledger: Some(ledger_path),
+            json: false,
         };
         let (msg, cross_ref) = check_receipt(&opts)?;
         assert_eq!(
@@ -1192,6 +1206,7 @@ mod tests {
             gap: Some(gap.to_string()),
             path: None,
             ledger: None,
+            json: false,
         };
         let check_path = resolve_check_path(&check_opts)?;
         assert_eq!(write_path, check_path);

@@ -1377,6 +1377,7 @@ dependencies = [
  "sha2",
  "tokio",
  "toml",
+ "tower",
  "tower-lsp-server",
  "winsafe",
 ]

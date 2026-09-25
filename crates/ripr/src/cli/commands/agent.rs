@@ -34,6 +34,14 @@ use super::agent_dispatch;
 use super::agent_gap_packet::render_agent_packet_from_gap_ledger;
 use super::write_text_file;
 
+/// Schema version of the `ripr agent repair --phase after` success envelope
+/// (`kind: "repair_after_result"`). The envelope is its own versioned
+/// contract: the agent verify 0.3 document rides unchanged under `verify`
+/// and the agent status 0.1 document under `agent_status`, so every stdout
+/// document's shape is identifiable from its `schema_version`. Refusal
+/// paths keep printing the bare agent verify 0.3 document instead.
+const REPAIR_AFTER_RESULT_SCHEMA_VERSION: &str = "0.1";
+
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
     let command = parse_agent_args(args)?;
     if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
@@ -65,14 +73,68 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
 }
 
 fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
+    let json = options.json;
     let written = write_agent_start(options)?;
-    for path in &written.paths {
-        println!("Wrote {}", path.display());
+    if json {
+        // Machine-readable mode: one JSON document with the same information
+        // the prose lines carry. The prose output remains the default.
+        let rendered = render_agent_start_json(&written)?;
+        print!("{rendered}");
+        return Ok(());
     }
-    if let Some(next) = &written.next_command {
-        println!("Next: {next}");
+    for line in agent_start_prose_lines(&written) {
+        println!("{line}");
     }
     Ok(())
+}
+
+/// The default human output of `agent start`: one `Wrote <path>` line per
+/// written workflow artifact, then the first missing-input command when one
+/// exists.
+fn agent_start_prose_lines(written: &AgentStartWritten) -> Vec<String> {
+    let mut lines = written
+        .paths
+        .iter()
+        .map(|path| format!("Wrote {}", path.display()))
+        .collect::<Vec<_>>();
+    if let Some(next) = &written.next_command {
+        lines.push(format!("Next: {next}"));
+    }
+    lines
+}
+
+/// Render the `ripr agent start --json` document. Field names match the
+/// workflow manifest's `outputs` block (`workflow_manifest`,
+/// `commands_markdown`, `agent_brief`) and the agent status `next_command`
+/// name; `next_command` is `null` when every workflow input is present.
+fn render_agent_start_json(written: &AgentStartWritten) -> Result<String, String> {
+    use crate::agent::loop_commands::{
+        WORKFLOW_AGENT_BRIEF_ARTIFACT, WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT,
+        WORKFLOW_MANIFEST_ARTIFACT,
+    };
+    let paths = &written.paths;
+    // Match each path by artifact identity, not write order: a future
+    // reorder (or an added artifact) in `write_agent_start` must not
+    // silently remap fields.
+    let path_for = |artifact: &str| -> Option<String> {
+        let file_name = std::path::Path::new(artifact).file_name()?;
+        paths
+            .iter()
+            .find(|path| path.file_name() == Some(file_name))
+            .map(|path| path.display().to_string())
+    };
+    let value = serde_json::json!({
+        "schema_version": app::agent_workflow::AGENT_WORKFLOW_SCHEMA_VERSION,
+        "tool": "ripr",
+        "kind": "agent_start",
+        "workflow": {
+            "workflow_manifest": path_for(WORKFLOW_MANIFEST_ARTIFACT),
+            "commands_markdown": path_for(WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT),
+            "agent_brief": path_for(WORKFLOW_AGENT_BRIEF_ARTIFACT),
+        },
+        "next_command": written.next_command,
+    });
+    output::json::render_pretty_with_newline(&value, "agent start")
 }
 
 /// Files written by `agent start` and the first missing-input command.
@@ -589,6 +651,7 @@ fn run_agent_repair_phase(
                 root: root.clone(),
                 seam_id: seam_id.clone(),
                 out_dir: std::path::PathBuf::from("target/ripr/workflow"),
+                json: false,
             })?;
             for path in &started.paths {
                 eprintln!("ripr: wrote {}", path.display());
@@ -754,11 +817,12 @@ fn run_agent_repair_phase(
 
             // Stdout carries exactly one JSON document on every path, like
             // every other agent command. The verify outcome is held until the
-            // tail below settles: on success the single document is the verify
-            // result with the status report embedded; when the tail refuses,
-            // the verify document alone is printed — the refusal bytes this
-            // phase always produced, and still one document an orchestrator
-            // can parse with one JSON.parse call.
+            // tail below settles: on success the single document is the
+            // repair-after-result envelope carrying the verify result under
+            // `verify` and the status report under `agent_status`; when the
+            // tail refuses, the verify document alone is printed — the
+            // refusal bytes this phase always produced, and still one document
+            // an orchestrator can parse with one JSON.parse call.
             let after_tail = || -> Result<String, String> {
                 use crate::app::python_repair_binding::{
                     confirm_manifest_unchanged, write_apply_record,
@@ -889,21 +953,25 @@ fn run_agent_repair_phase(
                     return Err(error);
                 }
             };
-            let mut document: serde_json::Value = serde_json::from_str(&rendered_verify)
+            let document: serde_json::Value = serde_json::from_str(&rendered_verify)
                 .map_err(|error| format!("parse rendered agent verify JSON failed: {error}"))?;
             let status_document: serde_json::Value = serde_json::from_str(&status_rendered)
                 .map_err(|error| format!("parse rendered agent status JSON failed: {error}"))?;
-            // The verify outcome already owns the top-level `status` name
-            // (`advisory`), so the status report rides under `agent_status`;
-            // every existing verify field keeps its name and value.
-            document
-                .as_object_mut()
-                .ok_or_else(|| {
-                    "rendered agent verify JSON must be an object for agent_status nesting"
-                        .to_string()
-                })?
-                .insert("agent_status".to_string(), status_document);
-            let combined = serde_json::to_string_pretty(&document).map_err(|error| {
+            // The success output is its own versioned envelope
+            // (`repair_after_result`), not a mutated verify document: the
+            // verify outcome already owns the top-level `status` name
+            // (`advisory`), so splicing `agent_status` into the 0.3 document
+            // would leave two same-version documents with different shapes.
+            // The verify document keeps every field, name, and value under
+            // `verify`, and the status report rides beside it under
+            // `agent_status`.
+            let envelope = serde_json::json!({
+                "schema_version": REPAIR_AFTER_RESULT_SCHEMA_VERSION,
+                "kind": "repair_after_result",
+                "verify": document,
+                "agent_status": status_document,
+            });
+            let combined = serde_json::to_string_pretty(&envelope).map_err(|error| {
                 format!("serialize after-phase result document failed: {error}")
             })?;
             println!("{combined}");
@@ -1865,5 +1933,78 @@ mod before_phase_stdout_tests {
     fn unreadable_packet_falls_back_to_the_json_on_a_terminal() {
         let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
         assert_eq!(before_phase_stdout(packet, "p", true), packet);
+    }
+}
+
+#[cfg(test)]
+mod start_output_tests {
+    use super::{AgentStartWritten, agent_start_prose_lines, render_agent_start_json};
+    use std::path::PathBuf;
+
+    fn written(next_command: Option<String>) -> AgentStartWritten {
+        AgentStartWritten {
+            paths: vec![
+                PathBuf::from("target/ripr/workflow/workflow.json"),
+                PathBuf::from("target/ripr/workflow/commands.md"),
+                PathBuf::from("target/ripr/workflow/agent-brief.json"),
+            ],
+            next_command,
+        }
+    }
+
+    #[test]
+    fn agent_start_json_carries_workflow_paths_and_next_command() -> Result<(), String> {
+        let rendered = render_agent_start_json(&written(Some(
+            "ripr check --root . --format json > target/ripr/workflow/before.repo-exposure.json"
+                .to_string(),
+        )))?;
+        let value: serde_json::Value = serde_json::from_str(&rendered)
+            .map_err(|err| format!("agent start JSON must parse: {err}"))?;
+        assert_eq!(value["schema_version"], "0.1");
+        assert_eq!(value["kind"], "agent_start");
+        assert_eq!(
+            value["workflow"]["workflow_manifest"],
+            "target/ripr/workflow/workflow.json"
+        );
+        assert_eq!(
+            value["workflow"]["commands_markdown"],
+            "target/ripr/workflow/commands.md"
+        );
+        assert_eq!(
+            value["workflow"]["agent_brief"],
+            "target/ripr/workflow/agent-brief.json"
+        );
+        assert_eq!(
+            value["next_command"],
+            "ripr check --root . --format json > target/ripr/workflow/before.repo-exposure.json"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_start_json_next_command_is_null_when_every_input_is_present() -> Result<(), String> {
+        let rendered = render_agent_start_json(&written(None))?;
+        let value: serde_json::Value = serde_json::from_str(&rendered)
+            .map_err(|err| format!("agent start JSON must parse: {err}"))?;
+        assert_eq!(value["next_command"], serde_json::Value::Null);
+        assert!(value["workflow"]["agent_brief"].is_string());
+        Ok(())
+    }
+
+    #[test]
+    fn agent_start_prose_default_names_every_written_path() {
+        let lines = agent_start_prose_lines(&written(Some("ripr pilot --root .".to_string())));
+        assert_eq!(
+            lines,
+            vec![
+                "Wrote target/ripr/workflow/workflow.json".to_string(),
+                "Wrote target/ripr/workflow/commands.md".to_string(),
+                "Wrote target/ripr/workflow/agent-brief.json".to_string(),
+                "Next: ripr pilot --root .".to_string(),
+            ]
+        );
+        let without_next = agent_start_prose_lines(&written(None));
+        assert_eq!(without_next.len(), 3);
+        assert!(!without_next.iter().any(|line| line.starts_with("Next:")));
     }
 }

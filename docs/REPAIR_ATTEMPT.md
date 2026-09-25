@@ -203,7 +203,7 @@ target/ripr/workflow/            # status input
 
 Those paths keep existing review and cockpit integrations working. Their evidence is admitted only after the exact attempt's retained before snapshot and packet have been resolved and validated.
 
-The after phase's stdout is exactly one JSON document, like every other agent command: the verify outcome — every existing field, including its own top-level `status` — with the status report embedded under `agent_status`, so a caller can parse stdout once. Narration stays on stderr. When the after phase refuses after the verify render (for example the receipt is not receipt-ready), stdout is the verify document alone, still one document.
+The after phase's stdout is exactly one JSON document, like every other agent command: the versioned `repair_after_result` envelope (`schema_version` `0.1`), which carries the agent verify 0.3 document — every existing field, including its own top-level `status` — unchanged under `verify`, with the status report embedded beside it under `agent_status`, so a caller can parse stdout once and every stdout document's shape is identifiable from its `schema_version`. Narration stays on stderr. When the after phase refuses after the verify render (for example the receipt is not receipt-ready), stdout is the bare verify 0.3 document alone — a pure verify document, still one document, honestly labeled.
 
 ### Rerunning the receipt
 

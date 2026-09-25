@@ -5,6 +5,7 @@ use crate::run::{
     run_output_owned_with_timeout, tool_build_timeout,
 };
 use serde_json::{Map, Value, json};
+use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
@@ -519,6 +520,7 @@ fn pr_evidence_packet(
     } else {
         Value::Null
     };
+    let targeted_mutation_route = targeted_mutation_route(check_value, ripr_severe_gap);
 
     json!({
         "schema_version": "0.1",
@@ -540,7 +542,8 @@ fn pr_evidence_packet(
             "severe_gaps": severe_gaps,
             "requires_targeted_mutation": ripr_severe_gap,
             "ripr_severe_gap": ripr_severe_gap,
-            "routing_reason": routing_reason
+            "routing_reason": routing_reason,
+            "targeted_mutation_route": targeted_mutation_route
         },
         "artifacts": [
             {
@@ -600,7 +603,12 @@ fn pr_evidence_error_packet(
             "severe_gaps": 0,
             "requires_targeted_mutation": false,
             "ripr_severe_gap": false,
-            "routing_reason": null
+            "routing_reason": null,
+            "targeted_mutation_route": {
+                "status": "not_required",
+                "candidates": [],
+                "limitations": []
+            }
         },
         "artifacts": [
             {
@@ -640,6 +648,119 @@ fn pr_evidence_error_packet(
             "PR evidence generation did not complete, so this packet must not be treated as proof of no gaps."
         ]
     })
+}
+
+/// Mirrors `targeted_mutation_route` in `crates/ripr/src/app/pr_evidence.rs`
+/// so the compatibility shim emits the same schema-required route the
+/// `ripr pr-evidence` producer emits. Candidates derive only from
+/// producer-owned probe facts on findings whose `source_currentness` is
+/// `candidate_current` — a current head obligation, never base-side evidence.
+/// Inputs that cannot yield a safe candidate produce honest limitations,
+/// never invented candidates.
+fn targeted_mutation_route(check_value: &Value, required: bool) -> Value {
+    let mut candidates = Vec::new();
+    let mut limitations = Vec::new();
+    let mut seen = BTreeSet::new();
+    for finding in check_value
+        .get("findings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(classification) = finding.get("classification").and_then(Value::as_str) else {
+            continue;
+        };
+        // Candidate-actionable eligibility (#3281): mutation candidates are
+        // current obligations; base-side evidence never names a head target.
+        if finding.get("source_currentness").and_then(Value::as_str) != Some("candidate_current") {
+            continue;
+        }
+        if !matches!(
+            classification,
+            "weakly_exposed" | "reachable_unrevealed" | "no_static_path"
+        ) {
+            continue;
+        }
+        let Some(probe) = finding.get("probe").and_then(Value::as_object) else {
+            limitations.push(json!({
+                "kind": "no_safe_candidate",
+                "message": "finding has no producer-owned probe facts from which to derive a safe mutation candidate"
+            }));
+            continue;
+        };
+        let family = probe
+            .get("family")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let file = probe.get("file").and_then(Value::as_str);
+        let line = probe.get("line").and_then(Value::as_u64);
+        let expression = probe.get("expression").and_then(Value::as_str);
+        let Some((from, to)) = (family == "predicate")
+            .then(|| expression.and_then(predicate_operator_flip))
+            .flatten()
+        else {
+            limitations.push(json!({
+                "kind": "no_safe_candidate",
+                "family": family,
+                "message": format!("no safe concrete mutation candidate could be derived for {family} producer evidence")
+            }));
+            continue;
+        };
+        let Some(file) = file.filter(|file| !file.trim().is_empty()) else {
+            limitations.push(json!({
+                "kind": "no_safe_candidate",
+                "family": family,
+                "message": "predicate mutation candidate has no producer-owned source file"
+            }));
+            continue;
+        };
+        let Some(line) = line else {
+            limitations.push(json!({
+                "kind": "no_safe_candidate",
+                "family": family,
+                "message": "predicate mutation candidate has no unambiguous source line"
+            }));
+            continue;
+        };
+        let key = format!("{file}:{line}:{from}:{to}");
+        if !seen.insert(key) {
+            continue;
+        }
+        candidates.push(json!({
+            "file": file,
+            "line": line,
+            "kind": "predicate_operator_flip",
+            "from": from,
+            "to": to,
+            "command": format!("cargo mutants --file \"{}\"", file.replace('"', "\\\"")),
+            "expected_observation": format!("the focused boundary test should observe the predicate change {from} -> {to}")
+        }));
+    }
+    let status = if !required {
+        "not_required"
+    } else if candidates.is_empty() {
+        "static_limitation"
+    } else {
+        "candidate"
+    };
+    json!({
+        "status": status,
+        "candidates": candidates,
+        "limitations": limitations
+    })
+}
+
+fn predicate_operator_flip(expression: &str) -> Option<(&'static str, &'static str)> {
+    [
+        (">=", ">"),
+        ("<=", "<"),
+        ("==", "!="),
+        ("!=", "=="),
+        (">", ">="),
+        ("<", "<="),
+    ]
+    .into_iter()
+    .find_map(|(from, to)| expression.contains(from).then_some((from, to)))
 }
 
 fn first_line(text: &str) -> String {
@@ -718,6 +839,7 @@ fn validate_packet_value(
     {
         violations.push("summary.routing_reason is missing or not string/null".to_string());
     }
+    validate_targeted_mutation_route(summary, &mut violations);
 
     validate_artifacts(packet, &mut violations);
     if !markdown_exists {
@@ -732,6 +854,49 @@ fn validate_packet_value(
         None => violations.push("advisory_limits is missing or not an array".to_string()),
     }
     violations
+}
+
+/// Presence and eligibility check for the schema-required
+/// `summary.targeted_mutation_route`. The app producer
+/// (`crates/ripr/src/app/pr_evidence.rs`) pairs `status: "not_required"`
+/// with `requires_targeted_mutation: false` and never derives candidates
+/// from base-side evidence, so a packet whose route disagrees with the
+/// eligibility rule is producer drift, not a softer state.
+fn validate_targeted_mutation_route(summary: &Map<String, Value>, violations: &mut Vec<String>) {
+    let Some(route) = summary
+        .get("targeted_mutation_route")
+        .and_then(Value::as_object)
+    else {
+        violations.push("summary.targeted_mutation_route is missing or not an object".to_string());
+        return;
+    };
+    let status = route.get("status").and_then(Value::as_str);
+    match status {
+        Some("not_required" | "candidate" | "static_limitation") => {}
+        Some(other) => violations.push(format!(
+            "summary.targeted_mutation_route.status {other:?} is not contract-valid"
+        )),
+        None => violations
+            .push("summary.targeted_mutation_route.status is missing or not a string".to_string()),
+    }
+    for key in ["candidates", "limitations"] {
+        if !route.get(key).is_some_and(Value::is_array) {
+            violations.push(format!(
+                "summary.targeted_mutation_route.{key} is missing or not an array"
+            ));
+        }
+    }
+    let required = summary
+        .get("requires_targeted_mutation")
+        .is_some_and(|value| value == &Value::Bool(true));
+    if let Some(status) = status
+        && (status == "not_required") == required
+    {
+        violations.push(format!(
+            "summary.targeted_mutation_route.status {status:?} disagrees with \
+             summary.requires_targeted_mutation {required}"
+        ));
+    }
 }
 
 fn expect_string(packet: &Value, key: &str, expected: &str, violations: &mut Vec<String>) {
@@ -935,6 +1100,121 @@ mod tests {
         assert_eq!(packet["summary"]["severe_gaps"], 3);
         assert_eq!(packet["summary"]["requires_targeted_mutation"], true);
         assert_eq!(packet["summary"]["routing_reason"], "ripr severe gap");
+    }
+
+    #[test]
+    fn packet_derives_targeted_mutation_route_from_candidate_current_findings() {
+        let check = json!({
+            "summary": {
+                "weakly_exposed": 1,
+                "reachable_unrevealed": 0,
+                "no_static_path": 0
+            },
+            "findings": [
+                {
+                    "classification": "weakly_exposed",
+                    "source_currentness": "candidate_current",
+                    "probe": {
+                        "family": "predicate",
+                        "file": "src/pricing.rs",
+                        "line": 42,
+                        "expression": "amount >= threshold"
+                    }
+                },
+                {
+                    "classification": "weakly_exposed",
+                    "source_currentness": "base_only",
+                    "probe": {
+                        "family": "predicate",
+                        "file": "src/base.rs",
+                        "line": 7,
+                        "expression": "count >= limit"
+                    }
+                }
+            ]
+        });
+        let packet = pr_evidence_packet(&options(), &["src/pricing.rs".to_string()], &check);
+        let route = &packet["summary"]["targeted_mutation_route"];
+        assert_eq!(route["status"], "candidate");
+        assert_eq!(route["candidates"].as_array().map(Vec::len), Some(1));
+        assert_eq!(route["candidates"][0]["file"], "src/pricing.rs");
+        assert_eq!(route["candidates"][0]["from"], ">=");
+        assert_eq!(route["candidates"][0]["to"], ">");
+        let candidates = route["candidates"].as_array();
+        assert!(
+            candidates.is_some_and(|candidates| candidates
+                .iter()
+                .all(|candidate| candidate["file"] != "src/base.rs")),
+            "base-side evidence must never name a head mutation target"
+        );
+        assert_eq!(route["limitations"], json!([]));
+        let violations = validate_packet_value(&packet, &options(), 1, true);
+        assert_eq!(violations, Vec::<String>::new());
+    }
+
+    #[test]
+    fn packet_marks_required_route_static_limitation_without_safe_candidate() {
+        let check = json!({
+            "summary": {
+                "weakly_exposed": 1,
+                "reachable_unrevealed": 0,
+                "no_static_path": 0
+            },
+            "findings": [
+                {
+                    "classification": "weakly_exposed",
+                    "source_currentness": "candidate_current"
+                }
+            ]
+        });
+        let packet = pr_evidence_packet(&options(), &["src/lib.rs".to_string()], &check);
+        let route = &packet["summary"]["targeted_mutation_route"];
+        assert_eq!(route["status"], "static_limitation");
+        assert_eq!(route["candidates"], json!([]));
+        assert_eq!(route["limitations"][0]["kind"], "no_safe_candidate");
+        let violations = validate_packet_value(&packet, &options(), 1, true);
+        assert_eq!(violations, Vec::<String>::new());
+    }
+
+    #[test]
+    fn validation_rejects_route_status_that_disagrees_with_eligibility() {
+        let packet = pr_evidence_packet(
+            &options(),
+            &["src/lib.rs".to_string()],
+            &json!({
+                "summary": {
+                    "weakly_exposed": 0,
+                    "reachable_unrevealed": 0,
+                    "no_static_path": 0
+                }
+            }),
+        );
+        let mut drifted = packet.clone();
+        drifted["summary"]["targeted_mutation_route"]["status"] = "candidate".into();
+        let violations = validate_packet_value(&drifted, &options(), 1, true);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation
+                    .contains("disagrees with summary.requires_targeted_mutation")),
+            "a not_required route claiming candidates must be rejected: {violations:?}"
+        );
+
+        let mut missing = packet;
+        assert!(
+            matches!(missing.get_mut("summary"), Some(Value::Object(_))),
+            "summary must be an object for the removal test"
+        );
+        if let Some(summary) = missing.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.remove("targeted_mutation_route");
+        }
+        let violations = validate_packet_value(&missing, &options(), 1, true);
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("summary.targeted_mutation_route is missing")
+            }),
+            "an absent route must be rejected: {violations:?}"
+        );
     }
 
     #[test]

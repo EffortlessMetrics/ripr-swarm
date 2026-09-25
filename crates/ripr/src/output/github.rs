@@ -7,6 +7,7 @@ use crate::output::perl_preview_card::perl_preview_card;
 use crate::output::preview_actionability::preview_actionability_for;
 use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_preview_card::typescript_preview_card;
+use crate::output::workflow_escape::{escape_data, escape_property, escape_property_pre_encoded};
 use std::path::Path;
 
 /// Render findings as GitHub Actions workflow command annotations.
@@ -154,10 +155,15 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         }
         out.push_str(&format!(
             "::{annotation_level} file={},line={},title={}::{}\n",
-            annotation_path(&output.root, &finding.probe.location.file),
+            // `file` arrives via `annotation_path` (stable text, `%`
+            // pre-encoded); `title` is raw text.
+            escape_property_pre_encoded(&annotation_path(
+                &output.root,
+                &finding.probe.location.file
+            )),
             finding.probe.location.line,
-            escape_cmd(&title),
-            escape_cmd(&message)
+            escape_property(&title),
+            escape_data(&message)
         ));
     }
     if output.findings.is_empty() {
@@ -264,15 +270,6 @@ fn non_empty(value: &str) -> Option<&str> {
     (!value.is_empty()).then_some(value)
 }
 
-fn escape_cmd(value: &str) -> String {
-    value
-        .replace('%', "%25")
-        .replace('\r', "%0D")
-        .replace('\n', "%0A")
-        .replace(',', "%2C")
-        .replace(':', "%3A")
-}
-
 #[cfg(test)]
 mod tests {
     use super::render;
@@ -318,8 +315,80 @@ mod tests {
         let rendered = render(&output_with_unknown_finding());
 
         assert!(rendered.contains("::notice file=src/lib.rs,line=13,title=ripr static_unknown::"));
-        assert!(rendered.contains("Add%3A case%2C with 100%25 coverage%0Athen verify%0Doutcome"));
-        assert!(rendered.contains("Stop reason%3A static_probe_unknown"));
+        // Message (data) encoding: comma/colon stay literal, percent/CR/LF
+        // escaped. The previous assertions pinned %3A/%2C in the message,
+        // which the workflow-command parser does not decode in data —
+        // visible scars (#4065).
+        assert!(rendered.contains("Add: case, with 100%25 coverage%0Athen verify%0Doutcome"));
+        assert!(rendered.contains("Stop reason: static_probe_unknown"));
+    }
+
+    #[test]
+    fn render_message_keeps_data_punctuation_literal() {
+        // GitHub's workflow-command parser decodes data (the message) with
+        // percent/CR/LF only: comma and colon arrive literally. Encoding
+        // them as %2C/%3A leaves visible percent-escapes in the rendered
+        // annotation (#4065).
+        let mut output = output_with_unknown_finding();
+        output.findings[0].recommended_next_step = Some(
+            "Check Result::Err from assert_eq!(actual, expected) at 100% — naïve ünïcode"
+                .to_string(),
+        );
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("Check Result::Err from assert_eq!(actual, expected) at 100%25"),
+            "message punctuation must stay literal with only percent escaped: {rendered}"
+        );
+        assert!(
+            rendered.contains("naïve ünïcode"),
+            "unicode message bytes must pass through unescaped: {rendered}"
+        );
+        assert!(
+            !rendered.contains("%2C") && !rendered.contains("%3A"),
+            "old data encoding must fail: {rendered}"
+        );
+        assert_eq!(
+            rendered.lines().count(),
+            1,
+            "one annotation must stay one physical line: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_file_property_escapes_comma_colon_percent() {
+        // Properties (file, title) decode comma/colon/percent in addition
+        // to CR/LF: an unescaped comma splits the filename into metadata
+        // (#4065). Unicode passes through raw — the escape map has no
+        // UTF-8 branch.
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file = PathBuf::from("src/a,b:c%dé.rs");
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("file=src/a%2Cb%3Ac%25dé.rs,line=13"),
+            "file property must escape comma/colon/percent, keep unicode literal: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_literal_percent_sequences_survive_one_decode() {
+        // A literal `%0A` in the source text must arrive as `%250A`: the
+        // percent itself is escaped, so one parser decode yields the
+        // original `%0A` instead of a newline. Blanket URL-decoding the
+        // input would be the wrong repair (#4065).
+        let mut output = output_with_unknown_finding();
+        output.findings[0].recommended_next_step =
+            Some("Expect literal %0A and %2C tokens".to_string());
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("Expect literal %250A and %252C tokens"),
+            "literal percent sequences must be percent-escaped once: {rendered}"
+        );
     }
 
     #[test]
@@ -505,7 +574,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains(
-            "Canonical gap%3A gap%3Apython%3Asrc/pricing.py%3Adiscount%3Apredicate_boundary%3Apredicate%3Aamount>=threshold"
+            "Canonical gap: gap:python:src/pricing.py:discount:predicate_boundary:predicate:amount>=threshold"
         ));
     }
 
@@ -528,7 +597,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains(
-            "Preview actionability%3A advisory/incomplete_repair_packet (advisory preview; no repair packet)."
+            "Preview actionability: advisory/incomplete_repair_packet (advisory preview; no repair packet)."
         ));
     }
 
@@ -559,29 +628,29 @@ mod tests {
 
         assert!(
             rendered
-                .contains("Bun cross-language grip 1/2%3A rust_ungripped_ts_missing_discriminator")
+                .contains("Bun cross-language grip 1/2: rust_ungripped_ts_missing_discriminator")
         );
         assert!(
             rendered
-                .contains("Bun cross-language grip 2/2%3A rust_ungripped_ts_missing_discriminator")
+                .contains("Bun cross-language grip 2/2: rust_ungripped_ts_missing_discriminator")
         );
         assert!(rendered.contains("copy_to_unshared"));
         assert!(rendered.contains("action `route_cross_language_oracle_visibility_limitation`"));
         assert!(rendered.contains("suggested test file `test/js/web/fetch/blob.test.ts`"));
-        assert!(rendered.contains("TypeScript placement%3A rank 1"));
+        assert!(rendered.contains("TypeScript placement: rank 1"));
         assert!(rendered.contains("missing discriminator is resizable ArrayBuffer"));
         assert_eq!(
-            rendered.matches("TypeScript placement%3A rank 1").count(),
+            rendered.matches("TypeScript placement: rank 1").count(),
             1,
             "only the Blob profile may receive placement evidence"
         );
         let copy_profile = rendered
-            .split("Bun cross-language grip 2/2%3A")
+            .split("Bun cross-language grip 2/2:")
             .nth(1)
             .unwrap_or_default();
         assert!(!copy_profile.is_empty(), "expected copy profile annotation");
         assert!(
-            !copy_profile.contains("TypeScript placement%3A"),
+            !copy_profile.contains("TypeScript placement:"),
             "copy_to_unshared must not receive placement evidence"
         );
         assert!(rendered.contains("(preview advisory)."));
@@ -592,11 +661,11 @@ mod tests {
         let rendered = render(&output_with_python_repair_card());
 
         assert!(
-            rendered.contains("Python repair card%3A missing discriminator `amount == threshold`")
+            rendered.contains("Python repair card: missing discriminator `amount == threshold`")
         );
         assert!(rendered.contains("add or strengthen `test_calculate_discount_threshold_boundary` in `tests/test_pricing.py`"));
         assert!(rendered.contains(
-            "verify `pytest tests/test_pricing.py%3A%3Atest_calculate_discount_threshold_boundary` (preview advisory)."
+            "verify `pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary` (preview advisory)."
         ));
         assert!(!rendered.contains("Python no-action"));
     }
@@ -605,9 +674,9 @@ mod tests {
     fn render_includes_perl_preview_card_guidance() {
         let rendered = render(&output_with_perl_preview_card());
 
-        assert!(rendered.contains("Perl preview card%3A missing discriminator `return_value`"));
+        assert!(rendered.contains("Perl preview card: missing discriminator `return_value`"));
         assert!(rendered.contains(
-            "add `assert the exact returned `return_value` value` at `t/app.t%3A%3Adiscount_smoke`"
+            "add `assert the exact returned `return_value` value` at `t/app.t::discount_smoke`"
         ));
         assert!(rendered.contains("verify `prove t/app.t` (preview advisory; no repair packet)."));
         assert!(!rendered.contains("ripr agent receipt --root"));
@@ -624,13 +693,13 @@ mod tests {
         let rendered = render(&output_with_python_no_action_findings());
 
         assert!(rendered.contains(
-            "Python no-action%3A already_observed; Current Python test evidence already observes"
+            "Python no-action: already_observed; Current Python test evidence already observes"
         ));
         assert!(rendered.contains(
-            "Python no-action%3A no_related_test; No related Python test was statically linked"
+            "Python no-action: no_related_test; No related Python test was statically linked"
         ));
         assert!(rendered.contains(
-            "Python no-action%3A heuristic_only; Only heuristic Python related-test proximity was found"
+            "Python no-action: heuristic_only; Only heuristic Python related-test proximity was found"
         ));
         assert_eq!(
             rendered
@@ -646,9 +715,9 @@ mod tests {
         let rendered = render(&output_with_python_static_limit());
 
         assert!(rendered.contains(
-            "Python no-action%3A static_limit `dynamic_dispatch`; Static limit `dynamic_dispatch` prevents bounded repair routing"
+            "Python no-action: static_limit `dynamic_dispatch`; Static limit `dynamic_dispatch` prevents bounded repair routing"
         ));
-        assert!(rendered.contains("Stop reason%3A dynamic_dispatch_unresolved"));
+        assert!(rendered.contains("Stop reason: dynamic_dispatch_unresolved"));
         assert!(rendered.contains("No repair card or agent packet emitted (preview advisory)."));
         assert!(!rendered.contains("Python repair card"));
     }
@@ -663,7 +732,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains(
-            "Python no-action%3A static_limit `dynamic_dispatch`; Python preview reported static limit `dynamic_dispatch` without a bounded repair route."
+            "Python no-action: static_limit `dynamic_dispatch`; Python preview reported static limit `dynamic_dispatch` without a bounded repair route."
         ));
         assert!(rendered.contains("No repair card or agent packet emitted (preview advisory)."));
         assert!(!rendered.contains("Python repair card"));
