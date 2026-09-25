@@ -295,6 +295,14 @@ are scoped or reviewed.
 
 ### Changed
 
+- xtask tests no longer discard `remove_dir_all`, `remove_file`, or
+  panic-path `set_current_dir` with `let _ =`. Directory cleanup matches
+  the `io::Result` in `ignore_remove_dir_all` and still ignores a failure.
+  The file cleanup and cwd restores match the same way. Fixture strings
+  that spell `let _ =` are unchanged. `clippy-debt-0001` stays deferred;
+  its `blocked_by` text now counts the remaining `let _ =` sites
+  ([#4046](https://github.com/EffortlessMetrics/ripr-swarm/issues/4046)).
+
 - Eval-sweep refresh no longer discards cleanup or sealed-dir restore
   `Result`s with `let _ =`. `discard_partial_dir` matches `remove_dir_all`
   and still ignores a failure. `remove_file`, the unix permission restore,
