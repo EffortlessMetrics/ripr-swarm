@@ -912,4 +912,77 @@ mod tests {
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
+
+    /// The agent status surface must count only artifacts the active loop mode
+    /// actually requires as "required" (docs/LEARNINGS.md, 2026-07-25
+    /// false-confidence gates): with no repair attempt every artifact is
+    /// required, and with a repair attempt present the repository-global
+    /// projections the attempt authority supersedes must not be called
+    /// "required".
+    #[test]
+    fn agent_review_summary_status_surface_counts_only_required_artifacts() -> Result<(), String> {
+        use crate::app::agent_status::{
+            AgentStatusArtifact, AgentStatusRepairAttempt, AgentStatusReport,
+        };
+        let artifacts = [
+            ("before_snapshot", WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT),
+            ("after_snapshot", WORKFLOW_AFTER_SNAPSHOT_ARTIFACT),
+            ("analysis_outcome", WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
+            ("agent_brief", WORKFLOW_AGENT_BRIEF_ARTIFACT),
+            ("agent_packet", WORKFLOW_AGENT_PACKET_ARTIFACT),
+            ("agent_verify", WORKFLOW_AGENT_VERIFY_ARTIFACT),
+            ("agent_receipt", WORKFLOW_AGENT_RECEIPT_ARTIFACT),
+        ]
+        .iter()
+        .map(|(name, path)| AgentStatusArtifact {
+            name: name.to_string(),
+            label: name.replace('_', " "),
+            path: path.to_string(),
+            present: true,
+            bytes: Some(1),
+            modified: None,
+        })
+        .collect::<Vec<_>>();
+        let attempt = |seam: &str| AgentStatusRepairAttempt {
+            attempt_id: format!("repair-attempt-{seam}"),
+            seam_id: seam.to_string(),
+            state: "awaiting_edit",
+            head_current: Some(true),
+            disposition: "resumable",
+            manifest: String::new(),
+            command: None,
+            evidence_head: String::new(),
+            receipt: crate::app::agent_status::AgentStatusAttemptReceipt::NotApplicable,
+            last_after_refusal: None,
+            diverged_recovery: None,
+        };
+        let report = |attempts: Vec<AgentStatusRepairAttempt>| AgentStatusReport {
+            root: ".".to_string(),
+            seam: None,
+            artifacts: artifacts.clone(),
+            repair_attempts: attempts,
+            missing_commands: Vec::new(),
+            next_command: None,
+            warnings: Vec::new(),
+        };
+
+        let legacy = super::artifacts::agent_status_surface(&report(Vec::new()), ".");
+        assert!(
+            legacy
+                .summary
+                .starts_with("7 of 7 required artifacts present, 0 missing"),
+            "legacy loop requires every artifact: {}",
+            legacy.summary
+        );
+
+        let repair = super::artifacts::agent_status_surface(&report(vec![attempt("a")]), ".");
+        assert!(
+            repair
+                .summary
+                .starts_with("0 of 0 required artifacts present, 0 missing"),
+            "a repair attempt supersedes the projections, so none is required: {}",
+            repair.summary
+        );
+        Ok(())
+    }
 }

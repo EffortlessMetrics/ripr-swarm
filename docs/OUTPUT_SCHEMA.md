@@ -12148,7 +12148,7 @@ The JSON schema is version `0.1`:
       "state": "computed",
       "status": "complete",
       "required": true,
-      "summary": "6 required artifacts present, 0 missing, 0 warnings."
+      "summary": "6 of 6 required artifacts present, 0 missing, 0 warnings."
     }
   ],
   "ci_artifacts": [
