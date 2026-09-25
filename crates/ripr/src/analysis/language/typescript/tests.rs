@@ -1427,6 +1427,18 @@ fn parse_error_reason_reports_parser_errors() {
 }
 
 #[test]
+fn parse_error_reason_includes_first_parser_message() {
+    // The reason must carry the first oxc message, not just a bare count,
+    // so the limitation is actionable.
+    let reason = parse_error_reason(Path::new("src/index.ts"), "const x = ;");
+    let reason = reason.expect("expected a parse error reason");
+    let message = reason
+        .strip_prefix("1 parser error(s): ")
+        .expect("reason must include the first parser message: {reason}");
+    assert!(!message.is_empty(), "parser message must be non-empty");
+}
+
+#[test]
 fn unsupported_syntax_finding_is_preview_static_unknown() {
     let limit = TypeScriptParseLimit {
         file: PathBuf::from("src/index.ts"),

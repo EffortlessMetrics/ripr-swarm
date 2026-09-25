@@ -8,7 +8,14 @@ pub(crate) fn parse_error_reason(file: &Path, source: &str) -> Option<String> {
     if ret.errors.is_empty() {
         None
     } else {
-        Some(format!("{} parser error(s)", ret.errors.len()))
+        // Include the first parser message so the limitation is actionable
+        // ("1 parser error(s): Unexpected token") instead of a bare count.
+        // oxc diagnostics implement Display as their message text.
+        Some(format!(
+            "{} parser error(s): {}",
+            ret.errors.len(),
+            ret.errors[0]
+        ))
     }
 }
 
