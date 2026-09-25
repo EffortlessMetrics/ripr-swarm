@@ -292,6 +292,60 @@ It should tell the reviewer which seam was targeted, what static movement was
 recorded, which receipt and verify artifacts carry the evidence, what is still
 missing, and what static limits remain.
 
+## Bounded execution: `ripr agent verify-execute`
+
+`ripr agent verify-execute` is the only standalone command in the agent loop
+that executes a process; `ripr agent repair --phase verify` also runs the
+retained packet's typed verify route through the bounded execution runner. It
+accepts one canonical producer-shaped packet and runs only the direct
+`ripr agent verify` route that packet declares — no shell, no display-text
+execution, no receipt issuance:
+
+```bash
+ripr agent verify-execute \
+  --root . \
+  --packet target/ripr/workflow/agent-packet.json \
+  --result-json target/ripr/workflow/verification-execution.json \
+  --authorize \
+  --json
+```
+
+- `--packet` and `--result-json` are required, along with `--json`; `--root`
+  selects the repository the packet and result paths must stay inside.
+- `--authorize` is required for execution. Omitting it is not a usage error;
+  it is a policy refusal reported as the typed
+  `verification_rejected_policy` disposition.
+- `--cancel-after-ms <n>` requests cancellation after `n` milliseconds; it
+  must be a positive value below the command timeout.
+- Typed JSON on every terminal state: each run — including pre-execution
+  refusals and a failing verify command — emits one JSON response on stdout
+  with a `disposition` field (for example `verification_executed_pass`,
+  `verification_executed_fail`, `verification_rejected_policy`,
+  `verification_wrong_root`, `verification_timed_out`,
+  `verification_cancelled`). Usage errors stay plain stderr messages with no
+  disposition. The exit status distinguishes only whether a bounded
+  observation was committed.
+
+The packet chooses which provenance-validated producer artifacts to compare;
+it never authors the command. Route authority is layered: the typed
+`command_specs.verify` must be reproducible from the packet's own
+`verification_commands`, and the route's `--before`/`--after` inputs must
+pass the repo-exposure provenance contract, after which RIPR recomputes the
+canonical route and requires equality. See
+[`OUTPUT_SCHEMA.md`](OUTPUT_SCHEMA.md#agent-verify-execute) for the full
+envelope, environment posture, and declared limitations.
+
+## MCP adapter
+
+`ripr mcp --stdio` exposes a bounded, read-only workspace-status projection
+for MCP clients: one tool (`ripr_workspace_status`) and one resource
+(`ripr://workspace/status`), both returning the same
+`ripr-mcp-workspace-status-v1` document. It declares no source-edit,
+verification-execution, mutation-execution, or model-provider authority
+(ADR 0022), and the status is resolved once at process startup — a static
+snapshot for the life of the server, not a live view. See
+[`docs/interop/mcp.md`](interop/mcp.md).
+
 ## CI Path
 
 The generated GitHub workflow from:

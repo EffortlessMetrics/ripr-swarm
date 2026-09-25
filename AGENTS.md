@@ -344,17 +344,26 @@ cargo xtask check-traceability
 cargo xtask check-capabilities
 cargo xtask check-workspace-shape
 cargo xtask check-architecture
+cargo xtask check-rust-judged-panel
+cargo xtask check-python-judged-panel
+cargo xtask check-rust-source-role-authority
 cargo xtask check-public-api
 cargo xtask check-output-contracts
+cargo xtask check-doc-artifacts
 cargo xtask check-doc-index
 cargo xtask check-pr-shape # advisory
+cargo xtask markdown-links
 cargo xtask check-generated
 cargo xtask check-badge-diff-policy
 cargo xtask check-generated-clean
 cargo xtask check-proof-packs
+cargo xtask check-release-targets
 cargo xtask check-dependencies
 cargo xtask check-process-policy
 cargo xtask check-network-policy
+cargo xtask check-lint-policy
+cargo xtask check-ci-lane-whitelist
+cargo xtask check-support-tiers
 cargo xtask check-command-catalog
 cargo xtask check-agent-skills
 ```

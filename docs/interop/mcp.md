@@ -45,7 +45,9 @@ A generic MCP client entry:
 | Resource (`application/json`) | `ripr://workspace/status` |
 
 Both return the same JSON document, schema `ripr-mcp-workspace-status-v1`,
-which wraps a `ripr-workspace-status-v1` workspace block:
+which wraps a `ripr-workspace-status-v1` workspace block. The status is
+resolved once at process startup and held for the life of the server — it is
+a static snapshot, not a live view, and nothing re-resolves it:
 
 - `workspace_state`: `ready` or `unavailable`;
 - `root`: validation `state`, `source` (`explicit`, `current_directory`,

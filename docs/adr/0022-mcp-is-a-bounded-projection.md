@@ -50,9 +50,11 @@ moved into the transport.
 
 ## Consequences
 
-MCP clients gain a live, standards-shaped discovery and status surface without
+MCP clients gain a standards-shaped discovery and status surface without
 getting repair, analysis refresh, source editing, command execution, mutation
-execution, remote transport, secrets, or model-provider configuration.
+execution, remote transport, secrets, or model-provider configuration. The
+workspace status is resolved once at process startup and never re-resolved:
+it is a static snapshot for the life of the server, not a live view.
 
 The local wire code is intentionally small and fixture-pinned. Protocol growth
 beyond this status slice raises the SDK migration trigger rather than expanding
