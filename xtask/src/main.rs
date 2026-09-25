@@ -18494,16 +18494,20 @@ fn porcelain_entry(field: &[u8]) -> Result<(&[u8], &str), String> {
 }
 
 fn add_changed_path(changes: &mut BTreeMap<String, BTreeSet<String>>, path: &str, status: &str) {
-    // Identity-exact (#4006): `-z` records are never quoted, so there is no
-    // quote-stripping and no trimming — legitimate leading/trailing spaces
-    // are path bytes. `normalize_slashes` stays: it only folds Windows
-    // separators for display, it never drops bytes.
-    let normalized = normalize_slashes(path);
-    if normalized.is_empty() {
+    // Identity-exact (#4006 item 5): the map key is the decoded path
+    // verbatim. All feeders pass `-z` git output, which always uses `/`
+    // separators even on Windows, so there is no separator folding to do —
+    // and folding would be wrong: the literal-backslash filename `a\b.rs`
+    // and the nested path `a/b.rs` are distinct tracked paths that folding
+    // collapsed to one key, omitting an inventory path while returning
+    // success. No trimming either: leading/trailing spaces are path bytes.
+    // Display-time normalization, if ever needed, belongs at the render
+    // call site — never in the identity map.
+    if path.is_empty() {
         return;
     }
     changes
-        .entry(normalized)
+        .entry(path.to_string())
         .or_default()
         .insert(status.to_string());
 }
