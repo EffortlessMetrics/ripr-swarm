@@ -10,6 +10,9 @@
 //! - `typescript_oracle_helper_gated` — LANDED in helper-gated oracle disclosure
 //! - `typescript_target_unresolved` — LANDED in PR 6 (cross-package ownership detection)
 //! - `typescript_path_alias_unresolved` — LANDED in RIPR-SPEC-0099 (tsconfig path alias gap)
+//! - `typescript_test_extraction_partial` — LANDED in partial test-extraction disclosure
+//!   (template-literal titles, tagged-template `.each`, tests generated in
+//!   loops/callbacks; detection only — extracting these shapes is follow-up)
 
 use super::*;
 
@@ -56,6 +59,32 @@ impl TypeScriptNamedLimitation {
                 self.name, self.repair_route
             ),
         ]
+    }
+}
+
+/// Build the `typescript_test_extraction_partial` named limitation from one
+/// concrete detected gap (`TypeScriptTestExtractionGap` produced by
+/// `tests_extract::detect_partial_test_extraction`).
+///
+/// CLASSIFICATION-NEUTRAL, additive disclosure only — like the alias
+/// limitation: the test index keeps exactly the tests the extractor
+/// supports; this limitation tells consumers the index is partial so a
+/// confident `no_static_path` (and the "add a test that calls the changed
+/// owner" advice) is known to be possibly false for owners whose only tests
+/// use the disclosed shape. It never flips a classification.
+pub(crate) fn test_extraction_partial_limitation(
+    gap: &TypeScriptTestExtractionGap,
+) -> TypeScriptNamedLimitation {
+    TypeScriptNamedLimitation {
+        name: "typescript_test_extraction_partial",
+        sample_source: format!("{}:{}", normalized_path(&gap.file), gap.sample_line),
+        why_not_actionable: format!(
+            "the recognized test file `{}` registers tests the syntax-first extractor drops ({shape}: `{snippet}`); the test index is partial, so `no_static_path` for owners those tests would exercise can be a false negative and \"add a test that calls the changed owner\" may point at a test that already exists in an unextracted shape",
+            normalized_path(&gap.file),
+            shape = gap.shape,
+            snippet = gap.snippet,
+        ),
+        repair_route: "analysis/typescript-test-extraction-shapes",
     }
 }
 
