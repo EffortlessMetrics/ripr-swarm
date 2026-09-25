@@ -670,13 +670,9 @@ mod tests {
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "change paths", "--quiet"])?;
 
-        for (setting, value) in [
-            ("diff.noprefix", "true"),
-            ("diff.mnemonicPrefix", "true"),
-        ] {
+        for (setting, value) in [("diff.noprefix", "true"), ("diff.mnemonicPrefix", "true")] {
             run_git_checked(&dir, &["config", setting, value])?;
-            let diff =
-                load_diff_range(&dir, "HEAD~1", "HEAD").map_err(std::io::Error::other)?;
+            let diff = load_diff_range(&dir, "HEAD~1", "HEAD").map_err(std::io::Error::other)?;
 
             assert!(
                 diff.contains("diff --git a/identity.rs b/identity.rs"),
@@ -688,8 +684,7 @@ mod tests {
             );
 
             let parsed = super::super::parse::parse_unified_diff(&diff);
-            let mut paths: Vec<PathBuf> =
-                parsed.iter().map(|file| file.path.clone()).collect();
+            let mut paths: Vec<PathBuf> = parsed.iter().map(|file| file.path.clone()).collect();
             paths.sort();
             assert_eq!(
                 paths,
@@ -712,11 +707,17 @@ mod tests {
         let dir = unique_fixture_root("diff-side-prefix-extra-precedence")?;
         init_git_repo(&dir, "main")?;
         fs::create_dir_all(dir.join("src"))?;
-        fs::write(dir.join("src").join("lib.rs"), "pub fn value() -> u32 { 1 }\n")?;
+        fs::write(
+            dir.join("src").join("lib.rs"),
+            "pub fn value() -> u32 { 1 }\n",
+        )?;
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "base source", "--quiet"])?;
 
-        fs::write(dir.join("src").join("lib.rs"), "pub fn value() -> u32 { 2 }\n")?;
+        fs::write(
+            dir.join("src").join("lib.rs"),
+            "pub fn value() -> u32 { 2 }\n",
+        )?;
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "change source", "--quiet"])?;
 
@@ -730,7 +731,10 @@ mod tests {
         .map_err(std::io::Error::other)?;
         let diff = String::from_utf8(bytes).map_err(std::io::Error::other)?;
 
-        assert!(diff.contains("diff --git a/src/lib.rs b/src/lib.rs"), "{diff}");
+        assert!(
+            diff.contains("diff --git a/src/lib.rs b/src/lib.rs"),
+            "{diff}"
+        );
         assert!(diff.contains("--- a/src/lib.rs"), "{diff}");
         assert!(diff.contains("+++ b/src/lib.rs"), "{diff}");
         assert!(!diff.contains("old/src/lib.rs"), "{diff}");
