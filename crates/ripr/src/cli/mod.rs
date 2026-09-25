@@ -62,6 +62,8 @@ impl std::fmt::Display for CommandError {
     }
 }
 
+impl std::error::Error for CommandError {}
+
 use crate::agent::loop_commands::{
     WORKFLOW_AGENT_BRIEF_ARTIFACT, WORKFLOW_AGENT_PACKET_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT,

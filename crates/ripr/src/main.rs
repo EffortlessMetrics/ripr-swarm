@@ -59,7 +59,7 @@ fn format_panic_report(message: &str, location: Option<(&str, u32)>) -> String {
 }
 
 fn report_failure(err: &CommandError) {
-    eprintln!("ripr: {}", err.message());
+    eprintln!("ripr: {err}");
 }
 
 /// The panic-boundary exit code. A main-thread panic is an internal error,
