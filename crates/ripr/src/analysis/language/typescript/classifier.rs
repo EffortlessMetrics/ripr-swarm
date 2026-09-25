@@ -320,7 +320,7 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
             continue;
         }
         let owner_receivers =
-            owner_namespace_receivers(&candidate.test, owner, alias_map, workspace_root);
+            owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         for assertion in &candidate.test.assertions {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
                 || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate)
@@ -476,7 +476,7 @@ fn owner_call_arguments(
         // resolves to the owner's own module (namespace import); a same-named
         // method on an unrelated receiver (`other.total(50)`) must not
         // witness the owner's boundary.
-        if before.trim_end().chars().next_back() == Some('.')
+        if before.trim_end().ends_with('.')
             && !owner_receivers
                 .iter()
                 .any(|receiver| receiver == &receiver_before_dot(before))
