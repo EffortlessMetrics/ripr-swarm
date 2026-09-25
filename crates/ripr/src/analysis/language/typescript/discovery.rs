@@ -82,27 +82,13 @@ fn has_directory_component(path: &Path, names: &[&str]) -> bool {
     })
 }
 
-/// Directory names never descended into during workspace discovery.
+/// Directory prune authority for the workspace walk.
 ///
-/// VCS/build/dependency/tooling noise plus the conventional generated-output
-/// directories (`dist`, `build`, `out`, `coverage`, `.next`, `.cache`,
-/// `vendor`) where multi-megabyte minified bundles live. Mirrors the Python
-/// discovery exclusions in `config/python.rs` (`dist`/`build`) extended with
-/// the TypeScript/JavaScript toolchain conventions.
-const EXCLUDED_DIRECTORY_NAMES: &[&str] = &[
-    ".git",
-    "target",
-    "node_modules",
-    ".ripr",
-    ".direnv",
-    "dist",
-    "build",
-    "out",
-    "coverage",
-    ".next",
-    ".cache",
-    "vendor",
-];
+/// Single table owned by `config::typescript` (`TYPESCRIPT_EXCLUDED_DIRS`),
+/// shared with the diff loop's pre-count refusal (#3743): the walk must prune
+/// exactly the trees the diff loop refuses, otherwise the denominator counts
+/// files no facts can back, or facts exist for files the denominator hides.
+/// `*.generated.*` files are additionally skipped at the file level below.
 
 /// Env override for [`DEFAULT_TS_MAX_WORKSPACE_FILES`].
 pub(crate) const TS_MAX_WORKSPACE_FILES_ENV: &str = "RIPR_TS_MAX_WORKSPACE_FILES";
@@ -182,7 +168,7 @@ pub(crate) fn visit_workspace(root: &Path, max_entries: usize) -> WorkspaceScan 
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or_default();
-            if EXCLUDED_DIRECTORY_NAMES.contains(&name) {
+            if is_typescript_dir_pruned_from_discovery(name) {
                 continue;
             }
             let file_type = match entry.file_type() {
@@ -191,7 +177,7 @@ pub(crate) fn visit_workspace(root: &Path, max_entries: usize) -> WorkspaceScan 
             };
             if file_type.is_dir() {
                 stack.push(path);
-            } else if file_type.is_file() {
+            } else if file_type.is_file() && !is_detectable_generated_typescript_path(&path) {
                 let adapter = TypeScriptAdapter;
                 if adapter.accepts_path(&path) {
                     let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
@@ -472,5 +458,60 @@ mod tests {
             ts_workspace_file_limit_from_env(Ok("nope".to_string())).is_err(),
             "non-numeric limit must be rejected"
         );
+    }
+
+    #[test]
+    fn workspace_walk_skips_excluded_and_generated_files_but_keeps_near_misses() {
+        let workspace = TempWorkspace::new("excluded-near-miss");
+        for rel in [
+            "src/ok.ts",
+            "src/generated.ts",
+            "src/regenerated.js",
+            "src/build.ts",
+            "node_modules/left-pad/index.js",
+            "dist/bundle.js",
+            "build/out.ts",
+            "out/tsc.ts",
+            "coverage/lcov.js",
+            ".next/server.ts",
+            ".cache/sw.js",
+            "vendor/lib.ts",
+            "src/__generated__/types.ts",
+            "src/cart.generated.ts",
+            "src/types.generated.d.ts",
+        ] {
+            workspace.write(rel, "export const value = 1;\n");
+        }
+        let scan = visit_workspace(&workspace.0, 10_000);
+        assert!(!scan.truncated, "scan must not trip the cap");
+        for expected in [
+            "src/ok.ts",
+            "src/generated.ts",
+            "src/regenerated.js",
+            "src/build.ts",
+        ] {
+            assert!(
+                scan.files.iter().any(|path| path == Path::new(expected)),
+                "expected near-miss {expected} in {scan.files:?}",
+            );
+        }
+        for excluded in [
+            "node_modules/left-pad/index.js",
+            "dist/bundle.js",
+            "build/out.ts",
+            "out/tsc.ts",
+            "coverage/lcov.js",
+            ".next/server.ts",
+            ".cache/sw.js",
+            "vendor/lib.ts",
+            "src/__generated__/types.ts",
+            "src/cart.generated.ts",
+            "src/types.generated.d.ts",
+        ] {
+            assert!(
+                !scan.files.iter().any(|path| path == Path::new(excluded)),
+                "did not expect {excluded} in {scan.files:?}",
+            );
+        }
     }
 }

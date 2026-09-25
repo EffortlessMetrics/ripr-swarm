@@ -143,20 +143,26 @@ pub(crate) fn classify_with(path: &Path, context: &SourceRoleContext) -> SourceR
 /// repair driver's edit-cage gate). It reuses the analyzer's existing
 /// test-file notions rather than forking them: the `tests`/`test` layout
 /// component shared by `rust_index::is_test_file` and the Python adapter's
-/// `is_test_file`, plus the per-language file-name conventions — `test_*.py`
-/// prefixes and `*_test.py`/`*_tests.py`/`*_test.rs`/`*_tests.rs` suffixes.
+/// `is_test_file`, the TypeScript preview adapter's `is_test_file` (Jest,
+/// Vitest, Node, Cypress, Jasmine, and `__tests__` conventions), plus the
+/// Rust and Python file-name conventions — `test_*.py` prefixes and
+/// `*_test.py`/`*_tests.py`/`*_test.rs`/`*_tests.rs` suffixes.
 ///
 /// The recognition is deliberately bounded and case-sensitive so lookalike
-/// names fail closed: `src/testing.py`, `lib/testutil.py`, and unusual
-/// casing are refused. This is role-derived evidence for an authorization
-/// decision; consumers keep the policy (what to refuse and what to name in
-/// the diagnostic) on their side.
+/// names fail closed: `src/testing.py`, `lib/testutil.py`, `src/contest.ts`,
+/// and unusual casing are refused. This is role-derived evidence for an
+/// authorization decision; consumers keep the policy (what to refuse and what
+/// to name in the diagnostic) on their side.
 pub(crate) fn is_test_surface_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/");
     if normalized
         .split('/')
         .any(|component| component == "tests" || component == "test")
     {
+        return true;
+    }
+    #[cfg(feature = "lang-typescript")]
+    if crate::analysis::language::is_test_file(Path::new(&normalized)) {
         return true;
     }
     let file_name = normalized.rsplit('/').next().unwrap_or_default();
@@ -289,6 +295,22 @@ mod tests {
                 "test surface `{accepted}` was refused"
             );
         }
+        #[cfg(feature = "lang-typescript")]
+        for accepted in [
+            "src/cart.test.ts",
+            "src/cart.spec.tsx",
+            "src/app.test.js",
+            "src/Header.test.jsx",
+            "src/__tests__/Header.tsx",
+            "cypress/e2e/checkout.cy.ts",
+            "src/cart_test.ts",
+            "spec/requestContractSpec.js",
+        ] {
+            assert!(
+                is_test_surface_path(accepted),
+                "test surface `{accepted}` was refused"
+            );
+        }
         for rejected in [
             "src/production.rs",
             "src/testing.py",
@@ -296,6 +318,13 @@ mod tests {
             "atest/helper.py",
             "src/mod.rs",
             "tests.rs",
+            "src/cart.ts",
+            "src/contest.ts",
+            "test-utils/helper.ts",
+            "src/cart.test.mts",
+            "src/latest/feature.ts",
+            "spec/helpers/setup.js",
+            "src/specification.ts",
         ] {
             assert!(
                 !is_test_surface_path(rejected),

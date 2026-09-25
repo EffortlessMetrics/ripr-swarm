@@ -4397,7 +4397,6 @@ fn analyze_diff_discovers_and_analyzes_mts_sources() -> Result<(), String> {
         &root.join("tests/cart.test.mts"),
         "import { cartTotal } from '../src/cart.mjs';\ntest('totals items', () => {\n  const result = cartTotal([1, 2]);\n  expect(result).toBe(3);\n});\n",
     )?;
-
     let adapter = TypeScriptAdapter;
     let options = AnalysisOptions {
         root: root.clone(),
@@ -4514,6 +4513,122 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
         "recovery must name the env knob: {}",
         capped.recovery.detail
     );
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Result<(), String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-ts-excluded-diff-{}-{stamp}",
+        std::process::id()
+    ));
+    let source = "export function shippingFee(total: number) {\n  return total > 50 ? 0 : 5;\n}\n";
+    for rel in [
+        "src/ok.ts",
+        "node_modules/pkg/index.ts",
+        "dist/bundle.js",
+        "vendor/lib.ts",
+        "build/out.js",
+        "coverage/report.ts",
+        "src/client.generated.ts",
+    ] {
+        let path = root.join(rel);
+        let parent = path
+            .parent()
+            .ok_or_else(|| format!("missing parent for {rel}"))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("create {}: {err}", parent.display()))?;
+        std::fs::write(&path, source).map_err(|err| format!("write {}: {err}", path.display()))?;
+    }
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let changed_line = crate::analysis::diff::ChangedLine {
+        line: 2,
+        new_side_line: 2,
+        text: "  return total >= 50 ? 0 : 5;".to_string(),
+    };
+    let changed_files = [
+        "src/ok.ts",
+        "node_modules/pkg/index.ts",
+        "dist/bundle.js",
+        "vendor/lib.ts",
+        "build/out.js",
+        "coverage/report.ts",
+        "src/client.generated.ts",
+    ]
+    .into_iter()
+    .map(|path| ChangedFile {
+        path: PathBuf::from(path),
+        added_lines: vec![changed_line.clone()],
+        removed_lines: Vec::new(),
+    })
+    .collect::<Vec<_>>();
+    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove temp workspace: {err}"))?;
+
+    if result.changed_files != 1 {
+        return Err(format!(
+            "expected only src/ok.ts to count, got {} (by language {:?})",
+            result.changed_files, result.changed_files_by_language
+        ));
+    }
+    let excluded_finding = result.findings.iter().any(|finding| {
+        finding.probe.location.file.components().any(|component| {
+            matches!(
+                component.as_os_str().to_str(),
+                Some("node_modules" | "dist" | "vendor" | "build" | "coverage" | "__generated__")
+            )
+        }) || finding
+            .probe
+            .location
+            .file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.contains(".generated."))
+    });
+    if excluded_finding {
+        return Err(format!(
+            "excluded or generated change produced a finding: {:?}",
+            result
+                .findings
+                .iter()
+                .map(|finding| finding.probe.location.file.display().to_string())
+                .collect::<Vec<_>>()
+        ));
+    }
+    if !result
+        .findings
+        .iter()
+        .any(|finding| finding.probe.location.file == Path::new("src/ok.ts"))
+    {
+        return Err(format!(
+            "the src/ok.ts control change produced no finding; files were {:?}",
+            result
+                .findings
+                .iter()
+                .map(|finding| finding.probe.location.file.display().to_string())
+                .collect::<Vec<_>>()
+        ));
+    }
     Ok(())
 }
 
