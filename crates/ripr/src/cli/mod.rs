@@ -378,7 +378,9 @@ mod tests {
     fn run_rejects_unknown_command() {
         assert_eq!(
             run(args(&["ripr", "unknown"])),
-            Err(CommandError::Failure("unknown command \"unknown\". Run `ripr --help`.".to_string()))
+            Err(CommandError::Failure(
+                "unknown command \"unknown\". Run `ripr --help`.".to_string()
+            ))
         );
     }
 

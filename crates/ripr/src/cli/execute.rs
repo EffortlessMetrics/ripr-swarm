@@ -31,9 +31,13 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
         CliCommand::Zero(args) => commands::zero(&args).map_err(CommandError::from),
         CliCommand::Policy(args) => commands::policy(&args).map_err(CommandError::from),
         CliCommand::PrLedger(args) => commands::pr_ledger(&args).map_err(CommandError::from),
-        CliCommand::PrComments(args) => commands::pr_comments(&args).map_err(CommandError::from),
+        CliCommand::PrComments(args) => {
+            commands::pr_comments(&args).map_err(CommandError::from)
+        }
         CliCommand::PrReview(args) => commands::pr_review(&args).map_err(CommandError::from),
-        CliCommand::CoverageGrip(args) => commands::coverage_grip(&args).map_err(CommandError::from),
+        CliCommand::CoverageGrip(args) => {
+            commands::coverage_grip(&args).map_err(CommandError::from)
+        }
         CliCommand::AssistantLoop(args) => {
             commands::assistant_loop(&args).map_err(CommandError::from)
         }
@@ -217,7 +221,9 @@ mod tests {
         );
         assert_eq!(
             execute(CliCommand::Cache(Vec::new())),
-            Err(CommandError::Failure("cache requires subcommand `status` or `clear`".to_string()))
+            Err(CommandError::Failure(
+                "cache requires subcommand `status` or `clear`".to_string()
+            ))
         );
     }
 

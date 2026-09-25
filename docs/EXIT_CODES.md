@@ -46,8 +46,11 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
 - **Typed refusal**: `ripr agent verify-execute` refused the packet (for
   example `verification_rejected_policy` or `verification_wrong_root`) and
   rendered the typed refusal JSON on stdout; `ripr agent repair --phase
-  after` refused after selecting its attempt (the refusal is recorded on the
-  attempt).
+  after` refused with a named cause after selecting its attempt — a diverged
+  HEAD, drifted analysis inputs, or a replaced trust-binding manifest — with
+  the recovery narrated and the refusal recorded on the attempt. Operational
+  errors after attempt selection (an unreadable retained packet, a failed
+  artifact write) still exit `2`.
 
 These are findings- and policy-driven exits, not operational failures; a
 monitoring system should page on `2`, not on `3`.

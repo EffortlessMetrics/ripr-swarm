@@ -73,9 +73,8 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
         | AgentCommand::StatusHelp
         | AgentCommand::ReviewSummaryHelp
         | AgentCommand::RepairHelp) => agent_dispatch::run_agent_help_command(&help_command)
-            .unwrap_or_else(|| {
-                Err(CommandError::from("agent help command was not dispatched".to_string()))
-            }),
+            .unwrap_or_else(|| Err("agent help command was not dispatched".to_string()))
+            .map_err(CommandError::from),
     }
 }
 
@@ -570,10 +569,10 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
             attempt_id.as_str()
         );
     }
-    // An error once the after phase selected its attempt is a typed refusal
-    // (recorded above), not an operational failure: it maps to the decision
-    // exit code 3. Errors before attempt selection are ordinary failures.
-    if refusal.selected_attempt.is_some() {
+    // A deliberate named refusal once the after phase selected its attempt
+    // (typed) is recorded above and maps to the decision exit code 3.
+    // Operational errors after selection stay ordinary failures: exit 2.
+    if refusal.selected_attempt.is_some() && refusal.typed {
         result.map_err(CommandError::Decision)
     } else {
         result.map_err(CommandError::Failure)
@@ -581,13 +580,21 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
 }
 
 /// What an after phase that refuses leaves for the attempt record: the
-/// attempt it selected, and the narration it printed before the final error
+/// attempt it selected, the narration it printed before the final error
 /// (the named cause and the recovery), so `ripr agent status` can repeat the
-/// same explanation instead of only the terse final error.
+/// same explanation instead of only the terse final error, and whether the
+/// refusal was a deliberate named refusal rather than an operational error.
 #[derive(Default)]
 struct AfterPhaseRefusalContext {
     selected_attempt: Option<(PathBuf, crate::app::repair_attempt::RepairAttemptId)>,
     narration: Vec<String>,
+    /// Set only at a deliberate named refusal (diverged HEAD, drifted
+    /// analysis inputs, replaced trust-binding manifest): a refusal the
+    /// command narrates with its cause and recovery before returning. Only
+    /// this maps to the decision exit code 3; operational errors after
+    /// attempt selection (unreadable retained packet, failed snapshot write,
+    /// failed receipt or apply-record publication) stay exit code 2.
+    typed: bool,
 }
 
 impl AfterPhaseRefusalContext {
@@ -798,6 +805,9 @@ fn run_agent_repair_phase(
                     {
                         refusal.narrate(line);
                     }
+                    // A deliberate named refusal: narrated cause and recovery
+                    // above, so it maps to the decision exit code 3.
+                    refusal.typed = true;
                     return Err(format!(
                         "repair attempt `{}` cannot finish: HEAD {current_head} does not descend from its before-phase head {}",
                         attempt.attempt_id.as_str(),
@@ -824,12 +834,14 @@ fn run_agent_repair_phase(
                 Ok(rendered) => rendered,
                 Err(error) => {
                     // The attempt is not finished yet, so it stays awaiting
-                    // the edit; name what moved and how to rerun.
+                    // the edit; name what moved and how to rerun. This is a
+                    // deliberate named refusal and maps to exit code 3.
                     if error.contains("analysis input identities differ") {
                         for line in repair_after_input_drift_lines(&root, &attempt) {
                             refusal.narrate(line);
                         }
                     }
+                    refusal.typed = true;
                     return Err(error);
                 }
             };
@@ -843,7 +855,7 @@ fn run_agent_repair_phase(
             // tail refuses, the verify document alone is printed — the
             // refusal bytes this phase always produced, and still one document
             // an orchestrator can parse with one JSON.parse call.
-            let after_tail = || -> Result<String, String> {
+            let after_tail = |refusal: &mut AfterPhaseRefusalContext| -> Result<String, String> {
                 use crate::app::python_repair_binding::{
                     confirm_manifest_unchanged, write_apply_record,
                 };
@@ -856,8 +868,12 @@ fn run_agent_repair_phase(
                 // verification ran before several expensive operations, and a
                 // manifest replaced inside that window must refuse instead of
                 // silently advancing the attempt against replaced trust data.
+                // This is a deliberate named refusal: it maps to exit code 3.
                 if let Some(binding) = &retained_binding {
-                    confirm_manifest_unchanged(binding)?;
+                    if let Err(error) = confirm_manifest_unchanged(binding) {
+                        refusal.typed = true;
+                        return Err(error);
+                    }
                 }
 
                 // Finish only after all command-owned after artifacts exist.
@@ -919,43 +935,50 @@ fn run_agent_repair_phase(
                 let mut apply_record_result: Result<(), String> = Ok(());
                 let apply_inputs = (&retained_binding, &verified_binding);
                 if let (Some(binding), Some(verified)) = apply_inputs {
-                    let record_outcome = confirm_manifest_unchanged(binding).and_then(|()| {
-                        write_apply_record(
+                    // A manifest replaced inside the finalize window is a
+                    // deliberate named refusal (exit code 3); a record write
+                    // failure after a successful confirmation is operational
+                    // (exit code 2).
+                    if let Err(error) = confirm_manifest_unchanged(binding) {
+                        refusal.typed = true;
+                        apply_record_result = Err(error);
+                    } else {
+                        let record_outcome = write_apply_record(
                             &root,
                             &attempt.attempt_id,
                             &binding.artifact_sha256,
                             verified,
                             edit_authorization.authority.as_deref().unwrap_or_default(),
                             &cage_after,
-                        )
-                    });
-                    match record_outcome {
-                        Ok(apply_record_path) => {
-                            eprintln!(
-                                "ripr: python repair-trust apply record: {}",
-                                apply_record_path.display()
-                            );
-                        }
-                        Err(error) => {
-                            // Finish already advanced the durable state, so a
-                            // failed record publication must restore the
-                            // attempt to awaiting_edit: the identical retry is
-                            // otherwise rejected and the record could never be
-                            // recreated.
-                            match restore_repair_attempt_to_awaiting_edit(
-                                &root,
-                                &attempt.attempt_id,
-                            ) {
-                                Ok(()) => {
-                                    eprintln!(
-                                        "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
-                                    );
-                                    apply_record_result = Err(error);
-                                }
-                                Err(restore_error) => {
-                                    apply_record_result = Err(format!(
-                                        "{error}; rolling the attempt back for a retry also failed: {restore_error}"
-                                    ));
+                        );
+                        match record_outcome {
+                            Ok(apply_record_path) => {
+                                eprintln!(
+                                    "ripr: python repair-trust apply record: {}",
+                                    apply_record_path.display()
+                                );
+                            }
+                            Err(error) => {
+                                // Finish already advanced the durable state, so a
+                                // failed record publication must restore the
+                                // attempt to awaiting_edit: the identical retry is
+                                // otherwise rejected and the record could never be
+                                // recreated.
+                                match restore_repair_attempt_to_awaiting_edit(
+                                    &root,
+                                    &attempt.attempt_id,
+                                ) {
+                                    Ok(()) => {
+                                        eprintln!(
+                                            "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
+                                        );
+                                        apply_record_result = Err(error);
+                                    }
+                                    Err(restore_error) => {
+                                        apply_record_result = Err(format!(
+                                            "{error}; rolling the attempt back for a retry also failed: {restore_error}"
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -966,7 +989,7 @@ fn run_agent_repair_phase(
 
                 Ok(status_rendered)
             };
-            let status_rendered = match after_tail() {
+            let status_rendered = match after_tail(&mut refusal) {
                 Ok(status_rendered) => status_rendered,
                 Err(error) => {
                     print!("{rendered_verify}");
@@ -1465,7 +1488,8 @@ mod tests {
         assert!(
             matches!(
                 &error,
-                CommandError::Decision(message) if message.contains("verification_rejected_policy")
+                CommandError::Decision(message)
+                    if message.contains("verification_rejected_policy")
             ),
             "typed refusal must carry the Decision variant: {error:?}"
         );

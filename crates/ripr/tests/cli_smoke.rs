@@ -4733,6 +4733,11 @@ fn agent_repair_admits_a_focused_test_committed_between_the_phases()
     );
     let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
     assert_failure(&after);
+    assert_eq!(
+        after.status.code(),
+        Some(3),
+        "a diverged HEAD is a typed refusal, not an operational failure"
+    );
     let stderr = String::from_utf8_lossy(&after.stderr);
     assert!(stderr.contains("does not descend from"), "{stderr}");
     assert!(
@@ -4748,6 +4753,41 @@ fn agent_repair_admits_a_focused_test_committed_between_the_phases()
     let rerun = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
     assert_success(&rerun);
     assert_eq!(repair_receipt(&root)?["status"], "advisory");
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// An operational error after the after phase selected its attempt (here the
+/// retained packet is missing) is an ordinary failure, not a typed refusal:
+/// it maps to exit code 2 even though the attempt was already selected.
+#[test]
+fn agent_repair_operational_error_after_attempt_selection_stays_failure()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unbuilt_repair_fixture("agent-repair-missing-retained-packet")?;
+    let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
+    assert_success(&before);
+    let (attempt_id, manifest) = sole_repair_attempt(&root)?;
+    let packet_rel = manifest["artifacts"]
+        .as_array()
+        .and_then(|artifacts| artifacts.iter().find(|artifact| artifact["role"] == "agent_packet"))
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("attempt manifest has no agent_packet artifact")?;
+    std::fs::remove_file(root.join(packet_rel))?;
+
+    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
+    assert_failure(&after);
+    assert_eq!(
+        after.status.code(),
+        Some(2),
+        "an unreadable retained packet is operational, not a typed refusal"
+    );
+    let stderr = String::from_utf8_lossy(&after.stderr);
+    assert!(
+        stderr.contains("read retained repair packet"),
+        "precondition: the retained packet is unreadable:\n{stderr}"
+    );
+    let (_, manifest) = sole_repair_attempt(&root)?;
+    assert_eq!(manifest["state"], "awaiting_edit", "{manifest}");
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -13649,6 +13689,11 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
     // No test edit yet: agent verify refuses a pair without movement.
     let refused = repair_route_after(&root, &attempt_id);
     assert!(!refused.status.success(), "{refused:?}");
+    assert_eq!(
+        refused.status.code(),
+        Some(3),
+        "a no-movement verify refusal is a typed refusal, not an operational failure"
+    );
     let refused_stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
         refused_stderr.contains("no repository movement"),
@@ -14215,6 +14260,11 @@ fn agent_status_reports_the_after_phase_recovery_for_rewritten_history()
     // The after phase gives the same recovery.
     let refused = repair_route_after(&root, &attempt_id);
     assert_failure(&refused);
+    assert_eq!(
+        refused.status.code(),
+        Some(3),
+        "a diverged HEAD is a typed refusal, not an operational failure"
+    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains(&reset_sentence), "{stderr}");
     assert_eq!(
@@ -14257,6 +14307,11 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
 
     let refused = repair_route_after(&root, &attempt_id);
     assert_failure(&refused);
+    assert_eq!(
+        refused.status.code(),
+        Some(3),
+        "drifted analysis inputs are a typed refusal, not an operational failure"
+    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
         stderr.contains("ripr: analysis inputs changed after the before phase: Cargo.toml."),
