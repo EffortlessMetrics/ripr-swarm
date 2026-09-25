@@ -159,16 +159,29 @@ impl OwnedProcess {
     /// returning. Windows: one termination request kills every process in
     /// the job. Other platforms: the direct child kill and reap.
     ///
-    /// The `Err` arm reports the typed termination or reap failure; the
-    /// reap is still attempted in that case so no zombie remains.
+    /// An already-exited child reaps immediately without a termination
+    /// request. A FAILED termination request is returned before any reap:
+    /// waiting on a process that refused to die would hang the caller on
+    /// the unbounded poll, so the leak is surfaced instead. The reap error
+    /// is reported only when termination succeeded (a successful kill
+    /// makes a failed reap a real zombie).
     pub fn terminate_tree(&mut self) -> Result<(), String> {
-        let termination = self.request_kill().map_err(|err| err.to_string());
-        let reap = self.wait();
-        match (termination, reap) {
-            (Err(err), _) => Err(format!("failed to terminate owned process: {err}")),
-            (_, Err(err)) => Err(format!("failed to reap owned process: {err}")),
-            (Ok(()), Ok(_)) => Ok(()),
+        if let Some(status) = self
+            .child
+            .try_wait()
+            .map_err(|err| format!("failed to probe owned process: {err}"))?
+        {
+            let _ = status;
+            return Ok(());
         }
+        let termination = self.request_kill().map_err(|err| err.to_string());
+        if let Err(err) = termination {
+            return Err(format!("failed to terminate owned process: {err}"));
+        }
+        let reap = self
+            .wait()
+            .map_err(|err| format!("failed to reap owned process: {err}"));
+        reap.map(|_| ())
     }
 
     /// Direct-child kill request without tree scope or reaping.
@@ -187,9 +200,15 @@ impl Drop for OwnedProcess {
         // wait failure, or panic unwinding — terminates the owned tree and
         // reaps the direct child first. Both steps are best-effort here;
         // typed evidence belongs to `terminate_tree`, which every explicit
-        // termination path uses.
-        let _ = self.request_kill();
-        let _ = self.wait();
+        // termination path uses. An already-reaped child is left alone, and
+        // a failed kill is not followed by an unbounded wait on a process
+        // that refused to die.
+        if self.child.try_wait().is_ok_and(|status| status.is_some()) {
+            return;
+        }
+        if self.request_kill().is_ok() {
+            let _ = self.wait();
+        }
     }
 }
 
