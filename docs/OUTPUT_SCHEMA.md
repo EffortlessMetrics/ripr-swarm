@@ -45,6 +45,7 @@ map is:
 | `ripr agent packet` | `schema_version` | `0.4` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
+| `ripr agent repair --phase after` success stdout | `schema_version` | `0.1` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
@@ -6644,6 +6645,54 @@ Field contract:
   `no_movement_reason`.
 - `new_gaps[]` / `resolved_gaps[]` - seam identity and static class for seam IDs
   present in only one snapshot.
+
+### Agent repair after-phase stdout
+
+`ripr agent repair --attempt <id> --phase after` holds the verify render until
+its post-verify tail (edit-cage finish, receipt write, apply record) settles,
+then prints exactly one JSON document on stdout. On success the document is
+its own versioned envelope, not a mutated verify document:
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "repair_after_result",
+  "verify": {
+    "schema_version": "0.3",
+    "tool": "ripr",
+    "status": "advisory"
+  },
+  "agent_status": {
+    "schema_version": "0.1",
+    "status": "complete"
+  }
+}
+```
+
+Field contract:
+
+- `schema_version` - currently `"0.1"`, versioning the envelope contract
+  independently of both children. The envelope exists so every stdout
+  document's shape is identifiable from its `schema_version`: the success
+  document wraps the two children instead of splicing `agent_status` into the
+  verify 0.3 document, which would leave two documents sharing one
+  `schema_version` with different shapes depending on the invocation path.
+- `kind` - always `"repair_after_result"`.
+- `verify` - the agent verify `0.3` document: every verify field keeps its
+  name and value, including the verify outcome's own top-level `status`
+  (keys are re-serialized in sorted order, so bytes may differ from a direct
+  `ripr agent verify --json` capture even though every field is identical). Consumers must read the verify
+  outcome under `verify`, not at the envelope top level.
+- `agent_status` - what `ripr agent status --json` prints at this point (agent
+  status `0.1`), embedded beside the verify document because the verify
+  outcome already owns the `status` field name.
+- Refusal paths are the exception, not the envelope: when the after phase
+  refuses after the verify render (for example the receipt is not
+  receipt-ready or the apply record failed), stdout is the bare agent verify
+  `0.3` document alone — a pure verify document, honestly labeled, still one
+  parseable document. A consumer dispatching on `schema_version` therefore
+  sees `0.1` only for the two-child envelope and `0.3` only for the pure
+  verify document, whichever path produced it.
 
 ## Agent Verify Execute
 
