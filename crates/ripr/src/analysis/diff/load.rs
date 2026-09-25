@@ -672,6 +672,26 @@ mod tests {
 
         for (setting, value) in [("diff.noprefix", "true"), ("diff.mnemonicPrefix", "true")] {
             run_git_checked(&dir, &["config", setting, value])?;
+
+            let raw = Command::new("git")
+                .args(["diff", "HEAD~1...HEAD"])
+                .current_dir(&dir)
+                .output()?;
+            assert!(
+                raw.status.success(),
+                "{setting} raw-control git diff failed: {}",
+                String::from_utf8_lossy(&raw.stderr)
+            );
+            let raw = String::from_utf8_lossy(&raw.stdout);
+            assert!(
+                raw.contains("identity.rs") && raw.contains("b/identity.rs"),
+                "{setting} raw control did not contain both fixture paths:\n{raw}"
+            );
+            assert!(
+                !raw.contains("diff --git a/identity.rs b/identity.rs"),
+                "{setting} raw control retained canonical prefixes, so the fixture does not discriminate:\n{raw}"
+            );
+
             let diff = load_diff_range(&dir, "HEAD~1", "HEAD").map_err(std::io::Error::other)?;
 
             assert!(
