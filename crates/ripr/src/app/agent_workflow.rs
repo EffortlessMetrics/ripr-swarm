@@ -795,10 +795,13 @@ mod tests {
             .as_array()
             .ok_or_else(|| "workflow JSON must carry an artifacts array".to_string())?
         {
+            let name = artifact["name"]
+                .as_str()
+                .ok_or_else(|| "artifact must carry a name".to_string())?;
             assert_eq!(
-                artifact["required"], false,
-                "repair loop must not require the superseded projection `{}`",
-                artifact["name"]
+                artifact["required"],
+                crate::app::agent_status::artifact_required_by_active_loop(name, true),
+                "rendered flag for `{name}` must follow the enforced loop mode"
             );
         }
 
@@ -813,14 +816,16 @@ mod tests {
     fn agent_workflow_every_artifact_has_a_loop_mode_classification() {
         let paths = AgentWorkflowPaths::new(Path::new("target/ripr/workflow"));
         let artifacts = workflow_artifacts(Path::new("."), &paths, true);
-        let not_required = artifacts
+        let mut not_required = artifacts
             .iter()
             .filter(|artifact| !artifact.required)
             .map(|artifact| artifact.name.as_str())
             .collect::<Vec<_>>();
+        not_required.sort_unstable();
+        let mut expected = crate::app::agent_status::REPAIR_ATTEMPT_SUPERSEDED_ARTIFACTS.to_vec();
+        expected.sort_unstable();
         assert_eq!(
-            not_required,
-            crate::app::agent_status::REPAIR_ATTEMPT_SUPERSEDED_ARTIFACTS.to_vec(),
+            not_required, expected,
             "each workflow artifact needs an explicit active-loop classification"
         );
     }
