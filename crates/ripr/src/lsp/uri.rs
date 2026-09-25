@@ -178,7 +178,7 @@ pub(super) fn read_artifact_capped(path: &Path) -> CappedArtifactRead {
 /// than read in full.
 pub(super) fn read_artifact_capped_with_limit(path: &Path, limit: u64) -> CappedArtifactRead {
     use std::io::Read as _;
-    let mut file = match std::fs::File::open(path) {
+    let file = match std::fs::File::open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return CappedArtifactRead::Missing;
