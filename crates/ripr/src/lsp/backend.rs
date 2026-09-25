@@ -93,7 +93,7 @@ use tower_lsp_server::ls_types::{
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentDiagnosticParams,
     DocumentDiagnosticReport, DocumentDiagnosticReportResult, ExecuteCommandParams, FileEvent,
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
-    LogTraceParams, MessageType, Registration, RelatedFullDocumentDiagnosticReport,
+    LogTraceParams, MessageType, PositionEncodingKind, Registration, RelatedFullDocumentDiagnosticReport,
     RelatedUnchangedDocumentDiagnosticReport, TraceValue, UnchangedDocumentDiagnosticReport, Uri,
     WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
     WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
@@ -2075,6 +2075,16 @@ impl Backend {
             .unwrap_or(serde_json::Value::Null)
     }
 
+    /// Position encoding negotiated once at initialize. A poisoned profile
+    /// store fails closed to the LSP default (UTF-16), matching the
+    /// pre-initialize unsupported profile rather than guessing byte offsets.
+    fn selected_position_encoding(&self) -> PositionEncodingKind {
+        self.client_features
+            .lock()
+            .map(|features| features.selected_position_encoding.clone())
+            .unwrap_or(PositionEncodingKind::UTF16)
+    }
+
     /// Poison the profile store so tests can exercise the fail-closed
     /// surfacing at `initialize` (#1987 review). A std::sync::Mutex is
     /// poisoned only when a guard holder unwinds, so this helper triggers a
@@ -2310,10 +2320,11 @@ impl Backend {
         params: DidChangeTextDocumentParams,
     ) -> Option<(Uri, QuarantineTransition)> {
         let uri = params.text_document.uri.clone();
+        let position_encoding = self.selected_position_encoding();
         self.documents
             .lock()
             .ok()
-            .map(|mut documents| (uri, documents.change(params)))
+            .map(|mut documents| (uri, documents.change(params, &position_encoding)))
     }
 
     fn save_document(
