@@ -1138,9 +1138,45 @@ fn resolve_revision_identity(repo: &Path, revision: &str) -> String {
 }
 
 fn has_changed_paths(repo: &Path, base: &str, head: &str) -> Result<bool, String> {
+    Ok(!changed_paths(repo, base, head)?.is_empty())
+}
+
+fn changed_paths(repo: &Path, base: &str, head: &str) -> Result<Vec<String>, String> {
+    // Raw NUL-delimited inventory (#4006): `-z` output is never C-quoted,
+    // so exotic names survive byte-exact; parsing rules come from the
+    // shared authority in `decode_changed_paths`, not from line splitting
+    // here.
     let range = format!("{base}..{head}");
-    let output = run_git_output(repo, &["diff", "--name-only", range.as_str()])?;
-    Ok(output.lines().any(|line| !line.trim().is_empty()))
+    let mut git_args = vec!["-C".to_string(), repo.display().to_string()];
+    git_args.extend(
+        ["diff", "--name-only", "-z", range.as_str()]
+            .iter()
+            .map(|arg| (*arg).to_string()),
+    );
+    let output = crate::run::capture_process_output("git", &git_args, &[])
+        .map_err(|error| format!("git diff --name-only -z inventory: {}", error.message))?;
+    decode_changed_paths(&output)
+}
+
+/// Decode raw `--name-only -z` bytes through the shared NUL path-record
+/// authority (#4006). Strict: non-UTF-8 or empty records fail loudly
+/// instead of collapsing through lossy conversion.
+fn decode_changed_paths(output: &[u8]) -> Result<Vec<String>, String> {
+    ripr::analysis::parse_git_path_records(output)
+        .map_err(|err| format!("review-comments changed-path inventory: {err}"))
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| {
+                    path.to_str().map(str::to_string).ok_or_else(|| {
+                        format!(
+                            "review-comments changed-path inventory: decoded path {} is not valid UTF-8",
+                            path.display()
+                        )
+                    })
+                })
+                .collect()
+        })
 }
 
 fn command_root_arg(repo: &Path, root: &str) -> String {
@@ -1685,12 +1721,62 @@ mod tests {
     }
 
     #[test]
+    fn strict_changed_path_inventory_rejects_non_utf8() -> Result<(), String> {
+        // The strict-failure side of the NUL authority at the
+        // review-comments decode boundary: non-UTF-8 records fail loudly
+        // instead of collapsing through lossy conversion.
+        let err = match decode_changed_paths(b"ok.txt\0\xffbad\0") {
+            Err(err) => err,
+            Ok(paths) => {
+                return Err(format!("non-UTF-8 inventory must fail, decoded {paths:?}"));
+            }
+        };
+        if !err.contains("not valid UTF-8") {
+            return Err(format!("unexpected strict-decode error: {err}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn changed_path_detection_distinguishes_empty_and_non_empty_diffs() -> Result<(), String> {
         let (repo, options) = prepared_review_repo("ripr-review-comments-diff")?;
 
         assert!(has_changed_paths(&repo, &options.base, &options.head)?);
         assert!(!has_changed_paths(&repo, "HEAD", "HEAD")?);
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn changed_paths_decode_exotic_names_exact() -> Result<(), String> {
+        // Discriminates NUL-delimited inventory (#4006): space and
+        // non-ASCII names must decode byte-exact; the old line parser kept
+        // git's C-quoted octal form. Asserts through the real
+        // `changed_paths` production path.
+        let repo = temp_repo("ripr-review-comments-names")?;
+        run_git(&repo, &["init"])?;
+        run_git(
+            &repo,
+            &["config", "user.email", "ripr-review@example.invalid"],
+        )?;
+        run_git(&repo, &["config", "user.name", "RIPR Review Test"])?;
+        write_repo_file(&repo, "base.txt", "base\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        write_repo_file(&repo, "sp ace.txt", "spaces\n")?;
+        write_repo_file(&repo, "uni-\u{e9}.txt", "unicode\n")?;
+        run_git(&repo, &["add", "-A"])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "exotic"])?;
+
+        let mut paths = changed_paths(&repo, "HEAD~1", "HEAD")?;
+        paths.sort();
+        let expected = vec!["sp ace.txt".to_string(), "uni-\u{e9}.txt".to_string()];
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        if paths != expected {
+            return Err(format!(
+                "exotic changed-path inventory mismatch: got {paths:?}, want {expected:?}"
+            ));
+        }
         Ok(())
     }
 

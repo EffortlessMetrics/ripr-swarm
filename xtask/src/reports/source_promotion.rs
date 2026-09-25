@@ -600,13 +600,42 @@ fn digest_lines(lines: &[String]) -> String {
 }
 
 fn changed_paths(repo: &Path, base: &str, head: &str) -> Result<Vec<String>, String> {
-    let mut paths = lines(git(
-        repo,
-        &["diff", "--name-only", &format!("{base}..{head}")],
-    )?);
+    // Raw NUL-delimited inventory (#4006): `-z` output is never C-quoted,
+    // so exotic names survive byte-exact; parsing rules come from the
+    // shared authority in `decode_changed_paths`, not from line splitting
+    // here.
+    let range = format!("{base}..{head}");
+    let owned = ["diff", "--name-only", "-z", range.as_str()]
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
+    let output = crate::run::capture_process_output_in("git", &owned, Some(repo), &[], &[], &[])
+        .map_err(|error| format!("git diff --name-only -z inventory: {}", error.message))?;
+    let mut paths = decode_changed_paths(&output)?;
     paths.sort();
     paths.dedup();
     Ok(paths)
+}
+
+/// Decode raw `--name-only -z` bytes through the shared NUL path-record
+/// authority (#4006). Strict: non-UTF-8 or empty records fail loudly
+/// instead of collapsing through lossy conversion.
+fn decode_changed_paths(output: &[u8]) -> Result<Vec<String>, String> {
+    ripr::analysis::parse_git_path_records(output)
+        .map_err(|err| format!("source-promotion changed-path inventory: {err}"))
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| {
+                    path.to_str().map(str::to_string).ok_or_else(|| {
+                        format!(
+                            "source-promotion changed-path inventory: decoded path {} is not valid UTF-8",
+                            path.display()
+                        )
+                    })
+                })
+                .collect()
+        })
 }
 
 fn is_swarm_authority_path(path: &str) -> bool {
@@ -1074,6 +1103,85 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn strict_changed_path_inventory_rejects_non_utf8() -> Result<(), String> {
+        // The strict-failure side of the NUL authority at the
+        // source-promotion decode boundary: non-UTF-8 records fail loudly
+        // instead of collapsing through lossy conversion.
+        let err = match decode_changed_paths(b"ok.txt\0\xffbad\0") {
+            Err(err) => err,
+            Ok(paths) => {
+                return Err(format!("non-UTF-8 inventory must fail, decoded {paths:?}"));
+            }
+        };
+        if !err.contains("not valid UTF-8") {
+            return Err(format!("unexpected strict-decode error: {err}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_paths_decode_exotic_names_exact() -> Result<(), String> {
+        // Discriminates NUL-delimited inventory (#4006): space and
+        // non-ASCII names must decode byte-exact; the old line parser kept
+        // git's C-quoted octal form. Asserts through the real
+        // `changed_paths` production path in a synthetic repository.
+        let repo = temp_repo("ripr-source-promotion-names")?;
+        fixture_git(&repo, &["init"])?;
+        fixture_git(
+            &repo,
+            &["config", "user.email", "ripr-promotion@example.invalid"],
+        )?;
+        fixture_git(&repo, &["config", "user.name", "RIPR Promotion Test"])?;
+        write_repo_file(&repo, "base.txt", "base\n")?;
+        fixture_git(&repo, &["add", "."])?;
+        fixture_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        write_repo_file(&repo, "sp ace.txt", "spaces\n")?;
+        write_repo_file(&repo, "uni-\u{e9}.txt", "unicode\n")?;
+        fixture_git(&repo, &["add", "-A"])?;
+        fixture_git(&repo, &["commit", "--no-gpg-sign", "-m", "exotic"])?;
+
+        let paths = changed_paths(&repo, "HEAD~1", "HEAD")?;
+        let expected = vec!["sp ace.txt".to_string(), "uni-\u{e9}.txt".to_string()];
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        if paths != expected {
+            return Err(format!(
+                "exotic changed-path inventory mismatch: got {paths:?}, want {expected:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn temp_repo(name: &str) -> Result<PathBuf, String> {
+        let unique = format!(
+            "{}-{}-{}",
+            name,
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|err| format!("system clock before epoch: {err}"))?
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&path).map_err(|err| format!("create {}: {err}", path.display()))?;
+        Ok(path)
+    }
+
+    fn write_repo_file(repo: &Path, relative: &str, text: &str) -> Result<(), String> {
+        let path = repo.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("create {}: {err}", parent.display()))?;
+        }
+        fs::write(&path, text).map_err(|err| format!("write {}: {err}", path.display()))
+    }
+
+    fn fixture_git(repo: &Path, args: &[&str]) -> Result<(), String> {
+        // The production git runner is the shared spawn site for this
+        // file; the fixture reuses it instead of adding its own.
+        super::run_git(repo, args).map(|_| ())
     }
 
     #[test]

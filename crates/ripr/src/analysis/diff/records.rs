@@ -18,12 +18,17 @@
 //! ```
 //!
 //! Consumer migration (slice 2, after this shared authority lands): the
-//! line-delimited inventories in `repair_attempt` (`git_paths`),
-//! `back_sync` (`lines`), `proof_route`, `review_comments`,
-//! `source_promotion`, `release_scope`, `edit_cage`, `first_pr`,
-//! `xtask` `pr_evidence`/`main`/`precommit_v2`, and the `init` template
-//! receipt path move to these decoders together with their `-z` flag. This
-//! module must not grow per-consumer argv or filtering rules.
+//! line-delimited inventories move to these decoders together with their
+//! `-z` flag. Slice 2a (xtask): `back_sync` (`ls-tree`/`--name-status`),
+//! `proof_route`, `review_comments`, `source_promotion`, `release_scope`,
+//! `main` (`changed_files_vs_base`), alongside the landed xtask
+//! `pr_evidence` (#4036). Slice 2b (product): `repair_attempt`
+//! (`git_paths`) and product `pr_evidence` (`changed_files`). Out of scope:
+//! `first_pr` (range validation only, no path decoding), the `init`
+//! template receipt (a NUL count, not an inventory), `edit_cage` and
+//! `precommit_v2` (already `-z` through their own strict local decoders;
+//! folding those into this authority is a separate claim). This module must
+//! not grow per-consumer argv or filtering rules.
 
 use std::path::PathBuf;
 

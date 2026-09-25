@@ -755,9 +755,13 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
 }
 
 fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
+    // Raw NUL-delimited inventory (#4006): `-z` output is never C-quoted,
+    // so exotic names survive byte-exact; parsing rules come from the
+    // shared authority in `decode_changed_files`, not from line splitting
+    // here. The spawn site is unchanged (gate-runner policy entry).
     let output = std::process::Command::new("git")
         .current_dir(root)
-        .args(["diff", "--name-only", "origin/main...HEAD"])
+        .args(["diff", "--name-only", "-z", "origin/main...HEAD"])
         .output()
         .map_err(|err| format!("git diff --name-only failed: {err}"))?;
     if !output.status.success() {
@@ -771,8 +775,28 @@ fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
             "git diff --name-only origin/main...HEAD failed: {detail};              if origin/main is not available, run `git fetch origin main` first"
         ));
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    Ok(text.lines().map(String::from).collect())
+    decode_changed_files(&output.stdout)
+}
+
+/// Decode raw `--name-only -z` bytes through the shared NUL path-record
+/// authority (#4006). Strict: non-UTF-8 or empty records fail loudly
+/// instead of collapsing through lossy conversion.
+fn decode_changed_files(output: &[u8]) -> Result<Vec<String>, String> {
+    ripr::analysis::parse_git_path_records(output)
+        .map_err(|err| format!("changed-file inventory: {err}"))
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| {
+                    path.to_str().map(str::to_string).ok_or_else(|| {
+                        format!(
+                            "changed-file inventory: decoded path {} is not valid UTF-8",
+                            path.display()
+                        )
+                    })
+                })
+                .collect()
+        })
 }
 
 /// Origin-main rooted selector for callers that run from the repository
@@ -853,6 +877,61 @@ mod check_fast_selector_tests {
             report.contains("Selector: failed") && report.contains("Base: origin/main"),
             "report must disclose selector status and base: {report}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn exotic_names_survive_the_changed_file_selector() -> Result<(), String> {
+        // Discriminates NUL-delimited inventory (#4006): a non-ASCII name
+        // must decode byte-exact; the old line parser kept git's C-quoted
+        // octal form. Asserts through the real `changed_files_vs_base`
+        // production path.
+        let root =
+            std::env::temp_dir().join(format!("ripr-check-fast-names-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create names fixture: {err}"))?;
+        let run = |args: &[&str]| run_fixture_git(&root, args);
+        run(&["init", "--initial-branch=main"])?;
+        run(&["config", "user.email", "ripr@example.invalid"])?;
+        run(&["config", "user.name", "ripr test"])?;
+        std::fs::write(root.join("base.txt"), "fixture\n")
+            .map_err(|err| format!("write names fixture: {err}"))?;
+        run(&["add", "."])?;
+        run(&["commit", "-m", "fixture"])?;
+        run(&["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+        std::fs::write(root.join("sp ace.txt"), "spaces\n")
+            .map_err(|err| format!("write names fixture: {err}"))?;
+        std::fs::write(root.join("uni-\u{e9}.txt"), "unicode\n")
+            .map_err(|err| format!("write names fixture: {err}"))?;
+        run(&["add", "-A"])?;
+        run(&["commit", "-m", "exotic"])?;
+
+        let mut files = changed_files_vs_base(&root)?;
+        files.sort();
+        let expected = vec!["sp ace.txt".to_string(), "uni-\u{e9}.txt".to_string()];
+        let _ = std::fs::remove_dir_all(&root);
+        if files != expected {
+            return Err(format!(
+                "exotic selector inventory mismatch: got {files:?}, want {expected:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn strict_selector_inventory_rejects_non_utf8() -> Result<(), String> {
+        // The strict-failure side of the NUL authority at the selector
+        // decode boundary: non-UTF-8 records fail loudly instead of
+        // collapsing through lossy conversion.
+        let err = match decode_changed_files(b"ok.txt\0\xffbad\0") {
+            Err(err) => err,
+            Ok(files) => {
+                return Err(format!("non-UTF-8 inventory must fail, decoded {files:?}"));
+            }
+        };
+        if !err.contains("not valid UTF-8") {
+            return Err(format!("unexpected strict-decode error: {err}"));
+        }
         Ok(())
     }
 
