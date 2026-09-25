@@ -362,7 +362,17 @@ enum WorkflowReceiptRead {
 fn read_workflow_receipt(root: &Path) -> WorkflowReceiptRead {
     let text = match std::fs::read_to_string(root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT)) {
         Ok(text) => text,
-        Err(_) => return WorkflowReceiptRead::Missing,
+        Err(error) => {
+            return if error.kind() == std::io::ErrorKind::NotFound {
+                WorkflowReceiptRead::Missing
+            } else {
+                // The file exists but cannot be read (permissions, race with
+                // a rewrite, ...): that is an unreadable receipt, never a
+                // missing one — reporting it as Missing would claim the
+                // receipt was never issued.
+                WorkflowReceiptRead::Unreadable
+            };
+        }
     };
     match serde_json::from_str(&text) {
         Ok(value) => WorkflowReceiptRead::Parsed(value),
@@ -1603,6 +1613,26 @@ mod tests {
             other => return Err(format!("a valid receipt must parse, got {other:?}")),
         }
 
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// A read failure that is not simple absence (e.g. the receipt path is a
+    /// directory, or permissions deny the read) must read as `Unreadable`,
+    /// never as `Missing` — `Missing` claims the receipt was never issued.
+    #[test]
+    fn agent_status_receipt_read_treats_io_errors_as_unreadable() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("receipt-read-io-error");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        // A directory at the receipt path makes read_to_string fail with a
+        // non-NotFound error on every supported platform.
+        std::fs::create_dir_all(root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT))
+            .map_err(|err| format!("create receipt-dir: {err}"))?;
+        assert_eq!(
+            read_workflow_receipt(&root),
+            WorkflowReceiptRead::Unreadable,
+            "an unreadable receipt path must not be reported as missing"
+        );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
