@@ -21901,6 +21901,8 @@ fn badge_input_identity_receipt_records_the_analyzed_subject() -> Result<(), Str
                 "--no-ext-diff",
                 "--no-textconv",
                 "--no-color",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
                 "--unified=0",
                 "--inter-hunk-context=0",
             ] {
