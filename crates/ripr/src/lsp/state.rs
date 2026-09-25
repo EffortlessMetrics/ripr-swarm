@@ -1130,22 +1130,26 @@ fn apply_document_content_changes(
     changes: Vec<TextDocumentContentChangeEvent>,
     encoding: &PositionEncodingKind,
 ) -> Result<(), ()> {
+    // Apply against a candidate buffer so one malformed later range cannot
+    // leave an earlier change from the same notification partially committed.
+    let mut candidate = text.clone();
     for change in changes {
         let Some(range) = change.range else {
-            *text = change.text;
+            candidate = change.text;
             continue;
         };
-        let Some(start) = document_position_byte_offset(text, range.start, encoding) else {
+        let Some(start) = document_position_byte_offset(&candidate, range.start, encoding) else {
             return Err(());
         };
-        let Some(end) = document_position_byte_offset(text, range.end, encoding) else {
+        let Some(end) = document_position_byte_offset(&candidate, range.end, encoding) else {
             return Err(());
         };
         if start > end {
             return Err(());
         }
-        text.replace_range(start..end, &change.text);
+        candidate.replace_range(start..end, &change.text);
     }
+    *text = candidate;
     Ok(())
 }
 
@@ -1750,6 +1754,47 @@ mod tests {
         );
         assert!(result.is_err());
         assert_eq!(reversed, "abcd");
+    }
+
+    #[test]
+    fn incremental_change_list_is_transactional_on_late_rejection() {
+        let mut text = "abcd".to_string();
+        let result = apply_document_content_changes(
+            &mut text,
+            vec![
+                TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range {
+                        start: Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 1,
+                        },
+                    }),
+                    range_length: None,
+                    text: "A".to_string(),
+                },
+                TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range {
+                        start: Position {
+                            line: 9,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 9,
+                            character: 0,
+                        },
+                    }),
+                    range_length: None,
+                    text: "X".to_string(),
+                },
+            ],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(result.is_err());
+        assert_eq!(text, "abcd");
     }
 
     #[test]
