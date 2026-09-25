@@ -1182,6 +1182,38 @@ impl DocumentStore {
 
         if let Some(state) = self.documents.get_mut(&uri) {
             state.version = version;
+
+            // Once one incremental range was rejected, the retained buffer is
+            // no longer an authority for later range-relative edits: the
+            // client may have applied the rejected notification. Stay
+            // quarantined until a range-less replacement re-establishes the
+            // complete current buffer, then apply only changes after that
+            // replacement.
+            if state.quarantine.as_ref().is_some_and(|quarantine| {
+                quarantine.reason == DocumentStalenessReason::InvalidIncrementalChange
+            }) {
+                let Some(last_full_replacement) =
+                    changes.iter().rposition(|change| change.range.is_none())
+                else {
+                    return QuarantineTransition::Unchanged;
+                };
+                let mut recovered = changes[last_full_replacement].text.clone();
+                if apply_document_content_changes(
+                    &mut recovered,
+                    changes
+                        .into_iter()
+                        .skip(last_full_replacement + 1)
+                        .collect(),
+                    position_encoding,
+                )
+                .is_err()
+                {
+                    return QuarantineTransition::Unchanged;
+                }
+                state.text = recovered;
+                return state.refresh_quarantine();
+            }
+
             if apply_document_content_changes(&mut state.text, changes, position_encoding).is_err() {
                 let was_quarantined = state.quarantine.is_some();
                 let was_disclosed = state
@@ -1840,6 +1872,110 @@ mod tests {
         }
         if state.text != "a🎉b" {
             return Err("a rejected incremental change must not corrupt retained text".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_incremental_state_requires_full_replacement_to_recover() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        let mut state = clean_document_state(&uri, "abcd");
+        state.quarantine = Some(DocumentQuarantine {
+            reason: DocumentStalenessReason::InvalidIncrementalChange,
+            withdrawal_disclosed: true,
+        });
+        store.documents.insert(uri.clone(), state);
+
+        let range_only = store.change(
+            DidChangeTextDocumentParams {
+                text_document: tower_lsp_server::ls_types::VersionedTextDocumentIdentifier {
+                    uri: uri.clone(),
+                    version: 3,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range {
+                        start: Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 1,
+                        },
+                    }),
+                    range_length: None,
+                    text: "X".to_string(),
+                }],
+            },
+            &PositionEncodingKind::UTF16,
+        );
+        if range_only != QuarantineTransition::Unchanged {
+            return Err("range-only edit must not recover unknown buffer authority".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing document state".to_string());
+        };
+        if state.text != "abcd"
+            || state.quarantine.as_ref().map(|q| q.reason)
+                != Some(DocumentStalenessReason::InvalidIncrementalChange)
+        {
+            return Err("range-only edit must preserve invalid-change quarantine".to_string());
+        }
+
+        let recovered = store.change(
+            DidChangeTextDocumentParams {
+                text_document: tower_lsp_server::ls_types::VersionedTextDocumentIdentifier {
+                    uri: uri.clone(),
+                    version: 4,
+                },
+                content_changes: vec![
+                    TextDocumentContentChangeEvent {
+                        range: None,
+                        range_length: None,
+                        text: "wxyz".to_string(),
+                    },
+                    TextDocumentContentChangeEvent {
+                        range: Some(tower_lsp_server::ls_types::Range {
+                            start: Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 1,
+                            },
+                        }),
+                        range_length: None,
+                        text: "W".to_string(),
+                    },
+                ],
+            },
+            &PositionEncodingKind::UTF16,
+        );
+        if recovered != QuarantineTransition::Unchanged {
+            // The document remains quarantined because the recovered buffer
+            // still differs from the analyzed saved digest. What changes is
+            // the reason: buffer authority is known again.
+            return Err("recovery must continue the existing quarantine episode".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing recovered document state".to_string());
+        };
+        if state.text != "Wxyz" {
+            return Err(format!("full replacement did not recover buffer: {:?}", state.text));
+        }
+        if state.quarantine.as_ref().map(|q| q.reason)
+            != Some(DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)
+        {
+            return Err("full replacement must restore ordinary dirty-buffer quarantine".to_string());
+        }
+        if !state
+            .quarantine
+            .as_ref()
+            .is_some_and(|quarantine| quarantine.withdrawal_disclosed)
+        {
+            return Err("recovery inside one quarantine episode must retain disclosure state".into());
         }
         Ok(())
     }
