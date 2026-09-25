@@ -22,6 +22,8 @@ use super::RiprSwarmAttemptLedgerReport;
 use super::RiprSwarmCommand;
 use super::RiprSwarmReadinessInput;
 use super::XtaskCommand;
+use super::add_name_status_bytes;
+use super::add_porcelain_bytes;
 use super::dispatch;
 use super::is_network_policy_candidate;
 use super::lane1_runtime_status_full;
@@ -49448,4 +49450,133 @@ fn check_pr_report_publication_failure_is_distinguishable() {
             && err.contains("publishing the failure report also failed")),
         "a failed gate plus failed report publication must stay distinguishable and preserve the gate diagnostic and reproduce command: {result:?}"
     );
+}
+
+#[test]
+fn pr_change_name_status_bytes_decode_exotic_names_exact() -> Result<(), String> {
+    // Real `--name-status -z` grammar (space, non-ASCII UTF-8, scored
+    // rename): the old tab-split route without `-z` kept git's C-quoted
+    // octal form verbatim, so byte-exactness here discriminates the
+    // migration. Rename records attribute the target, matching the old
+    // `parts.last()` projection.
+    let mut changes = BTreeMap::new();
+    add_name_status_bytes(
+        &mut changes,
+        "M\0sp ace.txt\0A\0uni-é.txt\0R100\0old.txt\0new.txt\0".as_bytes(),
+    )?;
+    let expected: BTreeMap<String, BTreeSet<String>> = [
+        ("sp ace.txt".to_string(), ["M".to_string()].into()),
+        ("uni-é.txt".to_string(), ["A".to_string()].into()),
+        ("new.txt".to_string(), ["R100".to_string()].into()),
+    ]
+    .into();
+    if changes != expected {
+        return Err(format!(
+            "exotic name-status inventory mismatch: got {changes:?}, want {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_name_status_bytes_reject_non_utf8() -> Result<(), String> {
+    // The old route lossy-decoded through `run_output`, collapsing this
+    // record into replacement characters and returning success; the strict
+    // route must fail loudly instead.
+    let mut changes = BTreeMap::new();
+    let err = match add_name_status_bytes(&mut changes, b"M\0ok.txt\0A\0\xffbad\0") {
+        Err(err) => err,
+        Ok(()) => return Err(format!("non-UTF-8 inventory must fail, got {changes:?}")),
+    };
+    if !err.contains("not valid UTF-8") {
+        return Err(format!("unexpected strict-decode error: {err}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_name_status_bytes_reject_legacy_line_grammar() -> Result<(), String> {
+    // Legacy non-`-z` git output (C-quoted, newline-delimited) fed to the
+    // new decoder must fail, not silently mangle: this pins the `-z`
+    // requirement at the decode boundary. The old tab-split parser accepted
+    // this shape and inventoried the quoted octal form as a path.
+    let mut changes = BTreeMap::new();
+    let legacy = b"M\t\"uni-\\303\\251.txt\"\n";
+    match add_name_status_bytes(&mut changes, legacy) {
+        Err(_) => Ok(()),
+        Ok(()) => Err(format!(
+            "legacy line grammar must fail strict decode, got {changes:?}"
+        )),
+    }
+}
+
+#[test]
+fn pr_change_porcelain_bytes_decode_exotic_names_exact() -> Result<(), String> {
+    // Real `status --porcelain=v1 -z` grammar (verified against git):
+    // `XY␣path\0`, renames as `XY␣new\0old\0`, no quoting. The ` -> ` in
+    // the fourth name is literal path bytes: the old `split_once(" -> ")`
+    // projection would have inventoried `b.txt` instead.
+    let mut changes = BTreeMap::new();
+    add_porcelain_bytes(
+        &mut changes,
+        b"M  sp ace.txt\0R  new name.txt\0old name.txt\0?? uni-\xc3\xa9.txt\0M  a -> b.txt\0M  li\nne.txt\0",
+    )?;
+    let expected: BTreeMap<String, BTreeSet<String>> = [
+        ("sp ace.txt".to_string(), ["M".to_string()].into()),
+        ("new name.txt".to_string(), ["R".to_string()].into()),
+        ("uni-é.txt".to_string(), ["??".to_string()].into()),
+        ("a -> b.txt".to_string(), ["M".to_string()].into()),
+        ("li\nne.txt".to_string(), ["M".to_string()].into()),
+    ]
+    .into();
+    if changes != expected {
+        return Err(format!(
+            "exotic porcelain inventory mismatch: got {changes:?}, want {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_porcelain_bytes_reject_truncated_rename() -> Result<(), String> {
+    // A rename entry missing its paired source must fail, not attribute
+    // the change to half a record.
+    let mut changes = BTreeMap::new();
+    let err = match add_porcelain_bytes(&mut changes, b"R  new.txt\0") {
+        Err(err) => err,
+        Ok(()) => return Err(format!("truncated rename must fail, got {changes:?}")),
+    };
+    if !err.contains("missing its paired path") {
+        return Err(format!("unexpected strict-decode error: {err}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_porcelain_bytes_reject_misframed_entries() -> Result<(), String> {
+    // Truncated fields must fail loudly instead of inventing entries. Note
+    // what is deliberately NOT rejected here: embedded newlines are legal
+    // path bytes (pinned by
+    // `pr_change_porcelain_bytes_decode_exotic_names_exact`), so a
+    // newline-bearing field decodes as one entry — the `-z` framing, not
+    // content sniffing, is what separates records.
+    let mut changes = BTreeMap::new();
+    match add_porcelain_bytes(&mut changes, b"xy") {
+        Err(_) => Ok(()),
+        Ok(()) => Err(format!(
+            "misframed porcelain input must fail, got {changes:?}"
+        )),
+    }
+}
+
+#[test]
+fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
+    // A real zero-change run decodes to an empty inventory on both routes.
+    let mut changes = BTreeMap::new();
+    add_name_status_bytes(&mut changes, b"")?;
+    add_porcelain_bytes(&mut changes, b"")?;
+    if !changes.is_empty() {
+        return Err(format!("empty inventory must stay empty, got {changes:?}"));
+    }
+    Ok(())
 }

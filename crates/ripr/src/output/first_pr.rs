@@ -1967,10 +1967,15 @@ fn git_rev_exists(root: &Path, rev: &str) -> Result<bool, String> {
 }
 
 fn git_diff_range_valid(root: &Path, base: &str, head: &str) -> Result<(), String> {
+    // Validity probe only (#4006): the exit status is the entire signal —
+    // stdout is never parsed, so no path identity flows from this call. It
+    // still passes `-z` so the grammar is unambiguous and no C-quoted
+    // rendering is ever produced on this route.
     let range = format!("{base}...{head}");
     let output = Command::new("git")
         .arg("diff")
         .arg("--name-only")
+        .arg("-z")
         .arg("--no-ext-diff")
         .arg(&range)
         .current_dir(root)
@@ -2027,6 +2032,12 @@ fn verify_ref_command(options: &FirstPrOptions, rev: &str) -> String {
     )
 }
 
+/// Human-facing suggested command (#4006 named non-claim): this string is
+/// rendered into a blocked-selection message for the operator to read and
+/// run — it is never executed by ripr and its output is never machine-parsed,
+/// so no path identity flows through it. It intentionally stays
+/// human-readable (no `-z`): NUL-delimited output is a machine grammar, and
+/// suggesting it to a human reader would degrade the message it lives in.
 fn diff_range_command(options: &FirstPrOptions) -> String {
     format!(
         "git -C {} diff --name-only --no-ext-diff {}",
