@@ -3,6 +3,12 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
+/// Best-effort temp-dir teardown for tests. The `io::Result` is matched
+/// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
+fn ignore_remove_dir_all(path: impl AsRef<std::path::Path>) {
+    if let Ok(()) = std::fs::remove_dir_all(path) {}
+}
+
 use std::io::Read;
 
 use crate::acquire_test_cwd_write_guard;
@@ -7864,16 +7870,16 @@ pub(crate) fn with_temp_cwd<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
     let out = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&root))) {
         Ok(result) => result,
         Err(panic_payload) => {
-            let _ = std::env::set_current_dir(&old);
+            if let Ok(()) = std::env::set_current_dir(&old) {}
             drop(lock);
-            let _ = fs::remove_dir_all(&root);
+            ignore_remove_dir_all(&root);
             std::panic::resume_unwind(panic_payload);
         }
     };
 
     std::env::set_current_dir(old).unwrap();
     drop(lock);
-    let _ = fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     out
 }
 
@@ -7896,7 +7902,7 @@ fn with_repo_cwd<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> 
     let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(result) => result,
         Err(panic_payload) => {
-            let _ = std::env::set_current_dir(&old);
+            if let Ok(()) = std::env::set_current_dir(&old) {}
             drop(guard);
             std::panic::resume_unwind(panic_payload);
         }
@@ -7945,7 +7951,7 @@ fn fixture_run_writes_its_facts_into_the_cache_the_runner_cleared() -> Result<()
             .join("target")
             .join("ripr")
             .join("cache");
-        let _ = fs::remove_dir_all(fixture.join("input").join("target"));
+        ignore_remove_dir_all(fixture.join("input").join("target"));
 
         let cache_dir = super::fixture_cache_dir(name)?;
         let stale = cache_dir
@@ -26051,8 +26057,8 @@ fn copy_badge_endpoints_from_reports_writes_both_files() -> Result<(), String> {
         b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"7\",\"color\":\"yellow\"}"
     );
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -26079,8 +26085,8 @@ fn copy_badge_endpoints_from_reports_creates_badges_dir_when_missing() -> Result
     assert!(repo_root.join("badges/ripr.json").exists());
     assert!(repo_root.join("badges/ripr-plus.json").exists());
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -26108,8 +26114,8 @@ fn copy_badge_endpoints_from_reports_errors_when_source_missing() -> Result<(), 
         "error should suggest regenerating the source: {err}"
     );
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -26136,8 +26142,8 @@ fn compute_badge_endpoint_violations_returns_empty_when_in_sync() -> Result<(), 
         "in-sync committed files must produce no violations: {violations:?}"
     );
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -26170,8 +26176,8 @@ fn compute_badge_endpoint_violations_flags_missing_committed_file() -> Result<()
         );
     }
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -26206,8 +26212,8 @@ fn compute_badge_endpoint_violations_flags_stale_committed_file() -> Result<(), 
         violations[0]
     );
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -26226,8 +26232,8 @@ fn compute_badge_endpoint_violations_errors_when_source_missing() -> Result<(), 
         "error should describe the read failure: {err}"
     );
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -29439,7 +29445,7 @@ fn lane1_evidence_audit_sampled_report_keeps_counts_and_names_limits() -> Result
     );
     assert!(lane1_evidence_audit_markdown(&report).contains("lane1_repo_exposure_sampled"));
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -30258,7 +30264,7 @@ fn evidence_health_report_artifact_completion_validator_names_bad_shapes() -> Re
         }
 
         write(json_path, &complete_evidence_health_json_fixture());
-        let _ = fs::remove_file(md_path);
+        if let Ok(()) = fs::remove_file(md_path) {}
         let err = super::evidence_health_report_artifacts_are_complete()
             .expect_err("missing Markdown artifact should be rejected");
         assert!(err.contains("failed to read evidence-health Markdown artifact"));
@@ -46863,7 +46869,7 @@ fn install_hooks_creates_missing_hook() -> Result<(), String> {
     assert_eq!(hook, root.join(".git").join("hooks").join("pre-commit"));
     assert!(is_ripr_managed_hook(&text));
     assert!(text.contains("cargo xtask precommit"));
-    let _ = fs::remove_dir_all(root);
+    ignore_remove_dir_all(root);
     Ok(())
 }
 
@@ -46881,7 +46887,7 @@ fn install_hooks_is_idempotent_for_managed_hook() -> Result<(), String> {
     assert_eq!(first, hook);
     assert_eq!(second, hook);
     assert_eq!(text, ripr_pre_commit_hook());
-    let _ = fs::remove_dir_all(root);
+    ignore_remove_dir_all(root);
     Ok(())
 }
 
@@ -46899,7 +46905,7 @@ fn install_hooks_refuses_unmanaged_existing_hook() -> Result<(), String> {
 
     assert!(error.contains("refusing to overwrite unmanaged hook"));
     assert_eq!(text, user_hook);
-    let _ = fs::remove_dir_all(root);
+    ignore_remove_dir_all(root);
     Ok(())
 }
 
@@ -46912,7 +46918,7 @@ fn install_hooks_errors_outside_git_worktree() -> Result<(), String> {
         .ok_or_else(|| "expected missing git worktree error".to_string())?;
 
     assert!(error.contains("missing .git directory"));
-    let _ = fs::remove_dir_all(root);
+    ignore_remove_dir_all(root);
     Ok(())
 }
 
@@ -48991,7 +48997,7 @@ fn golden_comparison_runs_consume_the_cache_the_runner_cleared() -> Result<(), S
         let name = "all_no_path_disclosure";
         let fixture = PathBuf::from("fixtures").join(name);
         let leaked = fixture.join("input").join("target");
-        let _ = fs::remove_dir_all(&leaked);
+        ignore_remove_dir_all(&leaked);
 
         let cache_dir = super::fixture_cache_dir(name)?;
         let stale = cache_dir
