@@ -66,11 +66,13 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
         // A config_error means the evaluation could not complete (exit 2);
         // only a completed evaluation reaching its blocking decision is a
         // Decision (exit 3).
-        return Err(if output::gate::gate_decision_status(&report) == "config_error" {
-            CommandError::Failure(message)
-        } else {
-            CommandError::Decision(message)
-        });
+        return Err(
+            if output::gate::gate_decision_status(&report) == "config_error" {
+                CommandError::Failure(message)
+            } else {
+                CommandError::Decision(message)
+            },
+        );
     }
     Ok(())
 }
