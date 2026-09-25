@@ -49538,6 +49538,39 @@ fn pr_change_porcelain_bytes_decode_exotic_names_exact() -> Result<(), String> {
 }
 
 #[test]
+fn pr_change_porcelain_bytes_attribute_worktree_column_rename() -> Result<(), String> {
+    // Worktree-column renames (` R`, e.g. intent-to-add via `git add -N`,
+    // verified against real git output) carry the paired source exactly
+    // like staged ones. Checking only the index column left the source
+    // field unconsumed, failing closed on legitimate state — or worse,
+    // misreading a source name with a space at byte index 2 as a new
+    // entry. Exactly one entry for the target, status trimmed to `R`.
+    let mut changes = BTreeMap::new();
+    add_porcelain_bytes(&mut changes, b" R new.txt\0old.txt\0")?;
+    let expected: BTreeMap<String, BTreeSet<String>> =
+        [("new.txt".to_string(), ["R".to_string()].into())].into();
+    if changes != expected {
+        return Err(format!(
+            "worktree rename inventory mismatch: got {changes:?}, want {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_porcelain_bytes_reject_missing_trailing_nul() -> Result<(), String> {
+    // Real git always NUL-terminates every record, so a non-empty input
+    // without a trailing NUL is truncation, not a final field: fail
+    // loudly instead of parsing a truncated path.
+    let mut changes = BTreeMap::new();
+    match add_porcelain_bytes(&mut changes, b"M  path_long") {
+        Err(err) if err.contains("missing trailing NUL") => Ok(()),
+        Err(err) => Err(format!("unexpected truncation error: {err}")),
+        Ok(()) => Err(format!("truncated input must fail, got {changes:?}")),
+    }
+}
+
+#[test]
 fn pr_change_porcelain_bytes_reject_truncated_rename() -> Result<(), String> {
     // A rename entry missing its paired source must fail, not attribute
     // the change to half a record.

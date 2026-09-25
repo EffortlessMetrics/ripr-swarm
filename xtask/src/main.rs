@@ -18436,11 +18436,15 @@ fn add_name_status_bytes(
 
 /// Decode raw `git status --porcelain=v1 -z` bytes (#4006). Entries are
 /// `XY␣path\0`; rename/copy entries append the source as a bare second
-/// field (`XY␣new\0old\0`, verified against real git output). Output is
-/// never C-quoted and never line-split, so exotic names survive
-/// byte-exact — including names containing ` -> `, which the old
-/// `split_once(" -> ")` projection mis-split. Rename entries attribute the
-/// target path, matching the old projection with exact bytes.
+/// field (`XY␣new\0old\0`, verified against real git output for both the
+/// staged `R ` and the worktree ` R` columns — the latter occurs for
+/// intent-to-add renames). Output is never C-quoted and never line-split,
+/// so exotic names survive byte-exact — including names containing ` -> `,
+/// which the old `split_once(" -> ")` projection mis-split. Rename entries
+/// attribute the target path, matching the old projection with exact bytes.
+/// A non-empty input missing its trailing NUL fails loudly: real git always
+/// terminates every record, so a missing terminator is truncation, not a
+/// final field.
 fn add_porcelain_bytes(
     changes: &mut BTreeMap<String, BTreeSet<String>>,
     output: &[u8],
@@ -18448,14 +18452,18 @@ fn add_porcelain_bytes(
     if output.is_empty() {
         return Ok(());
     }
-    let mut fields: Vec<&[u8]> = output.split(|byte| *byte == 0).collect();
-    if output.last() == Some(&0) {
-        fields.pop();
+    if output.last() != Some(&0) {
+        return Err(
+            "pr-change porcelain inventory: output is truncated or misframed (missing trailing NUL)"
+                .to_string(),
+        );
     }
+    let mut fields: Vec<&[u8]> = output.split(|byte| *byte == 0).collect();
+    fields.pop();
     let mut fields = fields.into_iter();
     while let Some(field) = fields.next() {
         let (status, path) = porcelain_entry(field)?;
-        if status.first() == Some(&b'R') || status.first() == Some(&b'C') {
+        if status.iter().any(|byte| matches!(byte, b'R' | b'C')) {
             let _source = fields.next().ok_or_else(|| {
                 format!("pr-change porcelain inventory: rename entry for `{path}` is missing its paired path")
             })?;
