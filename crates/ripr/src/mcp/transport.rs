@@ -1,7 +1,7 @@
-#[cfg(test)]
-use super::MAX_MESSAGE_BYTES;
 use super::protocol;
 use super::server::{McpServer, bounded_error_response};
+#[cfg(test)]
+use super::{MAX_MESSAGE_BYTES, MAX_RESPONSE_BYTES};
 use crate::workspace_status::WorkspaceStatus;
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -247,11 +247,12 @@ mod tests {
                 "over-cap fallback dropped the known request id: {parsed}"
             ));
         }
-        if parsed.pointer("/error/code").and_then(Value::as_i64) != Some(protocol::ERROR_INTERNAL)
-        {
+        if parsed.pointer("/error/code").and_then(Value::as_i64) != Some(protocol::ERROR_INTERNAL) {
             return Err("over-cap fallback error code drifted".to_string());
         }
-        if parsed.pointer("/error/data/maxResponseBytes").and_then(Value::as_u64)
+        if parsed
+            .pointer("/error/data/maxResponseBytes")
+            .and_then(Value::as_u64)
             != Some(super::MAX_RESPONSE_BYTES as u64)
         {
             return Err("over-cap fallback omitted the byte limit".to_string());

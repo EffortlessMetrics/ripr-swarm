@@ -329,10 +329,14 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     for (index, (id, code)) in expected.iter().enumerate() {
         let response = &responses[index + 1];
         if response.pointer("/error/code").and_then(Value::as_i64) != Some(*code) {
-            return Err(format!("rejection for {id} must be invalid-params: {response}"));
+            return Err(format!(
+                "rejection for {id} must be invalid-params: {response}"
+            ));
         }
         if response.pointer("/id").and_then(Value::as_str) != Some(id) {
-            return Err(format!("rejection for {id} must echo the request id: {response}"));
+            return Err(format!(
+                "rejection for {id} must echo the request id: {response}"
+            ));
         }
     }
     Ok(())

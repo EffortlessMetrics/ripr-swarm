@@ -309,11 +309,7 @@ fn unknown_tool_call_is_rejected_with_typed_invalid_params() -> Result<(), Strin
     {
         return Err("unknown tool must be rejected as invalid params".to_string());
     }
-    if response
-        .pointer("/error/message")
-        .and_then(Value::as_str)
-        != Some("unknown RIPR tool")
-    {
+    if response.pointer("/error/message").and_then(Value::as_str) != Some("unknown RIPR tool") {
         return Err("unknown tool error message drifted".to_string());
     }
     if response.get("id") != Some(&json!(2)) {
@@ -344,9 +340,7 @@ fn status_tool_rejects_non_empty_arguments() -> Result<(), String> {
     {
         return Err("non-empty arguments must be rejected as invalid params".to_string());
     }
-    if response
-        .pointer("/error/message")
-        .and_then(Value::as_str)
+    if response.pointer("/error/message").and_then(Value::as_str)
         != Some("ripr_workspace_status does not accept arguments")
     {
         return Err("arguments rejection message drifted".to_string());
@@ -376,11 +370,7 @@ fn current_protocol_resource_miss_uses_invalid_params() -> Result<(), String> {
     {
         return Err("current-protocol resource miss must be invalid params".to_string());
     }
-    if response
-        .pointer("/error/message")
-        .and_then(Value::as_str)
-        != Some("unknown RIPR resource")
-    {
+    if response.pointer("/error/message").and_then(Value::as_str) != Some("unknown RIPR resource") {
         return Err("current-protocol resource miss message drifted".to_string());
     }
     Ok(())
@@ -419,9 +409,7 @@ fn initialize_after_discover_is_rejected() -> Result<(), String> {
     {
         return Err("initialize after discover must be an invalid request".to_string());
     }
-    if response
-        .pointer("/error/message")
-        .and_then(Value::as_str)
+    if response.pointer("/error/message").and_then(Value::as_str)
         != Some("initialize cannot follow server/discover")
     {
         return Err("initialize-after-discover message drifted".to_string());
@@ -461,9 +449,7 @@ fn discover_after_initialize_is_rejected() -> Result<(), String> {
     {
         return Err("discover after initialize must be an invalid request".to_string());
     }
-    if response
-        .pointer("/error/message")
-        .and_then(Value::as_str)
+    if response.pointer("/error/message").and_then(Value::as_str)
         != Some("server/discover cannot replace an initialized session")
     {
         return Err("discover-after-initialize message drifted".to_string());

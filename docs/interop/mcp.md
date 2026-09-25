@@ -19,9 +19,10 @@ ripr mcp --stdio [--root PATH]
 exact directory. Without it, RIPR starts at the current directory and walks up
 to the nearest directory containing `.git`, falling back to the nearest one
 with a project file such as `Cargo.toml`, `package.json`, or `pyproject.toml`.
-Either way, the chosen root must itself contain a project file: a repository
-with only `.git` reports `repository_marker_missing` (#3927). Clients often start
-servers outside the repository, so pass an absolute `--root` when yours does.
+A directory containing only `.git` (a directory, or a gitfile as in worktrees
+and submodules) is a valid repository root: `.git` itself counts as the
+repository marker (#3927). Clients often start servers outside the repository,
+so pass an absolute `--root` when yours does.
 
 A generic MCP client entry:
 

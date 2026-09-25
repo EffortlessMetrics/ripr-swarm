@@ -270,7 +270,17 @@ fn has_non_git_repository_marker(root: &Path) -> bool {
 fn repository_markers(root: &Path) -> Vec<String> {
     REPOSITORY_MARKERS
         .iter()
-        .filter(|marker| root.join(marker).is_file())
+        .filter(|marker| {
+            // `.git` counts file-or-dir (worktrees and submodules use a
+            // gitfile); project markers stay file-only (#3927). Discovery
+            // already stops at `.git` ancestors, so validation must accept
+            // a root chosen for `.git` alone.
+            if **marker == ".git" {
+                root.join(".git").exists()
+            } else {
+                root.join(marker).is_file()
+            }
+        })
         .map(|marker| (*marker).to_string())
         .collect()
 }
@@ -363,5 +373,74 @@ mod tests {
             return Err("unavailable status leaked the rejected path".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn git_only_repository_root_is_a_valid_marker() -> Result<(), String> {
+        let root = temporary_root("git-only");
+        std::fs::create_dir_all(root.join(".git")).map_err(|error| error.to_string())?;
+
+        let status = WorkspaceStatus::resolve(Some(root.clone()));
+
+        if status.workspace_state != WorkspaceState::Ready {
+            return Err("a .git-only repository must not be rejected as unmarked".to_string());
+        }
+        if status.root.repository_markers != [".git".to_string()] {
+            return Err(format!(
+                ".git must be reported as the repository marker: {:?}",
+                status.root.repository_markers
+            ));
+        }
+        if status.root.error_code.is_some() {
+            return Err("a validated .git-only root must not carry an error code".to_string());
+        }
+
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn gitfile_repository_root_is_a_valid_marker() -> Result<(), String> {
+        // Worktrees and submodules keep `.git` as a file pointing at the
+        // real metadata directory.
+        let root = temporary_root("gitfile");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        std::fs::write(root.join(".git"), "gitdir: /elsewhere\n")
+            .map_err(|error| error.to_string())?;
+
+        let status = WorkspaceStatus::resolve(Some(root.clone()));
+
+        if status.workspace_state != WorkspaceState::Ready {
+            return Err("a gitfile-only repository must not be rejected as unmarked".to_string());
+        }
+        if status.root.repository_markers != [".git".to_string()] {
+            return Err(format!(
+                ".git must be reported as the repository marker: {:?}",
+                status.root.repository_markers
+            ));
+        }
+
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn project_root_still_reports_file_markers_alongside_git() -> Result<(), String> {
+        let root = temporary_root("git-and-project");
+        std::fs::create_dir_all(root.join(".git")).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n")
+            .map_err(|error| error.to_string())?;
+
+        let status = WorkspaceStatus::resolve(Some(root.clone()));
+
+        if status.workspace_state != WorkspaceState::Ready {
+            return Err("a .git plus project-file root must stay ready".to_string());
+        }
+        if status.root.repository_markers != [".git".to_string(), "Cargo.toml".to_string()] {
+            return Err(format!(
+                ".git and the project file must both be reported: {:?}",
+                status.root.repository_markers
+            ));
+        }
+
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 }
