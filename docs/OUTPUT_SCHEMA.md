@@ -14738,7 +14738,7 @@ JSON shape:
         "markdown_path": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
         "expected_report": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.json",
         "expected_markdown": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
-        "status": "pass",
+        "status": "warn",
         "missing_expected": 0,
         "warnings": 0,
         "failures": 0,
@@ -14754,7 +14754,7 @@ JSON shape:
           "validation_receipts",
           "sarif_badges"
         ],
-        "expected_status": "pass",
+        "expected_status": "warn",
         "expected_missing_expected": 0,
         "expected_warnings": 0,
         "expected_failures": 0,
@@ -15090,13 +15090,13 @@ The checked report-packet index receipt cases are:
 
 | Case | Expected status | Purpose |
 | --- | --- | --- |
-| `complete_packet` | `pass` | Shows the complete reviewer-first packet, including start-here and gate-authority links. |
+| `complete_packet` | `warn` | Shows the complete reviewer-first packet, including start-here and gate-authority links. |
 | `sparse_advisory` | `warn` | Keeps sparse adoption advisory while showing missing optional surfaces. |
 | `missing_front_panel` | `warn` | Makes a missing first-screen front panel visible instead of forcing artifact archaeology. |
 | `blocked_gate` | `fail` | Preserves a configured blocked gate state while naming gate decision as authority. |
 | `missing_assistant_proof` | `warn` | Routes users to regenerate missing assistant proof instead of hiding the gap. |
 | `missing_receipts` | `warn` | Shows missing validation receipts and their regeneration commands. |
-| `coverage_grip_present` | `pass` | Keeps coverage/grip context findable as calibration context, not runtime confirmation. |
+| `coverage_grip_present` | `warn` | Keeps coverage/grip context findable as calibration context, not runtime confirmation. |
 
 The checked generated-CI cockpit receipt cases are:
 

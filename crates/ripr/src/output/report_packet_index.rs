@@ -542,7 +542,9 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             required: false,
             authority: true,
             description: "Configured gate pass/fail authority.",
-            default_status: "pass",
+            // Fail closed: when the gate-decision sidecar cannot be read the
+            // entry must not claim a pass it never verified.
+            default_status: "incomplete",
             next_command: None,
         },
         ArtifactSpec {
@@ -701,23 +703,33 @@ fn status_for_spec(spec: &ArtifactSpec) -> String {
 
 fn gate_status(status: &str) -> String {
     match status {
+        "pass" => "pass".to_string(),
         "blocked" => "blocked".to_string(),
         "config_error" | "fail" | "failure" => "fail".to_string(),
+        "advisory" => "warn".to_string(),
         "acknowledged" => "acknowledged".to_string(),
         "suppressed" => "suppressed".to_string(),
         "warn" => "warn".to_string(),
         "incomplete" => "incomplete".to_string(),
-        _ => "pass".to_string(),
+        // Fail closed: the gate decision is authority, so an unrecognized
+        // producer token is reported as incomplete rather than credited as
+        // a pass the index never verified.
+        _ => "incomplete".to_string(),
     }
 }
 
 fn front_panel_status(status: &str) -> String {
     match status {
+        "pass" => "available".to_string(),
         "blocked" => "blocked".to_string(),
         "fail" | "config_error" => "fail".to_string(),
+        "advisory" => "warn".to_string(),
+        "acknowledged" => "acknowledged".to_string(),
         "warn" => "warn".to_string(),
         "incomplete" => "incomplete".to_string(),
-        _ => "available".to_string(),
+        // Fail closed: a required front panel with an unrecognized producer
+        // token is not credited as available.
+        _ => "incomplete".to_string(),
     }
 }
 
@@ -1093,9 +1105,20 @@ mod tests {
     }
 
     #[test]
-    fn gate_status_unknown_falls_through_to_pass() -> Result<(), String> {
+    fn gate_status_pass_returns_pass() -> Result<(), String> {
         assert_eq!(gate_status("pass"), "pass");
-        assert_eq!(gate_status("anything_else"), "pass");
+        Ok(())
+    }
+
+    #[test]
+    fn gate_status_advisory_returns_warn() -> Result<(), String> {
+        assert_eq!(gate_status("advisory"), "warn");
+        Ok(())
+    }
+
+    #[test]
+    fn gate_status_unknown_fails_closed_to_incomplete() -> Result<(), String> {
+        assert_eq!(gate_status("anything_else"), "incomplete");
         Ok(())
     }
 
@@ -1122,9 +1145,26 @@ mod tests {
     }
 
     #[test]
-    fn front_panel_status_unknown_returns_available() -> Result<(), String> {
+    fn front_panel_status_pass_returns_available() -> Result<(), String> {
         assert_eq!(front_panel_status("pass"), "available");
-        assert_eq!(front_panel_status("ok"), "available");
+        Ok(())
+    }
+
+    #[test]
+    fn front_panel_status_advisory_returns_warn() -> Result<(), String> {
+        assert_eq!(front_panel_status("advisory"), "warn");
+        Ok(())
+    }
+
+    #[test]
+    fn front_panel_status_acknowledged_returns_acknowledged() -> Result<(), String> {
+        assert_eq!(front_panel_status("acknowledged"), "acknowledged");
+        Ok(())
+    }
+
+    #[test]
+    fn front_panel_status_unknown_fails_closed_to_incomplete() -> Result<(), String> {
+        assert_eq!(front_panel_status("ok"), "incomplete");
         Ok(())
     }
 
@@ -1314,6 +1354,9 @@ mod tests {
     #[test]
     fn status_for_spec_gate_decision_falls_back_to_default() -> Result<(), String> {
         let root = temp_root("gate-default")?;
+        // Mirrors the production gate_decision spec: the default is
+        // "incomplete" so a missing/unreadable sidecar fails closed instead
+        // of claiming a pass.
         let spec = ArtifactSpec {
             id: "gate_decision",
             label: "Gate decision",
@@ -1324,10 +1367,10 @@ mod tests {
             required: false,
             authority: true,
             description: "desc",
-            default_status: "pass",
+            default_status: "incomplete",
             next_command: None,
         };
-        assert_eq!(status_for_spec(&spec), "pass");
+        assert_eq!(status_for_spec(&spec), "incomplete");
         Ok(())
     }
 
@@ -2105,7 +2148,154 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn gate_decision_advisory_produces_warn_entry_and_overall_status() -> Result<(), String> {
+        let root = temp_root("gate-advisory")?;
+        write(
+            &root.join("target/ripr/reports/gate-decision.md"),
+            "content\n",
+        )?;
+        write(
+            &root.join("target/ripr/reports/gate-decision.json"),
+            r#"{"decision":"advisory"}"#,
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let gate_entry = report
+            .groups
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .find(|e| e.id == "gate_decision");
+        let Some(entry) = gate_entry else {
+            return Err("expected gate_decision entry".to_string());
+        };
+        assert_eq!(entry.status, "warn");
+        assert_eq!(report.status, "warn");
+        Ok(())
+    }
+
+    #[test]
+    fn gate_decision_unknown_token_fails_closed_to_incomplete() -> Result<(), String> {
+        let root = temp_root("gate-unknown-token")?;
+        write(
+            &root.join("target/ripr/reports/gate-decision.md"),
+            "content\n",
+        )?;
+        write(
+            &root.join("target/ripr/reports/gate-decision.json"),
+            r#"{"decision":"surprising_new_token"}"#,
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let gate_entry = report
+            .groups
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .find(|e| e.id == "gate_decision");
+        let Some(entry) = gate_entry else {
+            return Err("expected gate_decision entry".to_string());
+        };
+        assert_eq!(entry.status, "incomplete");
+        assert_eq!(report.status, "warn");
+        Ok(())
+    }
+
+    #[test]
+    fn gate_decision_missing_sidecar_fails_closed_to_incomplete() -> Result<(), String> {
+        let root = temp_root("gate-missing-sidecar")?;
+        // Markdown is present (so the entry is available and authority-backed)
+        // but the JSON sidecar is absent: the entry must not claim a pass.
+        write(
+            &root.join("target/ripr/reports/gate-decision.md"),
+            "content\n",
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let gate_entry = report
+            .groups
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .find(|e| e.id == "gate_decision");
+        let Some(entry) = gate_entry else {
+            return Err("expected gate_decision entry".to_string());
+        };
+        assert_eq!(entry.status, "incomplete");
+        assert_eq!(report.status, "warn");
+        Ok(())
+    }
+
     // ── front_panel: warn and incomplete in full pipeline ────────────────────
+
+    #[test]
+    fn front_panel_advisory_json_status_produces_warn_overall() -> Result<(), String> {
+        let root = temp_root("front-panel-advisory")?;
+        write(
+            &root.join("target/ripr/reports/pr-review-front-panel.md"),
+            "content\n",
+        )?;
+        write(
+            &root.join("target/ripr/reports/pr-review-front-panel.json"),
+            r#"{"status":"advisory"}"#,
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let entry = report
+            .groups
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .find(|e| e.id == "pr_review_front_panel");
+        let Some(e) = entry else {
+            return Err("expected pr_review_front_panel entry".to_string());
+        };
+        assert_eq!(e.status, "warn");
+        assert_eq!(report.status, "warn");
+        Ok(())
+    }
+
+    #[test]
+    fn front_panel_acknowledged_json_status_stays_acknowledged() -> Result<(), String> {
+        let root = temp_root("front-panel-acknowledged")?;
+        write(
+            &root.join("target/ripr/reports/pr-review-front-panel.md"),
+            "content\n",
+        )?;
+        write(
+            &root.join("target/ripr/reports/pr-review-front-panel.json"),
+            r#"{"status":"acknowledged"}"#,
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let entry = report
+            .groups
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .find(|e| e.id == "pr_review_front_panel");
+        let Some(e) = entry else {
+            return Err("expected pr_review_front_panel entry".to_string());
+        };
+        assert_eq!(e.status, "acknowledged");
+        Ok(())
+    }
+
+    #[test]
+    fn front_panel_unknown_json_status_fails_closed_to_incomplete() -> Result<(), String> {
+        let root = temp_root("front-panel-unknown-token")?;
+        write(
+            &root.join("target/ripr/reports/pr-review-front-panel.md"),
+            "content\n",
+        )?;
+        write(
+            &root.join("target/ripr/reports/pr-review-front-panel.json"),
+            r#"{"status":"surprising_new_token"}"#,
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let entry = report
+            .groups
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .find(|e| e.id == "pr_review_front_panel");
+        let Some(e) = entry else {
+            return Err("expected pr_review_front_panel entry".to_string());
+        };
+        assert_eq!(e.status, "incomplete");
+        assert_eq!(report.status, "warn");
+        Ok(())
+    }
 
     #[test]
     fn front_panel_incomplete_json_status_produces_warn_overall() -> Result<(), String> {

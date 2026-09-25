@@ -19730,13 +19730,13 @@ fn dogfood_report_packet_index_scenarios_have_checked_receipts() -> Result<(), S
     with_repo_cwd(|| {
         let scenarios = dogfood_report_packet_index_scenarios();
         for required in [
-            ("complete_packet", "pass"),
+            ("complete_packet", "warn"),
             ("sparse_advisory", "warn"),
             ("missing_front_panel", "warn"),
             ("blocked_gate", "fail"),
             ("missing_assistant_proof", "warn"),
             ("missing_receipts", "warn"),
-            ("coverage_grip_present", "pass"),
+            ("coverage_grip_present", "warn"),
         ] {
             assert!(
                 scenarios.iter().any(|scenario| scenario.name == required.0
