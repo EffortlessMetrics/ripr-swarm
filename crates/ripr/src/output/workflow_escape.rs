@@ -19,14 +19,21 @@
 
 /// Escape workflow-command *data* (the message after `::`).
 ///
-/// Encodes percent first so literal `%0A` sequences survive one decode as
-/// `%250A` instead of becoming a newline — never blanket-decode the input
-/// to "repair" this.
+/// Single pass: each input char is visited once, so the `%` introduced by
+/// an insertion is never rescanned — literal `%0A` sequences survive one
+/// decode as `%250A` instead of becoming a newline. Never blanket-decode
+/// the input to "repair" this.
 pub(crate) fn escape_data(value: &str) -> String {
-    value
-        .replace('%', "%25")
-        .replace('\r', "%0D")
-        .replace('\n', "%0A")
+    let mut escaped = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '%' => escaped.push_str("%25"),
+            '\r' => escaped.push_str("%0D"),
+            '\n' => escaped.push_str("%0A"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
 }
 
 /// Escape a workflow-command *property* value from raw text.
@@ -34,7 +41,18 @@ pub(crate) fn escape_data(value: &str) -> String {
 /// Use for values that did not pass through stable path encoding
 /// (annotation titles, comments.json placement paths).
 pub(crate) fn escape_property(value: &str) -> String {
-    escape_data(value).replace(',', "%2C").replace(':', "%3A")
+    let mut escaped = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '%' => escaped.push_str("%25"),
+            '\r' => escaped.push_str("%0D"),
+            '\n' => escaped.push_str("%0A"),
+            ',' => escaped.push_str("%2C"),
+            ':' => escaped.push_str("%3A"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
 }
 
 /// Escape a workflow-command *property* value from stable path text.
@@ -42,11 +60,17 @@ pub(crate) fn escape_property(value: &str) -> String {
 /// Use only for values produced by stable path normalization, where `%`
 /// is already encoded. Encoding `%` again double-encodes (`%2525`).
 pub(crate) fn escape_property_pre_encoded(value: &str) -> String {
-    value
-        .replace('\r', "%0D")
-        .replace('\n', "%0A")
-        .replace(',', "%2C")
-        .replace(':', "%3A")
+    let mut escaped = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\r' => escaped.push_str("%0D"),
+            '\n' => escaped.push_str("%0A"),
+            ',' => escaped.push_str("%2C"),
+            ':' => escaped.push_str("%3A"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
 }
 
 #[cfg(test)]
