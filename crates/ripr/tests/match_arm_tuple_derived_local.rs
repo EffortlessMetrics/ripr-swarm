@@ -680,3 +680,38 @@ fn fixture_paths_remain_inside_the_ephemeral_root() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn projection_return_boundary_unreachable_assertions_cannot_certify_the_arm() -> Result<(), String> {
+    for assertion in [
+        "    assert_eq!(terminal.len(), 1);",
+        "    assert_eq!(terminal[0].0.id, \"receipt-1\");",
+        "    assert_eq!(terminal[0].1, \"request_identity_v2\");",
+    ] {
+        assert_eq!(REQUEST_ONLY_TEST.matches(assertion).count(), 1);
+        let test_source =
+            REQUEST_ONLY_TEST.replace(assertion, &format!("    return;\n{assertion}"));
+        let repo = TempRepo::create(CANDIDATE_SOURCE, &test_source)?;
+        let output = repo.check()?;
+        let finding = changed_request_only_arm(&output)?;
+        assert_unverified(finding, assertion);
+    }
+    Ok(())
+}
+
+#[test]
+fn projection_return_boundary_after_complete_observation_preserves_exposure() -> Result<(), String> {
+    let assertion = "    assert_eq!(terminal[0].1, \"request_identity_v2\");";
+    assert_eq!(REQUEST_ONLY_TEST.matches(assertion).count(), 1);
+    let test_source = REQUEST_ONLY_TEST.replace(assertion, &format!("{assertion}\n    return;"));
+    let repo = TempRepo::create(CANDIDATE_SOURCE, &test_source)?;
+    let output = repo.check()?;
+    let finding = changed_request_only_arm(&output)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "all required projection assertions precede the return: {:#?}",
+        finding.ripr
+    );
+    Ok(())
+}
