@@ -6719,6 +6719,82 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
     Ok(())
 }
 
+/// FieldConstruction downgrade mirror (Droid Auto Review confirmed finding
+/// on #4095): the value-family guard branch is shared between ReturnValue
+/// and FieldConstruction, so this control pins the sibling seam directly
+/// instead of inferring it from the ReturnValue control. A FieldConstruction
+/// change (`timeout: 5000,`) reached by a test whose only strong assertion
+/// observes an UNRELATED expression MUST downgrade to `weakly_exposed` with
+/// a `propagation_unknown` limitation — symmetric to
+/// `ts_returnvalue_unrelated_strong_assertion_downgrades`.
+#[test]
+fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "buildConfig".to_string(),
+        file: PathBuf::from("src/config.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "config side checks".to_string(),
+        local_name: "config side checks".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/config.test.ts"),
+        line: 1,
+        body_text: "buildConfig();\nexpect(formatDate(now)).toBe('2024-01-01');".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            // Unrelated expression: no owner name, no changed token (`timeout`).
+            observed_expression: Some("formatDate(now)".to_string()),
+            expected_value_or_variant: Some("'2024-01-01'".to_string()),
+            has_dynamic_matcher_arg: false,
+            oracle_confidence: OracleConfidence::High,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    };
+    // Changed line: a field value assignment (FieldConstruction).
+    let finding = classify_change(
+        Path::new("src/config.ts"),
+        3,
+        "  timeout: 5000,",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // MUST downgrade: the strong assertion observes an unrelated expression.
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "expected WeaklyExposed (unrelated strong assertion on FieldConstruction), got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes after value-sink observation guard, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    let all_text: String = finding.missing.join("\n");
+    assert!(
+        all_text.contains("propagation_unknown"),
+        "expected propagation_unknown in missing, got: {all_text:?}"
+    );
+    Ok(())
+}
+
 /// LIVE-pipeline guard test (RIPR-SPEC-0098 §fixture-5, #1235): exercises the
 /// REAL oracle extractor end-to-end. Source and test text are parsed by
 /// `extract_owners` / `extract_tests`, so the assertions carry whatever
