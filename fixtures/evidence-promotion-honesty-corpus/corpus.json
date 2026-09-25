@@ -467,6 +467,7 @@
       "language": "rust",
       "tier": "pure",
       "source_fixture": "fixtures/strong_error_oracle",
+      "vector": "variant_observing_error_oracle_still_exposed",
       "control": "must_stay_exposed",
       "assertions": [
         { "type": "must_promote" }
@@ -477,6 +478,7 @@
       "language": "rust",
       "tier": "pure",
       "source_fixture": "fixtures/unwrap_err_variant_positive",
+      "vector": "unwrap_err_variant_observation_still_exposed",
       "control": "must_stay_exposed",
       "assertions": [
         { "type": "must_promote" }
@@ -487,6 +489,7 @@
       "language": "rust",
       "tier": "pure",
       "source_fixture": "fixtures/guarded_result_match_positive",
+      "vector": "guarded_result_match_routing_still_exposed",
       "control": "must_stay_exposed",
       "assertions": [
         { "type": "must_promote" }
@@ -549,6 +552,7 @@
       "language": "typescript",
       "tier": "pure",
       "source_fixture": "fixtures/typescript_strong_oracle",
+      "vector": "strong_exact_value_oracle_still_exposed",
       "control": "must_stay_exposed",
       "assertions": [
         { "type": "must_promote" }
@@ -559,6 +563,7 @@
       "language": "typescript",
       "tier": "pure",
       "source_fixture": "fixtures/ts_repair_packet_complete",
+      "vector": "complete_repair_packet_contract_preserved",
       "control": "complete_packet_must_keep_contract",
       "assertions": [
         { "type": "must_not_report_clean" },
@@ -862,6 +867,7 @@
       "external_repo": "https://github.com/dtolnay/semver",
       "external_commit": "2c18cc482244f4bb9cc65003b07426c18a79a190",
       "external_patch": "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff",
+      "vector": "external_patch_public_api_path_named_not_silently_clean",
       "external_command": "ripr check --root {checkout} --diff {external_patch} --mode fast --json",
       "runtime_budget_seconds": 120,
       "artifact_budget_bytes": 10485760,
@@ -1335,6 +1341,7 @@
       "language": "rust",
       "tier": "pure",
       "source_fixture": "fixtures/error_variant_boxed_wrapper_downcast_witness",
+      "vector": "downcast_witness_binds_wrapper_variant_still_exposed",
       "control": "must_stay_exposed",
       "assertions": [
         { "type": "must_promote" }
@@ -1400,6 +1407,76 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_opaque_fixture_builder_infection_unknown",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-infection-unknown-opaque-builder-input.json",
+      "vector": "opaque_fixture_builder_input_infection_not_statically_determinable",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_verify_command" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "expected_class", "class": "infection_unknown" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_assertion_shaped_oracle_infection_unknown",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-infection-unknown-assertion-shaped-owner.json",
+      "vector": "assertion_shaped_owner_infection_not_statically_determinable",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_verify_command" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "expected_class", "class": "infection_unknown" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_error_path_sibling_oracle_no_repair_start",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_path_sibling_oracle_fake_clean",
+      "vector": "sibling_oracle_error_path_no_repair_start",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_verify_command" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" },
+        { "type": "expected_finding_count", "count": 2 },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_guarded_result_match_sibling_variant_no_repair_start",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/guarded_result_match_sibling_variant",
+      "vector": "owner_guard_sibling_variant_no_repair_start",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_verify_command" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" },
+        { "type": "expected_finding_count", "count": 2 },
         { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
