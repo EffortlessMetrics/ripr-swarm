@@ -90,8 +90,7 @@ fn server_path_text(path: &Path) -> String {
 fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
     let result = initialize_result();
 
-    let Some(TextDocumentSyncCapability::Options(sync)) =
-        result.capabilities.text_document_sync
+    let Some(TextDocumentSyncCapability::Options(sync)) = result.capabilities.text_document_sync
     else {
         return Err("expected explicit textDocumentSync options".to_string());
     };
