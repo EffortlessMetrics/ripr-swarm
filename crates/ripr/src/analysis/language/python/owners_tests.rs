@@ -211,6 +211,9 @@ pub(super) fn extract_tests(file: &Path, source: &str) -> Vec<PythonTest> {
     extract_source_facts(file, source).tests
 }
 
+/// Follow the default pytest `python_functions` and unittest
+/// `TestLoader.testMethodPrefix`: both use `test`, not `test_`.
+/// Custom collection prefixes and hooks are not resolved here.
 pub(super) fn collect_tests_from_statements(
     file: &Path,
     source: &str,
@@ -222,7 +225,7 @@ pub(super) fn collect_tests_from_statements(
 ) {
     for stmt in statements {
         match stmt {
-            Stmt::FunctionDef(function) if function.name.as_str().starts_with("test_") => {
+            Stmt::FunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
                     "unittest"
                 } else {
@@ -243,7 +246,7 @@ pub(super) fn collect_tests_from_statements(
                     assertions: collect_assertions_from_statements(&function.body, source),
                 });
             }
-            Stmt::AsyncFunctionDef(function) if function.name.as_str().starts_with("test_") => {
+            Stmt::AsyncFunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
                     "unittest"
                 } else {
@@ -449,3 +452,6 @@ fn route_decorator_literal_argument(source: &str, decorator: &Expr, name: &str) 
         .or_else(|| text.find(name).and_then(|idx| text.get(idx + name.len()..)))?;
     first_parenthesized_string_argument(after_name.trim_start())
 }
+
+#[cfg(test)]
+mod tests;
