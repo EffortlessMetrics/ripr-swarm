@@ -4384,7 +4384,10 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
         capped.recovery.kind
     );
     assert!(
-        capped.recovery.detail.contains("RIPR_TS_MAX_FILE_READ_BYTES"),
+        capped
+            .recovery
+            .detail
+            .contains("RIPR_TS_MAX_FILE_READ_BYTES"),
         "recovery must name the env knob: {}",
         capped.recovery.detail
     );

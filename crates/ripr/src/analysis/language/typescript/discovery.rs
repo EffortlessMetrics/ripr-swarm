@@ -116,10 +116,9 @@ pub(crate) fn ts_workspace_file_limit_from_env(
 ) -> Result<usize, String> {
     match value {
         Ok(raw) => {
-            let parsed = raw
-                .trim()
-                .parse::<usize>()
-                .map_err(|err| format!("{TS_MAX_WORKSPACE_FILES_ENV} must be a positive integer: {err}"))?;
+            let parsed = raw.trim().parse::<usize>().map_err(|err| {
+                format!("{TS_MAX_WORKSPACE_FILES_ENV} must be a positive integer: {err}")
+            })?;
             if parsed == 0 {
                 return Err(format!(
                     "{TS_MAX_WORKSPACE_FILES_ENV} must be a positive integer"
