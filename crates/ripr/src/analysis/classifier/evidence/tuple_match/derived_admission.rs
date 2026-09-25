@@ -309,18 +309,28 @@ fn fed_receipt_identity(
         if !valid_identifier(name) {
             return None;
         }
-        let mut bindings = statements[..owner_position].iter().filter_map(|statement| {
-            let ast::Stmt::LetStmt(binding) = statement else {
-                return None;
-            };
-            (binding_name(binding)?.as_str() == name).then_some(binding)
-        });
+        let mut bindings = statements[..owner_position]
+            .iter()
+            .filter(|statement| {
+                let ast::Stmt::LetStmt(binding) = statement else {
+                    return false;
+                };
+                binding
+                    .pat()
+                    .is_some_and(|pattern| pattern_binds_name(&pattern, name))
+            })
+            .map(|statement| match statement {
+                ast::Stmt::LetStmt(binding) => binding,
+                _ => unreachable!("filtered above"),
+            });
         let binding = bindings.next()?;
         if bindings.next().is_some() {
             return None;
         }
-        // The one binding of this name must be immutable: a `mut` binding
-        // could have changed after its identity-bearing initializer.
+        // The one binding of this name must be a plain immutable identifier:
+        // a `mut` binding could have changed after its identity-bearing
+        // initializer, and a destructuring pattern does not make the whole
+        // borrowed name the identity-bearing input the doc contract requires.
         immutable_binding_name(binding)?;
         binding.initializer()?
     } else {
@@ -333,12 +343,15 @@ fn fed_receipt_identity(
     Some(identity.clone())
 }
 
-/// Name of a `let` binding's identifier pattern with no immutability
-/// requirement, so shadow counting sees `mut` re-bindings too.
-fn binding_name(statement: &ast::LetStmt) -> Option<String> {
-    ast::IdentPat::cast(statement.pat()?.syntax().clone())?
-        .name()
-        .map(|name| name.text().to_string())
+/// Whether a pattern binds the name anywhere, including inside tuple,
+/// struct, or reference destructuring, so shadow counting cannot be
+/// bypassed by `let (receipts, other) = ...` re-bindings.
+fn pattern_binds_name(pattern: &ast::Pat, name: &str) -> bool {
+    pattern.syntax().descendants().any(|node| {
+        ast::IdentPat::cast(node)
+            .and_then(|ident| ident.name())
+            .is_some_and(|binding| binding.text() == name)
+    })
 }
 
 /// Macro token trees are not parsed as AST, so a `vec![Receipt { id: "..." }]`
@@ -593,6 +606,22 @@ mod tests {
             let terminal = terminalize_proof(&receipts);
             assert_eq!(terminal.len(), 1);
             assert_eq!(terminal[0].0.id, "receipt-1");
+            assert_eq!(terminal[0].1, "request_identity_v2");"#
+        ));
+    }
+
+    #[test]
+    fn destructuring_shadow_over_the_fed_receipt_name_is_ambiguous() {
+        // A tuple destructuring re-binding of the name is still a competing
+        // binding of `receipts`: the owner call would receive the destructured
+        // shadow, so counting must see it and fail closed instead of
+        // crediting the earlier immutable initializer.
+        assert!(!projection_is_admitted(
+            r#"let receipts = vec![Receipt { id: "receipt-1".to_string() }];
+            let (receipts, other) = (vec![Receipt { id: "input-receipt".to_string() }], 1);
+            let terminal = terminalize_proof(&receipts);
+            assert_eq!(terminal.len(), 1);
+            assert_eq!(terminal[0].0.id, "input-receipt");
             assert_eq!(terminal[0].1, "request_identity_v2");"#
         ));
     }
