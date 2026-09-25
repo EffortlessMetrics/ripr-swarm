@@ -381,13 +381,13 @@ mod tests {
             ts_byte_limit_from_env("RIPR_TEST_X", 16, Ok(" 64 ".to_string())),
             Ok(64)
         );
-        assert!(matches!(
-            ts_byte_limit_from_env("RIPR_TEST_X", 16, Ok("0".to_string())),
-            Err(_)
-        ));
-        assert!(matches!(
-            ts_byte_limit_from_env("RIPR_TEST_X", 16, Ok("nope".to_string())),
-            Err(_)
-        ));
+        assert!(
+            ts_byte_limit_from_env("RIPR_TEST_X", 16, Ok("0".to_string())).is_err(),
+            "zero limit must be rejected"
+        );
+        assert!(
+            ts_byte_limit_from_env("RIPR_TEST_X", 16, Ok("nope".to_string())).is_err(),
+            "non-numeric limit must be rejected"
+        );
     }
 }

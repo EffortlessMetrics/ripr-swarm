@@ -464,13 +464,13 @@ mod tests {
             ts_workspace_file_limit_from_env(Ok(" 42 ".to_string())),
             Ok(42)
         );
-        assert!(matches!(
-            ts_workspace_file_limit_from_env(Ok("0".to_string())),
-            Err(_)
-        ));
-        assert!(matches!(
-            ts_workspace_file_limit_from_env(Ok("nope".to_string())),
-            Err(_)
-        ));
+        assert!(
+            ts_workspace_file_limit_from_env(Ok("0".to_string())).is_err(),
+            "zero limit must be rejected"
+        );
+        assert!(
+            ts_workspace_file_limit_from_env(Ok("nope".to_string())).is_err(),
+            "non-numeric limit must be rejected"
+        );
     }
 }
