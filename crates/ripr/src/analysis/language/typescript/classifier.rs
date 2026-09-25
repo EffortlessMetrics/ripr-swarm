@@ -128,7 +128,34 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 /// observed-expression metadata is available to prove a side-channel), the guard
 /// **fails closed** and returns `false`, downgrading to WeaklyExposed.
 ///
-/// For all other families the guard always returns `true` (pre-guard behaviour).
+/// ### Value families (ReturnValue / FieldConstruction)
+///
+/// A strong assertion confirms (returns `true`, stays Exposed) only when it
+/// actually observes the changed sink:
+/// 1. Its `oracle_kind` matches the seam family (the same filter
+///    `strongest_family_matching_oracle` applies); AND
+/// 2. Its `observed_expression` either references the owner (the owner name or
+///    an owner call, e.g. `expect(applyDiscount(100, 10))`) or contains a
+///    changed token from the changed sub-expression.
+///
+/// One-hop local aliasing: a bare-local observed_expression
+/// (`t.is(result, 3)`) also confirms when the test body initializes that
+/// local from an expression referencing the owner or a changed token
+/// (`const result = add(1, 2)`). Without this credit the guard would
+/// falsely downgrade the canonical assert-the-return-value pattern and emit
+/// repair packets for tests that already observe the changed sink — the
+/// exact over-correction the RIPR-SPEC-0108 `must_stay_exposed` corpus
+/// controls (`ts_ava_t_is_exact_value`, `ts_tape_equal_exact_value`) pin.
+///
+/// An assertion on an UNRELATED expression (`expect(formatDate(now))`, or a
+/// local initialized from an unrelated call) does not witness
+/// `return amount - 12;`: the changed value never escapes into the observed
+/// expression, so the guard fails closed and the finding downgrades to
+/// WeaklyExposed. This mirrors the sink-alignment evidence the Python
+/// adapter already surfaces.
+///
+/// For all other families the guard always returns `true` (pre-guard
+/// behaviour). SideEffect / CallDeletion behaviour is pinned and unchanged.
 ///
 /// ### Fail-closed default (RIPR-SPEC-0098 hardening, #1235)
 ///
@@ -145,12 +172,19 @@ pub(crate) fn ts_changed_value_is_observed(
     owner_name: &str,
     candidates: &[TypeScriptRelatedCandidate<'_>],
 ) -> bool {
-    // Only apply the guard to SideEffect / CallDeletion families.
-    // All other families keep the pre-guard (always-confirmed) behaviour.
-    if !matches!(
+    // Apply the guard to effect families (SideEffect / CallDeletion) and value
+    // families (ReturnValue / FieldConstruction). All other families keep the
+    // pre-guard (always-confirmed) behaviour.
+    let value_family = matches!(
         probe_shape.family,
-        ProbeFamily::SideEffect | ProbeFamily::CallDeletion
-    ) {
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+    );
+    if !value_family
+        && !matches!(
+            probe_shape.family,
+            ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+        )
+    {
         return true;
     }
 
@@ -167,10 +201,10 @@ pub(crate) fn ts_changed_value_is_observed(
     };
 
     // Fail-CLOSED: confirmation must be affirmatively established by at least one
-    // strong assertion that actually witnesses a call effect. We scan every
+    // strong assertion that actually witnesses the changed sink. We scan every
     // strong assertion in the oracle-eligible candidates and return `true` the
-    // moment one of them qualifies. If none qualify, we downgrade — including the
-    // case where no `observed_expression` metadata is available at all (the
+    // moment one of them qualifies. If none qualify, we downgrade — including
+    // the case where no `observed_expression` metadata is available at all (the
     // former fail-OPEN `return true` fallback is deliberately gone: absence of
     // proof is not proof of observation).
     for candidate in candidates {
@@ -179,6 +213,49 @@ pub(crate) fn ts_changed_value_is_observed(
         }
         for assertion in &candidate.test.assertions {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
+                continue;
+            }
+            if value_family {
+                // Value families (ReturnValue / FieldConstruction): the strong
+                // assertion must MATCH the seam family (the same filter applied
+                // to `strongest_strength`) and its observed_expression must
+                // reference the owner (owner name or its call) or contain a
+                // changed token from the changed sub-expression. An assertion
+                // on an unrelated expression does not observe the changed
+                // sink; absence of observed_expression fails closed too.
+                if !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &probe_shape.family) {
+                    continue;
+                }
+                let Some(ref observed) = assertion.observed_expression else {
+                    continue;
+                };
+                if observed.contains(owner_name) {
+                    return true;
+                }
+                if !changed_tokens.is_empty()
+                    && changed_tokens
+                        .iter()
+                        .any(|tok| observed.contains(tok.as_str()))
+                {
+                    return true;
+                }
+                // One-hop local aliasing (RIPR-SPEC-0108 must_stay_exposed
+                // controls): `const result = add(1, 2)` asserted via
+                // `t.is(result, 3)` still observes the changed sink — the
+                // local is initialized from the owner call. Without this
+                // credit the guard falsely downgrades the canonical
+                // assert-the-return-value pattern.
+                if ts_observed_local_aliases_owner(
+                    observed,
+                    owner_name,
+                    &changed_tokens,
+                    &candidate.test.body_text,
+                ) {
+                    return true;
+                }
+                // This family-matching strong assertion observes an unrelated
+                // expression: it does NOT witness the changed sink. Keep
+                // scanning for a qualifying assertion.
                 continue;
             }
             // (1) Effect-shape oracle kinds confirm unconditionally: these ARE
@@ -228,25 +305,108 @@ pub(crate) fn ts_changed_value_is_observed(
         }
     }
 
-    // No strong assertion witnessed the call effect: fail closed → downgrade.
+    // No strong assertion witnessed the changed sink: fail closed → downgrade.
+    false
+}
+
+/// One-hop local aliasing credit for the value-family observation guard.
+///
+/// Test code conventionally captures the owner call in a local and asserts
+/// that local (`const result = add(1, 2); t.is(result, 3)`). The bare-local
+/// `observed_expression` carries no owner reference, but the changed value
+/// flows into it through the initializer, so treating it as unobserved
+/// would be a false downgrade that also flips `repair_packet_ready` on for
+/// tests that already assert the changed value (the over-correction pinned
+/// by the RIPR-SPEC-0108 `must_stay_exposed` corpus controls).
+///
+/// Conservatism: only a bare identifier qualifies (member or call
+/// expressions were already decided by the direct owner / changed-token
+/// checks), the assignment match requires whole-word identifier boundaries
+/// and a single `=` (not `==` / `=>`), the initializer is read only up to
+/// the next `;` or newline, and only the FIRST matching assignment in the
+/// test body is considered. Any failure to resolve keeps the guard's
+/// fail-closed downgrade.
+fn ts_observed_local_aliases_owner(
+    observed: &str,
+    owner_name: &str,
+    changed_tokens: &[String],
+    test_body: &str,
+) -> bool {
+    fn is_ident_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
+    let ident = observed.trim();
+    let ident_bytes = ident.as_bytes();
+    let ident_is_bare = !ident_bytes.is_empty()
+        && (ident_bytes[0].is_ascii_alphabetic()
+            || ident_bytes[0] == b'_'
+            || ident_bytes[0] == b'$')
+        && ident_bytes.iter().all(|&b| is_ident_byte(b));
+    if !ident_is_bare {
+        return false;
+    }
+    let body = test_body.as_bytes();
+    let mut search_from = 0;
+    while let Some(pos) = test_body
+        .get(search_from..)
+        .and_then(|rest| rest.find(ident))
+    {
+        let abs = search_from + pos;
+        let before_ok = abs == 0 || !is_ident_byte(body[abs - 1]);
+        let after = abs + ident.len();
+        let after_ok = after >= body.len() || !is_ident_byte(body[after]);
+        if before_ok && after_ok {
+            let mut i = after;
+            while i < body.len() && body[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            // A single `=`: reject `==` / `===` / `=>`.
+            if i < body.len() && body[i] == b'=' && body.get(i + 1) != Some(&b'=') {
+                let rhs_start = i + 1;
+                let rhs_end = test_body[rhs_start..]
+                    .find([';', '\n'])
+                    .map(|p| rhs_start + p)
+                    .unwrap_or(test_body.len());
+                let rhs = &test_body[rhs_start..rhs_end];
+                if rhs.contains(owner_name)
+                    || changed_tokens.iter().any(|tok| rhs.contains(tok.as_str()))
+                {
+                    return true;
+                }
+            }
+        }
+        search_from = after.max(abs + 1);
+    }
     false
 }
 
 /// Build the named limitation message for the RIPR-SPEC-0098 downgrade arm.
 ///
-/// Only fires for SideEffect / CallDeletion families (the guard is scoped to
-/// effect families only). Emits a `propagation_unknown` limitation.
+/// Fires for SideEffect / CallDeletion families (effect sink swallowed by
+/// value-shaped oracles) and for ReturnValue / FieldConstruction families
+/// (strong assertions that observe an unrelated expression, not the changed
+/// sink). Emits a `propagation_unknown` limitation.
 pub(crate) fn ts_observation_guard_limitation(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
 ) -> String {
-    // Describe the non-escaping sink where possible.
     let sink_hint = typescript_missing_discriminator_value(&probe_shape.family, line_text)
         .map(|disc| {
             let raw = strip_synthesized_prefix(&disc);
             format!(" (`{raw}`)")
         })
         .unwrap_or_default();
+    if matches!(
+        probe_shape.family,
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+    ) {
+        return format!(
+            "propagation_unknown: changed value sinks to the owner return value or constructed object{sink_hint}; \
+             all strong assertions observe an unrelated expression, not the changed sink; \
+             propagation unknown"
+        );
+    }
+    // Describe the non-escaping sink where possible.
     format!(
         "propagation_unknown: changed value sinks to a non-escaping call effect{sink_hint}; \
          all strong assertions observe the owner return value, not this call effect; \
