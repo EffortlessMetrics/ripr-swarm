@@ -6498,8 +6498,10 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
 
 /// Aliasing negative control: a bare-local observed_expression whose
 /// initializer is an UNRELATED call (`const other = formatDate(now)`) does
-/// not observe the changed sink. The one-hop credit must NOT fire, the
-/// guard fails closed, and the finding downgrades to `weakly_exposed`.
+/// not observe the changed sink, even when the test body also calls the
+/// owner (`applyDiscount(100, 10);` establishes reach). The one-hop credit
+/// must NOT fire, the guard fails closed, and the finding downgrades to
+/// `weakly_exposed`.
 #[test]
 fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(), String> {
     let owner = TypeScriptOwner {
@@ -6518,7 +6520,8 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
-        body_text: "const other = formatDate(now);\nexpect(other).toBe('2024-01-01');".to_string(),
+        body_text: "applyDiscount(100, 10);\nconst other = formatDate(now);\nexpect(other).toBe('2024-01-01');"
+            .to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
             argument_count: 1,
