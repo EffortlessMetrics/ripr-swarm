@@ -250,3 +250,223 @@ fn discovery_is_stable_and_advertises_only_read_only_surfaces() -> Result<(), St
     }
     Ok(())
 }
+
+fn initialize_frame(protocol_version: &str, id: i64) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(&json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": protocol_version,
+            "capabilities": {},
+            "clientInfo": { "name": "test", "version": "1" }
+        }
+    }))
+    .map_err(|error| error.to_string())
+}
+
+fn notifications_initialized_frame() -> Result<Vec<u8>, String> {
+    serde_json::to_vec(&json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+    }))
+    .map_err(|error| error.to_string())
+}
+
+fn start_legacy_session(server: &mut McpServer, protocol_version: &str) -> Result<(), String> {
+    let initialize = initialize_frame(protocol_version, 1)?;
+    if server
+        .handle_frame(&initialize)
+        .ok_or_else(|| "expected initialize response".to_string())?
+        .pointer("/error")
+        .is_some()
+    {
+        return Err("initialize must succeed before the rejection under test".to_string());
+    }
+    let initialized = notifications_initialized_frame()?;
+    if server.handle_frame(&initialized).is_some() {
+        return Err("initialized notification emitted a response".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn unknown_tool_call_is_rejected_with_typed_invalid_params() -> Result<(), String> {
+    let mut server = McpServer::new(status());
+    start_legacy_session(&mut server, "2025-11-25")?;
+    let call = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": { "name": "ripr_everything", "arguments": {} }
+    }))
+    .map_err(|error| error.to_string())?;
+    let response = server
+        .handle_frame(&call)
+        .ok_or_else(|| "expected unknown-tool error response".to_string())?;
+    if response.pointer("/error/code").and_then(Value::as_i64)
+        != Some(protocol::ERROR_INVALID_PARAMS)
+    {
+        return Err("unknown tool must be rejected as invalid params".to_string());
+    }
+    if response
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        != Some("unknown RIPR tool")
+    {
+        return Err("unknown tool error message drifted".to_string());
+    }
+    if response.get("id") != Some(&json!(2)) {
+        return Err("unknown tool rejection must echo the request id".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn status_tool_rejects_non_empty_arguments() -> Result<(), String> {
+    let mut server = McpServer::new(status());
+    start_legacy_session(&mut server, "2025-11-25")?;
+    let call = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "ripr_workspace_status",
+            "arguments": { "verbose": true }
+        }
+    }))
+    .map_err(|error| error.to_string())?;
+    let response = server
+        .handle_frame(&call)
+        .ok_or_else(|| "expected arguments error response".to_string())?;
+    if response.pointer("/error/code").and_then(Value::as_i64)
+        != Some(protocol::ERROR_INVALID_PARAMS)
+    {
+        return Err("non-empty arguments must be rejected as invalid params".to_string());
+    }
+    if response
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        != Some("ripr_workspace_status does not accept arguments")
+    {
+        return Err("arguments rejection message drifted".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn current_protocol_resource_miss_uses_invalid_params() -> Result<(), String> {
+    // Legacy resource misses use the legacy -32002 resource error (pinned by
+    // legacy_resource_miss_uses_the_legacy_resource_error); the current
+    // protocol instead rejects with standard -32602 invalid params.
+    let mut server = McpServer::new(status());
+    start_legacy_session(&mut server, protocol::CURRENT_PROTOCOL_VERSION)?;
+    let read = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "resources/read",
+        "params": { "uri": "ripr://workspace/missing" }
+    }))
+    .map_err(|error| error.to_string())?;
+    let response = server
+        .handle_frame(&read)
+        .ok_or_else(|| "expected current-protocol resource error response".to_string())?;
+    if response.pointer("/error/code").and_then(Value::as_i64)
+        != Some(protocol::ERROR_INVALID_PARAMS)
+    {
+        return Err("current-protocol resource miss must be invalid params".to_string());
+    }
+    if response
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        != Some("unknown RIPR resource")
+    {
+        return Err("current-protocol resource miss message drifted".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn initialize_after_discover_is_rejected() -> Result<(), String> {
+    let mut server = McpServer::new(status());
+    let discover = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "server/discover",
+        "params": {
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": protocol::CURRENT_PROTOCOL_VERSION,
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": { "name": "test", "version": "1" }
+            }
+        }
+    }))
+    .map_err(|error| error.to_string())?;
+    if server
+        .handle_frame(&discover)
+        .ok_or_else(|| "expected discovery response".to_string())?
+        .pointer("/error")
+        .is_some()
+    {
+        return Err("discovery must succeed before the rejection under test".to_string());
+    }
+    let initialize = initialize_frame("2025-11-25", 2)?;
+    let response = server
+        .handle_frame(&initialize)
+        .ok_or_else(|| "expected initialize rejection response".to_string())?;
+    if response.pointer("/error/code").and_then(Value::as_i64)
+        != Some(protocol::ERROR_INVALID_REQUEST)
+    {
+        return Err("initialize after discover must be an invalid request".to_string());
+    }
+    if response
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        != Some("initialize cannot follow server/discover")
+    {
+        return Err("initialize-after-discover message drifted".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn discover_after_initialize_is_rejected() -> Result<(), String> {
+    let mut server = McpServer::new(status());
+    let initialize = initialize_frame("2025-11-25", 1)?;
+    if server
+        .handle_frame(&initialize)
+        .ok_or_else(|| "expected initialize response".to_string())?
+        .pointer("/error")
+        .is_some()
+    {
+        return Err("initialize must succeed before the rejection under test".to_string());
+    }
+    let discover = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "server/discover",
+        "params": {
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": protocol::CURRENT_PROTOCOL_VERSION,
+                "io.modelcontextprotocol/clientCapabilities": {}
+            }
+        }
+    }))
+    .map_err(|error| error.to_string())?;
+    let response = server
+        .handle_frame(&discover)
+        .ok_or_else(|| "expected discover rejection response".to_string())?;
+    if response.pointer("/error/code").and_then(Value::as_i64)
+        != Some(protocol::ERROR_INVALID_REQUEST)
+    {
+        return Err("discover after initialize must be an invalid request".to_string());
+    }
+    if response
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        != Some("server/discover cannot replace an initialized session")
+    {
+        return Err("discover-after-initialize message drifted".to_string());
+    }
+    Ok(())
+}
