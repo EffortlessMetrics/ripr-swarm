@@ -6778,10 +6778,8 @@ fn repair_packet_sentinel(reason: &str) -> LSPAny {
 /// Vocabulary mirrors `limitation_non_claims("malformed_artifact")`: the
 /// client must be able to tell "no packet" apart from "packet source corrupt;
 /// artifact regeneration required before exposure can be assessed".
-const MALFORMED_ACTIONABLE_GAPS_REASON: &str =
-    "actionable-gaps.json is malformed; artifact regeneration required before exposure can be assessed";
-const MALFORMED_GAP_LEDGER_REASON: &str =
-    "gap-decision-ledger.json is malformed; artifact regeneration required before exposure can be assessed";
+const MALFORMED_ACTIONABLE_GAPS_REASON: &str = "actionable-gaps.json is malformed; artifact regeneration required before exposure can be assessed";
+const MALFORMED_GAP_LEDGER_REASON: &str = "gap-decision-ledger.json is malformed; artifact regeneration required before exposure can be assessed";
 
 fn gap_record_matches(record: &GapRecord, gap_id: &str) -> bool {
     record.gap_id == gap_id || record.canonical_gap_id == gap_id

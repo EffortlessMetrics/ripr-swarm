@@ -186,7 +186,10 @@ pub(super) fn read_artifact_capped_with_limit(path: &Path, limit: u64) -> Capped
         Err(_) => return CappedArtifactRead::Unusable,
     };
     let mut contents = String::new();
-    match file.take(limit.saturating_add(1)).read_to_string(&mut contents) {
+    match file
+        .take(limit.saturating_add(1))
+        .read_to_string(&mut contents)
+    {
         Ok(_) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return CappedArtifactRead::Missing;
