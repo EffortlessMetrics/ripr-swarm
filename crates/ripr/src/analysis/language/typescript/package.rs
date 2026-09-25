@@ -182,6 +182,11 @@ pub(crate) enum TsPackageLimitation {
     /// emitted as `typescript_test_runner: <name>`.
     /// Wire name: `typescript_test_runner_ambiguous`.
     FrameworkAmbiguous,
+    /// A `package.json` was found but exceeded the capped read limit, so its
+    /// manifest evidence could not be inspected. Fail-closed: no root, no
+    /// fabricated values.
+    /// Wire name: `typescript_package_manifest_read_capped`.
+    PackageManifestReadCapped,
 }
 
 impl TsPackageLimitation {
@@ -192,6 +197,7 @@ impl TsPackageLimitation {
             Self::PackageManagerUnresolved => "typescript_package_manager_unresolved",
             Self::RunnerHintMissing => "typescript_runner_hint_unresolved",
             Self::FrameworkAmbiguous => "typescript_test_runner_ambiguous",
+            Self::PackageManifestReadCapped => "typescript_package_manifest_read_capped",
         }
     }
 }
@@ -244,18 +250,24 @@ pub(crate) fn resolve_package_discovery(
         };
     };
 
-    // Read the package.json at that root.
+    // Read the package.json at that root (capped: an over-limit manifest is
+    // disclosed as its own named limitation, not conflated with "not found").
     let pkg_json_path = pkg_root.join("package.json");
-    let pkg_json_text = match std::fs::read_to_string(&pkg_json_path) {
+    let pkg_json_text = match read_config_capped(&pkg_json_path) {
         Ok(text) => text,
-        Err(_) => {
+        Err(err) => {
+            let limitation = if err.is_size_limit() {
+                TsPackageLimitation::PackageManifestReadCapped
+            } else {
+                TsPackageLimitation::PackageRootNotFound
+            };
             return PackageDiscovery {
                 package_root: None,
                 workspace_root: None,
                 framework_hint: None,
                 runner_hint: None,
                 confidence: TsPackageConfidence::None,
-                limitations: vec![TsPackageLimitation::PackageRootNotFound],
+                limitations: vec![limitation],
             };
         }
     };
@@ -365,7 +377,7 @@ fn find_workspace_root(pkg_root: &Path, stop_at: &Path) -> Option<PathBuf> {
         if current.join("pnpm-workspace.yaml").is_file() {
             return Some(current.clone());
         }
-        if let Ok(text) = std::fs::read_to_string(current.join("package.json"))
+        if let Ok(text) = read_config_capped(&current.join("package.json"))
             && json_has_workspaces_field(&text)
         {
             return Some(current.clone());
@@ -387,7 +399,7 @@ fn find_workspace_root(pkg_root: &Path, stop_at: &Path) -> Option<PathBuf> {
 /// then config-file markers, then the bun lockfile. Fail-closed: `None` when
 /// no signal matches — callers must report "not detected", never guess.
 pub(crate) fn detect_framework_for_root(root: &Path) -> Option<TsFramework> {
-    if let Ok(pkg_json) = std::fs::read_to_string(root.join("package.json"))
+    if let Ok(pkg_json) = read_config_capped(&root.join("package.json"))
         && let Some(framework) = detect_framework(&pkg_json)
     {
         return Some(framework);

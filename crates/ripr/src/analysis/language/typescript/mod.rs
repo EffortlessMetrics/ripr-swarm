@@ -39,6 +39,7 @@ pub(crate) use oxc_span::{GetSpan, SourceType};
 pub(crate) use std::path::{Path, PathBuf};
 
 mod actionability;
+mod bounded_read;
 mod bun_bridge;
 mod classifier;
 mod discovery;
@@ -63,6 +64,7 @@ mod types;
 // submodule's `use super::*;` resolves, and so that `tests.rs` which
 // uses `use super::*;` can access all items.
 pub(crate) use actionability::*;
+pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use discovery::*;
@@ -115,7 +117,8 @@ impl LanguageAdapter for TypeScriptAdapter {
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.
-        let workspace_files = collect_workspace_typescript_files(&options.root);
+        let workspace_scan = collect_workspace_typescript_files(&options.root);
+        let workspace_files = workspace_scan.files;
         let changed_paths = changed_files
             .iter()
             .map(|changed| normalized_path(&changed.path))
@@ -129,20 +132,35 @@ impl LanguageAdapter for TypeScriptAdapter {
         // count is reported instead of a hardcoded 0 so downstream consumers
         // can tell an empty workspace from a silently incomplete one.
         let mut skipped_files = 0usize;
+        // Capped reads: every workspace source is read ONCE into a shared
+        // cache under a per-file cap and a per-run aggregate byte budget
+        // (bounded_read.rs, mirroring the edit_cage contract). Files over
+        // either bound become named limitations; plain IO failures feed the
+        // read-failure disclosure lane (#4099) as skipped files.
+        let workspace_read = read_workspace_sources_capped(
+            &options.root,
+            &workspace_files,
+            ts_file_read_limit(),
+            ts_workspace_read_budget(),
+        );
+        let source_cache = workspace_read.sources;
+        let read_limits: Vec<TypeScriptParseLimit> = workspace_read
+            .limits
+            .into_iter()
+            .map(|(file, err)| TypeScriptParseLimit {
+                file,
+                reason: err.reason(),
+            })
+            .collect();
+        for (file, error) in workspace_read.io_failures {
+            skipped_files += 1;
+            read_failures.push(TypeScriptReadFailure { file, error });
+        }
         for relative in &workspace_files {
-            let absolute = options.root.join(relative);
-            let source = match std::fs::read_to_string(&absolute) {
-                Ok(source) => source,
-                Err(err) => {
-                    skipped_files += 1;
-                    read_failures.push(TypeScriptReadFailure {
-                        file: relative.clone(),
-                        error: err.to_string(),
-                    });
-                    continue;
-                }
+            let Some(source) = source_cache.get(relative) else {
+                continue;
             };
-            if let Some(reason) = parse_error_reason(relative, &source) {
+            if let Some(reason) = parse_error_reason(relative, source) {
                 // Disclose parse failures for CHANGED files of either role:
                 // a changed production file's added lines are never
                 // classified, and a changed test file's tests silently vanish
@@ -162,18 +180,18 @@ impl LanguageAdapter for TypeScriptAdapter {
                 continue;
             }
             if is_test_file(relative) {
-                let tests = extract_tests(relative, &source);
+                let tests = extract_tests(relative, source);
                 // A recognized test file that parses but registers test
                 // shapes the extractor drops (template-literal titles,
                 // tagged-template `.each`, tests generated in loops or
                 // callbacks) gets a partial-extraction disclosure so a
                 // confident `no_static_path` is known to be possibly false.
-                if let Some(gap) = detect_partial_test_extraction(relative, &source, &tests) {
+                if let Some(gap) = detect_partial_test_extraction(relative, source, &tests) {
                     extraction_gaps.push(gap);
                 }
                 all_tests.extend(tests);
             } else {
-                all_owners.extend(extract_owners(relative, &source));
+                all_owners.extend(extract_owners(relative, source));
             }
         }
         // Build tsconfig.json alias map when opt-in flag is enabled (RIPR-SPEC-0099).
@@ -189,8 +207,14 @@ impl LanguageAdapter for TypeScriptAdapter {
         // Build the single-hop re-export index from all non-test workspace files
         // (RIPR-SPEC-0095). The index enables crediting tests that reach the owner
         // via an explicit `export { N } from './owner'` barrel-file re-export.
-        let reexport_index =
-            ReExportIndex::build(&workspace_files, &options.root, alias_map_ref, is_test_file);
+        // Sources come from the Phase-1 cache so each file is read once per run.
+        let reexport_index = ReExportIndex::build(
+            &workspace_files,
+            &source_cache,
+            &options.root,
+            alias_map_ref,
+            is_test_file,
+        );
 
         // Phase 2: for each accepted changed file, classify each changed
         // line that falls inside an owner.
@@ -380,6 +404,40 @@ impl LanguageAdapter for TypeScriptAdapter {
                 .with_detail(format!(
                     "typescript_test_extraction_partial: {} at {}",
                     gap.shape, limitation.sample_source
+                ))?,
+            );
+        }
+        // Capped-read bounds are named limitations, never silent skips. The
+        // recovery names the env knobs so operators can raise the bounds.
+        limitations.extend(read_limits.iter().map(|limit| {
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::IncreaseConfiguredLimit,
+                    "Raise RIPR_TS_MAX_FILE_READ_BYTES and/or RIPR_TS_MAX_WORKSPACE_READ_BYTES, then re-run the analysis.",
+                )?,
+            )
+            .with_path(limit.file.to_string_lossy())?
+            .with_affected_items(1)?
+            .with_detail(limit.reason.clone())
+        }).collect::<Result<Vec<_>, String>>()?);
+        if workspace_scan.truncated {
+            // Workspace discovery hit the max-visited-files cap; the file list
+            // is partial, so disclose the bound instead of silently analyzing
+            // a subset.
+            limitations.push(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::DiffScopeOversized,
+                    AnalysisStage::LanguageAdapter,
+                    AnalysisRecovery::new(
+                        AnalysisRecoveryKind::IncreaseConfiguredLimit,
+                        "Raise RIPR_TS_MAX_WORKSPACE_FILES, then re-run the analysis.",
+                    )?,
+                )
+                .with_detail(format!(
+                    "Workspace discovery stopped at the {}-entry visit cap ({TS_MAX_WORKSPACE_FILES_ENV}); discovered files are a partial set.",
+                    ts_workspace_file_limit()
                 ))?,
             );
         }

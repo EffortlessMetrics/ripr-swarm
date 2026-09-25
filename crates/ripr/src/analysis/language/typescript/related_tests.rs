@@ -47,11 +47,17 @@ impl ReExportIndex {
     /// star-re-exports (`export * from`) and non-relative sources are ignored
     /// (fail-closed).
     ///
+    /// `sources` is the Phase-1 workspace source cache: every file is read at
+    /// most once per analysis run. Files absent from the cache (unreadable or
+    /// over the read caps) are skipped here; their limitation disclosure is
+    /// owned by the read pipeline.
+    ///
     /// `alias_map` is forwarded to `normalized_relative_import_module` so that
     /// tsconfig.json-aliased sources (e.g. `@/owner`) can be followed through
     /// re-exports when `resolve_tsconfig_paths` is enabled.
     pub(crate) fn build(
         workspace_files: &[PathBuf],
+        sources: &HashMap<PathBuf, String>,
         workspace_root: &Path,
         alias_map: Option<&TsAliasMap>,
         is_test: impl Fn(&Path) -> bool,
@@ -64,8 +70,7 @@ impl ReExportIndex {
             if is_test(relative) {
                 continue;
             }
-            let absolute = workspace_root.join(relative);
-            let Ok(source) = std::fs::read_to_string(&absolute) else {
+            let Some(source) = sources.get(relative) else {
                 continue;
             };
             let allocator = Allocator::default();

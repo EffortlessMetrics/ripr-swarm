@@ -23,6 +23,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use super::bounded_read::read_config_capped;
+
 // ── Wire types for parsing ────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -174,7 +176,9 @@ pub(crate) fn load_alias_map(root: &Path) -> Option<TsAliasMap> {
         if !path.is_file() {
             continue;
         }
-        let text = std::fs::read_to_string(&path).ok()?;
+        // Capped read: an over-limit tsconfig is treated like any other
+        // unreadable/invalid config — fail-closed to `None`.
+        let text = read_config_capped(&path).ok()?;
         return parse_alias_map(root, &text);
     }
     None

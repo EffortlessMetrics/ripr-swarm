@@ -4325,6 +4325,73 @@ fn analyze_diff_discovers_and_analyzes_mts_sources() -> Result<(), String> {
 }
 
 #[test]
+fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), String> {
+    // A workspace file larger than the 16 MiB default per-file cap must not be
+    // silently skipped: it surfaces as a named limitation whose recovery names
+    // the env knob (bounded_read.rs contract).
+    let root = ts_unique_tempdir("capped-read")?;
+    ts_write_file(&root.join("src/ok.ts"), "export const ok = 1;\n")?;
+    let over_limit = vec![b'x'; (DEFAULT_TS_MAX_FILE_READ_BYTES + 1) as usize];
+    std::fs::write(root.join("src/huge.ts"), over_limit)
+        .map_err(|err| format!("write huge fixture: {err}"))?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    let capped = result.limitations.iter().find(|limitation| {
+        limitation
+            .bounded_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("file_read_capped"))
+    });
+    let capped = capped.ok_or_else(|| {
+        format!(
+            "expected a named limitation for the over-limit file; got {:?}",
+            result
+                .limitations
+                .iter()
+                .map(|limitation| limitation.bounded_detail.clone())
+                .collect::<Vec<_>>()
+        )
+    })?;
+    assert_eq!(capped.path.as_deref(), Some("src/huge.ts"));
+    assert!(matches!(
+        capped.kind,
+        AnalysisLimitationKind::LanguageScopeUnsupported
+    ));
+    assert!(
+        matches!(
+            capped.recovery.kind,
+            AnalysisRecoveryKind::IncreaseConfiguredLimit
+        ),
+        "recovery must name the configured limit, got {:?}",
+        capped.recovery.kind
+    );
+    assert!(
+        capped.recovery.detail.contains("RIPR_TS_MAX_FILE_READ_BYTES"),
+        "recovery must name the env knob: {}",
+        capped.recovery.detail
+    );
+    Ok(())
+}
+
+#[test]
 fn analyze_repo_discloses_partial_run_instead_of_silent_empty() -> Result<(), String> {
     let adapter = TypeScriptAdapter;
     let options = AnalysisOptions {
