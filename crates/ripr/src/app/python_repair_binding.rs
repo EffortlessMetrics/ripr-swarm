@@ -1373,6 +1373,32 @@ fn check_binding_artifact_chain(staged_sha256_prefixed: &str, claimed: &str) -> 
     Ok(())
 }
 
+/// The late-window manifest confirmation distinguishes a replaced manifest —
+/// a deliberate named refusal that maps to the decision exit code 3 — from
+/// operational failures reading the retained binding or the manifest itself,
+/// which map to exit code 2.
+pub(crate) enum ManifestConfirmationError {
+    /// The manifest digests differently from the retained binding's pinned
+    /// digest: replaced trust data refuses the finish.
+    Replaced(String),
+    /// The retained binding or the manifest could not be read or validated.
+    Operational(String),
+}
+
+impl ManifestConfirmationError {
+    pub(crate) fn message(&self) -> &str {
+        match self {
+            Self::Replaced(message) | Self::Operational(message) => message,
+        }
+    }
+}
+
+impl From<ManifestConfirmationError> for String {
+    fn from(error: ManifestConfirmationError) -> Self {
+        error.message().to_string()
+    }
+}
+
 /// Re-reads the selection manifest at its recorded telemetry path and
 /// requires the pinned digest. This closes the late publication window: the
 /// apply verification runs before several expensive after-phase operations,
@@ -1380,24 +1406,36 @@ fn check_binding_artifact_chain(staged_sha256_prefixed: &str, claimed: &str) -> 
 /// durable attempt advances. A manifest replaced inside that window refuses
 /// here, leaving the attempt `awaiting_edit` instead of recording an edit
 /// against silently replaced trust data.
-pub(crate) fn confirm_manifest_unchanged(retained: &RetainedBinding) -> Result<(), String> {
-    let record = as_object(&retained.value, "retained binding record")?;
+pub(crate) fn confirm_manifest_unchanged(
+    retained: &RetainedBinding,
+) -> Result<(), ManifestConfirmationError> {
+    let record = as_object(&retained.value, "retained binding record")
+        .map_err(ManifestConfirmationError::Operational)?;
     let trust = record
         .get("trust")
         .and_then(Value::as_object)
-        .ok_or_else(|| "retained binding record is missing trust".to_string())?;
-    let pinned = require_string("retained binding trust", trust, "selection_manifest_sha256")?;
+        .ok_or_else(|| {
+            ManifestConfirmationError::Operational(
+                "retained binding record is missing trust".to_string(),
+            )
+        })?;
+    let pinned = require_string("retained binding trust", trust, "selection_manifest_sha256")
+        .map_err(ManifestConfirmationError::Operational)?;
     let path = require_string(
         "retained binding record",
         record,
         TELEMETRY_MANIFEST_PATH_FIELD,
-    )?;
-    let (current, _) = load_selection_manifest(Path::new(&path))
-        .map_err(|error| format!("stale packet rejected before the durable finish: {error}"))?;
+    )
+    .map_err(ManifestConfirmationError::Operational)?;
+    let (current, _) = load_selection_manifest(Path::new(&path)).map_err(|error| {
+        ManifestConfirmationError::Operational(format!(
+            "stale packet rejected before the durable finish: {error}"
+        ))
+    })?;
     if current != pinned {
-        return Err(format!(
+        return Err(ManifestConfirmationError::Replaced(format!(
             "stale selection manifest: the retained binding pins manifest sha256 `{pinned}` but {path} now digests to `{current}`; a changed manifest requires a new re-authorized attempt"
-        ));
+        )));
     }
     Ok(())
 }
@@ -1953,14 +1991,17 @@ mod tests {
                 .map_err(|error| format!("serialize replaced manifest: {error}"))?;
             std::fs::write(&manifest_path, &replaced_text)
                 .map_err(|error| format!("write replaced manifest: {error}"))?;
-            let error = match confirm_manifest_unchanged(&retained) {
-                Err(error) => error,
+            let message = match confirm_manifest_unchanged(&retained) {
+                Err(ManifestConfirmationError::Replaced(message)) => message,
+                Err(ManifestConfirmationError::Operational(message)) => {
+                    return Err(format!("unexpected operational refusal: {message}"));
+                }
                 Ok(()) => {
                     return Err("a replaced manifest passed the late-window confirm".to_string());
                 }
             };
-            if !error.contains("stale selection manifest") {
-                return Err(format!("unexpected confirm refusal: {error}"));
+            if !message.contains("stale selection manifest") {
+                return Err(format!("unexpected confirm refusal: {message}"));
             }
             Ok(())
         })();

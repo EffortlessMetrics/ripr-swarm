@@ -317,6 +317,14 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     )
 }
 
+/// True when a `render_agent_verify` error is a deliberate named refusal
+/// (input-identity drift or a no-movement verify refusal) rather than an
+/// operational failure.
+fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
+    error.contains("analysis input identities differ")
+        || error.contains("no repository movement between before and after artifacts")
+}
+
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
     ensure_command_root(&options.root, "agent verify-execute")?;
     let outcome = app::verification_execution::execute_verify_packet(
@@ -589,10 +597,11 @@ struct AfterPhaseRefusalContext {
     selected_attempt: Option<(PathBuf, crate::app::repair_attempt::RepairAttemptId)>,
     narration: Vec<String>,
     /// Set only at a deliberate named refusal (diverged HEAD, drifted
-    /// analysis inputs, replaced trust-binding manifest): a refusal the
-    /// command narrates with its cause and recovery before returning. Only
-    /// this maps to the decision exit code 3; operational errors after
-    /// attempt selection (unreadable retained packet, failed snapshot write,
+    /// analysis inputs, a no-movement verify refusal, or a replaced
+    /// trust-binding manifest): a refusal the command narrates with its
+    /// cause and recovery before returning. Only this maps to the decision
+    /// exit code 3; operational errors after attempt selection (an
+    /// unreadable retained packet or manifest, a failed snapshot write,
     /// failed receipt or apply-record publication) stay exit code 2.
     typed: bool,
 }
@@ -833,15 +842,19 @@ fn run_agent_repair_phase(
             let rendered_verify = match render_agent_verify(&verify_options) {
                 Ok(rendered) => rendered,
                 Err(error) => {
-                    // The attempt is not finished yet, so it stays awaiting
-                    // the edit; name what moved and how to rerun. This is a
-                    // deliberate named refusal and maps to exit code 3.
-                    if error.contains("analysis input identities differ") {
-                        for line in repair_after_input_drift_lines(&root, &attempt) {
-                            refusal.narrate(line);
+                    // Only deliberate named refusals are typed (exit 3):
+                    // drifted analysis inputs and a no-movement verify
+                    // refusal. Snapshot canonicalization, reads, artifact
+                    // validation, and rendering failures are operational
+                    // (exit 2) even though the attempt was already selected.
+                    if agent_verify_error_is_typed_refusal(&error) {
+                        if error.contains("analysis input identities differ") {
+                            for line in repair_after_input_drift_lines(&root, &attempt) {
+                                refusal.narrate(line);
+                            }
                         }
+                        refusal.typed = true;
                     }
-                    refusal.typed = true;
                     return Err(error);
                 }
             };
@@ -857,7 +870,7 @@ fn run_agent_repair_phase(
             // an orchestrator can parse with one JSON.parse call.
             let after_tail = |refusal: &mut AfterPhaseRefusalContext| -> Result<String, String> {
                 use crate::app::python_repair_binding::{
-                    confirm_manifest_unchanged, write_apply_record,
+                    ManifestConfirmationError, confirm_manifest_unchanged, write_apply_record,
                 };
                 use crate::app::repair_attempt::{
                     finish_repair_attempt, restore_repair_attempt_to_awaiting_edit,
@@ -872,8 +885,14 @@ fn run_agent_repair_phase(
                 if let Some(binding) = &retained_binding
                     && let Err(error) = confirm_manifest_unchanged(binding)
                 {
-                    refusal.typed = true;
-                    return Err(error);
+                    // Only a manifest replaced inside the late window is a
+                    // deliberate named refusal (exit 3); a manifest or
+                    // retained binding that cannot be read or validated is
+                    // operational (exit 2).
+                    if matches!(error, ManifestConfirmationError::Replaced(_)) {
+                        refusal.typed = true;
+                    }
+                    return Err(error.into());
                 }
 
                 // Finish only after all command-owned after artifacts exist.
@@ -936,12 +955,15 @@ fn run_agent_repair_phase(
                 let apply_inputs = (&retained_binding, &verified_binding);
                 if let (Some(binding), Some(verified)) = apply_inputs {
                     // A manifest replaced inside the finalize window is a
-                    // deliberate named refusal (exit code 3); a record write
-                    // failure after a successful confirmation is operational
-                    // (exit code 2).
+                    // deliberate named refusal (exit code 3); a manifest or
+                    // retained binding that cannot be read or validated, and
+                    // a record write failure after a successful confirmation,
+                    // are operational (exit code 2).
                     if let Err(error) = confirm_manifest_unchanged(binding) {
-                        refusal.typed = true;
-                        apply_record_result = Err(error);
+                        apply_record_result = Err(error.message().to_string());
+                        if matches!(error, ManifestConfirmationError::Replaced(_)) {
+                            refusal.typed = true;
+                        }
                     } else {
                         let record_outcome = write_apply_record(
                             &root,

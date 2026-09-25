@@ -126,6 +126,10 @@ const DISPOSITION_WRITE_FAILED: &str = "verification_result_write_failed";
 struct Refusal {
     disposition: &'static str,
     reason: String,
+    /// True for a deliberate policy refusal (exit code 3): a typed refusal
+    /// RIPR declined to commit. False for an operational failure reading or
+    /// resolving execution state (exit code 2).
+    typed: bool,
 }
 
 impl Refusal {
@@ -133,6 +137,15 @@ impl Refusal {
         Self {
             disposition,
             reason: reason.into(),
+            typed: true,
+        }
+    }
+
+    fn operational(disposition: &'static str, reason: impl Into<String>) -> Self {
+        Self {
+            disposition,
+            reason: reason.into(),
+            typed: false,
         }
     }
 }
@@ -146,6 +159,10 @@ impl From<Refusal> for String {
 
 fn rejected(reason: impl Into<String>) -> Refusal {
     Refusal::new(DISPOSITION_REJECTED, reason)
+}
+
+fn operationally_rejected(reason: impl Into<String>) -> Refusal {
+    Refusal::operational(DISPOSITION_REJECTED, reason)
 }
 
 fn wrong_root(reason: impl Into<String>) -> Refusal {
@@ -297,7 +314,7 @@ fn refusal_outcome(refusal: &Refusal) -> ExecutionOutcome {
         rendered: render(&response),
         disposition: refusal.disposition,
         failed: true,
-        refused: true,
+        refused: refusal.typed,
     }
 }
 
@@ -338,7 +355,7 @@ fn run(
     let spec = &validated.command_spec;
     let root_identity = display_path(&root);
     let head_before = current_git_head(&root)
-        .map_err(|error| rejected(format!("read HEAD before execution failed: {error}")))?;
+        .map_err(|error| operationally_rejected(format!("read HEAD before execution failed: {error}")))?;
     let dirty_before = git_worktree_dirty(&root)?;
 
     // Disclosure is derived from the validated spec, never asserted as fixed
@@ -367,10 +384,10 @@ fn run(
     }
 
     let executable = std::env::current_exe()
-        .map_err(|error| rejected(format!("resolve ripr executable failed: {error}")))?;
+        .map_err(|error| operationally_rejected(format!("resolve ripr executable failed: {error}")))?;
     let observation = run_process(&executable, spec, &root, cancel_after_ms)?;
     let head_after = current_git_head(&root)
-        .map_err(|error| rejected(format!("read HEAD after execution failed: {error}")))?;
+        .map_err(|error| operationally_rejected(format!("read HEAD after execution failed: {error}")))?;
     let dirty_after = git_worktree_dirty(&root)?;
     let currentness = if head_before != head_after {
         VerificationCurrentnessV1::HistoricalNoncurrent
@@ -385,7 +402,7 @@ fn run(
         head_before: head_before.clone(),
         head_after: head_after.clone(),
         command_spec_sha256: crate::domain::command_spec_sha256(spec)
-            .map_err(|error| rejected(format!("command spec digest failed: {error}")))?,
+            .map_err(|error| operationally_rejected(format!("command spec digest failed: {error}")))?,
         process_disposition: observation.disposition,
         exit_status: observation.exit_status,
         stdout_sha256: digest(&observation.stdout.bytes),
