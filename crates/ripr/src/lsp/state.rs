@@ -1175,6 +1175,25 @@ fn apply_document_content_changes(
     Ok(())
 }
 
+fn invalidate_incremental_document_state(
+    state: &mut DocumentState,
+) -> QuarantineTransition {
+    let was_quarantined = state.quarantine.is_some();
+    let was_disclosed = state
+        .quarantine
+        .as_ref()
+        .is_some_and(|quarantine| quarantine.withdrawal_disclosed);
+    state.quarantine = Some(DocumentQuarantine {
+        reason: DocumentStalenessReason::InvalidIncrementalChange,
+        withdrawal_disclosed: was_disclosed,
+    });
+    if was_quarantined {
+        QuarantineTransition::Unchanged
+    } else {
+        QuarantineTransition::Entered
+    }
+}
+
 #[derive(Default)]
 pub(super) struct DocumentStore {
     pub(super) documents: BTreeMap<Uri, DocumentState>,
@@ -1238,20 +1257,7 @@ impl DocumentStore {
 
             if apply_document_content_changes(&mut state.text, changes, position_encoding).is_err()
             {
-                let was_quarantined = state.quarantine.is_some();
-                let was_disclosed = state
-                    .quarantine
-                    .as_ref()
-                    .is_some_and(|quarantine| quarantine.withdrawal_disclosed);
-                state.quarantine = Some(DocumentQuarantine {
-                    reason: DocumentStalenessReason::InvalidIncrementalChange,
-                    withdrawal_disclosed: was_disclosed,
-                });
-                return if was_quarantined {
-                    QuarantineTransition::Unchanged
-                } else {
-                    QuarantineTransition::Entered
-                };
+                return invalidate_incremental_document_state(state);
             }
             return state.refresh_quarantine();
         }
@@ -1280,6 +1286,23 @@ impl DocumentStore {
         let transition = state.refresh_quarantine();
         self.documents.insert(uri, state);
         transition
+    }
+
+    /// Fail closed when a didChange notification cannot be interpreted under
+    /// the session's negotiated position encoding. The server must not guess
+    /// an encoding and mutate retained text: the client may already have
+    /// applied the change, so line identity is unknown until synchronization
+    /// authority is re-established.
+    pub(super) fn invalidate_change(
+        &mut self,
+        uri: &Uri,
+        version: i32,
+    ) -> QuarantineTransition {
+        let Some(state) = self.state_for_uri_mut(uri) else {
+            return QuarantineTransition::Unchanged;
+        };
+        state.version = Some(version);
+        invalidate_incremental_document_state(state)
     }
 
     /// Record a save: the didSave digest is the new saved-content identity
@@ -1898,6 +1921,35 @@ mod tests {
         }
         if state.text != "a🎉b" {
             return Err("a rejected incremental change must not corrupt retained text".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_position_encoding_invalidates_without_mutating_retained_text() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        store
+            .documents
+            .insert(uri.clone(), clean_document_state(&uri, "aéb"));
+
+        let transition = store.invalidate_change(&uri, 2);
+        if transition != QuarantineTransition::Entered {
+            return Err("uninterpretable didChange must enter quarantine".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing document state".to_string());
+        };
+        if state.version != Some(2) {
+            return Err("uninterpretable didChange must still advance the observed version".into());
+        }
+        if state.text != "aéb" {
+            return Err("uninterpretable didChange must not guess an encoding or mutate text".into());
+        }
+        if state.quarantine.as_ref().map(|q| q.reason)
+            != Some(DocumentStalenessReason::InvalidIncrementalChange)
+        {
+            return Err("uninterpretable didChange must use invalid-change quarantine".into());
         }
         Ok(())
     }
