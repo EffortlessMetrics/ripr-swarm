@@ -2497,9 +2497,10 @@ fn report_packet_index_ripr_binary() -> Result<PathBuf, String> {
                 tool_build_timeout()?,
                 "report-packet-index dogfood build of ripr",
             )?;
-            let binary = PathBuf::from("target")
-                .join("debug")
-                .join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
+            // `cargo build` writes under CARGO_TARGET_DIR when it is set (routed
+            // CI and isolated worktrees set it), so the binary must be looked up
+            // there too; a hardcoded `target/debug` fails every case (#2176).
+            let binary = ripr_debug_binary();
             if !binary.exists() {
                 return Err(format!(
                     "report-packet-index dogfood build reported success but {} is absent",
