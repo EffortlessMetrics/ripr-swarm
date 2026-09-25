@@ -4262,7 +4262,7 @@ fn analyze_diff_discovers_and_analyzes_mts_sources() -> Result<(), String> {
 }
 
 #[test]
-fn analyze_repo_returns_empty_scaffold() -> Result<(), String> {
+fn analyze_repo_discloses_partial_run_instead_of_silent_empty() -> Result<(), String> {
     let adapter = TypeScriptAdapter;
     let options = AnalysisOptions {
         root: PathBuf::from("/nonexistent_workspace"),
@@ -4282,6 +4282,170 @@ fn analyze_repo_returns_empty_scaffold() -> Result<(), String> {
     let result = adapter.analyze_repo(&options, &policy)?;
     assert!(result.findings.is_empty());
     assert_eq!(result.production_files, 0);
+    // The stub discloses the partial run on the shared channel (the
+    // pipeline records a `Partial` language run from `partial_reason`),
+    // so repo-mode output is not a silently clean result.
+    assert_eq!(
+        result.partial_reason.as_deref(),
+        Some("typescript_repo_mode_not_implemented_diff_first")
+    );
+    Ok(())
+}
+
+/// Two identical added lines in the same owner collide on the
+/// content-addressed probe id (path/family/owner/normalized expression,
+/// no line number — classifier.rs). The adapter's post-hoc ordinal pass
+/// must keep both findings distinct: the first keeps its id, the second
+/// gets the `.2` suffix (mirror of the Rust path's `dedup_probe_ids`),
+/// so the packet projection's `finding.id` dedupe fingerprint cannot
+/// collapse two distinct changed lines into one.
+#[test]
+fn analyze_diff_dedups_colliding_probe_ids_for_identical_added_lines() -> Result<(), String> {
+    let root = ts_unique_tempdir("probe-dedup")?;
+
+    // Two identical `if (x > 0) {` guards in one owner function.
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function classify(x: number): number {\n  if (x > 0) {\n    return 1;\n  }\n  if (x > 0) {\n    return 2;\n  }\n  return 0;\n}\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/lib.ts"),
+        added_lines: vec![
+            crate::analysis::diff::ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "  if (x > 0) {".to_string(),
+            },
+            crate::analysis::diff::ChangedLine {
+                line: 5,
+                new_side_line: 5,
+                text: "  if (x > 0) {".to_string(),
+            },
+        ],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    assert_eq!(
+        result.findings.len(),
+        2,
+        "both identical added lines must produce a finding each"
+    );
+    let first = &result.findings[0];
+    let second = &result.findings[1];
+    assert_eq!(first.probe.location.line, 2, "findings stay in diff order");
+    assert_eq!(second.probe.location.line, 5);
+    assert_ne!(
+        first.id, second.id,
+        "colliding probe ids must be de-duped into distinct identities"
+    );
+    // Second occurrence carries the ordinal suffix on probe and finding id.
+    let expected_second = format!("{}.2", first.probe.id.0);
+    assert_eq!(
+        second.probe.id.0, expected_second,
+        "second occurrence must append the .2 collision suffix"
+    );
+    assert_eq!(
+        second.id, second.probe.id.0,
+        "finding id must track the de-duped probe id"
+    );
+    // First occurrence keeps its ordinal-1 id: the fp8 hex tail carries no
+    // `.N` suffix (the id legitimately contains '.' from the file name, so
+    // only the last colon-separated segment is checked).
+    let tail = first.probe.id.0.rsplit(':').next().unwrap_or("");
+    assert!(
+        !tail.contains('.'),
+        "ordinal-1 id must stay suffix-free, got {}",
+        first.probe.id.0
+    );
+    Ok(())
+}
+
+/// Single-occurrence findings keep their ordinal-1 ids: the de-dup pass
+/// must not perturb ids that occur once. This pins the stability of the
+/// existing TS fixture goldens (e.g. `fixtures/typescript_strong_oracle`
+/// pins `probe:src_discount.ts:typescript_preview:2396aec1`).
+#[test]
+fn analyze_diff_keeps_single_occurrence_probe_ids_stable() -> Result<(), String> {
+    let root = ts_unique_tempdir("probe-stable")?;
+
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/lib.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "  if (amount >= threshold) {".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    assert_eq!(result.findings.len(), 1);
+    let finding = &result.findings[0];
+    let owner = finding
+        .probe
+        .owner
+        .as_ref()
+        .ok_or_else(|| "expected a resolved owner".to_string())?;
+    // Recompute the content-addressed id exactly as the adapter does;
+    // ordinal 1 means no collision suffix.
+    let expected = fingerprint_probe_id(
+        "probe",
+        "src_lib.ts",
+        "typescript_preview",
+        owner.0.as_str(),
+        &normalize_expression("  if (amount >= threshold) {"),
+        1,
+    );
+    assert_eq!(
+        finding.probe.id, expected,
+        "single-occurrence probe id must stay exactly the ordinal-1 id"
+    );
+    assert_eq!(finding.id, expected.0);
     Ok(())
 }
 
