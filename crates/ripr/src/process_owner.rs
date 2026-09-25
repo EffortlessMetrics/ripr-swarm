@@ -80,6 +80,10 @@ impl OwnedProcess {
         }
         #[cfg(not(windows))]
         {
+            // The passthrough spawn configures the prepared command in
+            // place; the owned binding keeps the call site identical to
+            // the Windows arm's by-value consumption.
+            let mut command = command;
             let child = command.spawn()?;
             Ok(Self { child })
         }
@@ -92,12 +96,26 @@ impl OwnedProcess {
 
     /// Take the piped stdout declared on the command before spawning.
     pub fn stdout_pipe(&mut self) -> &mut Option<ChildStdout> {
-        self.child.stdout()
+        #[cfg(windows)]
+        {
+            self.child.stdout()
+        }
+        #[cfg(not(windows))]
+        {
+            &mut self.child.stdout
+        }
     }
 
     /// Take the piped stderr declared on the command before spawning.
     pub fn stderr_pipe(&mut self) -> &mut Option<ChildStderr> {
-        self.child.stderr()
+        #[cfg(windows)]
+        {
+            self.child.stderr()
+        }
+        #[cfg(not(windows))]
+        {
+            &mut self.child.stderr
+        }
     }
 
     /// Non-blocking exit check for the direct child.
@@ -119,6 +137,24 @@ impl OwnedProcess {
         }
     }
 
+    /// Request termination of the owned primary process without waiting.
+    ///
+    /// Windows: the Job Object kill request. Other platforms:
+    /// `std::process::Child::kill`, which — like the Job Object request —
+    /// returns `Ok(())` for an already-exited child and never waits, so the
+    /// owner's terminate-then-reap sequence stays the single reaping
+    /// authority.
+    fn request_kill(&mut self) -> std::io::Result<()> {
+        #[cfg(windows)]
+        {
+            self.child.start_kill()
+        }
+        #[cfg(not(windows))]
+        {
+            self.child.kill()
+        }
+    }
+
     /// Terminate the whole owned tree and reap the direct child before
     /// returning. Windows: one termination request kills every process in
     /// the job. Other platforms: the direct child kill and reap.
@@ -126,7 +162,7 @@ impl OwnedProcess {
     /// The `Err` arm reports the typed termination or reap failure; the
     /// reap is still attempted in that case so no zombie remains.
     pub fn terminate_tree(&mut self) -> Result<(), String> {
-        let termination = self.child.start_kill().map_err(|err| err.to_string());
+        let termination = self.request_kill().map_err(|err| err.to_string());
         let reap = self.wait();
         match (termination, reap) {
             (Err(err), _) => Err(format!("failed to terminate owned process: {err}")),
@@ -152,7 +188,7 @@ impl Drop for OwnedProcess {
         // reaps the direct child first. Both steps are best-effort here;
         // typed evidence belongs to `terminate_tree`, which every explicit
         // termination path uses.
-        let _ = self.child.start_kill();
+        let _ = self.request_kill();
         let _ = self.wait();
     }
 }
@@ -163,6 +199,7 @@ mod tests {
     use std::io::Read;
     use std::process::Stdio;
 
+    #[cfg(windows)]
     fn platform_sleep_command(seconds: u32) -> Command {
         #[cfg(windows)]
         {
@@ -182,6 +219,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     fn alive_on_windows(pid: u32) -> bool {
         #[cfg(windows)]
         {
