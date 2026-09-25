@@ -2235,8 +2235,10 @@ re-imports the drift main already repaired.
 
 **`git merge --squash` cannot be undone with `git merge --abort`.** No
 `MERGE_HEAD` is recorded, so a conflicted squash merge leaves the index
-conflicted and `checkout -B` carries the mess forward. Repair:
-`git reset --hard <base>` before re-trying. Related: piping
+conflicted and `checkout -B` carries the mess forward. Repair: first commit
+or back up unrelated local work (a hard reset discards tracked changes and
+may overwrite untracked files), then `git reset --hard <base>` before
+re-trying. Related: piping
 `git apply --3way` through `head` kills it with SIGPIPE mid-apply — capture
 full output to a file instead.
 
