@@ -23,6 +23,7 @@ use crate::cli::commands_agent_support::{
 use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
 use crate::config::load_for_root;
 use crate::output;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::{
     fs::File,
@@ -32,6 +33,14 @@ use std::{
 use super::agent_dispatch;
 use super::agent_gap_packet::render_agent_packet_from_gap_ledger;
 use super::write_text_file;
+
+/// Schema version of the `ripr agent repair --phase after` success envelope
+/// (`kind: "repair_after_result"`). The envelope is its own versioned
+/// contract: the agent verify 0.3 document rides unchanged under `verify`
+/// and the agent status 0.1 document under `agent_status`, so every stdout
+/// document's shape is identifiable from its `schema_version`. Refusal
+/// paths keep printing the bare agent verify 0.3 document instead.
+const REPAIR_AFTER_RESULT_SCHEMA_VERSION: &str = "0.1";
 
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
     let command = parse_agent_args(args)?;
@@ -64,14 +73,68 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
 }
 
 fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
+    let json = options.json;
     let written = write_agent_start(options)?;
-    for path in &written.paths {
-        println!("Wrote {}", path.display());
+    if json {
+        // Machine-readable mode: one JSON document with the same information
+        // the prose lines carry. The prose output remains the default.
+        let rendered = render_agent_start_json(&written)?;
+        print!("{rendered}");
+        return Ok(());
     }
-    if let Some(next) = &written.next_command {
-        println!("Next: {next}");
+    for line in agent_start_prose_lines(&written) {
+        println!("{line}");
     }
     Ok(())
+}
+
+/// The default human output of `agent start`: one `Wrote <path>` line per
+/// written workflow artifact, then the first missing-input command when one
+/// exists.
+fn agent_start_prose_lines(written: &AgentStartWritten) -> Vec<String> {
+    let mut lines = written
+        .paths
+        .iter()
+        .map(|path| format!("Wrote {}", path.display()))
+        .collect::<Vec<_>>();
+    if let Some(next) = &written.next_command {
+        lines.push(format!("Next: {next}"));
+    }
+    lines
+}
+
+/// Render the `ripr agent start --json` document. Field names match the
+/// workflow manifest's `outputs` block (`workflow_manifest`,
+/// `commands_markdown`, `agent_brief`) and the agent status `next_command`
+/// name; `next_command` is `null` when every workflow input is present.
+fn render_agent_start_json(written: &AgentStartWritten) -> Result<String, String> {
+    use crate::agent::loop_commands::{
+        WORKFLOW_AGENT_BRIEF_ARTIFACT, WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT,
+        WORKFLOW_MANIFEST_ARTIFACT,
+    };
+    let paths = &written.paths;
+    // Match each path by artifact identity, not write order: a future
+    // reorder (or an added artifact) in `write_agent_start` must not
+    // silently remap fields.
+    let path_for = |artifact: &str| -> Option<String> {
+        let file_name = std::path::Path::new(artifact).file_name()?;
+        paths
+            .iter()
+            .find(|path| path.file_name() == Some(file_name))
+            .map(|path| path.display().to_string())
+    };
+    let value = serde_json::json!({
+        "schema_version": app::agent_workflow::AGENT_WORKFLOW_SCHEMA_VERSION,
+        "tool": "ripr",
+        "kind": "agent_start",
+        "workflow": {
+            "workflow_manifest": path_for(WORKFLOW_MANIFEST_ARTIFACT),
+            "commands_markdown": path_for(WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT),
+            "agent_brief": path_for(WORKFLOW_AGENT_BRIEF_ARTIFACT),
+        },
+        "next_command": written.next_command,
+    });
+    output::json::render_pretty_with_newline(&value, "agent start")
 }
 
 /// Files written by `agent start` and the first missing-input command.
@@ -566,14 +629,29 @@ fn run_agent_repair_phase(
                 root.display()
             );
 
-            // Compose existing commands: start (creates workflow + brief) + packet.
-            // Stdout carries only the packet JSON. The start step's
-            // `Next: ripr check ...` hint is dropped because this phase writes
-            // that before snapshot itself; printing it sent users to redo it.
+            // Render and admit the packet first (F15-12): a seam whose repair
+            // packet names no test file ripr may edit refuses here, before any
+            // workflow artifact is written, so neither this phase nor
+            // `ripr agent status` reads as a started repair.
+            let packet = render_agent_packet(&AgentPacketOptions {
+                root: root.clone(),
+                seam_id: Some(seam_id.clone()),
+                gap_ledger: None,
+                gap_id: None,
+                json: true,
+            })?;
+            crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
+                .map_err(|error| before_phase_refusal(&seam_id, &error))?;
+
+            // Compose existing commands: start (creates workflow + brief) +
+            // packet. The start step's `Next: ripr check ...` hint is dropped
+            // because this phase writes that before snapshot itself; printing
+            // it sent users to redo it.
             let started = write_agent_start(AgentStartOptions {
                 root: root.clone(),
                 seam_id: seam_id.clone(),
                 out_dir: std::path::PathBuf::from("target/ripr/workflow"),
+                json: false,
             })?;
             for path in &started.paths {
                 eprintln!("ripr: wrote {}", path.display());
@@ -582,21 +660,24 @@ fn run_agent_repair_phase(
             let before = root.join("target/ripr/workflow/before.repo-exposure.json");
             write_agent_repo_exposure_snapshot(&root, &before)?;
 
-            let packet = render_agent_packet(&AgentPacketOptions {
-                root: root.clone(),
-                seam_id: Some(seam_id),
-                gap_ledger: None,
-                gap_id: None,
-                json: true,
-            })?;
             let packet_path = root.join("target/ripr/workflow/agent-packet.json");
             write_text_file(&packet_path, &packet)?;
-            print!("{packet}");
-
             eprintln!("ripr: wrote {}", packet_path.display());
-            eprintln!(
-                "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below."
+            // Stdout carries the packet JSON when it is piped or redirected,
+            // which is how agents and scripts read it. A terminal reader gets
+            // a short summary instead of ~13 KB of JSON (F15-7); the packet
+            // file above is the same bytes either way.
+            print!(
+                "{}",
+                before_phase_stdout(
+                    &packet,
+                    "target/ripr/workflow/agent-packet.json",
+                    std::io::stdout().is_terminal(),
+                )
             );
+            // "Complete" and the next step are printed once the attempt is
+            // published (`cli::persist_before_repair_attempt`), so a refusal
+            // there is never preceded by a completion line.
             Ok(())
         }
         AgentRepairPhase::After => {
@@ -736,11 +817,12 @@ fn run_agent_repair_phase(
 
             // Stdout carries exactly one JSON document on every path, like
             // every other agent command. The verify outcome is held until the
-            // tail below settles: on success the single document is the verify
-            // result with the status report embedded; when the tail refuses,
-            // the verify document alone is printed — the refusal bytes this
-            // phase always produced, and still one document an orchestrator
-            // can parse with one JSON.parse call.
+            // tail below settles: on success the single document is the
+            // repair-after-result envelope carrying the verify result under
+            // `verify` and the status report under `agent_status`; when the
+            // tail refuses, the verify document alone is printed — the
+            // refusal bytes this phase always produced, and still one document
+            // an orchestrator can parse with one JSON.parse call.
             let after_tail = || -> Result<String, String> {
                 use crate::app::python_repair_binding::{
                     confirm_manifest_unchanged, write_apply_record,
@@ -871,21 +953,25 @@ fn run_agent_repair_phase(
                     return Err(error);
                 }
             };
-            let mut document: serde_json::Value = serde_json::from_str(&rendered_verify)
+            let document: serde_json::Value = serde_json::from_str(&rendered_verify)
                 .map_err(|error| format!("parse rendered agent verify JSON failed: {error}"))?;
             let status_document: serde_json::Value = serde_json::from_str(&status_rendered)
                 .map_err(|error| format!("parse rendered agent status JSON failed: {error}"))?;
-            // The verify outcome already owns the top-level `status` name
-            // (`advisory`), so the status report rides under `agent_status`;
-            // every existing verify field keeps its name and value.
-            document
-                .as_object_mut()
-                .ok_or_else(|| {
-                    "rendered agent verify JSON must be an object for agent_status nesting"
-                        .to_string()
-                })?
-                .insert("agent_status".to_string(), status_document);
-            let combined = serde_json::to_string_pretty(&document).map_err(|error| {
+            // The success output is its own versioned envelope
+            // (`repair_after_result`), not a mutated verify document: the
+            // verify outcome already owns the top-level `status` name
+            // (`advisory`), so splicing `agent_status` into the 0.3 document
+            // would leave two same-version documents with different shapes.
+            // The verify document keeps every field, name, and value under
+            // `verify`, and the status report rides beside it under
+            // `agent_status`.
+            let envelope = serde_json::json!({
+                "schema_version": REPAIR_AFTER_RESULT_SCHEMA_VERSION,
+                "kind": "repair_after_result",
+                "verify": document,
+                "agent_status": status_document,
+            });
+            let combined = serde_json::to_string_pretty(&envelope).map_err(|error| {
                 format!("serialize after-phase result document failed: {error}")
             })?;
             println!("{combined}");
@@ -1153,6 +1239,75 @@ fn repair_after_input_drift_lines(
         )),
     }
     lines
+}
+
+/// A before phase refused because the seam's repair packet cannot bound a
+/// test-only edit. Names the seam and the reason in plain words, says that
+/// nothing was started, and points at the surfaces that only offer a repair
+/// start for seams that pass this check.
+fn before_phase_refusal(seam_id: &str, error: &str) -> String {
+    format!(
+        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. Pick a seam whose `ripr pilot` output or review card shows a repair start. Cause: {error}"
+    )
+}
+
+/// What the before phase prints on stdout: the packet JSON for a pipe or
+/// file, a short summary for a terminal. A packet the summary cannot read
+/// falls back to the JSON, so nothing is hidden.
+fn before_phase_stdout(packet: &str, packet_path: &str, terminal: bool) -> String {
+    if terminal && let Some(summary) = before_phase_summary(packet, packet_path) {
+        return summary;
+    }
+    packet.to_string()
+}
+
+fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(packet).ok()?;
+    let item = value.get("packets")?.as_array()?.first()?;
+    let text = |pointer: &str| {
+        item.pointer(pointer)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+    };
+    let seam_id = text("/seam_id")?;
+    let test_file = text("/recommended_test/file")?;
+    let mut lines = Vec::new();
+    let location = match (
+        text("/file"),
+        item.get("line").and_then(serde_json::Value::as_u64),
+    ) {
+        (Some(file), Some(line)) => format!(" at {file}:{line}"),
+        (Some(file), None) => format!(" at {file}"),
+        _ => String::new(),
+    };
+    let owner = text("/owner")
+        .map(|owner| format!(" in {owner}"))
+        .unwrap_or_default();
+    lines.push(format!(
+        "Repair prepared for seam {seam_id}{location}{owner}."
+    ));
+    if let Some(expression) = text("/changed_expression") {
+        lines.push(format!("  changed behavior: {expression}"));
+    }
+    if let Some(missing) = text("/missing_discriminators/0/value") {
+        lines.push(format!("  missing discriminator: {missing}"));
+    }
+    match text("/recommended_test/name") {
+        Some(name) => lines.push(format!(
+            "  edit one test file: {test_file} (suggested test `{name}`); leave production code unchanged"
+        )),
+        None => lines.push(format!(
+            "  edit one test file: {test_file}; leave production code unchanged"
+        )),
+    }
+    if let Some(assertion) = text("/suggested_assertions/0") {
+        lines.push(format!("  assertion shape: {assertion}"));
+    }
+    lines.push(format!(
+        "  full repair packet (JSON): {packet_path}; stdout carries it when piped"
+    ));
+    Some(lines.join("\n") + "\n")
 }
 
 fn short_head(head: &str) -> &str {
@@ -1712,5 +1867,144 @@ mod repair_summary_tests {
     fn repair_summary_is_empty_when_the_receipt_lacks_movement() {
         assert!(repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#).is_empty());
         assert!(repair_receipt_summary_lines("not json").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod before_phase_stdout_tests {
+    use super::before_phase_stdout;
+
+    const PACKET: &str = r#"{
+  "schema_version": "0.1",
+  "packets": [
+    {
+      "seam_id": "0d196886bad1b124",
+      "owner": "src/lib.rs::discounted_total",
+      "file": "src/lib.rs",
+      "line": 11,
+      "changed_expression": "amount >= DISCOUNT_THRESHOLD",
+      "recommended_test": {
+        "name": "discounted_total_boundary_discriminator",
+        "file": "tests/pricing.rs"
+      },
+      "missing_discriminators": [
+        { "value": "DISCOUNT_THRESHOLD (equality boundary)" }
+      ],
+      "suggested_assertions": ["assert_eq!(discounted_total(10_000), 9_000)"]
+    }
+  ]
+}"#;
+
+    /// F15-7: a pipe or file gets the packet JSON byte for byte, so agents
+    /// and scripts that parse stdout keep their contract.
+    #[test]
+    fn piped_stdout_is_the_packet_json_unchanged() {
+        assert_eq!(
+            before_phase_stdout(PACKET, "target/ripr/workflow/agent-packet.json", false),
+            PACKET
+        );
+    }
+
+    /// F15-7: a terminal gets a short summary naming the seam, the one test
+    /// file to edit, and where the full packet is, instead of the JSON.
+    #[test]
+    fn terminal_stdout_is_a_short_summary_of_the_same_packet() {
+        let summary = before_phase_stdout(PACKET, "target/ripr/workflow/agent-packet.json", true);
+        assert!(!summary.contains('{'), "{summary}");
+        assert!(summary.lines().count() <= 8, "{summary}");
+        for expected in [
+            "Repair prepared for seam 0d196886bad1b124 at src/lib.rs:11 in src/lib.rs::discounted_total.",
+            "  changed behavior: amount >= DISCOUNT_THRESHOLD",
+            "  missing discriminator: DISCOUNT_THRESHOLD (equality boundary)",
+            "  edit one test file: tests/pricing.rs (suggested test `discounted_total_boundary_discriminator`); leave production code unchanged",
+            "  assertion shape: assert_eq!(discounted_total(10_000), 9_000)",
+            "  full repair packet (JSON): target/ripr/workflow/agent-packet.json; stdout carries it when piped",
+        ] {
+            assert!(
+                summary.lines().any(|line| line == expected),
+                "missing `{expected}` in:\n{summary}"
+            );
+        }
+    }
+
+    /// A packet the summary cannot read (no test file) falls back to the JSON
+    /// rather than hiding it behind an empty summary.
+    #[test]
+    fn unreadable_packet_falls_back_to_the_json_on_a_terminal() {
+        let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
+        assert_eq!(before_phase_stdout(packet, "p", true), packet);
+    }
+}
+
+#[cfg(test)]
+mod start_output_tests {
+    use super::{AgentStartWritten, agent_start_prose_lines, render_agent_start_json};
+    use std::path::PathBuf;
+
+    fn written(next_command: Option<String>) -> AgentStartWritten {
+        AgentStartWritten {
+            paths: vec![
+                PathBuf::from("target/ripr/workflow/workflow.json"),
+                PathBuf::from("target/ripr/workflow/commands.md"),
+                PathBuf::from("target/ripr/workflow/agent-brief.json"),
+            ],
+            next_command,
+        }
+    }
+
+    #[test]
+    fn agent_start_json_carries_workflow_paths_and_next_command() -> Result<(), String> {
+        let rendered = render_agent_start_json(&written(Some(
+            "ripr check --root . --format json > target/ripr/workflow/before.repo-exposure.json"
+                .to_string(),
+        )))?;
+        let value: serde_json::Value = serde_json::from_str(&rendered)
+            .map_err(|err| format!("agent start JSON must parse: {err}"))?;
+        assert_eq!(value["schema_version"], "0.1");
+        assert_eq!(value["kind"], "agent_start");
+        assert_eq!(
+            value["workflow"]["workflow_manifest"],
+            "target/ripr/workflow/workflow.json"
+        );
+        assert_eq!(
+            value["workflow"]["commands_markdown"],
+            "target/ripr/workflow/commands.md"
+        );
+        assert_eq!(
+            value["workflow"]["agent_brief"],
+            "target/ripr/workflow/agent-brief.json"
+        );
+        assert_eq!(
+            value["next_command"],
+            "ripr check --root . --format json > target/ripr/workflow/before.repo-exposure.json"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_start_json_next_command_is_null_when_every_input_is_present() -> Result<(), String> {
+        let rendered = render_agent_start_json(&written(None))?;
+        let value: serde_json::Value = serde_json::from_str(&rendered)
+            .map_err(|err| format!("agent start JSON must parse: {err}"))?;
+        assert_eq!(value["next_command"], serde_json::Value::Null);
+        assert!(value["workflow"]["agent_brief"].is_string());
+        Ok(())
+    }
+
+    #[test]
+    fn agent_start_prose_default_names_every_written_path() {
+        let lines = agent_start_prose_lines(&written(Some("ripr pilot --root .".to_string())));
+        assert_eq!(
+            lines,
+            vec![
+                "Wrote target/ripr/workflow/workflow.json".to_string(),
+                "Wrote target/ripr/workflow/commands.md".to_string(),
+                "Wrote target/ripr/workflow/agent-brief.json".to_string(),
+                "Next: ripr pilot --root .".to_string(),
+            ]
+        );
+        let without_next = agent_start_prose_lines(&written(None));
+        assert_eq!(without_next.len(), 3);
+        assert!(!without_next.iter().any(|line| line.starts_with("Next:")));
     }
 }

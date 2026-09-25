@@ -45,6 +45,7 @@ map is:
 | `ripr agent packet` | `schema_version` | `0.4` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
+| `ripr agent repair --phase after` success stdout | `schema_version` | `0.1` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
@@ -6645,6 +6646,54 @@ Field contract:
 - `new_gaps[]` / `resolved_gaps[]` - seam identity and static class for seam IDs
   present in only one snapshot.
 
+### Agent repair after-phase stdout
+
+`ripr agent repair --attempt <id> --phase after` holds the verify render until
+its post-verify tail (edit-cage finish, receipt write, apply record) settles,
+then prints exactly one JSON document on stdout. On success the document is
+its own versioned envelope, not a mutated verify document:
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "repair_after_result",
+  "verify": {
+    "schema_version": "0.3",
+    "tool": "ripr",
+    "status": "advisory"
+  },
+  "agent_status": {
+    "schema_version": "0.1",
+    "status": "complete"
+  }
+}
+```
+
+Field contract:
+
+- `schema_version` - currently `"0.1"`, versioning the envelope contract
+  independently of both children. The envelope exists so every stdout
+  document's shape is identifiable from its `schema_version`: the success
+  document wraps the two children instead of splicing `agent_status` into the
+  verify 0.3 document, which would leave two documents sharing one
+  `schema_version` with different shapes depending on the invocation path.
+- `kind` - always `"repair_after_result"`.
+- `verify` - the agent verify `0.3` document: every verify field keeps its
+  name and value, including the verify outcome's own top-level `status`
+  (keys are re-serialized in sorted order, so bytes may differ from a direct
+  `ripr agent verify --json` capture even though every field is identical). Consumers must read the verify
+  outcome under `verify`, not at the envelope top level.
+- `agent_status` - what `ripr agent status --json` prints at this point (agent
+  status `0.1`), embedded beside the verify document because the verify
+  outcome already owns the `status` field name.
+- Refusal paths are the exception, not the envelope: when the after phase
+  refuses after the verify render (for example the receipt is not
+  receipt-ready or the apply record failed), stdout is the bare agent verify
+  `0.3` document alone — a pure verify document, honestly labeled, still one
+  parseable document. A consumer dispatching on `schema_version` therefore
+  sees `0.1` only for the two-child envelope and `0.3` only for the pure
+  verify document, whichever path produced it.
+
 ## Agent Verify Execute
 
 `ripr agent verify-execute --root <workspace> --packet <packet-json>
@@ -10125,7 +10174,8 @@ JSON shape:
     "suppressed": 0,
     "blocking_candidates": 0,
     "visible_unresolved": 41,
-    "ripr_zero_state": "not_yet"
+    "ripr_zero_state": "not_yet",
+    "count_source": "baseline_delta"
   },
   "gate": {
     "mode": "baseline-check",
@@ -10219,6 +10269,11 @@ Field contract:
   or all evidence sources are missing.
 - `movement.*` - copied or derived from existing gate, baseline delta, and RIPR
   Zero status artifacts. The ledger must not recompute analyzer semantics.
+- `movement.count_source` - `baseline_delta`, `ripr_zero_status`, or
+  `not_measured`. With `not_measured` neither artifact was supplied, so
+  `new_policy_eligible`, `baseline_still_present`, `baseline_resolved`, and
+  `visible_unresolved` hold their zero defaults and are not evidence of zero
+  gaps; the Markdown renders those rows as `not measured`.
 - `gate.pass_fail_authority` - names `ripr gate evaluate` whenever a gate
   decision is present.
 - `waivers[]` - PR-time visible acknowledgement records. Waivers do not hide
@@ -11996,6 +12051,15 @@ Field contract:
 - `artifacts[]` - one entry for each required fixed artifact. `bytes` and
   `modified_unix_ms` are `null` when the artifact is missing or the filesystem
   does not expose the timestamp.
+- Volatile fields: `artifacts[].modified_unix_ms` is wall-clock state read
+  from the filesystem at report time, not analysis output. Two consecutive
+  `agent status --json` runs over an unchanged artifact tree can produce
+  different bytes for this field alone. Snapshot-based consumers must exclude
+  `artifacts[].modified_unix_ms` from snapshot assertions (and from any
+  byte-equality diff of the document). `artifacts[].bytes` is content-derived
+  and is stable while the artifact bytes are unchanged. The same rule applies
+  to the `agent_status` document embedded by `ripr agent repair --phase after`
+  (#4052), which is the same schema.
 - `missing_commands[]` - one command for each missing artifact in workflow
   order: before snapshot, packet, brief, after snapshot, verify, receipt. If no
   seam can be recovered, packet, brief, and receipt commands use `<seam-id>`.
@@ -12148,7 +12212,7 @@ The JSON schema is version `0.1`:
       "state": "computed",
       "status": "complete",
       "required": true,
-      "summary": "6 required artifacts present, 0 missing, 0 warnings."
+      "summary": "6 of 6 required artifacts present, 0 missing, 0 warnings."
     }
   ],
   "ci_artifacts": [
@@ -13039,7 +13103,7 @@ The queue envelope is:
         "reason": "repo-exposure source input identity no longer matches the current producer configuration; regenerate the source and ledger before assignment"
       },
       "refresh_commands": [
-        "ripr agent check-repo-exposure --root . --repo-exposure target/ripr/reports/repo-exposure.json --mode draft",
+        "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/reports/repo-exposure.json",
         "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --root . --out target/ripr/reports/gap-decision-ledger.json"
       ]
     }
@@ -14738,7 +14802,7 @@ JSON shape:
         "markdown_path": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
         "expected_report": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.json",
         "expected_markdown": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
-        "status": "pass",
+        "status": "warn",
         "missing_expected": 0,
         "warnings": 0,
         "failures": 0,
@@ -14754,7 +14818,7 @@ JSON shape:
           "validation_receipts",
           "sarif_badges"
         ],
-        "expected_status": "pass",
+        "expected_status": "warn",
         "expected_missing_expected": 0,
         "expected_warnings": 0,
         "expected_failures": 0,
@@ -15090,13 +15154,13 @@ The checked report-packet index receipt cases are:
 
 | Case | Expected status | Purpose |
 | --- | --- | --- |
-| `complete_packet` | `pass` | Shows the complete reviewer-first packet, including start-here and gate-authority links. |
+| `complete_packet` | `warn` | Shows the complete reviewer-first packet, including start-here and gate-authority links. |
 | `sparse_advisory` | `warn` | Keeps sparse adoption advisory while showing missing optional surfaces. |
 | `missing_front_panel` | `warn` | Makes a missing first-screen front panel visible instead of forcing artifact archaeology. |
 | `blocked_gate` | `fail` | Preserves a configured blocked gate state while naming gate decision as authority. |
 | `missing_assistant_proof` | `warn` | Routes users to regenerate missing assistant proof instead of hiding the gap. |
 | `missing_receipts` | `warn` | Shows missing validation receipts and their regeneration commands. |
-| `coverage_grip_present` | `pass` | Keeps coverage/grip context findable as calibration context, not runtime confirmation. |
+| `coverage_grip_present` | `warn` | Keeps coverage/grip context findable as calibration context, not runtime confirmation. |
 
 The checked generated-CI cockpit receipt cases are:
 

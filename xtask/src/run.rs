@@ -272,6 +272,30 @@ pub(crate) fn run_output(program: &str, args: &[&str]) -> Result<String, String>
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// `run_output` returning raw stdout bytes (#4006). Path inventories decode
+/// through the shared NUL authority at the call site; `String::from_utf8_lossy`
+/// here would collapse non-UTF-8 names before identity comparison.
+/// Delegates to the shared capture spawn site, so this adds no new process
+/// spawn for the process-policy gate; failure messages carry the shared
+/// runner's stdout/stderr context instead of `run_output`'s terse form.
+pub(crate) fn run_output_bytes(program: &str, args: &[&str]) -> Result<Vec<u8>, String> {
+    let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    capture_process_output_in(program, &owned, None, &[], &[], &[]).map_err(|error| error.message)
+}
+
+/// `run_output_optional` returning raw stdout bytes (#4006): success yields
+/// stdout, exit failure yields empty output, launch failure still errors —
+/// the exact `run_output_optional` contract, without lossy decoding and
+/// without a new spawn site (see `run_output_bytes`).
+pub(crate) fn run_output_optional_bytes(program: &str, args: &[&str]) -> Result<Vec<u8>, String> {
+    let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    match capture_process_output_in(program, &owned, None, &[], &[], &[]) {
+        Ok(stdout) => Ok(stdout),
+        Err(error) if matches!(error.kind, ProcessErrorKind::Exit) => Ok(Vec::new()),
+        Err(error) => Err(error.message),
+    }
+}
+
 pub(crate) fn run_output_owned(program: &str, args: &[String]) -> Result<String, String> {
     run_output_owned_with_envs(program, args, &[])
 }

@@ -15,9 +15,9 @@ undocumented override.
 | `policy/clippy-debt.toml` | Temporary Clippy debt entries | `cargo xtask check-lint-policy` |
 | `policy/clippy-exceptions.toml` | Per-site Clippy suppression receipts; test-valued `covered_by` claims | `cargo xtask check-covered-by` (structural/expiry + `covered_by`); `check-allow-attributes` still reads only `.ripr/allow-attributes.txt` |
 | `policy/dependency_allowlist.txt` | Allowed crate dependencies | `cargo xtask check-dependencies` |
-| `policy/ci-budget.toml` | LEM bands and enforcement posture | `cargo xtask ci plan` |
-| `policy/ci-lane-whitelist.toml` | Lane definitions and base LEM | `cargo xtask ci plan` |
-| `policy/ci-risk-packs.toml` | Changed-path → risk-pack mapping | `cargo xtask ci plan` |
+| `policy/ci-budget.toml` | LEM bands and enforcement posture | `cargo xtask check-ci-lane-whitelist` |
+| `policy/ci-lane-whitelist.toml` | Lane definitions and base LEM | `cargo xtask check-ci-lane-whitelist` |
+| `policy/ci-risk-packs.toml` | Changed-path → risk-pack mapping | `cargo xtask check-ci-lane-whitelist` |
 | `policy/ripr-soft-gate.toml` | Soft-gate threshold and calibration | `cargo xtask check-pr` |
 
 ## Related policy ledgers

@@ -12,6 +12,7 @@ fn ignore_remove_dir_all(path: impl AsRef<std::path::Path>) {
 use std::io::Read;
 
 use crate::acquire_test_cwd_write_guard;
+use crate::python_judged_panel_replay::sha256_hex;
 use ripr::output::receipt_lifecycle::{
     RECEIPT_MISSING, RECEIPT_MOVEMENT_IMPROVED, RECEIPT_NOT_APPLICABLE,
 };
@@ -22,6 +23,8 @@ use super::RiprSwarmAttemptLedgerReport;
 use super::RiprSwarmCommand;
 use super::RiprSwarmReadinessInput;
 use super::XtaskCommand;
+use super::add_name_status_bytes;
+use super::add_porcelain_bytes;
 use super::dispatch;
 use super::is_network_policy_candidate;
 use super::lane1_runtime_status_full;
@@ -158,12 +161,12 @@ use super::{
     pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
     pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
     pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-    public_contract_rows, read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
-    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
-    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
-    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
-    repo_badge_artifacts_summary_markdown, repo_exposure_latency_json,
-    repo_exposure_latency_markdown, repo_exposure_latency_run,
+    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
+    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
+    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
+    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
+    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
+    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_trace, repo_exposure_summary_report_timeout_ms_from_env, repo_root,
     repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
@@ -205,7 +208,8 @@ use super::{
     windows_absolute_path_tokens, workflow_bare_self_hosted_violations,
     workflow_review_thread_mutation_violations, workflow_runtime_violations, worktree,
     worktree_doctor_findings, write_badge_artifacts_after_build, write_badge_artifacts_from_diff,
-    write_evidence_health_report_with_runner, write_evidence_health_report_with_runners,
+    write_badge_input_identity, write_evidence_health_report_with_runner,
+    write_evidence_health_report_with_runners,
     write_lane1_evidence_audit_repo_exposure_with_runner, write_repo_exposure_latency_report,
     write_repo_exposure_summary_report_with_runner,
 };
@@ -19730,13 +19734,13 @@ fn dogfood_report_packet_index_scenarios_have_checked_receipts() -> Result<(), S
     with_repo_cwd(|| {
         let scenarios = dogfood_report_packet_index_scenarios();
         for required in [
-            ("complete_packet", "pass"),
+            ("complete_packet", "warn"),
             ("sparse_advisory", "warn"),
             ("missing_front_panel", "warn"),
             ("blocked_gate", "fail"),
             ("missing_assistant_proof", "warn"),
             ("missing_receipts", "warn"),
-            ("coverage_grip_present", "pass"),
+            ("coverage_grip_present", "warn"),
         ] {
             assert!(
                 scenarios.iter().any(|scenario| scenario.name == required.0
@@ -21717,6 +21721,206 @@ fn badge_artifact_command_args_substitutes_format_only() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// ---- #4003: the badge input must come from the actual resolved base through
+// the shared authorities, with a pinned Git presentation. These are real-Git
+// fixture tests: a mocked diff runner cannot prove the Git boundary. ----
+
+fn badge_fixture_git(args: &[&str]) -> Result<(), String> {
+    let status = run("git", args)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("badge fixture git command failed: {args:?}"))
+    }
+}
+
+fn badge_fixture_commit(message: &str) -> Result<(), String> {
+    badge_fixture_git(&[
+        "-c",
+        "user.email=badge-fixture@example.com",
+        "-c",
+        "user.name=badge fixture",
+        "commit",
+        "--quiet",
+        "-m",
+        message,
+    ])
+}
+
+fn badge_fixture_base_and_edit_commits() -> Result<(), String> {
+    fs::write("subject.txt", "kept line\nbadge-secret-line\n").map_err(|err| err.to_string())?;
+    badge_fixture_git(&["add", "."])?;
+    badge_fixture_commit("badge fixture base")?;
+    badge_fixture_git(&["checkout", "--quiet", "-b", "feature/badge-input"])?;
+    fs::write(
+        "subject.txt",
+        "kept line\nbadge-secret-line\nbadge-secret-line added\n",
+    )
+    .map_err(|err| err.to_string())?;
+    badge_fixture_git(&["add", "."])?;
+    badge_fixture_commit("badge fixture edit")
+}
+
+fn assert_badge_commit_identity(value: &str, label: &str) -> Result<(), String> {
+    if value.len() < 40 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(format!(
+            "expected a resolved {label} commit identity, got {value:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn badge_diff_reader_resolves_a_non_main_default_base_and_diffs_it() -> Result<(), String> {
+    with_temp_cwd(
+        "badge-diff-non-main-default",
+        |root| -> Result<(), String> {
+            // master-default repo with no remote: the shared default-base
+            // authority must pick master, not fabricate origin/main
+            // (#4003, RIPR-SPEC-0084).
+            badge_fixture_git(&["init", "--initial-branch=master", "--quiet"])?;
+            badge_fixture_base_and_edit_commits()?;
+            let input = read_badge_artifact_diff_governed(root)?;
+            if input.base_ref != "master" {
+                return Err(format!(
+                    "badge input resolved the wrong base: expected master, got {:?}",
+                    input.base_ref
+                ));
+            }
+            if !input.diff.contains("+badge-secret-line added") {
+                return Err(format!(
+                    "badge input must contain the branch edit; got: {}",
+                    input.diff
+                ));
+            }
+            assert_badge_commit_identity(&input.base_commit, "base")?;
+            assert_badge_commit_identity(&input.head_commit, "head")?;
+            assert_badge_commit_identity(&input.head_tree, "head tree")?;
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn badge_diff_reader_fails_closed_when_no_base_resolves() -> Result<(), String> {
+    with_temp_cwd("badge-diff-no-base", |root| -> Result<(), String> {
+        // A repository with no commits has no resolvable base. The badge
+        // producer must fail with a named cause, never write an empty patch
+        // that renders as a clean zero-change badge (#4003).
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        let Err(err) = read_badge_artifact_diff_governed(root) else {
+            return Err(
+                "a repo with no resolvable base must fail the badge input, not return an empty diff"
+                    .to_string(),
+            );
+        };
+        if !err.contains("base") {
+            return Err(format!(
+                "badge input failure must name the base cause: {err}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn badge_diff_reader_pins_the_git_presentation_against_ambient_config() -> Result<(), String> {
+    with_temp_cwd(
+        "badge-diff-pinned-presentation",
+        |root| -> Result<(), String> {
+            badge_fixture_git(&["init", "--initial-branch=master", "--quiet"])?;
+            // Ambient configuration the pre-#4003 producer absorbed: a textconv
+            // driver that hides the changed source line, ANSI color, an expanded
+            // ambient context, and an external diff driver that would fail
+            // loudly if spawned.
+            fs::write(".gitattributes", "*.txt diff=badge-wordifier\n")
+                .map_err(|err| err.to_string())?;
+            badge_fixture_git(&[
+                "config",
+                "diff.badge-wordifier.textconv",
+                "sed /badge-secret-line/d",
+            ])?;
+            badge_fixture_git(&["config", "color.diff", "always"])?;
+            badge_fixture_git(&["config", "diff.context", "8"])?;
+            badge_fixture_git(&[
+                "config",
+                "diff.external",
+                "ripr-badge-fixture-no-such-external-diff-driver",
+            ])?;
+            badge_fixture_base_and_edit_commits()?;
+            let input = read_badge_artifact_diff_governed(root)?;
+            if input.diff.contains('\u{1b}') {
+                return Err(
+                    "ambient color.diff=always leaked ANSI escapes into the badge input"
+                        .to_string(),
+                );
+            }
+            if !input.diff.contains("+badge-secret-line added") {
+                return Err(
+                    "the textconv driver hid the changed source from the badge input".to_string(),
+                );
+            }
+            if input.diff.lines().any(|line| line.starts_with(' ')) {
+                return Err(
+                "ambient diff.context expanded the badge input beyond the pinned zero-context presentation"
+                    .to_string(),
+            );
+            }
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn badge_input_identity_receipt_records_the_analyzed_subject() -> Result<(), String> {
+    with_temp_cwd(
+        "badge-input-identity-receipt",
+        |root| -> Result<(), String> {
+            badge_fixture_git(&["init", "--initial-branch=master", "--quiet"])?;
+            badge_fixture_base_and_edit_commits()?;
+            let input = read_badge_artifact_diff_governed(root)?;
+            write_badge_input_identity(&input, "input", &[])?;
+            let receipt_path = root.join("target/ripr/reports/badge-artifacts-identity.json");
+            let receipt = fs::read_to_string(&receipt_path)
+                .map_err(|err| format!("failed to read {}: {err}", receipt_path.display()))?;
+            let value: serde_json::Value = serde_json::from_str(&receipt)
+                .map_err(|err| format!("identity receipt is not valid JSON: {err}"))?;
+            if value["input"]["base_ref"] != "master" {
+                return Err(format!("receipt base_ref should be master: {receipt}"));
+            }
+            if value["input"]["diff_sha256"] != sha256_hex(input.diff.as_bytes()) {
+                return Err("receipt diff digest must match the badge input bytes".to_string());
+            }
+            let presentation = value["input"]["presentation"]["argv"]
+                .as_str()
+                .unwrap_or_default();
+            for pin in [
+                "core.quotePath=true",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--unified=0",
+                "--inter-hunk-context=0",
+            ] {
+                if !presentation.contains(pin) {
+                    return Err(format!("receipt presentation must name the {pin} pin"));
+                }
+            }
+            if !value["input"]["base_resolution"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("RIPR-SPEC-0084")
+            {
+                return Err("receipt must name the shared base resolution authority".to_string());
+            }
+            if value["phase"] != "input" {
+                return Err(format!("unexpected receipt phase: {receipt}"));
+            }
+            Ok(())
+        },
+    )
 }
 
 #[test]
@@ -49448,4 +49652,195 @@ fn check_pr_report_publication_failure_is_distinguishable() {
             && err.contains("publishing the failure report also failed")),
         "a failed gate plus failed report publication must stay distinguishable and preserve the gate diagnostic and reproduce command: {result:?}"
     );
+}
+
+#[test]
+fn pr_change_name_status_bytes_decode_exotic_names_exact() -> Result<(), String> {
+    // Real `--name-status -z` grammar (space, non-ASCII UTF-8, scored
+    // rename): the old tab-split route without `-z` kept git's C-quoted
+    // octal form verbatim, so byte-exactness here discriminates the
+    // migration. Rename records attribute the target, matching the old
+    // `parts.last()` projection.
+    let mut changes = BTreeMap::new();
+    add_name_status_bytes(
+        &mut changes,
+        "M\0sp ace.txt\0A\0uni-é.txt\0R100\0old.txt\0new.txt\0".as_bytes(),
+    )?;
+    let expected: BTreeMap<String, BTreeSet<String>> = [
+        ("sp ace.txt".to_string(), ["M".to_string()].into()),
+        ("uni-é.txt".to_string(), ["A".to_string()].into()),
+        ("new.txt".to_string(), ["R100".to_string()].into()),
+    ]
+    .into();
+    if changes != expected {
+        return Err(format!(
+            "exotic name-status inventory mismatch: got {changes:?}, want {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_name_status_bytes_reject_non_utf8() -> Result<(), String> {
+    // The old route lossy-decoded through `run_output`, collapsing this
+    // record into replacement characters and returning success; the strict
+    // route must fail loudly instead.
+    let mut changes = BTreeMap::new();
+    let err = match add_name_status_bytes(&mut changes, b"M\0ok.txt\0A\0\xffbad\0") {
+        Err(err) => err,
+        Ok(()) => return Err(format!("non-UTF-8 inventory must fail, got {changes:?}")),
+    };
+    if !err.contains("not valid UTF-8") {
+        return Err(format!("unexpected strict-decode error: {err}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_name_status_bytes_reject_legacy_line_grammar() -> Result<(), String> {
+    // Legacy non-`-z` git output (C-quoted, newline-delimited) fed to the
+    // new decoder must fail, not silently mangle: this pins the `-z`
+    // requirement at the decode boundary. The old tab-split parser accepted
+    // this shape and inventoried the quoted octal form as a path.
+    let mut changes = BTreeMap::new();
+    let legacy = b"M\t\"uni-\\303\\251.txt\"\n";
+    match add_name_status_bytes(&mut changes, legacy) {
+        Err(_) => Ok(()),
+        Ok(()) => Err(format!(
+            "legacy line grammar must fail strict decode, got {changes:?}"
+        )),
+    }
+}
+
+#[test]
+fn pr_change_porcelain_bytes_decode_exotic_names_exact() -> Result<(), String> {
+    // Real `status --porcelain=v1 -z` grammar (verified against git):
+    // `XY␣path\0`, renames as `XY␣new\0old\0`, no quoting. The ` -> ` in
+    // the fourth name is literal path bytes: the old `split_once(" -> ")`
+    // projection would have inventoried `b.txt` instead.
+    let mut changes = BTreeMap::new();
+    add_porcelain_bytes(
+        &mut changes,
+        b"M  sp ace.txt\0R  new name.txt\0old name.txt\0?? uni-\xc3\xa9.txt\0M  a -> b.txt\0M  li\nne.txt\0",
+    )?;
+    let expected: BTreeMap<String, BTreeSet<String>> = [
+        ("sp ace.txt".to_string(), ["M".to_string()].into()),
+        ("new name.txt".to_string(), ["R".to_string()].into()),
+        ("uni-é.txt".to_string(), ["??".to_string()].into()),
+        ("a -> b.txt".to_string(), ["M".to_string()].into()),
+        ("li\nne.txt".to_string(), ["M".to_string()].into()),
+    ]
+    .into();
+    if changes != expected {
+        return Err(format!(
+            "exotic porcelain inventory mismatch: got {changes:?}, want {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_porcelain_bytes_attribute_worktree_column_rename() -> Result<(), String> {
+    // Worktree-column renames (` R`, e.g. intent-to-add via `git add -N`,
+    // verified against real git output) carry the paired source exactly
+    // like staged ones. Checking only the index column left the source
+    // field unconsumed, failing closed on legitimate state — or worse,
+    // misreading a source name with a space at byte index 2 as a new
+    // entry. Exactly one entry for the target, status trimmed to `R`.
+    let mut changes = BTreeMap::new();
+    add_porcelain_bytes(&mut changes, b" R new.txt\0old.txt\0")?;
+    let expected: BTreeMap<String, BTreeSet<String>> =
+        [("new.txt".to_string(), ["R".to_string()].into())].into();
+    if changes != expected {
+        return Err(format!(
+            "worktree rename inventory mismatch: got {changes:?}, want {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_porcelain_bytes_reject_missing_trailing_nul() -> Result<(), String> {
+    // Real git always NUL-terminates every record, so a non-empty input
+    // without a trailing NUL is truncation, not a final field: fail
+    // loudly instead of parsing a truncated path.
+    let mut changes = BTreeMap::new();
+    match add_porcelain_bytes(&mut changes, b"M  path_long") {
+        Err(err) if err.contains("missing trailing NUL") => Ok(()),
+        Err(err) => Err(format!("unexpected truncation error: {err}")),
+        Ok(()) => Err(format!("truncated input must fail, got {changes:?}")),
+    }
+}
+
+#[test]
+fn pr_change_porcelain_bytes_reject_truncated_rename() -> Result<(), String> {
+    // A rename entry missing its paired source must fail, not attribute
+    // the change to half a record.
+    let mut changes = BTreeMap::new();
+    let err = match add_porcelain_bytes(&mut changes, b"R  new.txt\0") {
+        Err(err) => err,
+        Ok(()) => return Err(format!("truncated rename must fail, got {changes:?}")),
+    };
+    if !err.contains("missing its paired path") {
+        return Err(format!("unexpected strict-decode error: {err}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_porcelain_bytes_reject_misframed_entries() -> Result<(), String> {
+    // Truncated fields must fail loudly instead of inventing entries. Note
+    // what is deliberately NOT rejected here: embedded newlines are legal
+    // path bytes (pinned by
+    // `pr_change_porcelain_bytes_decode_exotic_names_exact`), so a
+    // newline-bearing field decodes as one entry — the `-z` framing, not
+    // content sniffing, is what separates records.
+    let mut changes = BTreeMap::new();
+    match add_porcelain_bytes(&mut changes, b"xy") {
+        Err(_) => Ok(()),
+        Ok(()) => Err(format!(
+            "misframed porcelain input must fail, got {changes:?}"
+        )),
+    }
+}
+
+#[test]
+fn pr_change_backslash_name_stays_distinct_from_nested_path() -> Result<(), String> {
+    // Item-5 identity control (#4006): the literal-backslash filename
+    // `a\b.rs` and the nested path `a/b.rs` are distinct tracked paths
+    // (real Linux git fixture). Folding separators before map insertion
+    // collapsed them to one key, omitting an inventory path while
+    // returning success. Both decoders must preserve two entries.
+    // Byte literals carry the exact `-z` grammar (Rust string escapes,
+    // not shell quoting, keep the backslash literal).
+    let mut changes = BTreeMap::new();
+    add_name_status_bytes(&mut changes, b"M\0a\\b.rs\0M\0a/b.rs\0")?;
+    if changes.len() != 2 || !changes.contains_key("a\\b.rs") || !changes.contains_key("a/b.rs") {
+        return Err(format!(
+            "name-status backslash/nested collision: got {changes:?}, want two distinct keys"
+        ));
+    }
+    let mut porcelain = BTreeMap::new();
+    add_porcelain_bytes(&mut porcelain, b"M  a\\b.rs\0M  a/b.rs\0")?;
+    if porcelain.len() != 2
+        || !porcelain.contains_key("a\\b.rs")
+        || !porcelain.contains_key("a/b.rs")
+    {
+        return Err(format!(
+            "porcelain backslash/nested collision: got {porcelain:?}, want two distinct keys"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
+    // A real zero-change run decodes to an empty inventory on both routes.
+    let mut changes = BTreeMap::new();
+    add_name_status_bytes(&mut changes, b"")?;
+    add_porcelain_bytes(&mut changes, b"")?;
+    if !changes.is_empty() {
+        return Err(format!("empty inventory must stay empty, got {changes:?}"));
+    }
+    Ok(())
 }

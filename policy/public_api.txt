@@ -173,11 +173,19 @@ pub use ripr::analysis::PartialDiffStopReason
 # diff assembly (#3930), consumed by the product route and the xtask route;
 # covered_by:
 # cargo test -p ripr --lib analysis::diff::records, cargo xtask check-public-api.
+# Issue #4003: same owner; reason: intentional shared RIPR-SPEC-0084
+# default-base authority and pinned analysis-range diff assembly, consumed
+# by the analysis route and the xtask badge-input route so the badge
+# producer cannot hardcode origin/main or rebuild the diff argv inline;
+# covered_by:
+# cargo test -p xtask badge_diff_reader, cargo xtask check-public-api.
 pub use ripr::analysis::PathRecordError
 pub use ripr::analysis::StatusRecord
+pub use ripr::analysis::load_diff_range
 pub use ripr::analysis::load_pr_evidence_diff_range
 pub use ripr::analysis::parse_git_path_records
 pub use ripr::analysis::parse_git_status_records
+pub use ripr::analysis::resolve_default_base_commit
 pub use ripr::app::OutputFormat
 pub use ripr::app::check_workspace
 pub use ripr::app::check_workspace_repo
