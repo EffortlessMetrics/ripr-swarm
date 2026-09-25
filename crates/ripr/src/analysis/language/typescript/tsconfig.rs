@@ -189,7 +189,10 @@ pub(crate) fn load_alias_map(root: &Path) -> Option<TsAliasMap> {
 /// `CappedReadError::is_size_limit`.
 pub(crate) fn load_alias_map_with_read_error(
     root: &Path,
-) -> (Option<TsAliasMap>, Option<(PathBuf, super::bounded_read::CappedReadError)>) {
+) -> (
+    Option<TsAliasMap>,
+    Option<(PathBuf, super::bounded_read::CappedReadError)>,
+) {
     for filename in &["tsconfig.json", "jsconfig.json"] {
         let path = root.join(filename);
         if !path.is_file() {

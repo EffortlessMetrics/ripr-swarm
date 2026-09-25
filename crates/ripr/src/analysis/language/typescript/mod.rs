@@ -77,9 +77,9 @@ pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
 pub(crate) use static_limit::*;
 pub(crate) use tests_extract::*;
-pub(crate) use tsconfig::{TsAliasMap, load_alias_map_with_read_error};
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;
+pub(crate) use tsconfig::{TsAliasMap, load_alias_map_with_read_error};
 pub(crate) use types::*;
 
 /// TypeScript / JavaScript preview adapter.
