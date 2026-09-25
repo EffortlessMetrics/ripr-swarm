@@ -372,6 +372,11 @@ impl LanguageAdapter for TypeScriptAdapter {
                 ))?,
             );
         }
+        // Post-hoc collision de-dup: identical added lines in the same
+        // owner share a content-addressed probe id (path/family/owner/
+        // expression, no line number); the ordinal pass keeps them
+        // distinct (mirror of the Rust path's `dedup_probe_ids`).
+        dedup_typescript_probe_ids(&mut findings);
         Ok(LanguageDiffResult {
             findings,
             harness_projections: Vec::new(),
@@ -391,12 +396,15 @@ impl LanguageAdapter for TypeScriptAdapter {
     ) -> Result<LanguageRepoResult, String> {
         // Repo-mode preview output lands in a follow-up. The current
         // sub-slice scopes to diff-mode for the smallest useful fixture.
-        // This stub returns an empty result; callers that consume
-        // repo-scoped formats on a TypeScript-only workspace get zero
-        // seams from this adapter. Note that repo_exposure.rs emits a
-        // `typescript_diff_first` limitation entry for TS/JS-only
-        // workspaces, so a TypeScript-only run is not entirely warning-
-        // free — but the empty adapter result itself is silent. See
+        // The stub still returns an empty result, but it now discloses
+        // the partial run through `partial_reason` so the pipeline
+        // records a `Partial` language run on the shared `language_runs`
+        // channel (adapter.rs): human/JSON output renders the limitation
+        // and gates fail closed on the partial denominator. Without this
+        // disclosure the empty adapter result was silent — and in a mixed
+        // Rust+TypeScript repo the render-side `typescript_diff_first`
+        // guidance (output/render.rs) never fires because it requires an
+        // empty seam inventory AND no Rust files. See
         // docs/LANGUAGE_ADAPTER_PREVIEW.md § "Repo-Mode Analysis" for
         // the limitation contract.
         Ok(LanguageRepoResult {
@@ -404,7 +412,7 @@ impl LanguageAdapter for TypeScriptAdapter {
             harness_projections: Vec::new(),
             production_files: 0,
             skipped_files: 0,
-            partial_reason: None,
+            partial_reason: Some("typescript_repo_mode_not_implemented_diff_first".to_string()),
         })
     }
 }

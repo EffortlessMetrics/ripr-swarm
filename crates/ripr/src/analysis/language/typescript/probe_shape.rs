@@ -613,3 +613,32 @@ fn first_typescript_string_literal(text: &str) -> Option<String> {
     }
     None
 }
+
+/// Post-hoc collision de-dup over the adapter's diff-mode findings,
+/// mirroring the Rust path's `dedup_probe_ids` (analysis/probes/diff.rs).
+///
+/// Probe ids are content-addressed over (path, family, owner, normalized
+/// expression) with no line number, so two identical added lines in the
+/// same owner (a repeated `total += 1;`, duplicate `if (x > 0) {` guard,
+/// …) collide on one id. Scan findings in diff order and rewrite the
+/// 2nd+ occurrences of a colliding id to append `.2`, `.3`, … — the
+/// first occurrence keeps its ordinal-1 id, so single-line fixtures stay
+/// stable. Without this pass the packet projection's `finding.id` dedupe
+/// fingerprint collapses two distinct changed lines into one, or aliases
+/// receipts for two different lines. Evidence lines captured before this
+/// pass keep the base content fingerprint — both occurrences genuinely
+/// share the same (path, family, owner, expression) content; the ordinal
+/// only disambiguates identity, matching the Rust path's behavior.
+pub(crate) fn dedup_typescript_probe_ids(findings: &mut [Finding]) {
+    use std::collections::HashMap;
+    let mut seen: HashMap<String, u32> = HashMap::new();
+    for finding in findings.iter_mut() {
+        let count = seen.entry(finding.probe.id.0.clone()).or_insert(0);
+        *count += 1;
+        if *count > 1 {
+            let suffixed = format!("{}.{}", finding.probe.id.0, count);
+            finding.probe.id.0 = suffixed.clone();
+            finding.id = suffixed;
+        }
+    }
+}
