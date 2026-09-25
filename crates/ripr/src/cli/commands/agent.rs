@@ -33,6 +33,14 @@ use super::agent_dispatch;
 use super::agent_gap_packet::render_agent_packet_from_gap_ledger;
 use super::write_text_file;
 
+/// Schema version of the `ripr agent repair --phase after` success envelope
+/// (`kind: "repair_after_result"`). The envelope is its own versioned
+/// contract: the agent verify 0.3 document rides unchanged under `verify`
+/// and the agent status 0.1 document under `agent_status`, so every stdout
+/// document's shape is identifiable from its `schema_version`. Refusal
+/// paths keep printing the bare agent verify 0.3 document instead.
+const REPAIR_AFTER_RESULT_SCHEMA_VERSION: &str = "0.1";
+
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
     let command = parse_agent_args(args)?;
     if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
@@ -871,21 +879,37 @@ fn run_agent_repair_phase(
                     return Err(error);
                 }
             };
-            let mut document: serde_json::Value = serde_json::from_str(&rendered_verify)
+            let document: serde_json::Value = serde_json::from_str(&rendered_verify)
                 .map_err(|error| format!("parse rendered agent verify JSON failed: {error}"))?;
             let status_document: serde_json::Value = serde_json::from_str(&status_rendered)
                 .map_err(|error| format!("parse rendered agent status JSON failed: {error}"))?;
-            // The verify outcome already owns the top-level `status` name
-            // (`advisory`), so the status report rides under `agent_status`;
-            // every existing verify field keeps its name and value.
-            document
+            // The success output is its own versioned envelope
+            // (`repair_after_result`), not a mutated verify document: the
+            // verify outcome already owns the top-level `status` name
+            // (`advisory`), so splicing `agent_status` into the 0.3 document
+            // would leave two same-version documents with different shapes.
+            // The verify document keeps every field, name, and value under
+            // `verify`, and the status report rides beside it under
+            // `agent_status`.
+            let mut envelope = serde_json::json!({
+                "schema_version": REPAIR_AFTER_RESULT_SCHEMA_VERSION,
+                "kind": "repair_after_result",
+            });
+            envelope
                 .as_object_mut()
                 .ok_or_else(|| {
-                    "rendered agent verify JSON must be an object for agent_status nesting"
+                    "repair after result envelope must be an object for verify nesting"
+                        .to_string()
+                })?
+                .insert("verify".to_string(), document);
+            envelope
+                .as_object_mut()
+                .ok_or_else(|| {
+                    "repair after result envelope must be an object for agent_status nesting"
                         .to_string()
                 })?
                 .insert("agent_status".to_string(), status_document);
-            let combined = serde_json::to_string_pretty(&document).map_err(|error| {
+            let combined = serde_json::to_string_pretty(&envelope).map_err(|error| {
                 format!("serialize after-phase result document failed: {error}")
             })?;
             println!("{combined}");
