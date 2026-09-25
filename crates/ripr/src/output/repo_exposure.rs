@@ -1545,9 +1545,9 @@ mod tests {
         assert!(md.contains("repo seam inventory is empty"), "{md}");
         assert!(!md.contains("typescript_diff_first"), "{md}");
         // ripr-allow: static-language: test guard checks that the prohibited term does not appear in rendered output
-        assert!(!md.contains("untested"), "{md}");
+        assert!(!md.contains("untested"), "{md}"); // ripr-allow: static-language: guard string in test, not in output
         // ripr-allow: static-language: test guard checks that the prohibited term does not appear in rendered output
-        assert!(!md.contains("proven"), "{md}");
+        assert!(!md.contains("proven"), "{md}"); // ripr-allow: static-language: guard string in test, not in output
     }
 
     #[test]
