@@ -1885,7 +1885,14 @@ jobs:
               fi
               echo "- Status: \`$ledger_status\`"
               echo "- Gate: mode=\`$ledger_gate_mode\`, decision=\`$ledger_gate_decision\`"
-              echo "- Counts: new_policy_eligible=\`$ledger_new_policy_eligible\`, baseline_still_present=\`$ledger_still_present\`, baseline_resolved=\`$ledger_resolved\`, acknowledged=\`$ledger_acknowledged\`, suppressed=\`$ledger_suppressed\`, blocking_candidates=\`$ledger_blocking\`, visible_unresolved=\`$ledger_visible\`"
+              # F60-4: counts with no baseline delta or RIPR Zero status
+              # behind them were never measured; do not print their zeros.
+              ledger_count_source="$(jq -r '.movement.count_source // "unknown"' "$ledger_json" 2>/dev/null || echo unknown)"
+              if [ "$ledger_count_source" = "not_measured" ]; then
+                echo "- Counts: gap counts not measured (no baseline debt delta or RIPR Zero status); acknowledged=\`$ledger_acknowledged\`, suppressed=\`$ledger_suppressed\`, blocking_candidates=\`$ledger_blocking\`"
+              else
+                echo "- Counts: new_policy_eligible=\`$ledger_new_policy_eligible\`, baseline_still_present=\`$ledger_still_present\`, baseline_resolved=\`$ledger_resolved\`, acknowledged=\`$ledger_acknowledged\`, suppressed=\`$ledger_suppressed\`, blocking_candidates=\`$ledger_blocking\`, visible_unresolved=\`$ledger_visible\`"
+              fi
               echo "- Top repair route: \`$ledger_route\`"
               echo "- $ledger_verify_label: \`$ledger_verify\`"
               if [ "$ledger_agent" != "$ledger_repair" ]; then
