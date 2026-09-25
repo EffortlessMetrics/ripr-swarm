@@ -63,7 +63,7 @@ use crate::output::gap_decision_ledger::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -167,7 +167,7 @@ pub(super) struct Backend {
     /// The owning session failure stays committed; this records the delivery
     /// omission locally instead of dropping it silently. Reflects the most
     /// recent disclosure attempt.
-    initialize_failure_disclosure_omitted: Mutex<bool>,
+    initialize_failure_disclosure_omitted: AtomicBool,
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
     refresh_idle: Notify,
@@ -241,7 +241,7 @@ impl Backend {
             last_lens_view_identity: Mutex::new(None),
             dynamic_file_watch_registration: Mutex::new(false),
             last_component_degradation: Mutex::new(None),
-            initialize_failure_disclosure_omitted: Mutex::new(false),
+            initialize_failure_disclosure_omitted: AtomicBool::new(false),
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
             refresh_idle: Notify::new(),
@@ -1463,18 +1463,16 @@ impl Backend {
     /// and the committed failure is re-disclosed by the next status
     /// publication.
     async fn deliver_initialize_failure_disclosures(&self, warning: String) {
-        if let Ok(mut omitted) = self.initialize_failure_disclosure_omitted.lock() {
-            *omitted = false;
-        }
+        self.initialize_failure_disclosure_omitted
+            .store(false, Ordering::Release);
         let delivery = tokio::time::timeout(INITIALIZE_FAILURE_DISCLOSURE_BUDGET, async {
             self.client.log_message(MessageType::WARNING, warning).await;
             self.publish_analysis_status().await;
         })
         .await;
-        if delivery.is_err()
-            && let Ok(mut omitted) = self.initialize_failure_disclosure_omitted.lock()
-        {
-            *omitted = true;
+        if delivery.is_err() {
+            self.initialize_failure_disclosure_omitted
+                .store(true, Ordering::Release);
         }
     }
 
@@ -1988,9 +1986,7 @@ impl Backend {
     #[cfg(test)]
     pub(super) fn initialize_failure_disclosure_omitted(&self) -> bool {
         self.initialize_failure_disclosure_omitted
-            .lock()
-            .map(|omitted| *omitted)
-            .unwrap_or(true)
+            .load(Ordering::Acquire)
     }
 
     async fn reload_repository_config(&self) {
