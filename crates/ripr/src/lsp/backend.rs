@@ -2075,14 +2075,20 @@ impl Backend {
             .unwrap_or(serde_json::Value::Null)
     }
 
-    /// Position encoding negotiated once at initialize. A poisoned profile
-    /// store fails closed to the LSP default (UTF-16), matching the
-    /// pre-initialize unsupported profile rather than guessing byte offsets.
-    fn selected_position_encoding(&self) -> PositionEncodingKind {
+    /// Position encoding negotiated once at initialize. If the immutable
+    /// profile store is unavailable, return no encoding: after negotiation,
+    /// guessing UTF-16 could reinterpret UTF-8/UTF-32 incremental ranges and
+    /// corrupt retained buffer identity.
+    fn selected_position_encoding(&self) -> Option<PositionEncodingKind> {
         self.client_features
             .lock()
+            .ok()
             .map(|features| features.selected_position_encoding.clone())
-            .unwrap_or(PositionEncodingKind::UTF16)
+    }
+
+    #[cfg(test)]
+    pub(super) fn selected_position_encoding_for_test(&self) -> Option<PositionEncodingKind> {
+        self.selected_position_encoding()
     }
 
     /// Poison the profile store so tests can exercise the fail-closed
@@ -2320,11 +2326,14 @@ impl Backend {
         params: DidChangeTextDocumentParams,
     ) -> Option<(Uri, QuarantineTransition)> {
         let uri = params.text_document.uri.clone();
+        let version = params.text_document.version;
         let position_encoding = self.selected_position_encoding();
-        self.documents
-            .lock()
-            .ok()
-            .map(|mut documents| (uri, documents.change(params, &position_encoding)))
+        let mut documents = self.documents.lock().ok()?;
+        let transition = match position_encoding {
+            Some(position_encoding) => documents.change(params, &position_encoding),
+            None => documents.invalidate_change(&uri, version),
+        };
+        Some((uri, transition))
     }
 
     fn save_document(
