@@ -91,6 +91,41 @@ The `SHA256SUMS` sidecar is `sha256sum -c SHA256SUMS`-compatible (one
 same manifest under the legacy name `checksums.txt`; the content format is
 unchanged.
 
+### RC placement and the embedded manifest digest (#3798)
+
+The server manifest is placement-neutral per distribution generation: the
+generation's manifest bytes (and archive identities) are identical on the
+exact stable release and on the one public RC release of the same generation,
+so one raw-byte manifest SHA-256 admits both placements. Build the RC release
+from the generation's version (`release-server-manifest --version 0.11.0`),
+upload those bytes to the RC tag, and upload the identical bytes to the stable
+tag when it is cut.
+
+`cargo xtask release-server-manifest` also regenerates
+`editors/vscode/src/serverDescriptor.ts` with that digest. The release cut
+must run the manifest command and commit the refreshed descriptor **before**
+packaging the extension VSIX, so the packaged extension embeds the real
+digest. A generation without an embedded descriptor has no fallback row: a
+prerelease request's stable absence stays terminal.
+
+With the descriptor embedded, a clean RC extension requests its own version
+(for example `0.11.0-rc.1`) and the downloader resolves:
+
+```text
+fetch the exact stable placement v<GENERATION>/ripr-server-manifest-v<GENERATION>.json
+  accepted      -> selected_stable_exact
+  direct 404    -> fetch the one predeclared RC placement
+                   v<REQUESTED>/ripr-server-manifest-v<GENERATION>.json
+                   admitted by the same digest
+                -> selected_rc_exact_after_stable_absent
+  anything else -> fail closed with the original typed reason
+```
+
+A redirected 404, DNS/connect/TLS failure, timeout, 401/403, 5xx, redirect
+loop, malformed or wrong-digest manifest, or a target-set identity conflict is
+never absence and never falls back. No other RC, `latest` query, version
+range, or mutable lookup is ever derived.
+
 Each server archive contains:
 
 ```text

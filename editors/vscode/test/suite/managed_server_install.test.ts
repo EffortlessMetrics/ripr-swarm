@@ -137,6 +137,19 @@ suite('Managed Server Installation', () => {
     assert.strictEqual(await readManagedServerInstallation(request), undefined);
   });
 
+  test('prerelease requests admit the generation-keyed manifest version through staging and cache read-back', async () => {
+    const request = installRequest(root, '2.1.0-rc.1');
+    const installed = await installManagedServer(request, operations('rc-generation-binary', '2.1.0'));
+
+    assert.strictEqual(installed.receipt.requestedVersion, '2.1.0-rc.1');
+    assert.strictEqual(installed.receipt.manifestVersion, '2.1.0');
+
+    const reread = await readManagedServerInstallation(request);
+    assert.ok(reread, 'a completed generation-keyed RC install must remain cache-eligible');
+    assert.strictEqual(reread.receipt.manifestVersion, '2.1.0');
+    assert.strictEqual(reread.receipt.requestedVersion, '2.1.0-rc.1');
+  });
+
   test('active probe version remains authoritative over receipt-time identity', async () => {
     const installation = await installManagedServer(
       installRequest(root, '6.0.0'),

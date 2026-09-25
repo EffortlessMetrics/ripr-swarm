@@ -7863,6 +7863,50 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
     })
 }
 
+#[test]
+fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result<(), String> {
+    with_temp_cwd("release-server-descriptor", |root| {
+        let dist = root.join("dist");
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
+            "linux",
+        );
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+            "linux-sha\n",
+        );
+
+        let args = vec![
+            "--version".to_string(),
+            "v1.2.3".to_string(),
+            "--repository".to_string(),
+            "EffortlessMetrics/ripr".to_string(),
+        ];
+
+        super::release_server_manifest(&args)?;
+
+        let descriptor_path = root
+            .join("editors")
+            .join("vscode")
+            .join("src")
+            .join("serverDescriptor.ts");
+        let descriptor = fs::read_to_string(&descriptor_path)
+            .map_err(|err| format!("read editor distribution descriptor: {err}"))?;
+        let manifest_sha256 = super::sha256_file(&dist.join("ripr-server-manifest-v1.2.3.json"))?;
+        assert!(
+            descriptor.contains(&format!(
+                "{{ generation: \"1.2.3\", manifestSha256: \"{manifest_sha256}\" }}"
+            )),
+            "the descriptor must embed the exact generation and the manifest's raw-byte digest"
+        );
+        assert!(
+            descriptor.contains("SERVER_DISTRIBUTION_DESCRIPTORS"),
+            "the descriptor must declare the editor's admitted-descriptor list"
+        );
+        Ok(())
+    })
+}
+
 pub(crate) fn with_temp_cwd<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
     let lock = acquire_test_cwd_write_guard();
     let old = std::env::current_dir().unwrap();
