@@ -68,9 +68,9 @@
             "historical_noncurrent",
             "historical_before_current_after",
             "current_before_historical_after",
-            "dirty_both",
             "dirty_before",
-            "dirty_after"
+            "dirty_after",
+            "dirty_both"
           ]
         }
       }

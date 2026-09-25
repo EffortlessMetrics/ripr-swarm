@@ -1532,19 +1532,7 @@ mod tests {
     }
 
     fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(root)
-            .output()
-            .map_err(|err| format!("run git {args:?}: {err}"))?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "git {args:?} failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
+        crate::testing::fixture_git::fixture_git_ok(root, args)
     }
 
     /// Publishes one real repair attempt the way the before phase does, so
