@@ -23,6 +23,7 @@ use crate::cli::commands_agent_support::{
 use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
 use crate::config::load_for_root;
 use crate::output;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::{
     fs::File,
@@ -566,10 +567,24 @@ fn run_agent_repair_phase(
                 root.display()
             );
 
-            // Compose existing commands: start (creates workflow + brief) + packet.
-            // Stdout carries only the packet JSON. The start step's
-            // `Next: ripr check ...` hint is dropped because this phase writes
-            // that before snapshot itself; printing it sent users to redo it.
+            // Render and admit the packet first (F15-12): a seam whose repair
+            // packet names no test file ripr may edit refuses here, before any
+            // workflow artifact is written, so neither this phase nor
+            // `ripr agent status` reads as a started repair.
+            let packet = render_agent_packet(&AgentPacketOptions {
+                root: root.clone(),
+                seam_id: Some(seam_id.clone()),
+                gap_ledger: None,
+                gap_id: None,
+                json: true,
+            })?;
+            crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
+                .map_err(|error| before_phase_refusal(&seam_id, &error))?;
+
+            // Compose existing commands: start (creates workflow + brief) +
+            // packet. The start step's `Next: ripr check ...` hint is dropped
+            // because this phase writes that before snapshot itself; printing
+            // it sent users to redo it.
             let started = write_agent_start(AgentStartOptions {
                 root: root.clone(),
                 seam_id: seam_id.clone(),
@@ -582,21 +597,24 @@ fn run_agent_repair_phase(
             let before = root.join("target/ripr/workflow/before.repo-exposure.json");
             write_agent_repo_exposure_snapshot(&root, &before)?;
 
-            let packet = render_agent_packet(&AgentPacketOptions {
-                root: root.clone(),
-                seam_id: Some(seam_id),
-                gap_ledger: None,
-                gap_id: None,
-                json: true,
-            })?;
             let packet_path = root.join("target/ripr/workflow/agent-packet.json");
             write_text_file(&packet_path, &packet)?;
-            print!("{packet}");
-
             eprintln!("ripr: wrote {}", packet_path.display());
-            eprintln!(
-                "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below."
+            // Stdout carries the packet JSON when it is piped or redirected,
+            // which is how agents and scripts read it. A terminal reader gets
+            // a short summary instead of ~13 KB of JSON (F15-7); the packet
+            // file above is the same bytes either way.
+            print!(
+                "{}",
+                before_phase_stdout(
+                    &packet,
+                    "target/ripr/workflow/agent-packet.json",
+                    std::io::stdout().is_terminal(),
+                )
             );
+            // "Complete" and the next step are printed once the attempt is
+            // published (`cli::persist_before_repair_attempt`), so a refusal
+            // there is never preceded by a completion line.
             Ok(())
         }
         AgentRepairPhase::After => {
@@ -1153,6 +1171,75 @@ fn repair_after_input_drift_lines(
         )),
     }
     lines
+}
+
+/// A before phase refused because the seam's repair packet cannot bound a
+/// test-only edit. Names the seam and the reason in plain words, says that
+/// nothing was started, and points at the surfaces that only offer a repair
+/// start for seams that pass this check.
+fn before_phase_refusal(seam_id: &str, error: &str) -> String {
+    format!(
+        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. Pick a seam whose `ripr pilot` output or review card shows a repair start. Cause: {error}"
+    )
+}
+
+/// What the before phase prints on stdout: the packet JSON for a pipe or
+/// file, a short summary for a terminal. A packet the summary cannot read
+/// falls back to the JSON, so nothing is hidden.
+fn before_phase_stdout(packet: &str, packet_path: &str, terminal: bool) -> String {
+    if terminal && let Some(summary) = before_phase_summary(packet, packet_path) {
+        return summary;
+    }
+    packet.to_string()
+}
+
+fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(packet).ok()?;
+    let item = value.get("packets")?.as_array()?.first()?;
+    let text = |pointer: &str| {
+        item.pointer(pointer)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+    };
+    let seam_id = text("/seam_id")?;
+    let test_file = text("/recommended_test/file")?;
+    let mut lines = Vec::new();
+    let location = match (
+        text("/file"),
+        item.get("line").and_then(serde_json::Value::as_u64),
+    ) {
+        (Some(file), Some(line)) => format!(" at {file}:{line}"),
+        (Some(file), None) => format!(" at {file}"),
+        _ => String::new(),
+    };
+    let owner = text("/owner")
+        .map(|owner| format!(" in {owner}"))
+        .unwrap_or_default();
+    lines.push(format!(
+        "Repair prepared for seam {seam_id}{location}{owner}."
+    ));
+    if let Some(expression) = text("/changed_expression") {
+        lines.push(format!("  changed behavior: {expression}"));
+    }
+    if let Some(missing) = text("/missing_discriminators/0/value") {
+        lines.push(format!("  missing discriminator: {missing}"));
+    }
+    match text("/recommended_test/name") {
+        Some(name) => lines.push(format!(
+            "  edit one test file: {test_file} (suggested test `{name}`); leave production code unchanged"
+        )),
+        None => lines.push(format!(
+            "  edit one test file: {test_file}; leave production code unchanged"
+        )),
+    }
+    if let Some(assertion) = text("/suggested_assertions/0") {
+        lines.push(format!("  assertion shape: {assertion}"));
+    }
+    lines.push(format!(
+        "  full repair packet (JSON): {packet_path}; stdout carries it when piped"
+    ));
+    Some(lines.join("\n") + "\n")
 }
 
 fn short_head(head: &str) -> &str {
@@ -1712,5 +1799,71 @@ mod repair_summary_tests {
     fn repair_summary_is_empty_when_the_receipt_lacks_movement() {
         assert!(repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#).is_empty());
         assert!(repair_receipt_summary_lines("not json").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod before_phase_stdout_tests {
+    use super::before_phase_stdout;
+
+    const PACKET: &str = r#"{
+  "schema_version": "0.1",
+  "packets": [
+    {
+      "seam_id": "0d196886bad1b124",
+      "owner": "src/lib.rs::discounted_total",
+      "file": "src/lib.rs",
+      "line": 11,
+      "changed_expression": "amount >= DISCOUNT_THRESHOLD",
+      "recommended_test": {
+        "name": "discounted_total_boundary_discriminator",
+        "file": "tests/pricing.rs"
+      },
+      "missing_discriminators": [
+        { "value": "DISCOUNT_THRESHOLD (equality boundary)" }
+      ],
+      "suggested_assertions": ["assert_eq!(discounted_total(10_000), 9_000)"]
+    }
+  ]
+}"#;
+
+    /// F15-7: a pipe or file gets the packet JSON byte for byte, so agents
+    /// and scripts that parse stdout keep their contract.
+    #[test]
+    fn piped_stdout_is_the_packet_json_unchanged() {
+        assert_eq!(
+            before_phase_stdout(PACKET, "target/ripr/workflow/agent-packet.json", false),
+            PACKET
+        );
+    }
+
+    /// F15-7: a terminal gets a short summary naming the seam, the one test
+    /// file to edit, and where the full packet is, instead of the JSON.
+    #[test]
+    fn terminal_stdout_is_a_short_summary_of_the_same_packet() {
+        let summary = before_phase_stdout(PACKET, "target/ripr/workflow/agent-packet.json", true);
+        assert!(!summary.contains('{'), "{summary}");
+        assert!(summary.lines().count() <= 8, "{summary}");
+        for expected in [
+            "Repair prepared for seam 0d196886bad1b124 at src/lib.rs:11 in src/lib.rs::discounted_total.",
+            "  changed behavior: amount >= DISCOUNT_THRESHOLD",
+            "  missing discriminator: DISCOUNT_THRESHOLD (equality boundary)",
+            "  edit one test file: tests/pricing.rs (suggested test `discounted_total_boundary_discriminator`); leave production code unchanged",
+            "  assertion shape: assert_eq!(discounted_total(10_000), 9_000)",
+            "  full repair packet (JSON): target/ripr/workflow/agent-packet.json; stdout carries it when piped",
+        ] {
+            assert!(
+                summary.lines().any(|line| line == expected),
+                "missing `{expected}` in:\n{summary}"
+            );
+        }
+    }
+
+    /// A packet the summary cannot read (no test file) falls back to the JSON
+    /// rather than hiding it behind an empty summary.
+    #[test]
+    fn unreadable_packet_falls_back_to_the_json_on_a_terminal() {
+        let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
+        assert_eq!(before_phase_stdout(packet, "p", true), packet);
     }
 }
