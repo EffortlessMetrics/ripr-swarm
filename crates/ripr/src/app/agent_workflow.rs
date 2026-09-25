@@ -7,6 +7,8 @@ use crate::agent::loop_commands::{
     display_path, workflow_artifact_path,
 };
 use crate::app::Mode;
+use crate::app::agent_status::artifact_required_by_active_loop;
+use crate::app::repair_attempt::{RepairAttemptInventoryEntry, inventory_repair_attempts};
 use crate::domain::CommandSpec;
 use serde_json::Value;
 use std::path::Path;
@@ -52,6 +54,12 @@ pub(crate) struct AgentWorkflowArtifact {
     pub(crate) name: String,
     pub(crate) label: String,
     pub(crate) path: String,
+    /// Whether the active loop mode requires this artifact. Computed with the
+    /// same superseded-artifact rule as `ripr agent status`
+    /// (`app::agent_status::artifact_required_by_active_loop`), so the
+    /// manifest never claims the legacy loop enforces a repository-global
+    /// projection the repair-attempt authority has superseded.
+    pub(crate) required: bool,
     pub(crate) state: AgentWorkflowArtifactState,
 }
 
@@ -95,7 +103,8 @@ pub(crate) fn build_agent_workflow_manifest(
     let paths = AgentWorkflowPaths::new(out_dir);
     let seam = workflow_seam_from_brief(agent_brief_json, seam_id)?;
     let commands = workflow_commands(&root_display, mode, &paths, seam_id);
-    let artifacts = workflow_artifacts(root, &paths);
+    let repair_attempt_present = repair_attempt_present(root);
+    let artifacts = workflow_artifacts(root, &paths, repair_attempt_present);
     let missing_inputs = commands
         .iter()
         .filter(|command| {
@@ -360,7 +369,28 @@ fn workflow_artifact_path_with_default(
     }
 }
 
-fn workflow_artifacts(root: &Path, paths: &AgentWorkflowPaths) -> Vec<AgentWorkflowArtifact> {
+/// Whether a trusted repair attempt is present, mirroring
+/// `app::agent_status`: an attempt is present when the inventory lists at
+/// least one valid manifest, and an inventory that cannot be read reports no
+/// attempt, exactly as status's `required` flags treat it. While an attempt
+/// is present the attempt authority supersedes the repository-global
+/// workflow projections (docs/REPAIR_ATTEMPT.md, "Durable location" and
+/// "Compatibility outputs").
+fn repair_attempt_present(root: &Path) -> bool {
+    inventory_repair_attempts(root)
+        .map(|entries| {
+            entries
+                .iter()
+                .any(|entry| matches!(entry, RepairAttemptInventoryEntry::Valid(_)))
+        })
+        .unwrap_or(false)
+}
+
+fn workflow_artifacts(
+    root: &Path,
+    paths: &AgentWorkflowPaths,
+    repair_attempt_present: bool,
+) -> Vec<AgentWorkflowArtifact> {
     [
         ("before_snapshot", "before snapshot", &paths.before_snapshot),
         (
@@ -384,6 +414,7 @@ fn workflow_artifacts(root: &Path, paths: &AgentWorkflowPaths) -> Vec<AgentWorkf
         name: name.to_string(),
         label: label.to_string(),
         path: path.to_string(),
+        required: artifact_required_by_active_loop(name, repair_attempt_present),
         state: if root.join(path).is_file() {
             AgentWorkflowArtifactState::Present
         } else {
@@ -674,6 +705,186 @@ mod tests {
         };
 
         assert!(err.contains("was not returned by agent brief"));
+        Ok(())
+    }
+
+    /// The artifact `required` flags must claim no more than the active loop
+    /// mode enforces (docs/LEARNINGS.md, 2026-07-25 false-confidence gates),
+    /// with the same superseded-artifact rule `ripr agent status` reports: no
+    /// repair attempt means the legacy artifact loop requires every workflow
+    /// artifact; a trusted attempt present means the attempt authority
+    /// supersedes the repository-global projections (docs/REPAIR_ATTEMPT.md,
+    /// "Durable location" and "Compatibility outputs"), so the manifest must
+    /// not claim the legacy loop enforces them.
+    #[test]
+    fn agent_workflow_artifact_required_flags_follow_the_enforced_loop_mode() -> Result<(), String>
+    {
+        let root = unique_workflow_test_dir("required-flags");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let seam_id = "67fc764ba37d77bd";
+
+        // No repair attempt: the legacy loop is active and requires every
+        // workflow artifact, and the manifest JSON must carry that flag.
+        let manifest = build_agent_workflow_manifest(
+            &root,
+            &root,
+            &Mode::Draft,
+            Path::new("target/ripr/workflow"),
+            seam_id,
+            brief_json(),
+        )?;
+        assert!(
+            manifest.artifacts.iter().all(|artifact| artifact.required),
+            "legacy loop must require every workflow artifact"
+        );
+
+        // A trusted repair attempt: the superseded projections are not
+        // required; only the workflow-only `agent_seam_packets` stays
+        // required because the attempt authority does not supersede it.
+        run_git(&root, &["init"])?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&root, &["config", "user.name", "RIPR Test"])?;
+        write_file(&root.join("README.md"), "# test\n")?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        prepare_attempt_fixture(&root, seam_id)?;
+
+        let manifest = build_agent_workflow_manifest(
+            &root,
+            &root,
+            &Mode::Draft,
+            Path::new("target/ripr/workflow"),
+            seam_id,
+            brief_json(),
+        )?;
+        for artifact in &manifest.artifacts {
+            assert_eq!(
+                artifact.required,
+                artifact_required_by_active_loop(&artifact.name, true),
+                "repair loop classification for `{}` must match the status rule",
+                artifact.name
+            );
+        }
+        let seam_packets = manifest
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.name == "agent_seam_packets")
+            .ok_or_else(|| "manifest must report agent_seam_packets".to_string())?;
+        assert!(
+            seam_packets.required,
+            "agent_seam_packets is not superseded by the repair-attempt authority"
+        );
+        assert!(
+            manifest
+                .artifacts
+                .iter()
+                .filter(|artifact| !artifact.required)
+                .count()
+                == crate::app::agent_status::REPAIR_ATTEMPT_SUPERSEDED_ARTIFACTS.len(),
+            "exactly the superseded projections may be marked not required"
+        );
+
+        // The machine-readable contract renders the producer's flags.
+        let rendered = crate::output::agent_workflow::render_agent_workflow_json(&manifest)?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse workflow JSON: {err}"))?;
+        for artifact in value["artifacts"]
+            .as_array()
+            .ok_or_else(|| "workflow JSON must carry an artifacts array".to_string())?
+        {
+            assert_eq!(
+                artifact["required"], false,
+                "repair loop must not require the superseded projection `{}`",
+                artifact["name"]
+            );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// Every workflow artifact must carry an explicit classification for the
+    /// repair-attempt loop mode, so a newly added artifact cannot silently
+    /// inherit an all-`true` or all-`false` claim.
+    #[test]
+    fn agent_workflow_every_artifact_has_a_loop_mode_classification() {
+        let paths = AgentWorkflowPaths::new(Path::new("target/ripr/workflow"));
+        let artifacts = workflow_artifacts(Path::new("."), &paths, true);
+        let not_required = artifacts
+            .iter()
+            .filter(|artifact| !artifact.required)
+            .map(|artifact| artifact.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            not_required,
+            crate::app::agent_status::REPAIR_ATTEMPT_SUPERSEDED_ARTIFACTS.to_vec(),
+            "each workflow artifact needs an explicit active-loop classification"
+        );
+    }
+
+    fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
+        crate::testing::fixture_git::fixture_git_ok(root, args)
+    }
+
+    fn write_file(path: &Path, text: &str) -> Result<(), String> {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent).map_err(|err| format!("create parent: {err}"))?;
+        }
+        std::fs::write(path, text).map_err(|err| format!("write {}: {err}", path.display()))
+    }
+
+    /// Publishes one real repair attempt the way the before phase does, so
+    /// the manifest reads a trusted attempt directory rather than a synthetic
+    /// one. Mirrors `agent_status`'s fixture: both surfaces must agree on
+    /// what the active loop mode is.
+    fn prepare_attempt_fixture(root: &Path, seam_id: &str) -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeginRepairAttemptOptions, begin_repair_attempt_with,
+            edit_cage_policy_from_packet, write_edit_cage_baseline,
+        };
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow)
+            .map_err(|err| format!("create {}: {err}", workflow.display()))?;
+        let before = workflow.join("before-workflow-honesty.json");
+        let packet = workflow.join("packet-workflow-honesty.json");
+        let baseline = workflow.join("baseline-workflow-honesty.json");
+        write_file(&before, "{}")?;
+        let packet_text = serde_json::json!({
+            "seam_id": seam_id,
+            "allowed_edit_surface": ["tests/target.rs"],
+            "forbidden_files": []
+        })
+        .to_string();
+        write_file(&packet, &packet_text)?;
+        let policy = edit_cage_policy_from_packet(&packet_text, seam_id)?;
+        write_edit_cage_baseline(root, &baseline, &policy)?;
+        begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root,
+            root_argument: root,
+            seam_id,
+            sources: &[
+                BeforeArtifactSource {
+                    role: "before_snapshot",
+                    path: &before,
+                },
+                BeforeArtifactSource {
+                    role: "agent_packet",
+                    path: &packet,
+                },
+                BeforeArtifactSource {
+                    role: "edit_cage_baseline",
+                    path: &baseline,
+                },
+            ],
+            expected_repository_head: None,
+            next_command_suffix: None,
+        })?;
         Ok(())
     }
 }

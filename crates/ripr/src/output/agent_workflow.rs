@@ -83,7 +83,7 @@ fn artifact_json(artifact: &AgentWorkflowArtifact) -> Value {
         "name": artifact.name,
         "label": artifact.label,
         "path": artifact.path,
-        "required": true,
+        "required": artifact.required,
         "state": artifact.state.as_str(),
     })
 }
@@ -259,6 +259,7 @@ mod tests {
                 name: "before_snapshot".to_string(),
                 label: "before snapshot".to_string(),
                 path: "target/ripr/workflow/before.repo-exposure.json".to_string(),
+                required: true,
                 state: AgentWorkflowArtifactState::Missing,
             }],
             commands: vec![AgentWorkflowCommand {
@@ -288,6 +289,9 @@ mod tests {
         assert_eq!(value["status"], "ready");
         assert_eq!(value["seam"]["seam_id"], "67fc764ba37d77bd");
         assert_eq!(value["boundaries"]["source_edits"], false);
+        // The artifact's `required` flag is the producer's active-loop
+        // classification, not an unconditional literal.
+        assert_eq!(value["artifacts"][0]["required"], true);
         assert_eq!(
             value["next_command"]["command"],
             "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json"
