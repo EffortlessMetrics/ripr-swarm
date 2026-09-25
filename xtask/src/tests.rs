@@ -7865,6 +7865,105 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
     })
 }
 
+#[test]
+fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result<(), String> {
+    with_temp_cwd("release-server-descriptor", |root| {
+        let dist = root.join("dist");
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
+            "linux",
+        );
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+            "linux-sha\n",
+        );
+
+        let args = vec![
+            "--version".to_string(),
+            "v1.2.3".to_string(),
+            "--repository".to_string(),
+            "EffortlessMetrics/ripr".to_string(),
+        ];
+
+        super::release_server_manifest(&args)?;
+
+        let descriptor_path = root
+            .join("editors")
+            .join("vscode")
+            .join("src")
+            .join("serverDescriptor.ts");
+        let descriptor = fs::read_to_string(&descriptor_path)
+            .map_err(|err| format!("read editor distribution descriptor: {err}"))?;
+        let manifest_sha256 = super::sha256_file(&dist.join("ripr-server-manifest-v1.2.3.json"))?;
+        assert!(
+            descriptor.contains(&format!(
+                "{{ generation: \"1.2.3\", manifestSha256: \"{manifest_sha256}\" }}"
+            )),
+            "the descriptor must embed the exact generation and the manifest's raw-byte digest"
+        );
+        assert!(
+            descriptor.contains("SERVER_DISTRIBUTION_DESCRIPTORS"),
+            "the descriptor must declare the editor's admitted-descriptor list"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Result<(), String> {
+    // The editor descriptor admits a distribution generation
+    // (MAJOR.MINOR.PATCH) and the downloader only ever looks the generation
+    // up, so a prerelease or build-metadata version would embed a descriptor
+    // row no request can match and silently leave the packaged RC extension
+    // without a fallback.
+    // A four-component version can never match the downloader's
+    // three-component generation lookup either.
+    for version in ["1.2.3-rc.1", "1.2.3+meta", "1.2.3.4"] {
+        with_temp_cwd("release-server-descriptor-prerelease", |root| {
+            let dist = root.join("dist");
+            let asset_name = format!("ripr-server-v{version}-x86_64-unknown-linux-gnu.tar.gz");
+            write(&dist.join(&asset_name), "linux");
+            write(&dist.join(format!("{asset_name}.sha256")), "linux-sha\n");
+
+            let args = vec![
+                "--version".to_string(),
+                format!("v{version}"),
+                "--repository".to_string(),
+                "EffortlessMetrics/ripr".to_string(),
+            ];
+
+            let Err(err) = super::release_server_manifest(&args) else {
+                return Err(format!(
+                    "prerelease/build-metadata version `{version}` must not write the descriptor"
+                ));
+            };
+            assert!(
+                err.contains("MAJOR.MINOR.PATCH"),
+                "the error must name the required distribution generation form; got: {err}"
+            );
+
+            // The guard sits exactly at the descriptor boundary: the
+            // generation-keyed run artifacts exist, the descriptor does not.
+            assert!(
+                dist.join(format!("ripr-server-manifest-v{version}.json"))
+                    .exists(),
+                "the manifest write precedes the refused descriptor write"
+            );
+            let descriptor_path = root
+                .join("editors")
+                .join("vscode")
+                .join("src")
+                .join("serverDescriptor.ts");
+            assert!(
+                !descriptor_path.exists(),
+                "a prerelease/build-metadata version must never write the editor descriptor"
+            );
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
 pub(crate) fn with_temp_cwd<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
     let lock = acquire_test_cwd_write_guard();
     let old = std::env::current_dir().unwrap();
