@@ -1,0 +1,15 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_deep_nesting_parse_budget/input
+
+Summary: 0 probe(s), 0 exposed, 0 weak, 0 unrevealed, 0 no path, 0 unknown
+
+Changed file(s) by language: rust: 0, typescript: 1.
+
+Analysis outcome: partial_with_limitations (analysis incomplete).
+  Zero findings is not a clean result because the analyzed scope is incomplete.
+  Limitation: language_scope_unsupported at language_adapter (src/deep.ts); affected items: 1; recovery: retry — Reduce the expression nesting depth below the parse budget, then re-run the analysis.
+
+No diff-derived static exposure probes found.
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

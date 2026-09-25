@@ -121,6 +121,18 @@ impl LanguageAdapter for TypeScriptAdapter {
             let Ok(source) = std::fs::read_to_string(&absolute) else {
                 continue;
             };
+            // Nesting-budget trips are disclosed for every file, changed or
+            // not: an undisclosed skip of an unchanged file would hide why
+            // its owners/tests are absent, and the trip is the only record
+            // that the file was seen. Ordinary parse errors keep the
+            // existing changed-file-only disclosure.
+            if let Some(reason) = nesting_budget_trip(&source) {
+                parse_limits.push(TypeScriptParseLimit {
+                    file: relative.clone(),
+                    reason,
+                });
+                continue;
+            }
             if let Some(reason) = parse_error_reason(relative, &source) {
                 if !is_test_file(relative)
                     && changed_paths
@@ -282,13 +294,21 @@ impl LanguageAdapter for TypeScriptAdapter {
         let limitations = parse_limits
             .iter()
             .map(|limit| {
+                // A budget trip is not a parse error: the file was never
+                // parsed, so the recovery must say that (matched on the
+                // stable reason prefix, not re-derived).
+                let recovery_detail = if limit
+                    .reason
+                    .starts_with(TS_PARSE_BUDGET_REASON_PREFIX)
+                {
+                    "Reduce the expression nesting depth below the parse budget, then re-run the analysis."
+                } else {
+                    "Fix the TypeScript or JavaScript parse error, then re-run the analysis."
+                };
                 AnalysisLimitation::new(
                     AnalysisLimitationKind::LanguageScopeUnsupported,
                     AnalysisStage::LanguageAdapter,
-                    AnalysisRecovery::new(
-                        AnalysisRecoveryKind::Retry,
-                        "Fix the TypeScript or JavaScript parse error, then re-run the analysis.",
-                    )?,
+                    AnalysisRecovery::new(AnalysisRecoveryKind::Retry, recovery_detail)?,
                 )
                 .with_path(limit.file.to_string_lossy())?
                 .with_affected_items(1)?

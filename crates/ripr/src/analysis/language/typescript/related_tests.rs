@@ -63,6 +63,13 @@ impl ReExportIndex {
             let Ok(source) = std::fs::read_to_string(&absolute) else {
                 continue;
             };
+            // Same nesting budget as the Phase-1 gate (issue #4101): this
+            // index parses independently of `parse_error_reason`, so it must
+            // decline deep files itself rather than abort on them. The trip
+            // is already disclosed by the Phase-1 loop, which runs first.
+            if nesting_budget_trip(&source).is_some() {
+                continue;
+            }
             let allocator = Allocator::default();
             let ret = Parser::new(&allocator, &source, source_type_for(relative)).parse();
             if !ret.errors.is_empty() {

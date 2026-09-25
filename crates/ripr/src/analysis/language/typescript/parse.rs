@@ -3,6 +3,9 @@
 use super::*;
 
 pub(crate) fn parse_error_reason(file: &Path, source: &str) -> Option<String> {
+    if let Some(reason) = nesting_budget_trip(source) {
+        return Some(reason);
+    }
     let allocator = Allocator::default();
     let ret = Parser::new(&allocator, source, source_type_for(file)).parse();
     if ret.errors.is_empty() {
@@ -10,6 +13,71 @@ pub(crate) fn parse_error_reason(file: &Path, source: &str) -> Option<String> {
     } else {
         Some(format!("{} parser error(s)", ret.errors.len()))
     }
+}
+
+/// Maximum bracket-nesting depth the oxc parser may be asked to handle
+/// (issue #4101). Past this depth a recursive-descent parse can overflow
+/// the thread stack — an abort, not a catchable panic — so the adapter
+/// declines the file with a typed budget reason instead. 128 sits 3x below
+/// the lowest observed abort threshold (depth 400, Windows debug
+/// main-thread stack) and far above legitimate nesting.
+pub(crate) const MAX_TS_PARSE_NESTING_DEPTH: usize = 128;
+
+/// Stable prefix of the nesting-budget trip reason. Consumers that render
+/// trip-specific guidance match on this instead of re-deriving the trip.
+pub(crate) const TS_PARSE_BUDGET_REASON_PREFIX: &str = "typescript parse budget exceeded";
+
+/// Budget trip for a TypeScript/JavaScript source: `Some(reason)` when the
+/// bracket-nesting depth exceeds [`MAX_TS_PARSE_NESTING_DEPTH`].
+/// Single pass, comment-aware (`//` and `/* */` skipped); string contents
+/// are counted literally — over-counting a bracket inside a string only
+/// declines the file (fail-closed), while skipping strings risks missing
+/// real nesting (unsound).
+pub(crate) fn nesting_budget_trip(source: &str) -> Option<String> {
+    let bytes = source.as_bytes();
+    let mut depth: usize = 0;
+    let mut max_depth: usize = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'/' && index + 1 < bytes.len() {
+            if bytes[index + 1] == b'/' {
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+                continue;
+            }
+            if bytes[index + 1] == b'*' {
+                index += 2;
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    index += 1;
+                }
+                index += 2;
+                continue;
+            }
+        }
+        match byte {
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                max_depth = max_depth.max(depth);
+                if max_depth > MAX_TS_PARSE_NESTING_DEPTH {
+                    // Trip at the first excess: the file is declined without
+                    // parsing, so the reported fact is the exceeded budget,
+                    // not the file's full depth.
+                    return Some(format!(
+                        "{TS_PARSE_BUDGET_REASON_PREFIX}: nesting depth exceeded {MAX_TS_PARSE_NESTING_DEPTH}"
+                    ));
+                }
+            }
+            b')' | b']' | b'}' => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
 }
 
 pub(crate) fn parse_limit_for_file<'a>(

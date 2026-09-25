@@ -8260,3 +8260,135 @@ it("tiers", () => {
         );
     }
 }
+
+// ── Nesting-budget guard (issue #4101) ────────────────────────────────────
+// Deep expression nesting overflows the oxc recursive-descent stack — an
+// abort, not a catchable panic. These tests pin the pre-parse budget that
+// declines such files with a typed reason instead of parsing them.
+
+fn deep_parens(depth: usize) -> String {
+    format!(
+        "export const deep = {}x{};",
+        "(".repeat(depth),
+        ")".repeat(depth)
+    )
+}
+
+#[test]
+fn nesting_budget_allows_ordinary_source() -> Result<(), String> {
+    let source = "export function add(a: number, b: number): number {\n  return a + b;\n}\n";
+    if let Some(reason) = nesting_budget_trip(source) {
+        return Err(format!("ordinary source must stay within budget: {reason}"));
+    }
+    if let Some(reason) = parse_error_reason(Path::new("src/app.ts"), source) {
+        return Err(format!("ordinary source must parse cleanly: {reason}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn nesting_budget_trips_past_cap_with_typed_reason() -> Result<(), String> {
+    let reason = nesting_budget_trip(&deep_parens(500)).ok_or("depth 500 must trip the budget")?;
+    assert_eq!(
+        reason,
+        format!(
+            "typescript parse budget exceeded: nesting depth exceeded {MAX_TS_PARSE_NESTING_DEPTH}"
+        )
+    );
+    let path = Path::new("src/deep.ts");
+    assert_eq!(
+        parse_error_reason(path, &deep_parens(500)),
+        Some(reason),
+        "a tripped file must surface the budget reason through the parse gate, never reach the parser"
+    );
+    Ok(())
+}
+
+#[test]
+fn nesting_budget_boundary_128_ok_129_trips() {
+    assert!(
+        nesting_budget_trip(&deep_parens(128)).is_none(),
+        "depth exactly at the cap must stay parsable"
+    );
+    assert!(
+        nesting_budget_trip(&deep_parens(129)).is_some(),
+        "depth one past the cap must trip"
+    );
+}
+
+#[test]
+fn nesting_budget_skips_comments_but_counts_strings_fail_closed() {
+    // 500-deep nesting inside comments is not real code and must not trip.
+    let commented = format!(
+        "// {}\n/* {} */\nexport const x = 1;\n",
+        "(".repeat(500),
+        "(".repeat(500)
+    );
+    assert!(
+        nesting_budget_trip(&commented).is_none(),
+        "commented-out brackets must not consume the budget"
+    );
+    // Brackets inside strings cannot be distinguished cheaply from real
+    // nesting; counting them (fail-closed decline) is sound, skipping them
+    // would risk missing real nesting (unsound).
+    let stringy = format!("export const s = \"{}\";\n", "(".repeat(500));
+    assert!(
+        nesting_budget_trip(&stringy).is_some(),
+        "string-held brackets must trip fail-closed, never be skipped"
+    );
+}
+
+#[test]
+fn deep_unchanged_file_discloses_budget_limit_without_abort() -> Result<(), String> {
+    let root = ts_unique_tempdir("nesting-budget")?;
+    ts_write_file(&root.join("src/deep.ts"), &deep_parens(500))?;
+    ts_write_file(
+        &root.join("src/app.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    // Benign change to app.ts only; deep.ts is NOT in the diff — the exact
+    // blast-radius shape from the issue. Completing this call (rather than
+    // aborting the test process) is the regression pin.
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/app.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 4,
+            new_side_line: 4,
+            text: "export const extra = 1;".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    let disclosed = result.limitations.iter().any(|limitation| {
+        limitation.path.as_deref() == Some("src/deep.ts")
+            && limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript parse budget exceeded"))
+    });
+    if !disclosed {
+        return Err(format!(
+            "deep unchanged file must be disclosed as a budget trip; limitations={:?}",
+            result.limitations
+        ));
+    }
+    Ok(())
+}

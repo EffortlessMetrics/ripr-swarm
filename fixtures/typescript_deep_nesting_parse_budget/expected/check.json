@@ -1,0 +1,24 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/typescript_deep_nesting_parse_budget/input",
+  "summary": {"changed_rust_files":0,"probes":0,"findings":0,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": false,
+    "outcome": {"schema_version":"0.1","kind":"partial_with_limitations","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:eb063ce4f3659f794e4b86597f30743b6b92c58a88a9a5002c6873fc08602dca","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":1,"candidate_line_count":0,"probe_count":0,"finding_count":0},"limitations":[{"kind":"language_scope_unsupported","producer_stage":"language_adapter","path":"src/deep.ts","affected_items":1,"bounded_detail":"typescript parse budget exceeded: nesting depth exceeded 128","recovery":{"kind":"retry","detail":"Reduce the expression nesting depth below the parse budget, then re-run the analysis."}}],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": ["src/app.ts"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ]
+}
