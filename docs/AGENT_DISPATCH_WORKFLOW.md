@@ -74,7 +74,7 @@ capped set of seams with `why_now`, nearest test-to-imitate, candidate
 values, missing discriminators, assertion shape, and verification commands.
 The full packet remains the detailed work order for one seam.
 
-Use it at step 3-4 below: when the report or hover names more gaps than the
+Use it at steps 3-4 below: when the report or hover names more gaps than the
 current change needs, `ripr agent brief` ranks the working set first, then
 `ripr agent packet --seam-id` expands the chosen seam.
 
