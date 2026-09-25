@@ -294,10 +294,12 @@ missing, and what static limits remain.
 
 ## Bounded execution: `ripr agent verify-execute`
 
-`ripr agent verify-execute` is the only surface in the agent loop that
-executes a process. It accepts one canonical producer-shaped packet and runs
-only the direct `ripr agent verify` route that packet declares — no shell,
-no display-text execution, no receipt issuance:
+`ripr agent verify-execute` is the only standalone command in the agent loop
+that executes a process; `ripr agent repair --phase verify` also runs the
+retained packet's typed verify route through the bounded execution runner. It
+accepts one canonical producer-shaped packet and runs only the direct
+`ripr agent verify` route that packet declares — no shell, no display-text
+execution, no receipt issuance:
 
 ```bash
 ripr agent verify-execute \

@@ -2283,4 +2283,5 @@ command names with an explicit retired-command error pointing at GitHub
 issues/PRs and `cargo xtask help --all` as the live work-selection surfaces.
 Treat the retired commands in those entries as historical record only — do not
 copy them into new playbooks, and replay the premise check with
-`git fetch origin` / `gh issue list --state open` instead.
+`git fetch origin`, `git status --short`, `gh issue list --state open`,
+and `gh pr list --state open` instead.
