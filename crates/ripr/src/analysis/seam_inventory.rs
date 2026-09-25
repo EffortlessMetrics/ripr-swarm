@@ -3502,8 +3502,8 @@ marker = "libtest_mimic::Trial"
         std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o644))
             .map_err(|err| format!("restore source permissions: {err}"))?;
         match outcome {
-            NoImpactOutcome::Fast(_) => Ok(()),
-            NoImpactOutcome::Declined(reason) => Err(format!(
+            Ok(NoImpactOutcome::Fast(_)) => Ok(()),
+            Ok(NoImpactOutcome::Declined(reason)) => Err(format!(
                 "fast path must not read Rust contents, got fallback {}",
                 reason.as_str()
             )),
@@ -3528,7 +3528,6 @@ marker = "libtest_mimic::Trial"
                 reason.as_str()
             )),
             NoImpactOutcome::Fast(_) => Err("cold cache must not take the fast path".to_owned()),
-            Err(error) => Err(error),
         }?;
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
@@ -3572,7 +3571,6 @@ marker = "libtest_mimic::Trial"
             NoImpactOutcome::Fast(_) => {
                 Err("corrupt mapping must not take the fast path".to_owned())
             }
-            Err(error) => Err(error),
         }?;
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
@@ -3614,7 +3612,6 @@ marker = "libtest_mimic::Trial"
             NoImpactOutcome::Fast(_) => {
                 Err("foreign mapping must not take the fast path".to_owned())
             }
-            Err(error) => Err(error),
         }?;
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
@@ -3635,7 +3632,16 @@ marker = "libtest_mimic::Trial"
             inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], true)?;
         let full =
             inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
-        if fast.classified != full.classified
+        // ClassifiedSeam carries evidence payloads without structural
+        // equality; compare canonical seam identities instead.
+        let seam_ids = |inventory: &ScopedClassifiedSeamInventory| {
+            inventory
+                .classified
+                .iter()
+                .map(|entry| entry.seam.id().as_str().to_owned())
+                .collect::<Vec<_>>()
+        };
+        if seam_ids(&fast) != seam_ids(&full)
             || fast.workspace_cache_key != full.workspace_cache_key
             || fast.total_rust_files != full.total_rust_files
             || fast.total_production_files != full.total_production_files
