@@ -2364,6 +2364,27 @@ impl Backend {
             .map(|state| state.text.clone())
     }
 
+    /// Version-bind push diagnostics only when the client explicitly
+    /// advertised publishDiagnostics.versionSupport. The document version is
+    /// sampled before any currentness/quarantine decision at the call site:
+    /// if a later edit races the send, the older version is safe for the
+    /// client to discard instead of relabelling saved-state ranges as newer.
+    fn document_version_for_push(&self, uri: &Uri) -> Option<i32> {
+        let version_supported = self
+            .client_features
+            .lock()
+            .ok()
+            .is_some_and(|features| features.publish_version);
+        if !version_supported {
+            return None;
+        }
+        self.documents
+            .lock()
+            .ok()?
+            .state_for_uri(uri)
+            .and_then(|state| state.version)
+    }
+
     /// The quarantine state of an open document, as `(path, reason)`.
     /// `None` means the document is unknown or clean: its buffer matches the
     /// saved content the committed snapshot analyzed.
@@ -2478,15 +2499,22 @@ impl Backend {
     /// episode. A document with nothing served stays silent — there is no
     /// stale line identity to withdraw.
     async fn withdraw_document_diagnostics(&self, uri: &Uri) {
+        let version = self.document_version_for_push(uri);
         let had_visible = !self.committed_served_diagnostics_for_uri(uri).is_empty()
             || self.last_diagnostics_has_any(uri);
         if !had_visible {
             return;
         }
+        // A newer lifecycle event may have lifted quarantine before this
+        // async handler reaches publication. In that case its own transition
+        // owns the newer view; never clear diagnostics as that newer version.
+        if self.document_quarantine(uri).is_none() {
+            return;
+        }
         self.disclose_withdrawal_once(uri).await;
         if !self.pull_diagnostics_enabled() {
             self.client
-                .publish_diagnostics(uri.clone(), Vec::new(), None)
+                .publish_diagnostics(uri.clone(), Vec::new(), version)
                 .await;
         }
         self.set_last_diagnostics_for_uri(uri, Vec::new());
@@ -2496,10 +2524,18 @@ impl Backend {
     /// matches the analyzed saved content, so the committed snapshot's
     /// line-local diagnostics are valid for the client's buffer.
     async fn restore_document_diagnostics(&self, uri: &Uri, was_disclosed: bool) {
+        let version = self.document_version_for_push(uri);
+        // Symmetric with withdrawal: if a newer edit re-entered quarantine
+        // before this handler publishes, do not bind stale saved diagnostics
+        // to that newer document version. The newer transition owns the
+        // current push view.
+        if self.document_quarantine(uri).is_some() {
+            return;
+        }
         let diagnostics = self.committed_served_diagnostics_for_uri(uri);
         if !self.pull_diagnostics_enabled() {
             self.client
-                .publish_diagnostics(uri.clone(), diagnostics.clone(), None)
+                .publish_diagnostics(uri.clone(), diagnostics.clone(), version)
                 .await;
         }
         self.set_last_diagnostics_for_uri(uri, diagnostics);
@@ -2524,6 +2560,7 @@ impl Backend {
         diagnostics: Vec<Diagnostic>,
         pending_analyzed: &BTreeMap<Uri, Option<String>>,
     ) {
+        let version = self.document_version_for_push(uri);
         if self
             .document_quarantine_for_pending(uri, pending_analyzed)
             .is_some()
@@ -2548,12 +2585,12 @@ impl Backend {
                 }
             }
             self.client
-                .publish_diagnostics(uri.clone(), Vec::new(), None)
+                .publish_diagnostics(uri.clone(), Vec::new(), version)
                 .await;
             return;
         }
         self.client
-            .publish_diagnostics(uri.clone(), diagnostics, None)
+            .publish_diagnostics(uri.clone(), diagnostics, version)
             .await;
     }
 
