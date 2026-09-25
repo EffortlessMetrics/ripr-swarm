@@ -309,20 +309,19 @@ fn fed_receipt_identity(
         if !valid_identifier(name) {
             return None;
         }
-        let mut bindings = statements[..owner_position]
-            .iter()
-            .filter(|statement| {
-                let ast::Stmt::LetStmt(binding) = statement else {
-                    return false;
-                };
-                binding
-                    .pat()
-                    .is_some_and(|pattern| pattern_binds_name(&pattern, name))
-            })
-            .map(|statement| match statement {
-                ast::Stmt::LetStmt(binding) => binding,
-                _ => unreachable!("filtered above"),
-            });
+        let mut bindings =
+            statements[..owner_position]
+                .iter()
+                .filter_map(|statement| match statement {
+                    ast::Stmt::LetStmt(binding)
+                        if binding
+                            .pat()
+                            .is_some_and(|pattern| pattern_binds_name(&pattern, name)) =>
+                    {
+                        Some(binding)
+                    }
+                    _ => None,
+                });
         let binding = bindings.next()?;
         if bindings.next().is_some() {
             return None;
