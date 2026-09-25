@@ -13491,7 +13491,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
     assert!(markdown.contains("Full top-3 capture cases: 1 / 1 evals"));
     assert!(markdown.contains("TypeScript Preview Repair-Loop Receipts"));
     assert!(markdown.contains("TypeScript False-Actionable Audit"));
-    assert!(markdown.contains("False actionable: 0 / 14 checked rows"));
+    assert!(markdown.contains("False actionable: 0 / 15 checked rows"));
     assert!(markdown.contains("Bun UB Cross-Language Witness Receipts"));
     assert!(markdown.contains("bun_blob_31648_known_good"));
     assert!(markdown.contains("User Surface Projection Alignment Receipts"));
