@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use super::{ParsedDiff, parse_bounded_lines, parse_unbounded};
 use crate::analysis_outcome::AnalysisLimitationKind;
 
-const FIRST_FILE: &str = "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-old\n+new\n";
+const FIRST_FILE: &str =
+    "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-old\n+new\n";
 
 fn assert_stops_at_header(prefix: &str, limit: usize, observed: usize) -> Result<(), String> {
     let prefix_reads = Cell::new(0);
@@ -22,7 +23,11 @@ fn assert_stops_at_header(prefix: &str, limit: usize, observed: usize) -> Result
         return Err("over-limit scope returned a partial successful parse".to_string());
     };
     assert_eq!(prefix_reads.get(), prefix.lines().count());
-    assert_eq!(tail_reads.get(), 0, "the oversized file body must stay unread");
+    assert_eq!(
+        tail_reads.get(),
+        0,
+        "the oversized file body must stay unread"
+    );
     assert!(error.starts_with(&format!(
         "diff_scope_oversized: at least {observed} changed files"
     )));
@@ -41,22 +46,25 @@ fn assert_matches_unbounded(input: &str, actual: &ParsedDiff) {
     assert_eq!(actual.deleted_file_count, expected.deleted_file_count);
     assert_eq!(actual.submodule_file_count, expected.submodule_file_count);
     assert_eq!(actual.renamed_file_count, expected.renamed_file_count);
-    assert_eq!(actual.pure_rename_file_count, expected.pure_rename_file_count);
+    assert_eq!(
+        actual.pure_rename_file_count,
+        expected.pure_rename_file_count
+    );
     assert_eq!(actual.pure_rename_paths, expected.pure_rename_paths);
     assert_eq!(actual.limitations, expected.limitations);
 }
 
 #[test]
 fn oversized_git_diff_stops_before_the_next_hunk_or_long_tail() -> Result<(), String> {
-    let prefix = format!(
-        "{FIRST_FILE}diff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n"
-    );
+    let prefix =
+        format!("{FIRST_FILE}diff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n");
     assert_stops_at_header(&prefix, 1, 2)
 }
 
 #[test]
 fn oversized_plain_diff_stops_after_marker_lookahead() -> Result<(), String> {
-    let prefix = "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-old\n+new\n--- a/src/b.rs\n+++ b/src/b.rs\n";
+    let prefix =
+        "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-old\n+new\n--- a/src/b.rs\n+++ b/src/b.rs\n";
     assert_stops_at_header(prefix, 1, 2)
 }
 
