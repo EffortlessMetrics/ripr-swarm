@@ -67,6 +67,34 @@ const ARTIFACTS: &[AgentStatusArtifactDef] = &[
     },
 ];
 
+/// Artifacts whose repository-global copies the repair-attempt authority
+/// supersedes while a repair attempt is present. Per
+/// `docs/REPAIR_ATTEMPT.md` ("Durable location" and "Compatibility
+/// outputs"), repository-global workflow files remain compatibility
+/// projections and are not repair-attempt identity: the attempt retains its
+/// own digest-bound before artifacts under `target/ripr/repair-attempts/`,
+/// and the manifest records that after-phase verify and receipt outputs
+/// remain mirrored through the workflow compatibility paths. Status must not
+/// report a projection the active loop mode does not enforce as `required`.
+const REPAIR_ATTEMPT_SUPERSEDED_ARTIFACTS: &[&str] = &[
+    "before_snapshot",
+    "after_snapshot",
+    "analysis_outcome",
+    "agent_brief",
+    "agent_packet",
+    "agent_verify",
+    "agent_receipt",
+];
+
+/// Whether the active loop mode requires this artifact: every artifact is
+/// required by the legacy artifact loop when no repair attempt is present;
+/// artifacts the repair-attempt authority supersedes are not required while
+/// an attempt is present, because the attempt directory holds the enforced
+/// identity and the global files are compatibility projections.
+fn artifact_required_by_active_loop(name: &str, repair_attempt_present: bool) -> bool {
+    !(repair_attempt_present && REPAIR_ATTEMPT_SUPERSEDED_ARTIFACTS.contains(&name))
+}
+
 const MISSING_COMMAND_ORDER: &[&str] = &[
     "before_snapshot",
     "agent_packet",
@@ -890,13 +918,19 @@ fn keep_follow_up_templates_reachable(root: &str) {
 
 pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<String, String> {
     let next_command = report.next_command.as_ref().map(agent_status_command_json);
+    let repair_attempt_present = !report.repair_attempts.is_empty();
+    let artifacts = report
+        .artifacts
+        .iter()
+        .map(|artifact| agent_status_artifact_json(artifact, repair_attempt_present))
+        .collect::<Vec<_>>();
     let value = serde_json::json!({
         "schema_version": AGENT_STATUS_SCHEMA_VERSION,
         "tool": "ripr",
         "status": report.status(),
         "root": report.root,
         "seam": report.seam.as_ref().map(agent_status_seam_json),
-        "artifacts": report.artifacts.iter().map(agent_status_artifact_json).collect::<Vec<_>>(),
+        "artifacts": artifacts,
         "repair_attempts": report.repair_attempts.iter().map(agent_status_repair_attempt_json).collect::<Vec<_>>(),
         "missing_commands": report.missing_commands.iter().map(agent_status_command_json).collect::<Vec<_>>(),
         "next_command": next_command,
@@ -1008,12 +1042,15 @@ fn agent_status_seam_json(seam: &AgentStatusSeam) -> Value {
     })
 }
 
-fn agent_status_artifact_json(artifact: &AgentStatusArtifact) -> Value {
+fn agent_status_artifact_json(
+    artifact: &AgentStatusArtifact,
+    repair_attempt_present: bool,
+) -> Value {
     serde_json::json!({
         "name": artifact.name,
         "label": artifact.label,
         "path": artifact.path,
-        "required": true,
+        "required": artifact_required_by_active_loop(&artifact.name, repair_attempt_present),
         "state": if artifact.present { "present" } else { "missing" },
         "bytes": artifact.bytes,
         "modified_unix_ms": modified_unix_ms(artifact.modified)
@@ -1408,6 +1445,19 @@ mod tests {
         assert_eq!(value["status"], "incomplete");
         assert_eq!(value["seam"], Value::Null);
         assert_eq!(value["artifacts"].as_array().map(Vec::len), Some(7));
+        // No repair attempt is present, so the legacy artifact loop is the
+        // active mode and every workflow artifact is required
+        // (docs/LEARNINGS.md, 2026-07-25 false-confidence gates).
+        let artifacts = value["artifacts"]
+            .as_array()
+            .ok_or_else(|| "status JSON must carry an artifacts array".to_string())?;
+        for artifact in artifacts {
+            assert_eq!(
+                artifact["required"], true,
+                "legacy loop must require `{}`",
+                artifact["name"]
+            );
+        }
         assert_eq!(value["missing_commands"].as_array().map(Vec::len), Some(7));
         assert_eq!(value["repair_attempts"], serde_json::json!([]));
         // A fresh workspace knows no seam and has no workflow directory, so the
@@ -1417,6 +1467,118 @@ mod tests {
         assert_eq!(value["next_command"]["command"], "ripr pilot --root .");
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// The artifact `required` flags must claim no more than the active loop
+    /// mode enforces (docs/LEARNINGS.md, 2026-07-25 false-confidence gates).
+    /// With no repair attempt present the legacy artifact loop is active and
+    /// requires every workflow artifact; with a trusted repair attempt
+    /// present the attempt authority supersedes the repository-global
+    /// projections (docs/REPAIR_ATTEMPT.md, "Durable location" and
+    /// "Compatibility outputs"), so none of them is required.
+    #[test]
+    fn agent_status_artifact_required_flags_follow_the_enforced_loop_mode() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("required-flags-repair");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        run_git(&root, &["init"])?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&root, &["config", "user.name", "RIPR Test"])?;
+        write_file(&root.join("README.md"), "# test\n")?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        prepare_attempt_fixture(&root, "seam:status-honesty")?;
+
+        let report = build_agent_status_report(&root, &root);
+        assert_eq!(
+            report.repair_attempts.len(),
+            1,
+            "the prepared attempt must be the active loop mode"
+        );
+        let rendered = render_agent_status_json(&report)?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse status JSON: {err}"))?;
+        let artifacts = value["artifacts"]
+            .as_array()
+            .ok_or_else(|| "status JSON must carry an artifacts array".to_string())?;
+        for artifact in artifacts {
+            assert_eq!(
+                artifact["required"], false,
+                "repair loop must not require the superseded projection `{}`",
+                artifact["name"]
+            );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// Every artifact status reports on must carry an explicit classification
+    /// for the repair-attempt loop mode, so a newly added artifact cannot
+    /// silently inherit an all-`true` or all-`false` claim.
+    #[test]
+    fn agent_status_every_artifact_has_a_loop_mode_classification() {
+        let reported = ARTIFACTS
+            .iter()
+            .map(|artifact| artifact.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            REPAIR_ATTEMPT_SUPERSEDED_ARTIFACTS, reported,
+            "each reported artifact needs an explicit active-loop classification"
+        );
+    }
+
+    fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
+        crate::testing::fixture_git::fixture_git_ok(root, args)
+    }
+
+    /// Publishes one real repair attempt the way the before phase does, so
+    /// status reads a trusted attempt directory rather than a synthetic one.
+    fn prepare_attempt_fixture(root: &Path, seam_id: &str) -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeginRepairAttemptOptions, begin_repair_attempt_with,
+            edit_cage_policy_from_packet, write_edit_cage_baseline,
+        };
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow)
+            .map_err(|err| format!("create {}: {err}", workflow.display()))?;
+        let before = workflow.join("before-status-honesty.json");
+        let packet = workflow.join("packet-status-honesty.json");
+        let baseline = workflow.join("baseline-status-honesty.json");
+        write_file(&before, "{}")?;
+        let packet_text = serde_json::json!({
+            "seam_id": seam_id,
+            "allowed_edit_surface": ["tests/target.rs"],
+            "forbidden_files": []
+        })
+        .to_string();
+        write_file(&packet, &packet_text)?;
+        let policy = edit_cage_policy_from_packet(&packet_text, seam_id)?;
+        write_edit_cage_baseline(root, &baseline, &policy)?;
+        begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root,
+            root_argument: root,
+            seam_id,
+            sources: &[
+                BeforeArtifactSource {
+                    role: "before_snapshot",
+                    path: &before,
+                },
+                BeforeArtifactSource {
+                    role: "agent_packet",
+                    path: &packet,
+                },
+                BeforeArtifactSource {
+                    role: "edit_cage_baseline",
+                    path: &baseline,
+                },
+            ],
+            expected_repository_head: None,
+            next_command_suffix: None,
+        })?;
         Ok(())
     }
 
