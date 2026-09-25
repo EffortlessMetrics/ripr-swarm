@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/typescript_tape_equal_oracle/input
 
-Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
+Summary: 1 probe(s), 1 exposed, 0 weak, 0 unrevealed, 0 no path, 0 unknown
 
 Changed file(s) by language: rust: 0, typescript: 1.
 
@@ -15,12 +15,11 @@ Start here:
   File: src/score.ts:2
   Language: typescript
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: exposed (warning, confidence 0.60)
   Changed behavior: return total - penalty + 0;
-  Missing discriminator: propagation_unknown: changed value sinks to the owner return value or constructed object (`total - penalty + 0`); all strong assertions observe an unrelated expression, not the cha…
+  Discriminator (observed, advisory): Related test reaches `score` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
   Related test: tests/score.test.ts:3 scores the difference
-  Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == total - penalty + 0`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
+  Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
   Evidence:
     - reach yes: 1 related test(s) found for owner `score`
     - infection unknown: TypeScript preview adapter does not yet model infection.

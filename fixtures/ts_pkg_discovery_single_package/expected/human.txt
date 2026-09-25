@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/ts_pkg_discovery_single_package/input
 
-Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
+Summary: 1 probe(s), 1 exposed, 0 weak, 0 unrevealed, 0 no path, 0 unknown
 
 Changed file(s) by language: rust: 0, typescript: 1.
 
@@ -11,16 +11,15 @@ Analysis outcome: complete_with_findings (analysis complete).
 
 Start here:
   State: preview_limited
-  Safe next action: preview-language evidence is advisory; the repair packet is complete but remains advisory, so verify independently before acting.
+  Safe next action: preview-language evidence is advisory; complete the missing repair-packet fields before acting.
   File: src/math.ts:2
   Language: typescript
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: exposed (warning, confidence 0.60)
   Changed behavior: return a + b + 0;
-  Missing discriminator: propagation_unknown: changed value sinks to the owner return value or constructed object (`a + b + 0`); all strong assertions observe an unrelated expression, not the changed sink;…
+  Discriminator (observed, advisory): Related test reaches `add` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
   Related test: tests/math.test.ts:3 add returns sum
-  Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == a + b + 0`; the repair packet is complete and delegatable (advisory).
+  Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
   Evidence:
     - reach yes: 1 related test(s) found for owner `add`
     - infection unknown: TypeScript preview adapter does not yet model infection.
