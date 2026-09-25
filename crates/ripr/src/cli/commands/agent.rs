@@ -869,11 +869,11 @@ fn run_agent_repair_phase(
                 // manifest replaced inside that window must refuse instead of
                 // silently advancing the attempt against replaced trust data.
                 // This is a deliberate named refusal: it maps to exit code 3.
-                if let Some(binding) = &retained_binding {
-                    if let Err(error) = confirm_manifest_unchanged(binding) {
-                        refusal.typed = true;
-                        return Err(error);
-                    }
+                if let Some(binding) = &retained_binding
+                    && let Err(error) = confirm_manifest_unchanged(binding)
+                {
+                    refusal.typed = true;
+                    return Err(error);
                 }
 
                 // Finish only after all command-owned after artifacts exist.
