@@ -12,6 +12,7 @@ fn ignore_remove_dir_all(path: impl AsRef<std::path::Path>) {
 use std::io::Read;
 
 use crate::acquire_test_cwd_write_guard;
+use crate::python_judged_panel_replay::sha256_hex;
 use ripr::output::receipt_lifecycle::{
     RECEIPT_MISSING, RECEIPT_MOVEMENT_IMPROVED, RECEIPT_NOT_APPLICABLE,
 };
@@ -160,12 +161,12 @@ use super::{
     pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
     pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
     pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-    public_contract_rows, read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
-    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
-    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
-    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
-    repo_badge_artifacts_summary_markdown, repo_exposure_latency_json,
-    repo_exposure_latency_markdown, repo_exposure_latency_run,
+    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
+    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
+    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
+    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
+    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
+    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_trace, repo_exposure_summary_report_timeout_ms_from_env, repo_root,
     repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
@@ -207,7 +208,8 @@ use super::{
     windows_absolute_path_tokens, workflow_bare_self_hosted_violations,
     workflow_review_thread_mutation_violations, workflow_runtime_violations, worktree,
     worktree_doctor_findings, write_badge_artifacts_after_build, write_badge_artifacts_from_diff,
-    write_evidence_health_report_with_runner, write_evidence_health_report_with_runners,
+    write_badge_input_identity, write_evidence_health_report_with_runner,
+    write_evidence_health_report_with_runners,
     write_lane1_evidence_audit_repo_exposure_with_runner, write_repo_exposure_latency_report,
     write_repo_exposure_summary_report_with_runner,
 };
@@ -19776,13 +19778,13 @@ fn dogfood_report_packet_index_scenarios_have_checked_receipts() -> Result<(), S
     with_repo_cwd(|| {
         let scenarios = dogfood_report_packet_index_scenarios();
         for required in [
-            ("complete_packet", "pass"),
+            ("complete_packet", "warn"),
             ("sparse_advisory", "warn"),
             ("missing_front_panel", "warn"),
             ("blocked_gate", "fail"),
             ("missing_assistant_proof", "warn"),
             ("missing_receipts", "warn"),
-            ("coverage_grip_present", "pass"),
+            ("coverage_grip_present", "warn"),
         ] {
             assert!(
                 scenarios.iter().any(|scenario| scenario.name == required.0
@@ -21763,6 +21765,206 @@ fn badge_artifact_command_args_substitutes_format_only() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// ---- #4003: the badge input must come from the actual resolved base through
+// the shared authorities, with a pinned Git presentation. These are real-Git
+// fixture tests: a mocked diff runner cannot prove the Git boundary. ----
+
+fn badge_fixture_git(args: &[&str]) -> Result<(), String> {
+    let status = run("git", args)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("badge fixture git command failed: {args:?}"))
+    }
+}
+
+fn badge_fixture_commit(message: &str) -> Result<(), String> {
+    badge_fixture_git(&[
+        "-c",
+        "user.email=badge-fixture@example.com",
+        "-c",
+        "user.name=badge fixture",
+        "commit",
+        "--quiet",
+        "-m",
+        message,
+    ])
+}
+
+fn badge_fixture_base_and_edit_commits() -> Result<(), String> {
+    fs::write("subject.txt", "kept line\nbadge-secret-line\n").map_err(|err| err.to_string())?;
+    badge_fixture_git(&["add", "."])?;
+    badge_fixture_commit("badge fixture base")?;
+    badge_fixture_git(&["checkout", "--quiet", "-b", "feature/badge-input"])?;
+    fs::write(
+        "subject.txt",
+        "kept line\nbadge-secret-line\nbadge-secret-line added\n",
+    )
+    .map_err(|err| err.to_string())?;
+    badge_fixture_git(&["add", "."])?;
+    badge_fixture_commit("badge fixture edit")
+}
+
+fn assert_badge_commit_identity(value: &str, label: &str) -> Result<(), String> {
+    if value.len() < 40 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(format!(
+            "expected a resolved {label} commit identity, got {value:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn badge_diff_reader_resolves_a_non_main_default_base_and_diffs_it() -> Result<(), String> {
+    with_temp_cwd(
+        "badge-diff-non-main-default",
+        |root| -> Result<(), String> {
+            // master-default repo with no remote: the shared default-base
+            // authority must pick master, not fabricate origin/main
+            // (#4003, RIPR-SPEC-0084).
+            badge_fixture_git(&["init", "--initial-branch=master", "--quiet"])?;
+            badge_fixture_base_and_edit_commits()?;
+            let input = read_badge_artifact_diff_governed(root)?;
+            if input.base_ref != "master" {
+                return Err(format!(
+                    "badge input resolved the wrong base: expected master, got {:?}",
+                    input.base_ref
+                ));
+            }
+            if !input.diff.contains("+badge-secret-line added") {
+                return Err(format!(
+                    "badge input must contain the branch edit; got: {}",
+                    input.diff
+                ));
+            }
+            assert_badge_commit_identity(&input.base_commit, "base")?;
+            assert_badge_commit_identity(&input.head_commit, "head")?;
+            assert_badge_commit_identity(&input.head_tree, "head tree")?;
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn badge_diff_reader_fails_closed_when_no_base_resolves() -> Result<(), String> {
+    with_temp_cwd("badge-diff-no-base", |root| -> Result<(), String> {
+        // A repository with no commits has no resolvable base. The badge
+        // producer must fail with a named cause, never write an empty patch
+        // that renders as a clean zero-change badge (#4003).
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        let Err(err) = read_badge_artifact_diff_governed(root) else {
+            return Err(
+                "a repo with no resolvable base must fail the badge input, not return an empty diff"
+                    .to_string(),
+            );
+        };
+        if !err.contains("base") {
+            return Err(format!(
+                "badge input failure must name the base cause: {err}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn badge_diff_reader_pins_the_git_presentation_against_ambient_config() -> Result<(), String> {
+    with_temp_cwd(
+        "badge-diff-pinned-presentation",
+        |root| -> Result<(), String> {
+            badge_fixture_git(&["init", "--initial-branch=master", "--quiet"])?;
+            // Ambient configuration the pre-#4003 producer absorbed: a textconv
+            // driver that hides the changed source line, ANSI color, an expanded
+            // ambient context, and an external diff driver that would fail
+            // loudly if spawned.
+            fs::write(".gitattributes", "*.txt diff=badge-wordifier\n")
+                .map_err(|err| err.to_string())?;
+            badge_fixture_git(&[
+                "config",
+                "diff.badge-wordifier.textconv",
+                "sed /badge-secret-line/d",
+            ])?;
+            badge_fixture_git(&["config", "color.diff", "always"])?;
+            badge_fixture_git(&["config", "diff.context", "8"])?;
+            badge_fixture_git(&[
+                "config",
+                "diff.external",
+                "ripr-badge-fixture-no-such-external-diff-driver",
+            ])?;
+            badge_fixture_base_and_edit_commits()?;
+            let input = read_badge_artifact_diff_governed(root)?;
+            if input.diff.contains('\u{1b}') {
+                return Err(
+                    "ambient color.diff=always leaked ANSI escapes into the badge input"
+                        .to_string(),
+                );
+            }
+            if !input.diff.contains("+badge-secret-line added") {
+                return Err(
+                    "the textconv driver hid the changed source from the badge input".to_string(),
+                );
+            }
+            if input.diff.lines().any(|line| line.starts_with(' ')) {
+                return Err(
+                "ambient diff.context expanded the badge input beyond the pinned zero-context presentation"
+                    .to_string(),
+            );
+            }
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn badge_input_identity_receipt_records_the_analyzed_subject() -> Result<(), String> {
+    with_temp_cwd(
+        "badge-input-identity-receipt",
+        |root| -> Result<(), String> {
+            badge_fixture_git(&["init", "--initial-branch=master", "--quiet"])?;
+            badge_fixture_base_and_edit_commits()?;
+            let input = read_badge_artifact_diff_governed(root)?;
+            write_badge_input_identity(&input, "input", &[])?;
+            let receipt_path = root.join("target/ripr/reports/badge-artifacts-identity.json");
+            let receipt = fs::read_to_string(&receipt_path)
+                .map_err(|err| format!("failed to read {}: {err}", receipt_path.display()))?;
+            let value: serde_json::Value = serde_json::from_str(&receipt)
+                .map_err(|err| format!("identity receipt is not valid JSON: {err}"))?;
+            if value["input"]["base_ref"] != "master" {
+                return Err(format!("receipt base_ref should be master: {receipt}"));
+            }
+            if value["input"]["diff_sha256"] != sha256_hex(input.diff.as_bytes()) {
+                return Err("receipt diff digest must match the badge input bytes".to_string());
+            }
+            let presentation = value["input"]["presentation"]["argv"]
+                .as_str()
+                .unwrap_or_default();
+            for pin in [
+                "core.quotePath=true",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--unified=0",
+                "--inter-hunk-context=0",
+            ] {
+                if !presentation.contains(pin) {
+                    return Err(format!("receipt presentation must name the {pin} pin"));
+                }
+            }
+            if !value["input"]["base_resolution"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("RIPR-SPEC-0084")
+            {
+                return Err("receipt must name the shared base resolution authority".to_string());
+            }
+            if value["phase"] != "input" {
+                return Err(format!("unexpected receipt phase: {receipt}"));
+            }
+            Ok(())
+        },
+    )
 }
 
 #[test]

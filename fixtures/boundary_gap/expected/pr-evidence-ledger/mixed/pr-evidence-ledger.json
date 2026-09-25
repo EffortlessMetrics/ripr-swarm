@@ -43,6 +43,7 @@
     "baseline_resolved": 3,
     "baseline_still_present": 2,
     "blocking_candidates": 0,
+    "count_source": "baseline_delta",
     "new_policy_eligible": 1,
     "ripr_zero_state": "not_yet",
     "suppressed": 1,

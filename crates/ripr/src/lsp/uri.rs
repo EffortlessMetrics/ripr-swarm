@@ -145,6 +145,63 @@ pub(super) fn absolute_join(root: &Path, path: &Path) -> PathBuf {
     }
 }
 
+/// Byte cap for report artifacts read by the long-running LSP server.
+/// Real repo-exposure artifacts for large repositories can reach tens of
+/// megabytes; 256 MiB is far above any legitimate artifact while still
+/// failing closed on an unbounded input. The cap is enforced while reading
+/// (`take(limit + 1)`), not just from metadata, so a file that grows between
+/// check and read cannot bypass it. Mirrors the CLI's
+/// `MAX_AGENT_VERIFY_SNAPSHOT_BYTES` (#2921).
+pub(super) const MAX_LSP_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Outcome of a capped artifact read. Callers must distinguish an absent
+/// artifact — a normal state for deferred analysis output, where falling back
+/// or returning no data is honest — from a present-but-unusable artifact
+/// (oversize, unreadable, or non-UTF-8), which requires a typed degradation
+/// instead of a silent `None`.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(super) enum CappedArtifactRead {
+    Contents(String),
+    Missing,
+    Unusable,
+}
+
+/// Read a repo-controlled report artifact with a metadata pre-check and a
+/// byte cap, failing closed. Follows `read_agent_verify_snapshot`'s shape.
+pub(super) fn read_artifact_capped(path: &Path) -> CappedArtifactRead {
+    read_artifact_capped_with_limit(path, MAX_LSP_ARTIFACT_BYTES)
+}
+
+/// `limit` is a parameter so tests can exercise the cap without materializing
+/// 256 MiB; production callers use [`read_artifact_capped`]. Reads at most
+/// `limit + 1` bytes, so a file that grows concurrently is rejected rather
+/// than read in full.
+pub(super) fn read_artifact_capped_with_limit(path: &Path, limit: u64) -> CappedArtifactRead {
+    use std::io::Read as _;
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return CappedArtifactRead::Missing;
+        }
+        Err(_) => return CappedArtifactRead::Unusable,
+    };
+    let mut contents = String::new();
+    match file
+        .take(limit.saturating_add(1))
+        .read_to_string(&mut contents)
+    {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return CappedArtifactRead::Missing;
+        }
+        Err(_) => return CappedArtifactRead::Unusable,
+    }
+    if contents.len() as u64 > limit {
+        return CappedArtifactRead::Unusable;
+    }
+    CappedArtifactRead::Contents(contents)
+}
+
 fn canonical_or_normalized(path: &Path) -> PathBuf {
     canonicalize_with_missing_tail(path).unwrap_or_else(|| normalize_path(path))
 }
@@ -351,6 +408,62 @@ mod tests {
         assert!(file_uri_is_within_root(root, &inside));
         assert!(!file_uri_is_within_root(root, &outside));
         assert!(!file_uri_is_within_root(root, &foreign));
+        Ok(())
+    }
+
+    #[test]
+    fn read_artifact_capped_reads_small_file_and_reports_missing() -> Result<(), String> {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ripr-uri-capped-read-{suffix}"));
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let path = dir.join("artifact.json");
+        std::fs::write(&path, "{\"records\":[]}").map_err(|err| err.to_string())?;
+
+        assert_eq!(
+            read_artifact_capped(&path),
+            CappedArtifactRead::Contents("{\"records\":[]}".to_string())
+        );
+        assert_eq!(
+            read_artifact_capped(&dir.join("absent.json")),
+            CappedArtifactRead::Missing
+        );
+
+        std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn read_artifact_capped_with_limit_rejects_oversize_and_non_utf8() -> Result<(), String> {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ripr-uri-capped-limit-{suffix}"));
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let path = dir.join("artifact.json");
+        std::fs::write(&path, "abcd").map_err(|err| err.to_string())?;
+
+        // Four bytes is under any real cap but over a 3-byte test limit.
+        assert_eq!(
+            read_artifact_capped_with_limit(&path, 3),
+            CappedArtifactRead::Unusable
+        );
+        assert_eq!(
+            read_artifact_capped_with_limit(&path, 4),
+            CappedArtifactRead::Contents("abcd".to_string())
+        );
+
+        let binary_path = dir.join("artifact.bin");
+        std::fs::write(&binary_path, [0xff, 0xfe, 0xfd]).map_err(|err| err.to_string())?;
+        assert_eq!(
+            read_artifact_capped_with_limit(&binary_path, 1024),
+            CappedArtifactRead::Unusable
+        );
+
+        std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
         Ok(())
     }
 }

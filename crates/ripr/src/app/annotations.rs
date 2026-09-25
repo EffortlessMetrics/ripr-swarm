@@ -11,6 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::cli::unknown_argument;
+use crate::output::workflow_escape::{escape_data, escape_property};
 
 const DEFAULT_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 const DEFAULT_ANNOTATIONS_TXT: &str = "target/ripr/review/annotations.txt";
@@ -180,12 +181,15 @@ fn annotation_from_comment(item: &Value) -> Result<String, String> {
         message.push_str(intent);
     }
     let title = format!("ripr {severity} {kind}");
+    // comments.json placement paths are raw text (never stable-encoded),
+    // so the full property encoding applies — unlike the raw-check
+    // renderer's stable `file=` input (#4065).
     Ok(format!(
         "::warning file={},line={},title={}::{}",
-        escape_cmd(&path),
+        escape_property(&path),
         line,
-        escape_cmd(&title),
-        escape_cmd(&message)
+        escape_property(&title),
+        escape_data(&message)
     ))
 }
 
@@ -238,15 +242,6 @@ fn write_annotations(
     }
     println!("Wrote {}", options.out);
     Ok(())
-}
-
-fn escape_cmd(value: &str) -> String {
-    value
-        .replace('%', "%25")
-        .replace('\r', "%0D")
-        .replace('\n', "%0A")
-        .replace(',', "%2C")
-        .replace(':', "%3A")
 }
 
 fn repo_root() -> Result<PathBuf, String> {
@@ -302,6 +297,31 @@ mod tests {
             out: "annotations.txt".to_string(),
             check: false,
         }
+    }
+
+    #[test]
+    fn annotation_escapes_data_and_property_contracts() -> Result<(), String> {
+        // Shared wire authority (#4065): the message keeps comma/colon
+        // literal (data decoding), while the raw comments.json path takes
+        // the full property encoding — including `%`, which unlike the
+        // raw-check renderer is NOT pre-encoded here.
+        let item: Value = serde_json::from_str(
+            r#"{
+                "placement": {"path": "src/a,b:c%d.rs", "line": 7, "mode": "exact_seam_line"},
+                "severity": "warning",
+                "kind": "focused_test",
+                "reason": "Check Result::Err from assert_eq!(actual, expected)",
+                "suggested_test": {"intent": "cover 100%"}
+            }"#,
+        )
+        .map_err(|err| format!("fixture must parse: {err}"))?;
+        let annotation = annotation_from_comment(&item)?;
+        if annotation
+            != "::warning file=src/a%2Cb%3Ac%25d.rs,line=7,title=ripr warning focused_test::Check Result::Err from assert_eq!(actual, expected) Suggested test: cover 100%25"
+        {
+            return Err(format!("wire encoding mismatch: {annotation}"));
+        }
+        Ok(())
     }
 
     #[test]

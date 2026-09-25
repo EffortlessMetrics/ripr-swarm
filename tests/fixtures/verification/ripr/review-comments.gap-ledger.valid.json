@@ -1,0 +1,87 @@
+{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "status": "advisory",
+  "root": ".",
+  "base": "origin/main",
+  "head": "HEAD",
+  "mode": "draft",
+  "inputs": {
+    "gap_ledger": "target/ripr/reports/gap-decision-ledger.json"
+  },
+  "analysis_scope": {
+    "scope": "gap_ledger_artifact",
+    "run_status": "artifact_scope",
+    "basis": "supplied_gap_decision_ledger",
+    "changed_files": [
+      "src/pricing.rs"
+    ],
+    "changed_lines": 1,
+    "changed_owner_functions": 0,
+    "changed_production_files": [
+      "src/pricing.rs"
+    ],
+    "immediate_caller_files": [],
+    "scoped_production_files": [
+      "src/pricing.rs"
+    ],
+    "total_rust_files": null,
+    "total_production_files": null,
+    "production_files_considered": 1,
+    "classified_seams_considered": 2,
+    "downstream_consumable": true,
+    "limitation": "review_comments_gap_ledger_artifact_scope_only",
+    "repair_route": "reports/gap-decision-ledger"
+  },
+  "rendering_limits": {
+    "max_inline_comments": 3,
+    "max_summary_items": 10
+  },
+  "summary": {
+    "comments": 0,
+    "summary_only": 0,
+    "suppressed": 2,
+    "unchanged_tests": true
+  },
+  "comments": [],
+  "summary_only": [],
+  "suppressed": [
+    {
+      "gap_id": "gap:rust:pricing:discount:missing-seam",
+      "file": null,
+      "line": null,
+      "reason": "missing_seam_identity",
+      "message": "PR comments require producer-owned seam identity."
+    },
+    {
+      "gap_id": "gap:rust:pricing:discount:threshold-boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "reason": "not_pr_comment_eligible",
+      "message": "missing_pr_comment_projection"
+    }
+  ],
+  "warnings": [],
+  "limits_note": "Advisory static evidence only; gap-ledger repair cards do not edit source, generate tests, run mutation testing, or change CI/gate authority.",
+  "run_receipt": {
+    "schema_version": "0.1",
+    "status": "complete",
+    "root_identity": ".",
+    "base_sha": "origin/main",
+    "head_sha": "HEAD",
+    "configured_timeout_ms": 120000,
+    "last_completed_phase": "artifact_io",
+    "active_phase": null,
+    "completed_artifacts": [
+      "target/ripr/review/comments.json",
+      "target/ripr/review/comments.md"
+    ],
+    "missing_artifacts": [],
+    "reusable_cache_identity": "sha256:fixture",
+    "limitations": [],
+    "non_claims": [
+      "static review guidance is advisory evidence only"
+    ],
+    "atomic_write_status": "committed"
+  }
+}

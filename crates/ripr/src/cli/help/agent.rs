@@ -30,12 +30,18 @@ control, debugging, and compatibility.
 "#;
 pub(super) const AGENT_START_HELP: &str = r#"Start a source-edit-free workflow packet for one selected change.
 
-Usage: ripr agent start [--root PATH] --seam-id ID [--out PATH]
+Usage: ripr agent start [--root PATH] --seam-id ID [--out PATH] [--json]
 
 Options:
   --root PATH      Workspace root. Defaults to current directory.
   --seam-id ID     Select one visible seam by ID.
   --out PATH       Workflow output directory (relative to --root). Defaults to target/ripr/workflow.
+  --json           Emit one machine-readable JSON document instead of the
+                   `Wrote <path>` / `Next: <cmd>` prose lines:
+                     {"schema_version": "0.1", "workflow": {"workflow_manifest": <path>,
+                      "commands_markdown": <path>, "agent_brief": <path>},
+                      "next_command": <cmd or null>}
+                   Field names match the workflow manifest `outputs` block.
 
 The start command writes a source-edit-free workflow packet for one seam:
 workflow.json, commands.md, and agent-brief.json. The packet contains artifact
