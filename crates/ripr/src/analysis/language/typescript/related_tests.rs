@@ -321,6 +321,10 @@ pub(crate) fn owner_call_relation(
     }
     if contains_call_name(&test.body_text, &owner.name)
         && !owner_name_shadowed_by_unrelated_import(test, owner, alias_map, workspace_root)
+        // Shadow guard (#4102): a test body that declares its own
+        // `function <owner>(...)` / `const <owner> = ...` calls the local
+        // declaration, not the imported owner — do not credit DirectOwnerCall.
+        && !local_identifier_declared_in_test_body(&test.body_text, &owner.name)
     {
         return Some(TypeScriptRelationKind::DirectOwnerCall);
     }
@@ -868,6 +872,10 @@ fn import_references_owner_call(
     }
     import.imported.as_deref() == Some(owner.name.as_str())
         && contains_call_name(body_text, &import.local)
+        // Shadow guard (#4102): the same test-body declaration guard the
+        // alias arm applies — a locally re-declared `local` reaches the
+        // shadow, not the owner.
+        && !local_identifier_declared_in_test_body(body_text, &import.local)
 }
 
 pub(crate) fn import_source_matches_owner(
@@ -994,7 +1002,7 @@ fn expect_actual_slices(body_text: &str) -> Vec<&str> {
         .collect()
 }
 
-fn local_identifier_declared_in_test_body(body_text: &str, identifier: &str) -> bool {
+pub(crate) fn local_identifier_declared_in_test_body(body_text: &str, identifier: &str) -> bool {
     body_text.lines().any(|line| {
         let trimmed = line.trim_start();
         !trimmed.starts_with("//") && declaration_line_declares_identifier(trimmed, identifier)

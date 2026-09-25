@@ -427,14 +427,20 @@ pub(crate) fn ts_observation_guard_limitation(
 /// an assertion whose observed owner call carries that boundary:
 ///
 /// - **One literal operand** (`total >= 50`, `status === 'paid'`): an argument
-///   of the observed owner call contains the literal as a value token.
-/// - **No literal operand** (`count <= limit`): the adapter has no owner
-///   parameter facts to map operands to argument positions, so it accepts the
-///   same textual witness the Rust boundary evidence accepts without value
-///   resolution — two identical arguments in one observed owner call
-///   (`isAllowed(5, 5)`) — or an object-literal argument that names both
-///   operands with identical values (`PriceLabel({ amount: 100, threshold:
-///   100 })`). Otherwise the boundary is not witnessed.
+///   of the observed owner call carries the literal at a position the
+///   comparison reads, standing alone as a value (#4102 guards 1 and 2) —
+///   either the whole argument is the literal, or an object-literal argument
+///   pins the comparison operand's field to it (`{ total: 50 }`). A literal
+///   inside a larger expression (`price + 100`) leaves the effective input
+///   unknown and a literal in an argument past the owner's readable parameter
+///   positions (`applyDiscount(150, 100)` against a single-parameter owner) is
+///   never read by the comparison.
+/// - **No literal operand** (`count <= limit`): the adapter has no literal to
+///   map, so it accepts the same textual witness the Rust boundary evidence
+///   accepts without value resolution — two identical arguments in one
+///   observed owner call (`isAllowed(5, 5)`) — or an object-literal argument
+///   that names both operands with identical values (`PriceLabel({ amount:
+///   100, threshold: 100 })`). Otherwise the boundary is not witnessed.
 /// - **No parseable comparison** (`if (Number.isNaN(n))`, `case 'gold':`) or an
 ///   ambiguous fallback shape (`}`): nothing statically ties a test to the
 ///   changed branch, so this fails closed.
@@ -443,14 +449,20 @@ pub(crate) fn ts_observation_guard_limitation(
 /// When it is absent, or names a local such as `result`, the witness fails
 /// closed; the finding then takes the existing weak path.
 ///
-/// Receiver resolution: a member match (`pricing.applyDiscount(...)`) only
-/// counts when the receiver is bound to the owner's own module in this test
-/// (a namespace import such as `import * as pricing from "../src/pricing"`).
-/// A same-named method on an unrelated receiver (`other.total(50)`) never
-/// witnesses, even when its arguments carry the boundary literal.
+/// Identity and liveness guards (#4102): a receiver-qualified call
+/// (`pricing.applyDiscount(100)`) witnesses only when the receiver binds to
+/// the owner's own module (a namespace import of the owner file; the landed
+/// receiver resolution keeps a same-named method on an unrelated receiver —
+/// `other.total(50)` — from witnessing); a test body that declares its own
+/// same-name function or const calls the shadow, not the owner; an expected
+/// side that itself calls the owner is a tautology; and a dead expected
+/// literal — one that matches neither the changed behavior's value at the
+/// boundary input nor, when checkable, differs from the unchanged behavior's
+/// — cannot witness. Every unresolved case fails closed.
 pub(crate) fn ts_predicate_boundary_is_witnessed(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
+    line: usize,
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
     alias_map: Option<&TsAliasMap>,
@@ -479,6 +491,13 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
         if !candidate.relation.uses_oracle() {
             continue;
         }
+        // Shadow guard (#4102): a test body that declares its own
+        // `function <owner>(...)` / `const <owner> = ...` executes the local
+        // declaration, not the changed owner — its assertions cannot witness
+        // the owner's boundary however boundary-shaped they look.
+        if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
+            continue;
+        }
         let owner_receivers =
             owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         for assertion in &candidate.test.assertions {
@@ -495,13 +514,31 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
                     call_has_identical_arguments(&arguments)
                         || object_argument_pins_operands_equal(&arguments, left, right)
                 } else {
-                    literals
-                        .iter()
-                        .any(|literal| arguments_contain_literal(&arguments, literal))
+                    literals.iter().any(|literal| {
+                        boundary_literal_reaches_read_argument(
+                            &arguments, literal, left, right, owner,
+                        )
+                    })
                 };
-                if witnessed {
-                    return true;
+                if !witnessed {
+                    continue;
                 }
+                // Expected-side guards (#4102): a self-comparing expectation
+                // (`toBe(applyDiscount(100))`) never discriminates, and a dead
+                // expected literal (`toBe(999)` when the changed behavior
+                // produces `90` at the boundary input) proves nothing — the
+                // changed value never reaches a passing assertion.
+                if expected_side_calls_owner(&candidate.test.body_text, observed, &owner.name) {
+                    continue;
+                }
+                if let Some(expected) = assertion.expected_value_or_variant.as_deref()
+                    && expected_side_is_live(
+                        owner, line, line_text, left, right, &arguments, expected,
+                    ) == Some(false)
+                {
+                    continue;
+                }
+                return true;
             }
         }
     }
@@ -746,31 +783,573 @@ fn object_argument_pins_operands_equal(arguments: &[String], left: &str, right: 
     })
 }
 
-fn arguments_contain_literal(arguments: &[String], literal: &str) -> bool {
+/// owner's arity is known, and nothing is excluded when no parameter facts
+/// exist (the remaining guards still apply).
+enum ReadPosition {
+    /// The comparison operand names the parameter at this index.
+    Index(usize),
+    /// The operand does not name a parameter, but the arity is known.
+    Bounded(usize),
+    /// No resolvable parameter facts — every position is plausible.
+    Any,
+}
+
+fn comparison_read_position(operand: &str, owner: &TypeScriptOwner) -> ReadPosition {
+    let segment = last_identifier_segment(operand);
+    if let Some(idx) = owner.parameters.iter().position(|name| name == segment) {
+        return ReadPosition::Index(idx);
+    }
+    match owner.arity {
+        Some(arity) => ReadPosition::Bounded(arity),
+        None => ReadPosition::Any,
+    }
+}
+
+fn last_identifier_segment(operand: &str) -> &str {
+    operand.trim().rsplit('.').next().unwrap_or(operand).trim()
+}
+
+/// `true` when the boundary literal reaches the argument position the changed
+/// comparison reads (#4102 guards 1 and 2). The literal must stand alone as
+/// the argument value — the whole argument tokenizes to the literal, or an
+/// object-literal argument pins the comparison operand's field to it
+/// (`{ total: 50 }` for `total >= 50`). Containment inside a larger
+/// expression (`price + 100`) leaves the effective input unknown and never
+/// credits, and an argument beyond the owner's readable positions
+/// (`applyDiscount(150, 100)` against `applyDiscount(total)`) is never read.
+fn boundary_literal_reaches_read_argument(
+    arguments: &[String],
+    literal: &str,
+    left: &str,
+    right: &str,
+    owner: &TypeScriptOwner,
+) -> bool {
+    let operand = if is_boundary_literal(right) {
+        left
+    } else {
+        right
+    };
+    let position = comparison_read_position(operand, owner);
+    let readable = |idx: usize| match position {
+        ReadPosition::Index(read) => idx == read,
+        ReadPosition::Bounded(arity) => idx < arity,
+        ReadPosition::Any => true,
+    };
+    arguments.iter().enumerate().any(|(idx, argument)| {
+        readable(idx)
+            && (argument_stands_alone_as_literal(argument, literal)
+                || object_argument_pins_literal(argument, operand, literal))
+    })
+}
+
+/// `true` when the whole argument is exactly the literal value: a plain
+/// decimal (`50`, `50.0`, `1_000`, `50n`), the same quoted string, or the
+/// bare token (`true` / `false` / `null` / `undefined` / an identifier
+/// operand).
+fn argument_stands_alone_as_literal(argument: &str, literal: &str) -> bool {
+    let argument = argument.trim();
     let literal = literal.trim();
     if let Some(expected) = numeric_literal_value(literal) {
-        return arguments.iter().any(|argument| {
-            argument
-                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
-                .filter_map(numeric_literal_value)
-                .any(|value| value == expected)
-        });
+        return numeric_literal_value(argument).is_some_and(|value| value == expected);
     }
     if let Some(body) = literal
         .strip_prefix(['"', '\'', '`'])
         .and_then(|rest| rest.strip_suffix(['"', '\'', '`']))
     {
-        return arguments.iter().any(|argument| {
-            ['"', '\'', '`']
-                .iter()
-                .any(|quote| argument.contains(&format!("{quote}{body}{quote}")))
+        return ['"', '\'', '`'].iter().any(|quote| {
+            argument.starts_with(*quote)
+                && argument.ends_with(*quote)
+                && argument.len() >= 2
+                && argument.get(1..argument.len() - 1) == Some(body)
         });
     }
-    arguments.iter().any(|argument| {
-        argument
-            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
-            .any(|token| token == literal)
+    argument == literal
+}
+
+/// `true` when an object-literal argument pins the comparison operand (matched
+/// by its last identifier segment) to exactly the boundary literal —
+/// `applyDiscount({ total: 50 })` for `total >= 50`. A same-value field
+/// binding keeps the effective input known, unlike containment in a larger
+/// expression.
+fn object_argument_pins_literal(argument: &str, operand: &str, literal: &str) -> bool {
+    let key = last_identifier_segment(operand);
+    if key.is_empty() {
+        return false;
+    }
+    let Some(body) = argument
+        .trim()
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+    else {
+        return false;
+    };
+    let Some(fields) = balanced_call_arguments(&format!("{body})")) else {
+        return false;
+    };
+    fields.iter().any(|field| {
+        let Some((name, value)) = field.split_once(':') else {
+            return false;
+        };
+        name.trim().trim_matches(['"', '\'']) == key
+            && argument_stands_alone_as_literal(value.trim(), literal)
     })
+}
+
+/// `true` when the matcher argument of the `expect(<observed>)...` assertion
+/// itself calls the owner (`expect(applyDiscount(100)).toBe(applyDiscount(
+/// 100))`) — a self-comparing tautology that can never discriminate the
+/// changed behavior (#4102 expected-side liveness).
+fn expected_side_calls_owner(body_text: &str, observed: &str, owner_name: &str) -> bool {
+    let observed = observed.trim();
+    if observed.is_empty() {
+        return false;
+    }
+    for (idx, _) in body_text.match_indices("expect(") {
+        if line_prefix_looks_like_comment_or_string(body_text, idx)
+            || inside_block_comment(body_text, idx)
+        {
+            continue;
+        }
+        let Some(after_open) = body_text.get(idx + "expect(".len()..) else {
+            continue;
+        };
+        if !after_open.trim_start().starts_with(observed) {
+            continue;
+        }
+        let Some(close) = balanced_close_offset(after_open) else {
+            continue;
+        };
+        // Walk the `.resolves` / `.rejects` / matcher member chain after the
+        // expect(...) call to the matcher's argument list.
+        let mut rest = &after_open[close + 1..];
+        loop {
+            rest = rest.trim_start();
+            let Some(after_dot) = rest.strip_prefix('.') else {
+                break;
+            };
+            let ident_len = after_dot
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                .count();
+            if ident_len == 0 {
+                break;
+            }
+            rest = &after_dot[ident_len..];
+        }
+        let Some(after_paren) = rest.trim_start().strip_prefix('(') else {
+            continue;
+        };
+        let Some(argument_close) = balanced_close_offset(after_paren) else {
+            continue;
+        };
+        // The tautology shape is the bare owner call; receiver resolution is
+        // not needed to detect the expected side re-calling the owner.
+        if !owner_call_arguments(&after_paren[..argument_close], owner_name, &[]).is_empty() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Byte offset of the matching close parenthesis within `inner` (which
+/// excludes the opening paren), string-aware; `None` when unbalanced.
+fn balanced_close_offset(inner: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (offset, ch) in inner.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' => {
+                if depth == 0 {
+                    return Some(offset);
+                }
+                depth -= 1;
+            }
+            ']' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Expected-side liveness for a witnessed boundary assertion (#4102).
+///
+/// Returns `Some(true)` when the expected literal can be the CHANGED
+/// behavior's value at the boundary input and differs from the UNCHANGED
+/// behavior's value there; `Some(false)` when it provably cannot (a dead test
+/// whose expectation is wrong under both behaviors, or one that pins the
+/// unchanged value and so discriminates nothing); `None` when the check is not
+/// statically determinable (no owner body, unresolvable branches or bindings,
+/// non-numeric expectation) — the witness decision then stands unchanged.
+///
+/// The semantics are derived only from statically resolvable facts: the
+/// changed comparison's operator, the observed argument values bound to the
+/// comparison's parameters, and the two branch `return` expressions of the
+/// changed `if` in the owner's own source. At the boundary input the changed
+/// comparison takes the branch the new operator selects, and the unchanged
+/// behavior took the opposite branch — that is exactly what makes the input
+/// discriminating.
+fn expected_side_is_live(
+    owner: &TypeScriptOwner,
+    line: usize,
+    line_text: &str,
+    left: &str,
+    right: &str,
+    arguments: &[String],
+    expected: &str,
+) -> Option<bool> {
+    let source = owner.source_text.as_deref()?;
+    let expected_value = numeric_literal_value(expected).and_then(|v| v.parse::<f64>().ok())?;
+    let operator = changed_comparison_operator(line_text)?;
+    let lines: Vec<&str> = source.lines().collect();
+    // Locate the changed line inside the owner body: prefer the declared line
+    // offset, fall back to a text match; a stale or duplicated line skips the
+    // check rather than attributing the wrong branch.
+    let start = line
+        .checked_sub(owner.start_line)
+        .and_then(|idx| lines.get(idx))
+        .filter(|candidate| candidate.trim() == line_text.trim())
+        .map(|_| line - owner.start_line)
+        .or_else(|| {
+            lines
+                .iter()
+                .position(|candidate| candidate.trim() == line_text.trim())
+        })?;
+    let (true_expr, false_expr) = branch_return_expressions(&lines, start)?;
+    let lhs = comparison_operand_value(left, owner, arguments)?;
+    let rhs = comparison_operand_value(right, owner, arguments)?;
+    let new_takes_true = comparison_holds(&operator, lhs, rhs)?;
+    let bindings = observed_argument_bindings(owner, arguments);
+    let (new_expr, old_expr) = if new_takes_true {
+        (true_expr.as_str(), false_expr.as_str())
+    } else {
+        (false_expr.as_str(), true_expr.as_str())
+    };
+    let new_value = fold_numeric_expression(new_expr, &bindings)?;
+    let old_value = fold_numeric_expression(old_expr, &bindings)?;
+    let new_epsilon = 1e-9 * new_value.abs().max(1.0);
+    let old_epsilon = 1e-9 * old_value.abs().max(1.0);
+    Some(
+        (expected_value - new_value).abs() <= new_epsilon
+            && (expected_value - old_value).abs() > old_epsilon,
+    )
+}
+
+/// The operator of the changed comparison, probed in the same ordered list
+/// `typescript_boundary_discriminator` uses so the operands align.
+fn changed_comparison_operator(line_text: &str) -> Option<String> {
+    let expression = strip_typescript_control_prefix(line_text);
+    ["===", "!==", ">=", "<=", "==", "!=", ">", "<"]
+        .into_iter()
+        .find(|operator| expression.contains(operator))
+        .map(str::to_string)
+}
+
+/// The numeric value a comparison operand evaluates to in the witnessed call:
+/// the argument at that parameter's position when the operand names a
+/// parameter, else the operand's own literal value.
+fn comparison_operand_value(
+    operand: &str,
+    owner: &TypeScriptOwner,
+    arguments: &[String],
+) -> Option<f64> {
+    let segment = last_identifier_segment(operand);
+    if let Some(idx) = owner.parameters.iter().position(|name| name == segment)
+        && let Some(value) = arguments
+            .get(idx)
+            .and_then(|argument| numeric_literal_value(argument))
+            .and_then(|value| value.parse::<f64>().ok())
+    {
+        return Some(value);
+    }
+    numeric_literal_value(operand).and_then(|value| value.parse::<f64>().ok())
+}
+
+/// Parameter-name bindings for folding branch expressions: every parameter
+/// whose observed argument position carries a plain numeric literal.
+fn observed_argument_bindings(owner: &TypeScriptOwner, arguments: &[String]) -> Vec<(String, f64)> {
+    owner
+        .parameters
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, name)| {
+            let value = arguments
+                .get(idx)
+                .and_then(|argument| numeric_literal_value(argument))
+                .and_then(|value| value.parse::<f64>().ok())?;
+            Some((name.clone(), value))
+        })
+        .collect()
+}
+
+/// The true/false-branch `return` expressions of the changed `if` at `start`
+/// (0-based index into the owner source lines). Only two shapes are
+/// attributed — a fall-through else-less branch and a plain `} else {` block;
+/// nested branching, computed closers, quoted braces, and comments fail the
+/// scan so the caller skips the check instead of attributing a wrong branch.
+fn branch_return_expressions(lines: &[&str], start: usize) -> Option<(String, String)> {
+    if !lines.get(start)?.contains('{') {
+        return None;
+    }
+    enum Phase {
+        True,
+        Else,
+        Fallthrough,
+        Done,
+    }
+    let mut phase = Phase::True;
+    let mut depth: i64 = 1; // the changed line opened the if-body
+    let mut true_return: Option<String> = None;
+    let mut false_return: Option<String> = None;
+    for text in lines.iter().skip(start + 1) {
+        let trimmed = text.trim();
+        if ["\"", "'", "`", "//", "/*"]
+            .iter()
+            .any(|marker| trimmed.contains(marker))
+        {
+            return None; // quoted braces or comments would corrupt the scan
+        }
+        match phase {
+            Phase::Done => break,
+            Phase::True => {
+                if trimmed.starts_with('}') {
+                    if trimmed.contains("else") {
+                        // `} else {`: the false branch body opens here.
+                        if trimmed.contains("else if") || !trimmed.ends_with('{') {
+                            return None;
+                        }
+                        phase = Phase::Else;
+                        depth = 1;
+                    } else if trimmed == "}" {
+                        phase = Phase::Fallthrough;
+                        depth = 0;
+                    } else {
+                        return None;
+                    }
+                    continue;
+                }
+                if depth == 1 && true_return.is_none() {
+                    true_return = return_statement_expression(trimmed).map(str::to_string);
+                }
+                depth += trimmed.matches('{').count() as i64;
+                depth -= trimmed.matches('}').count() as i64;
+                if depth < 1 {
+                    return None; // closed without a `}`-led line: unattributable
+                }
+            }
+            Phase::Else => {
+                if trimmed.starts_with('}') {
+                    if trimmed == "}" {
+                        phase = Phase::Done;
+                        continue;
+                    }
+                    return None;
+                }
+                if depth == 1 && false_return.is_none() {
+                    false_return = return_statement_expression(trimmed).map(str::to_string);
+                }
+                depth += trimmed.matches('{').count() as i64;
+                depth -= trimmed.matches('}').count() as i64;
+                if depth < 1 {
+                    return None;
+                }
+            }
+            Phase::Fallthrough => {
+                if trimmed.starts_with('}') {
+                    break; // enclosing function body closed
+                }
+                if let Some(expression) = return_statement_expression(trimmed) {
+                    false_return = Some(expression.to_string());
+                    break;
+                }
+                if trimmed.contains('{') || trimmed.starts_with("else") {
+                    return None; // another branch intervenes: unattributable
+                }
+            }
+        }
+    }
+    match (true_return, false_return) {
+        (Some(true_expr), Some(false_expr)) => Some((true_expr, false_expr)),
+        _ => None,
+    }
+}
+
+/// The expression of a single-line `return <expr>;` statement, when `trimmed`
+/// is exactly that shape.
+fn return_statement_expression(trimmed: &str) -> Option<&str> {
+    let expression = trimmed.strip_prefix("return ")?.strip_suffix(';')?.trim();
+    (!expression.is_empty()).then_some(expression)
+}
+
+/// Evaluate the changed comparison at the bound operand values.
+fn comparison_holds(operator: &str, lhs: f64, rhs: f64) -> Option<bool> {
+    let epsilon = 1e-9 * lhs.abs().max(rhs.abs()).max(1.0);
+    Some(match operator {
+        "===" | "==" => (lhs - rhs).abs() <= epsilon,
+        "!==" | "!=" => (lhs - rhs).abs() > epsilon,
+        ">=" => lhs - rhs >= -epsilon,
+        ">" => lhs - rhs > epsilon,
+        "<=" => rhs - lhs >= -epsilon,
+        "<" => rhs - lhs > epsilon,
+        _ => return None,
+    })
+}
+
+/// Constant-fold a numeric expression with `bindings` (identifier → value).
+/// Supports decimal literals, bound identifiers, `+ - * / %`, unary minus,
+/// and parentheses. Any other construct — unbound identifiers, calls, member
+/// access, strings — fails the fold; the caller then skips the check rather
+/// than approximating.
+fn fold_numeric_expression(expression: &str, bindings: &[(String, f64)]) -> Option<f64> {
+    let mut folder = Folder {
+        chars: expression.chars().collect(),
+        position: 0,
+        bindings,
+    };
+    let value = folder.parse_expression()?;
+    folder.skip_whitespace();
+    if folder.position != folder.chars.len() {
+        return None; // trailing tokens: not a pure numeric expression
+    }
+    Some(value)
+}
+
+struct Folder<'a> {
+    chars: Vec<char>,
+    position: usize,
+    bindings: &'a [(String, f64)],
+}
+
+impl Folder<'_> {
+    fn skip_whitespace(&mut self) {
+        while self
+            .chars
+            .get(self.position)
+            .is_some_and(|ch| ch.is_whitespace())
+        {
+            self.position += 1;
+        }
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.chars.get(self.position).copied()
+    }
+
+    fn parse_expression(&mut self) -> Option<f64> {
+        let mut left = self.parse_term()?;
+        loop {
+            self.skip_whitespace();
+            match self.peek() {
+                Some('+') => {
+                    self.position += 1;
+                    left += self.parse_term()?;
+                }
+                Some('-') => {
+                    self.position += 1;
+                    left -= self.parse_term()?;
+                }
+                _ => return Some(left),
+            }
+        }
+    }
+
+    fn parse_term(&mut self) -> Option<f64> {
+        let mut left = self.parse_unary()?;
+        loop {
+            self.skip_whitespace();
+            match self.peek() {
+                Some('*') => {
+                    self.position += 1;
+                    left *= self.parse_unary()?;
+                }
+                Some('/') => {
+                    self.position += 1;
+                    let divisor = self.parse_unary()?;
+                    if divisor == 0.0 {
+                        return None;
+                    }
+                    left /= divisor;
+                }
+                Some('%') => {
+                    self.position += 1;
+                    let divisor = self.parse_unary()?;
+                    if divisor == 0.0 {
+                        return None;
+                    }
+                    left %= divisor;
+                }
+                _ => return Some(left),
+            }
+        }
+    }
+
+    fn parse_unary(&mut self) -> Option<f64> {
+        self.skip_whitespace();
+        match self.peek()? {
+            '-' => {
+                self.position += 1;
+                Some(-self.parse_unary()?)
+            }
+            '+' => {
+                self.position += 1;
+                self.parse_unary()
+            }
+            '(' => {
+                self.position += 1;
+                let value = self.parse_expression()?;
+                self.skip_whitespace();
+                if self.peek() != Some(')') {
+                    return None;
+                }
+                self.position += 1;
+                Some(value)
+            }
+            ch if ch.is_ascii_digit() => self.parse_number(),
+            ch if ch.is_ascii_alphabetic() || ch == '_' || ch == '$' => self.parse_binding(),
+            _ => None,
+        }
+    }
+
+    fn parse_number(&mut self) -> Option<f64> {
+        let start = self.position;
+        while self
+            .chars
+            .get(self.position)
+            .is_some_and(|ch| ch.is_ascii_digit() || *ch == '.')
+        {
+            self.position += 1;
+        }
+        let text: String = self.chars[start..self.position].iter().collect();
+        text.parse::<f64>().ok()
+    }
+
+    fn parse_binding(&mut self) -> Option<f64> {
+        let start = self.position;
+        while self
+            .chars
+            .get(self.position)
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+        {
+            self.position += 1;
+        }
+        let name: String = self.chars[start..self.position].iter().collect();
+        self.bindings
+            .iter()
+            .find(|(bound, _)| *bound == name)
+            .map(|(_, value)| *value)
+    }
 }
 
 // ── Family↔oracle-kind matching (RIPR-SPEC-0104) ─────────────────────────────
@@ -1029,6 +1608,7 @@ pub(crate) fn classify_change(
         || ts_predicate_boundary_is_witnessed(
             &probe_shape,
             line_text,
+            line,
             owner,
             &related_candidates,
             alias_map,

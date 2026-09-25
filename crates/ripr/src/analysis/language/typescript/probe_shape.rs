@@ -474,7 +474,7 @@ pub(crate) fn is_computed_field_construction(line_text: &str) -> bool {
     contains_unquoted_shape(text, "{[") || contains_unquoted_shape(text, "{ [")
 }
 
-fn strip_typescript_control_prefix(line_text: &str) -> String {
+pub(crate) fn strip_typescript_control_prefix(line_text: &str) -> String {
     let mut text = line_text
         .trim()
         .trim_start_matches('}')

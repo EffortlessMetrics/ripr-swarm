@@ -30,9 +30,9 @@ pub(crate) use crate::domain::{FlowSinkFact, FlowSinkKind};
 pub(crate) use oxc_allocator::Allocator;
 pub(crate) use oxc_ast::ast::{
     Argument, ArrowFunctionExpression, BindingPattern, Class, ClassElement, Declaration,
-    ExportDefaultDeclarationKind, Expression, Function, ImportDeclarationSpecifier,
-    ImportOrExportKind, MethodDefinition, ModuleExportName, ObjectPropertyKind, PropertyKey,
-    Statement, VariableDeclaration, VariableDeclarator,
+    ExportDefaultDeclarationKind, Expression, FormalParameters, Function,
+    ImportDeclarationSpecifier, ImportOrExportKind, MethodDefinition, ModuleExportName,
+    ObjectPropertyKind, PropertyKey, Statement, VariableDeclaration, VariableDeclarator,
 };
 pub(crate) use oxc_parser::Parser;
 pub(crate) use oxc_span::{GetSpan, SourceType};

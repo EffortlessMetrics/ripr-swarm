@@ -20,6 +20,9 @@ fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     }
 }
@@ -1652,6 +1655,9 @@ fn find_related_tests_matches_by_call_name() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = vec![
@@ -1695,6 +1701,9 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
@@ -1724,6 +1733,9 @@ fn find_related_tests_matches_bounded_method_receiver_calls() {
         owner_kind: OwnerKind::Method,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1761,6 +1773,9 @@ fn find_related_tests_keeps_factory_receiver_calls_unrelated_for_method_owners()
         owner_kind: OwnerKind::Method,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1789,6 +1804,9 @@ fn find_related_tests_keeps_dynamic_method_receiver_calls_unrelated() {
         owner_kind: OwnerKind::Method,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1818,6 +1836,9 @@ fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
         owner_kind: OwnerKind::Method,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1852,6 +1873,9 @@ fn find_related_tests_keeps_mocked_function_owner_call_at_proximity() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1896,6 +1920,9 @@ fn find_related_tests_keeps_mocked_arrow_function_owner_call_at_proximity() {
         owner_kind: OwnerKind::ArrowFunction,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1945,6 +1972,9 @@ fn find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1987,6 +2017,9 @@ fn find_related_tests_credits_unmocked_function_owner_call() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2021,6 +2054,9 @@ fn classify_change_stays_weakly_exposed_when_test_mocks_owner_module() -> Result
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2082,6 +2118,9 @@ fn find_related_tests_matches_bounded_class_method_calls() {
         owner_kind: OwnerKind::ClassMethod,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2118,6 +2157,9 @@ fn find_related_tests_keeps_shadowed_class_method_calls_unrelated() {
         owner_kind: OwnerKind::ClassMethod,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2146,6 +2188,9 @@ fn find_related_tests_matches_same_file_class_method_calls() {
         owner_kind: OwnerKind::ClassMethod,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2181,6 +2226,9 @@ fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
         owner_kind: OwnerKind::ClassMethod,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2208,6 +2256,9 @@ fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
         owner_kind: OwnerKind::ClassMethod,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2237,6 +2288,9 @@ fn find_related_tests_requires_class_name_for_class_method_calls() {
         owner_kind: OwnerKind::ClassMethod,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2264,6 +2318,9 @@ fn find_related_tests_matches_module_initializer_named_import_observer() {
         owner_kind: OwnerKind::ModuleFunction,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2300,6 +2357,9 @@ fn find_related_tests_matches_module_initializer_namespace_observer() {
         owner_kind: OwnerKind::ModuleFunction,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2329,6 +2389,9 @@ fn find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_
         owner_kind: OwnerKind::ModuleFunction,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2366,6 +2429,9 @@ fn find_related_tests_matches_named_import_alias_calls() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2414,6 +2480,9 @@ fn find_related_tests_alias_wrong_name_not_credited() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2449,6 +2518,9 @@ fn find_related_tests_alias_shadowed_local_not_credited_high() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2484,6 +2556,9 @@ fn find_related_tests_non_alias_import_still_direct_owner_call() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2527,6 +2602,9 @@ fn find_related_tests_namespace_import_unchanged_imported_owner_call() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2570,6 +2648,9 @@ fn find_related_tests_matches_namespace_import_member_calls() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2598,6 +2679,9 @@ fn find_related_tests_ignores_unrelated_and_type_only_import_aliases() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2635,6 +2719,9 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
@@ -2664,6 +2751,9 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = vec![
@@ -2706,6 +2796,9 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     // Each test references the owner without a recognized call shape, so the
@@ -2777,6 +2870,9 @@ fn related_test_name_proximity_ignores_partial_tokens() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2804,6 +2900,9 @@ fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2854,6 +2953,9 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -3181,6 +3283,9 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -3223,6 +3328,9 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             owner_kind: OwnerKind::Function,
             class_name: None,
             decorated: false,
+            arity: None,
+            parameters: Vec::new(),
+            source_text: None,
             imports: Vec::new(),
         },
         TypeScriptOwner {
@@ -3233,6 +3341,9 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             owner_kind: OwnerKind::Function,
             class_name: None,
             decorated: false,
+            arity: None,
+            parameters: Vec::new(),
+            source_text: None,
             imports: Vec::new(),
         },
     ];
@@ -3958,6 +4069,9 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -4023,6 +4137,9 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -4084,6 +4201,9 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let finding = classify_change(
@@ -4116,6 +4236,9 @@ fn classify_change_returns_none_when_line_is_outside_any_owner() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let finding = classify_change(
@@ -5181,6 +5304,9 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = vec![
@@ -5221,6 +5347,9 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
@@ -5248,6 +5377,9 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
@@ -5276,6 +5408,9 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
@@ -5351,6 +5486,9 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     // The test body calls the owner (it would be credited without the
     // package-local filter) and mocks a path resolving to the owner's module.
@@ -5404,6 +5542,9 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     let unfiltered = classify_change(
         &pkg_a.join("src").join("work.ts"),
@@ -5448,6 +5589,9 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
@@ -5526,6 +5670,9 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: vec![TypeScriptImport {
             source: "./labels".to_string(),
             imported: Some("normalizeLabel".to_string()),
@@ -6401,6 +6548,9 @@ fn package_local_filter_selects_same_package_test() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -6462,6 +6612,9 @@ fn package_local_filter_rejects_cross_package_test() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -6605,6 +6758,9 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     // Cross-package test that calls applyDiscount by name (local shadow or
@@ -6733,6 +6889,9 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     // Two strong `toBe` assertions on the UNCHANGED return value.
@@ -6831,6 +6990,9 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -6903,6 +7065,9 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     let test = TypeScriptTest {
         name: "discount side checks".to_string(),
@@ -6976,6 +7141,9 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     let test = TypeScriptTest {
         name: "applies discount".to_string(),
@@ -7045,6 +7213,9 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     let test = TypeScriptTest {
         name: "applies discount".to_string(),
@@ -7114,6 +7285,9 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     let test = TypeScriptTest {
         name: "discount side checks".to_string(),
@@ -7186,6 +7360,9 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7267,6 +7444,9 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7339,6 +7519,9 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     let test = TypeScriptTest {
         name: "config side checks".to_string(),
@@ -7476,6 +7659,9 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     // A strong MockExpectation assertion with observed_expression None — exactly
@@ -7550,6 +7736,9 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     // The observed expression names the owner (so the side-channel arm does
     // not fire) but only "confirms" via the substring `includes` — which is
@@ -7666,6 +7855,9 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7733,6 +7925,9 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7823,6 +8018,9 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7884,6 +8082,9 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     // Test only imports `cloneDeep` from lodash — unrelated to the owner name.
@@ -7940,6 +8141,9 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     // Test only imports the React default binding — unrelated to the owner.
     let test = TypeScriptTest {
@@ -7993,6 +8197,9 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     let test = TypeScriptTest {
         name: "default import test".to_string(),
@@ -8057,6 +8264,9 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     // Test A: error-path observer — toThrow(DiscountError) — Strong, ExactErrorVariant.
@@ -8157,6 +8367,9 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let exact_value_test = TypeScriptTest {
@@ -8219,6 +8432,9 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let throw_test = TypeScriptTest {
@@ -8289,6 +8505,9 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     // ONE test with TWO assertions:
@@ -8891,6 +9110,9 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -9185,6 +9407,9 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     let mut test = exact_value_test("applyDiscount", "pricing.applyDiscount(100, 100)", "90");
     test.file = PathBuf::from("tests/pricing.test.ts");
@@ -9351,6 +9576,285 @@ fn spec_0027_boundary_witness_leaves_return_value_family_exposed() -> Result<(),
     let tests = [exact_value_test("shippingFee", "shippingFee(60)", "0")];
     let finding = classify_boundary_line("shippingFee", "  return 0;", &tests)?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+// ── RIPR-SPEC-0027 boundary-witness identity and liveness guards (#4102) ─────
+
+/// Owner facts mirroring the #4102 fixture owner: a single-parameter
+/// `applyDiscount(total)` whose changed predicate `total >= 100` selects
+/// between `return total * 0.9;` (changed behavior at the boundary input:
+/// 90) and `return total;` (unchanged behavior there: 100). These are the
+/// extraction-populated facts the witness needs for position/arity matching
+/// and expected-side liveness.
+fn boundary_witness_owner() -> TypeScriptOwner {
+    TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 6,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+        arity: Some(1),
+        parameters: vec!["total".to_string()],
+        source_text: Some(
+            concat!(
+                "export function applyDiscount(total: number): number {\n",
+                "    if (total >= 100) {\n",
+                "        return total * 0.9;\n",
+                "    }\n",
+                "    return total;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+    }
+}
+
+fn classify_boundary_line_for_owner(
+    owner: &TypeScriptOwner,
+    line_text: &str,
+    tests: &[TypeScriptTest],
+) -> Result<Finding, String> {
+    classify_change(
+        Path::new("src/lib.ts"),
+        2,
+        line_text,
+        std::slice::from_ref(owner),
+        tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| format!("expected a finding for `{line_text}`"))
+}
+
+/// #4102 guard 1 (dead argument): `applyDiscount(150, 100)` against a
+/// single-parameter owner puts the boundary literal `100` in an argument the
+/// changed comparison (`total >= 100`) never reads — the owner reads only
+/// `total` (parameter 0), and the expected `135` is identical under both
+/// behaviors at input 150. The boundary must fail closed.
+#[test]
+fn spec_0027_boundary_literal_in_unread_argument_does_not_witness() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(150, 100)",
+        "135",
+    )];
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a literal in an argument the single-parameter owner never reads must not witness"
+    );
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("changed predicate boundary `total == 100`")),
+        "boundary limitation must be named: {:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+/// #4102 guard 1 (padding argument): `applyDiscount(0, 100)` — the boundary
+/// literal sits in the dead second argument; input `0` behaves identically
+/// under both comparisons. The boundary must fail closed.
+#[test]
+fn spec_0027_boundary_literal_in_padding_argument_does_not_witness() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(0, 100)",
+        "0",
+    )];
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a literal in a padding argument must not witness"
+    );
+    Ok(())
+}
+
+/// #4102 guard 2 (nested containment): `applyDiscount(price + 100)` with
+/// `price = 60` — the argument tokenizes beyond the literal, so the effective
+/// input (160) is not the boundary even though the literal text is present.
+/// Must fail closed even without owner parameter facts.
+#[test]
+fn spec_0027_contained_boundary_literal_does_not_witness() -> Result<(), String> {
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(price + 100)",
+        "144",
+    )];
+    let finding = classify_boundary_line("applyDiscount", "  if (total >= 100) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a literal contained in a larger argument expression must not witness"
+    );
+    Ok(())
+}
+
+/// #4102 guard 3 (receiver-qualified same-name): `pricing.applyDiscount(100)`
+/// where `pricing` is a test-local object carrying an unrelated same-name
+/// member is NOT an owner call — only a namespace import of the owner's own
+/// module binds a receiver. The anchor `applyDiscount(150)` call elsewhere in
+/// the body does not rescue the boundary-shaped shadow assertion.
+#[test]
+fn spec_0027_receiver_qualified_same_name_object_does_not_witness() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let mut test = exact_value_test("applyDiscount", "pricing.applyDiscount(100)", "200");
+    test.body_text =
+        "const unused = applyDiscount(150);\nexpect(pricing.applyDiscount(100)).toBe(200);"
+            .to_string();
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a same-named member on an unresolvable receiver must not witness"
+    );
+    Ok(())
+}
+
+/// Control for guard 3: a namespace import of the owner's own module DOES
+/// bind the receiver — `pricing.applyDiscount(100)` at the boundary with a
+/// live expected value stays `exposed` (the #4102 `w15` genuine control).
+#[test]
+fn spec_0027_namespace_receiver_owner_call_stays_exposed() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let mut test = exact_value_test("applyDiscount", "pricing.applyDiscount(100)", "90");
+    test.imports_in_file = vec![TypeScriptImport {
+        source: "../src/lib".to_string(),
+        imported: None,
+        local: "pricing".to_string(),
+        namespace: true,
+    }];
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a namespace-import receiver at the boundary is a genuine witness"
+    );
+    Ok(())
+}
+
+/// #4102 guard 4 (body-local shadow): a `function applyDiscount(...)`
+/// declaration inside the test body executes the shadow, not the changed
+/// owner, so its assertions cannot witness the owner's boundary — and the
+/// owner-call relation must not be credited over the shadow. The shadowed
+/// reference severs owner-call relations entirely (the same tradeoff the
+/// landed alias-arm shadow guard makes): the changed owner is genuinely
+/// unreferenced by this test, so `no_static_path` is the honest verdict and
+/// its "add a test that calls the changed owner" guidance is true.
+#[test]
+fn spec_0027_body_local_shadow_does_not_witness() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let mut test = exact_value_test("applyDiscount", "applyDiscount(100)", "42");
+    test.body_text = "function applyDiscount(total: number): number {\n        return 42;\n    }\n    expect(applyDiscount(100)).toBe(42);".to_string();
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::NoStaticPath,
+        "a body-local same-name declaration must not witness the owner boundary, and the \
+         owner-call relation must not be credited over the shadow"
+    );
+    assert!(
+        finding.related_tests.is_empty(),
+        "a shadowed body must not credit owner-call relations: {:?}",
+        finding.related_tests
+    );
+    Ok(())
+}
+
+/// #4102 guard 5a (self-comparing expectation): `toBe(applyDiscount(100))`
+/// compares the owner to itself — statically detectable, never
+/// discriminating. Must fail closed.
+#[test]
+fn spec_0027_tautological_expected_owner_call_does_not_witness() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(100)",
+        "applyDiscount(100)",
+    )];
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "an expected side that calls the owner itself must not witness"
+    );
+    Ok(())
+}
+
+/// #4102 guard 5b (dead expected): `toBe(999)` is wrong under BOTH behaviors
+/// at the boundary input (changed: 90, unchanged: 100) — statically provable
+/// from the owner body and the changed comparison. Must fail closed.
+#[test]
+fn spec_0027_dead_expected_value_does_not_witness() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(100)",
+        "999",
+    )];
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "an expected literal that matches neither behavior at the boundary must not witness"
+    );
+    Ok(())
+}
+
+/// Control for guard 5b: the honest boundary assertion `toBe(90)` — the
+/// changed behavior's value at the boundary input, distinct from the
+/// unchanged behavior's `100` — stays `exposed` with discriminate=yes.
+#[test]
+fn spec_0027_live_expected_value_stays_exposed() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(100)",
+        "90",
+    )];
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "the genuine boundary assertion must stay exposed"
+    );
+    assert!(
+        matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must be Yes for a live boundary assertion, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    Ok(())
+}
+
+/// Control for guard 2's object-pin exception: an object argument that binds
+/// the comparison operand's field to the boundary value
+/// (`applyDiscount({ total: 100 })`) keeps the effective input known and
+/// stays `exposed`.
+#[test]
+fn spec_0027_object_pin_at_read_position_stays_exposed() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount({ total: 100 })",
+        "90",
+    )];
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "an object pin of the read operand at the boundary is a genuine witness"
+    );
     Ok(())
 }
 
