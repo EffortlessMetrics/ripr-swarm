@@ -280,15 +280,18 @@ mod tests {
     }
 
     #[test]
-    fn over_limit_file_is_rejected_with_named_reason() {
+    fn over_limit_file_is_rejected_with_named_reason() -> Result<(), String> {
         let dir = TempDir::new("over-limit");
         dir.write("big.ts", &[b'a'; 100]);
-        let err = read_source_capped(&dir.0.join("big.ts"), 50, None)
-            .expect_err("over-limit read must fail");
-        assert_eq!(err, CappedReadError::OverFileLimit { limit: 50 });
+        let outcome = read_source_capped(&dir.0.join("big.ts"), 50, None);
+        let Err(err) = &outcome else {
+            return Err(format!("over-limit read must fail, got {outcome:?}"));
+        };
+        assert_eq!(err, &CappedReadError::OverFileLimit { limit: 50 });
         assert!(err.is_size_limit());
         assert!(err.reason().contains("file_read_capped"));
         assert!(err.reason().contains("50"));
+        Ok(())
     }
 
     #[test]
@@ -304,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_budget_exhaustion_is_distinguishable() {
+    fn workspace_budget_exhaustion_is_distinguishable() -> Result<(), String> {
         let dir = TempDir::new("budget");
         dir.write("a.ts", &[b'a'; 40]);
         dir.write("b.ts", &[b'b'; 40]);
@@ -313,10 +316,13 @@ mod tests {
         assert!(first_outcome.is_ok(), "first read must succeed");
         let first = first_outcome.unwrap_or_default();
         assert_eq!(remaining, 50 - first.len() as u64);
-        let err = read_source_capped(&dir.0.join("b.ts"), 1024, Some(&mut remaining))
-            .expect_err("budget-exhausting read must fail");
+        let outcome = read_source_capped(&dir.0.join("b.ts"), 1024, Some(&mut remaining));
+        let Err(err) = &outcome else {
+            return Err(format!("budget-exhausting read must fail, got {outcome:?}"));
+        };
         assert!(matches!(err, CappedReadError::OverWorkspaceBudget { .. }));
         assert!(err.reason().contains("workspace_read_budget_exhausted"));
+        Ok(())
     }
 
     #[test]
@@ -375,7 +381,13 @@ mod tests {
             ts_byte_limit_from_env("RIPR_TEST_X", 16, Ok(" 64 ".to_string())),
             Ok(64)
         );
-        assert!(ts_byte_limit_from_env("RIPR_TEST_X", 16, Ok("0".to_string())).is_err());
-        assert!(ts_byte_limit_from_env("RIPR_TEST_X", 16, Ok("nope".to_string())).is_err());
+        assert!(matches!(
+            ts_byte_limit_from_env("RIPR_TEST_X", 16, Ok("0".to_string())),
+            Err(_)
+        ));
+        assert!(matches!(
+            ts_byte_limit_from_env("RIPR_TEST_X", 16, Ok("nope".to_string())),
+            Err(_)
+        ));
     }
 }

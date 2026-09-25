@@ -464,7 +464,13 @@ mod tests {
             ts_workspace_file_limit_from_env(Ok(" 42 ".to_string())),
             Ok(42)
         );
-        assert!(ts_workspace_file_limit_from_env(Ok("0".to_string())).is_err());
-        assert!(ts_workspace_file_limit_from_env(Ok("nope".to_string())).is_err());
+        assert!(matches!(
+            ts_workspace_file_limit_from_env(Ok("0".to_string())),
+            Err(_)
+        ));
+        assert!(matches!(
+            ts_workspace_file_limit_from_env(Ok("nope".to_string())),
+            Err(_)
+        ));
     }
 }
