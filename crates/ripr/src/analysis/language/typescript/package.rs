@@ -478,6 +478,13 @@ fn detect_framework(pkg_json: &str) -> Option<TsFramework> {
     detect_framework_signals(pkg_json).first().copied()
 }
 
+/// Push `framework` into `signals` unless an equal signal is already present.
+fn push_framework_signal(signals: &mut Vec<TsFramework>, framework: TsFramework) {
+    if !signals.contains(&framework) {
+        signals.push(framework);
+    }
+}
+
 /// Detect every DISTINCT framework signal in `package.json`, in priority order.
 ///
 /// Unlike [`detect_framework`] (first match wins), this returns ALL matched
@@ -491,30 +498,25 @@ fn detect_framework_signals(pkg_json: &str) -> Vec<TsFramework> {
     };
     let has_dep = |name: &str| facts.dep_names.iter().any(|dep| dep == name);
     let mut signals: Vec<TsFramework> = Vec::new();
-    let mut push_signal = |framework: TsFramework| {
-        if !signals.contains(&framework) {
-            signals.push(framework);
-        }
-    };
 
     // ── Dependency-signal priority (most reliable) ──────────────────────────
     if has_dep("jest") || has_dep("@types/jest") || has_dep("ts-jest") || has_dep("babel-jest") {
-        push_signal(TsFramework::Jest);
+        push_framework_signal(&mut signals, TsFramework::Jest);
     }
     if has_dep("vitest") {
-        push_signal(TsFramework::Vitest);
+        push_framework_signal(&mut signals, TsFramework::Vitest);
     }
     if has_dep("bun-types") {
-        push_signal(TsFramework::Bun);
+        push_framework_signal(&mut signals, TsFramework::Bun);
     }
     if has_dep("ava") {
-        push_signal(TsFramework::Ava);
+        push_framework_signal(&mut signals, TsFramework::Ava);
     }
     if has_dep("mocha") || has_dep("@types/mocha") {
-        push_signal(TsFramework::Mocha);
+        push_framework_signal(&mut signals, TsFramework::Mocha);
     }
     if has_dep("@types/node") {
-        push_signal(TsFramework::NodeTest);
+        push_framework_signal(&mut signals, TsFramework::NodeTest);
     }
     if !signals.is_empty() {
         return signals;
@@ -549,24 +551,24 @@ fn detect_framework_signals(pkg_json: &str) -> Vec<TsFramework> {
         false
     };
     if script_has_word("jest") {
-        push_signal(TsFramework::Jest);
+        push_framework_signal(&mut signals, TsFramework::Jest);
     }
     if script_has_word("vitest") {
-        push_signal(TsFramework::Vitest);
+        push_framework_signal(&mut signals, TsFramework::Vitest);
     }
     if script_has_word("ava") {
-        push_signal(TsFramework::Ava);
+        push_framework_signal(&mut signals, TsFramework::Ava);
     }
     if script_has_word("mocha") {
-        push_signal(TsFramework::Mocha);
+        push_framework_signal(&mut signals, TsFramework::Mocha);
     }
     // "node --test" or "node:test" patterns
     if test_script.contains("node --test") || test_script.contains("node:test") {
-        push_signal(TsFramework::NodeTest);
+        push_framework_signal(&mut signals, TsFramework::NodeTest);
     }
     // "bun test" pattern (script-only; dep signal already caught bun-types above)
     if test_script.contains("bun test") || test_script.starts_with("bun ") {
-        push_signal(TsFramework::Bun);
+        push_framework_signal(&mut signals, TsFramework::Bun);
     }
     signals
 }
