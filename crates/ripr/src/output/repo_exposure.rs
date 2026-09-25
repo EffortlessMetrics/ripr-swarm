@@ -372,6 +372,7 @@ fn write_repo_exposure_json_document<W: io::Write>(
                 json_escape(PythonRepoExposureGuidance::REPAIR_ROUTE)
             )?;
             writeln!(out, "    }}")?;
+            first = false;
         }
         writeln!(out, "  ],")?;
     }
@@ -1283,7 +1284,7 @@ mod tests {
     }
 
     #[test]
-    fn json_emits_python_guidance_when_python_workspace_and_empty_seams() {
+    fn json_emits_python_guidance_when_python_workspace_and_empty_seams() -> Result<(), String> {
         let guidance = PythonRepoExposureGuidance {
             python_file_count: 2,
         };
@@ -1311,20 +1312,24 @@ mod tests {
             !json.contains("\"category\": \"typescript_diff_first\""),
             "python-only guidance must not invent a TypeScript entry:\n{json}"
         );
-        serde_json::from_str::<serde_json::Value>(&json).expect("python guidance JSON must parse");
+        serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("python guidance JSON must parse: {err}\n{json}"))?;
+        Ok(())
     }
 
     #[test]
-    fn json_emits_python_guidance_after_typescript_guidance() {
+    fn json_emits_python_guidance_after_typescript_guidance() -> Result<(), String> {
         let ts = ts_guidance(1);
         let python = PythonRepoExposureGuidance {
             python_file_count: 4,
         };
         let json = render_repo_exposure_json(&[], None, Some(&ts), Some(&python));
-        let value: serde_json::Value = serde_json::from_str(&json).expect("json");
-        let categories: Vec<&str> = value["limitations"]
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|err| format!("parse combined guidance JSON failed: {err}\n{json}"))?;
+        let limitations = value["limitations"]
             .as_array()
-            .expect("limitations")
+            .ok_or_else(|| format!("limitations missing: {json}"))?;
+        let categories: Vec<&str> = limitations
             .iter()
             .filter_map(|item| item["category"].as_str())
             .collect();
@@ -1332,6 +1337,7 @@ mod tests {
             categories,
             vec!["typescript_diff_first", "python_diff_first"]
         );
+        Ok(())
     }
 
     #[test]
