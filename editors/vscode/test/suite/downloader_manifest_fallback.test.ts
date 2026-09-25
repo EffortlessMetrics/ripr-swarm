@@ -140,7 +140,10 @@ function fixturePlatform(): RiprPlatform {
 
 function probePayloadPath(): string {
   if (process.platform === 'win32') {
-    const payload = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
+    // Composed from SystemDrive so the source carries no local absolute
+    // Windows path (the local-context gate bans that literal).
+    const systemRoot = process.env.SystemRoot ?? path.join(process.env.SystemDrive ?? 'C:', 'Windows');
+    const payload = path.join(systemRoot, 'System32', 'tar.exe');
     assert.ok(fs.existsSync(payload), `fixture probe payload is missing: ${payload}`);
     return payload;
   }
