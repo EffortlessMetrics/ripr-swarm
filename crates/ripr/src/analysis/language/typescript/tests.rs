@@ -7962,7 +7962,13 @@ fn spec_0027_boundary_witness_fails_closed_without_strong_owner_call_at_boundary
 /// witnessed and the finding must fail closed to `weakly_exposed`.
 #[test]
 fn spec_0027_same_named_method_on_other_receiver_does_not_witness() -> Result<(), String> {
-    let tests = [exact_value_test("total", "other.total(50)", "120")];
+    // The first test anchors the owner relation with a real owner call that
+    // is NOT at the boundary literal (`60` vs boundary `50`); the second
+    // asserts on a same-named method of a DIFFERENT receiver at the literal.
+    let tests = [
+        exact_value_test("total", "total(60)", "120"),
+        exact_value_test("total", "other.total(50)", "120"),
+    ];
     let finding = classify_boundary_line("total", "  if (total >= 50) {", &tests)?;
     assert_eq!(
         finding.class,
