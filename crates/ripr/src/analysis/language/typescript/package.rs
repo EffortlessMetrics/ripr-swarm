@@ -477,6 +477,25 @@ fn parse_manifest_facts(pkg_json: &str) -> Option<ManifestFacts> {
 fn detect_framework(pkg_json: &str) -> Option<TsFramework> {
     detect_framework_signals(pkg_json).first().copied()
 }
+
+/// Push `framework` into `signals` unless an equal signal is already present.
+fn push_framework_signal(signals: &mut Vec<TsFramework>, framework: TsFramework) {
+    if !signals.contains(&framework) {
+        signals.push(framework);
+    }
+}
+
+/// Detect every DISTINCT framework signal in `package.json`, in priority order.
+///
+/// Unlike [`detect_framework`] (first match wins), this returns ALL matched
+/// frameworks (deduplicated). When two or more signals match — e.g. both
+/// `jest` and `vitest` in `devDependencies` — the caller can disclose the
+/// ambiguity instead of silently resolving by fixed priority. Fail-closed:
+/// empty when the manifest is unparseable or no signal matches.
+fn detect_framework_signals(pkg_json: &str) -> Vec<TsFramework> {
+    let Some(facts) = parse_manifest_facts(pkg_json) else {
+        return Vec::new();
+    };
     let has_dep = |name: &str| facts.dep_names.iter().any(|dep| dep == name);
     let mut signals: Vec<TsFramework> = Vec::new();
 
@@ -882,6 +901,19 @@ mod tests {
         assert_eq!(
             result, None,
             "a framework name appearing as a string value must not be credited"
+        );
+    }
+
+    #[test]
+    fn spaced_dependency_key_still_credited() {
+        // JSON keys may have whitespace before the colon; the quoted-key
+        // heuristic must still credit them.
+        let pkg = r#"{"devDependencies":{ "vitest" : "^1.0.0" }}"#;
+        let result = detect_framework(pkg);
+        assert_eq!(
+            result,
+            Some(TsFramework::Vitest),
+            "spaced dependency keys must still be credited"
         );
     }
 
