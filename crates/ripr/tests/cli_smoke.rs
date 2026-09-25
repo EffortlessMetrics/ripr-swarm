@@ -4787,7 +4787,7 @@ fn agent_repair_operational_error_after_attempt_selection_stays_failure()
     );
     let stderr = String::from_utf8_lossy(&after.stderr);
     assert!(
-        stderr.contains("read retained repair packet"),
+        stderr.contains("canonicalize artifact") && stderr.contains("agent-packet.json"),
         "precondition: the retained packet is unreadable:\n{stderr}"
     );
     let (_, manifest) = sole_repair_attempt(&root)?;
