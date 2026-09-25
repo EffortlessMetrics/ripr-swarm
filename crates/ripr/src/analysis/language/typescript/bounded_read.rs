@@ -252,12 +252,23 @@ mod tests {
                 "ripr-ts-bounded-read-{label}-{}-{stamp}",
                 std::process::id()
             ));
-            fs::create_dir_all(&root).expect("create temp dir");
+            let created = fs::create_dir_all(&root);
+            assert!(
+                created.is_ok(),
+                "create temp dir {}: {:?}",
+                root.display(),
+                created.err()
+            );
             Self(root)
         }
 
         fn write(&self, name: &str, bytes: &[u8]) {
-            fs::write(self.0.join(name), bytes).expect("write temp file");
+            let written = fs::write(self.0.join(name), bytes);
+            assert!(
+                written.is_ok(),
+                "write temp file {name}: {:?}",
+                written.err()
+            );
         }
     }
 
@@ -284,8 +295,9 @@ mod tests {
         let dir = TempDir::new("under-limit");
         dir.write("ok.ts", b"export const value = 1;\n");
         let mut remaining = 10u64;
-        let text = read_source_capped(&dir.0.join("ok.ts"), 1024, Some(&mut remaining))
-            .expect("under-limit read must succeed");
+        let outcome = read_source_capped(&dir.0.join("ok.ts"), 1024, Some(&mut remaining));
+        assert!(outcome.is_ok(), "under-limit read must succeed");
+        let text = outcome.unwrap_or_default();
         assert!(text.contains("value = 1"));
         assert_eq!(remaining, 10 - text.len() as u64);
     }
@@ -296,8 +308,9 @@ mod tests {
         dir.write("a.ts", &[b'a'; 40]);
         dir.write("b.ts", &[b'b'; 40]);
         let mut remaining = 50u64;
-        let first = read_source_capped(&dir.0.join("a.ts"), 1024, Some(&mut remaining))
-            .expect("first read must succeed");
+        let first_outcome = read_source_capped(&dir.0.join("a.ts"), 1024, Some(&mut remaining));
+        assert!(first_outcome.is_ok(), "first read must succeed");
+        let first = first_outcome.unwrap_or_default();
         assert_eq!(remaining, 50 - first.len() as u64);
         let err = read_source_capped(&dir.0.join("b.ts"), 1024, Some(&mut remaining))
             .expect_err("budget-exhausting read must fail");

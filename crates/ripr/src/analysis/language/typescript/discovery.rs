@@ -229,15 +229,33 @@ mod tests {
                 "ripr-ts-discovery-{label}-{}-{stamp}",
                 std::process::id()
             ));
-            fs::create_dir_all(&root).expect("create temp workspace");
+            let created = fs::create_dir_all(&root);
+            assert!(
+                created.is_ok(),
+                "create temp workspace {}: {:?}",
+                root.display(),
+                created.err()
+            );
             Self(root)
         }
 
         fn write(&self, relative: &str, source: &str) {
             let absolute = self.0.join(relative);
-            let parent = absolute.parent().expect("fixture path has a parent");
-            fs::create_dir_all(parent).expect("create fixture dir");
-            fs::write(&absolute, source).expect("write fixture file");
+            let parent = absolute.parent().unwrap_or(Path::new("."));
+            let created = fs::create_dir_all(parent);
+            assert!(
+                created.is_ok(),
+                "create fixture dir {}: {:?}",
+                parent.display(),
+                created.err()
+            );
+            let written = fs::write(&absolute, source);
+            assert!(
+                written.is_ok(),
+                "write fixture file {}: {:?}",
+                absolute.display(),
+                written.err()
+            );
         }
     }
 
