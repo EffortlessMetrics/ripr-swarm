@@ -14,6 +14,56 @@ mod suggest;
 
 pub(crate) use suggest::unknown_argument;
 
+/// Top-level error of command dispatch, carrying the process exit-code
+/// contract documented in `docs/EXIT_CODES.md`.
+///
+/// Most command layers keep producing plain `String` errors; `From<String>`
+/// maps them to [`CommandError::Failure`], so the only call sites that must
+/// name this type are the ones that reached a blocking decision or typed
+/// refusal and therefore exit with code 3.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandError {
+    /// The command could not complete: usage, parse, operational, or
+    /// internal error. Maps to exit code 2.
+    Failure(String),
+    /// The command ran successfully and reached a blocking decision or a
+    /// typed refusal. Maps to exit code 3, so orchestrators can branch on
+    /// `0` (completed), `3` (decision/refusal), and `2` (could not
+    /// complete) without parsing output.
+    Decision(String),
+}
+
+impl CommandError {
+    /// The human-readable error message, reported on stderr unchanged.
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Failure(message) | Self::Decision(message) => message,
+        }
+    }
+
+    /// The process exit code this error maps to (2 or 3).
+    pub const fn exit_code(&self) -> i32 {
+        match self {
+            Self::Failure(_) => 2,
+            Self::Decision(_) => 3,
+        }
+    }
+}
+
+impl From<String> for CommandError {
+    fn from(message: String) -> Self {
+        Self::Failure(message)
+    }
+}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message())
+    }
+}
+
+impl std::error::Error for CommandError {}
+
 use crate::agent::loop_commands::{
     WORKFLOW_AGENT_BRIEF_ARTIFACT, WORKFLOW_AGENT_PACKET_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT,
@@ -23,7 +73,7 @@ use crate::app::repair_attempt::BeforeArtifactSource;
 use std::fs::File;
 use std::path::Path;
 
-pub fn run(mut args: Vec<String>) -> Result<(), String> {
+pub fn run(mut args: Vec<String>) -> Result<(), CommandError> {
     let version_requested = parse::top_level_version_requested(&args);
     // #2610: extract --verbose before command dispatch so it works with any
     // subcommand. Version is a side-effect-free identity query, so it must not
@@ -187,6 +237,9 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
         );
     }
     eprintln!(
+        "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below."
+    );
+    eprintln!(
         "ripr: repair attempt {} is awaiting the focused test edit",
         result.manifest.repair_attempt_id.as_str()
     );
@@ -327,7 +380,9 @@ mod tests {
     fn run_rejects_unknown_command() {
         assert_eq!(
             run(args(&["ripr", "unknown"])),
-            Err("unknown command \"unknown\". Run `ripr --help`.".to_string())
+            Err(CommandError::Failure(
+                "unknown command \"unknown\". Run `ripr --help`.".to_string()
+            ))
         );
     }
 
@@ -335,10 +390,10 @@ mod tests {
     fn run_dispatches_check_parse_errors() {
         assert_eq!(
             run(args(&["ripr", "check", "--format", "xml"])),
-            Err(
+            Err(CommandError::Failure(
                 "unknown format \"xml\"; see `ripr check --help` for the accepted formats"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -346,7 +401,9 @@ mod tests {
     fn run_dispatches_doctor_root_parse_errors() {
         assert_eq!(
             run(args(&["ripr", "doctor", "--root"])),
-            Err("missing value for --root".to_string())
+            Err(CommandError::Failure(
+                "missing value for --root".to_string()
+            ))
         );
     }
 
@@ -354,7 +411,9 @@ mod tests {
     fn run_dispatches_init_parse_errors() {
         assert_eq!(
             run(args(&["ripr", "init", "--root"])),
-            Err("missing value for --root".to_string())
+            Err(CommandError::Failure(
+                "missing value for --root".to_string()
+            ))
         );
     }
 
@@ -364,38 +423,66 @@ mod tests {
         assert_eq!(run(args(&["ripr", "--version"])), Ok(()));
         assert_eq!(
             run(args(&["ripr", "explain"])),
-            Err("missing finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string())
+            Err(CommandError::Failure(
+                "missing finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "context"])),
-            Err("missing --at or --finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string())
+            Err(CommandError::Failure(
+                "missing --at or --finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "diff", "--format", "xml"])),
-            Err("unknown diff format \"xml\"; expected `human`, `text`, `md`, `markdown`, or `json`".to_string())
+            Err(CommandError::Failure(
+                "unknown diff format \"xml\"; expected `human`, `text`, `md`, `markdown`, or `json`".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "lsp", "--bad"])),
-            Err("unknown lsp argument \"--bad\". Run `ripr lsp --help`.".to_string())
+            Err(CommandError::Failure(
+                "unknown lsp argument \"--bad\". Run `ripr lsp --help`.".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "agent", "brief", "--diff", "change.diff"])),
-            Err(
+            Err(CommandError::Failure(
                 "agent brief requires --json (the supported output for this subcommand)"
                     .to_string()
-            )
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "first-pr", "--gap-ledger"])),
-            Err("missing value for --gap-ledger".to_string())
+            Err(CommandError::Failure(
+                "missing value for --gap-ledger".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "start-here", "--gap-ledger"])),
-            Err("missing value for --gap-ledger".to_string())
+            Err(CommandError::Failure(
+                "missing value for --gap-ledger".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "first-action", "--assistant-proof"])),
-            Err("missing value for --assistant-proof".to_string())
+            Err(CommandError::Failure(
+                "missing value for --assistant-proof".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn command_error_exit_codes_distinguish_failure_from_decision() {
+        assert_eq!(CommandError::Failure("usage".to_string()).exit_code(), 2);
+        assert_eq!(CommandError::Decision("blocked".to_string()).exit_code(), 3);
+        assert_eq!(
+            CommandError::Decision("blocked".to_string()).message(),
+            "blocked"
+        );
+        assert_eq!(
+            format!("{}", CommandError::Failure("usage".to_string())),
+            "usage"
         );
     }
 }

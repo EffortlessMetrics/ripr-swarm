@@ -1,7 +1,7 @@
-#[cfg(test)]
-use super::MAX_MESSAGE_BYTES;
 use super::protocol;
 use super::server::{McpServer, bounded_error_response};
+#[cfg(test)]
+use super::{MAX_MESSAGE_BYTES, MAX_RESPONSE_BYTES};
 use crate::workspace_status::WorkspaceStatus;
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -24,7 +24,10 @@ where
             FrameRead::Eof => return Ok(()),
             FrameRead::Empty => {}
             FrameRead::Oversized => {
+                // The frame was discarded unread, so the request id is
+                // unknown and the JSON-RPC 2.0 fallback carries a null id.
                 let response = bounded_error_response(
+                    None,
                     protocol::ERROR_INVALID_REQUEST,
                     "MCP message exceeds the configured byte limit",
                     Some(json!({ "maxMessageBytes": super::MAX_MESSAGE_BYTES })),
@@ -47,7 +50,11 @@ where
     let encoded =
         serde_json::to_vec(response).map_err(|error| format!("serialize MCP response: {error}"))?;
     let encoded = if encoded.len() > super::MAX_RESPONSE_BYTES {
+        // JSON-RPC 2.0: the error fallback must echo the known request id so
+        // the client can correlate it; only an unreadable id becomes null.
+        let request_id = response.get("id").and_then(readable_response_id);
         let fallback = bounded_error_response(
+            request_id,
             protocol::ERROR_INTERNAL,
             "MCP response exceeds the configured byte limit",
             Some(json!({ "maxResponseBytes": super::MAX_RESPONSE_BYTES })),
@@ -143,6 +150,13 @@ fn append_bounded(frame: &mut Vec<u8>, bytes: &[u8], oversized: &mut bool) {
     frame.extend_from_slice(bytes);
 }
 
+fn readable_response_id(value: &Value) -> Option<Value> {
+    match value {
+        Value::Null | Value::Number(_) | Value::String(_) => Some(value.clone()),
+        _ => None,
+    }
+}
+
 fn trim_carriage_return(frame: &mut Vec<u8>) {
     if frame.last() == Some(&b'\r') {
         let _removed = frame.pop();
@@ -212,5 +226,59 @@ mod tests {
             FrameRead::Frame(value) if value.as_slice() == b"{}" => Ok(()),
             _ => Err("reader did not recover after oversized frame".to_string()),
         }
+    }
+
+    #[tokio::test]
+    async fn oversized_response_fallback_keeps_the_known_request_id() -> Result<(), String> {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "result": { "blob": "x".repeat(super::MAX_RESPONSE_BYTES + 1) }
+        });
+        let mut output = Vec::new();
+        write_response(&mut output, &response).await?;
+        if output.last() == Some(&b'\n') {
+            let _trailing_newline = output.pop();
+        }
+        let parsed: Value = serde_json::from_slice(&output)
+            .map_err(|error| format!("fallback response is not JSON: {error}"))?;
+        if parsed.get("id") != Some(&json!(7)) {
+            return Err(format!(
+                "over-cap fallback dropped the known request id: {parsed}"
+            ));
+        }
+        if parsed.pointer("/error/code").and_then(Value::as_i64) != Some(protocol::ERROR_INTERNAL) {
+            return Err("over-cap fallback error code drifted".to_string());
+        }
+        if parsed
+            .pointer("/error/data/maxResponseBytes")
+            .and_then(Value::as_u64)
+            != Some(super::MAX_RESPONSE_BYTES as u64)
+        {
+            return Err("over-cap fallback omitted the byte limit".to_string());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn oversized_response_fallback_maps_an_unreadable_id_to_null() -> Result<(), String> {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": { "not": "a json-rpc id" },
+            "result": { "blob": "x".repeat(super::MAX_RESPONSE_BYTES + 1) }
+        });
+        let mut output = Vec::new();
+        write_response(&mut output, &response).await?;
+        if output.last() == Some(&b'\n') {
+            let _trailing_newline = output.pop();
+        }
+        let parsed: Value = serde_json::from_slice(&output)
+            .map_err(|error| format!("fallback response is not JSON: {error}"))?;
+        if parsed.get("id") != Some(&Value::Null) {
+            return Err(format!(
+                "over-cap fallback must null out an unreadable id: {parsed}"
+            ));
+        }
+        Ok(())
     }
 }

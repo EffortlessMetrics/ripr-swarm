@@ -327,7 +327,31 @@ Updated:
 ## Pending — python_strong_oracle (2)
 
 Reason:
+RIPR-SPEC-0028: predicate boundary activation rule records literal owner-call arguments and the observed boundary equality; the strong oracle calls the owner at the boundary, so exposed stays
+
+Command:
+`cargo xtask goldens bless python_strong_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_strong_oracle (4)
+
+Reason:
 RIPR-SPEC-0084: CheckInput default base is now None (was origin/main); --diff fixture envelopes honestly omit the inapplicable top-level base and record base_revision null. Only base/base_revision changed; findings, counts, and input_identity byte-identical.
+
+Command:
+`cargo xtask goldens bless python_strong_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_strong_oracle (3)
+
+Reason:
+RIPR-SPEC-0082/RIPR-SPEC-0122 wording owner change (PR #3978): Why lines re-derived from reach/observe stage state, preview notes use language display names with singular file counts, recovery detail lines end with exactly one period; mechanical re-render of unchanged fixture evidence
 
 Command:
 `cargo xtask goldens bless python_strong_oracle --reason "..."`

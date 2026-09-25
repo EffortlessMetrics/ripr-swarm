@@ -14,10 +14,9 @@
 //! - No parallel TypeScript-specific completeness validator is introduced.
 //!   The only flip gate is `validate_agent_gap_record_packet(..) == Ok(())`.
 
-use crate::agent::loop_commands::shell_arg;
 use crate::domain::Finding;
 use crate::output::gap_decision_ledger::{
-    GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility,
+    GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility, preview_receipt_write_command,
 };
 use std::collections::BTreeMap;
 
@@ -77,11 +76,22 @@ impl TargetAssertionShape {
     }
 }
 
-/// Derive the packet's target assertion shape from the observed oracle
-/// evidence (issue #4105).
+/// Build the assertion the repair should add, from the borrowed call shape,
+/// gated by a static reachability verdict against the named discriminator
+/// (issue #4105).
 ///
-/// - No observed expression, no parseable discriminator comparison, or no
-///   statically decidable verdict → the observed shape stands unchanged.
+/// The borrowed assertion supplies only the observed call (`applyDiscount(100,
+/// 100)`), which is what makes the target concrete. Its expected literal and
+/// matcher belong to a different, weaker check: the projection only runs for
+/// weakly-exposed findings, so by construction the borrowed assertion does not
+/// pin the changed behavior. Re-using its literal under `toBe` fabricated
+/// assertions such as `expect(result).toBe(50)` from `toBeGreaterThan(50)`.
+/// Static evidence cannot know the right expected value, so the shape uses the
+/// same `expected` placeholder as the Rust assertion shapes.
+///
+/// Reachability (#4105):
+/// - No parseable discriminator comparison, or no statically decidable
+///   verdict → the observed shape stands unchanged.
 /// - The observed call input hits the boundary → the observed shape stands
 ///   (landed behavior for boundary-hitting fixtures).
 /// - The observed call input provably does NOT hit the boundary → a
@@ -89,38 +99,41 @@ impl TargetAssertionShape {
 ///   `/* boundary input for <discriminator> */`) replaces the observed input;
 ///   the caller fails the packet closed via the shared validator.
 pub(crate) fn typescript_target_assertion_shape(
-    oracle_observed: &str,
-    oracle_expected: &str,
+    family: &crate::domain::ProbeFamily,
+    observed: &str,
     missing_discriminator: Option<&str>,
     owner_name: Option<&str>,
 ) -> TargetAssertionShape {
-    let observed_shape = format!("expect({oracle_observed}).toBe({oracle_expected})");
-    let observed = || TargetAssertionShape::Observed {
-        shape: observed_shape.clone(),
+    let expected_clause = match family {
+        crate::domain::ProbeFamily::ErrorPath => ".toThrow(expected)",
+        _ => ".toBe(expected)",
+    };
+    let observed_shape = TargetAssertionShape::Observed {
+        shape: format!("expect({observed}){expected_clause}"),
     };
     let Some(discriminator) = missing_discriminator
         .map(str::trim)
         .filter(|d| !d.is_empty())
     else {
-        return observed();
+        return observed_shape;
     };
-    let Some(call) = parse_static_call_expression(oracle_observed) else {
-        return observed();
+    let Some(call) = parse_static_call_expression(observed) else {
+        return observed_shape;
     };
     if !call_callee_is_owner(&call.callee, owner_name) {
-        return observed();
+        return observed_shape;
     }
     let Some(comparison) = parse_static_comparison(discriminator) else {
-        return observed();
+        return observed_shape;
     };
     match static_argument_reaches_boundary(&call, &comparison) {
-        Some(true) | None => observed(),
+        Some(true) | None => observed_shape,
         Some(false) => TargetAssertionShape::Unreachable {
             shape: format!(
-                "{}(/* boundary input for {discriminator} */).toBe({oracle_expected})",
+                "{}(/* boundary input for {discriminator} */){expected_clause}",
                 call.callee
             ),
-            observed_call: oracle_observed.to_string(),
+            observed_call: observed.to_string(),
             discriminator: discriminator.to_string(),
         },
     }
@@ -469,11 +482,6 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         return None;
     }
 
-    // Build receipt command (§3.2 new producer F6/F7):
-    // A fixed `ripr outcome … target/ripr/receipts/<canonical_gap_id>.targeted-test-outcome.json`
-    // command — no external provider, no interpolation of free text.
-    let receipt_command = typescript_receipt_command(&canonical_gap_id, verify_command);
-
     // Build repair_route from the finding (§3.1 — test file from related test).
     // The route_kind is derived from the probe family / missing discriminator.
     let missing_discriminator = finding
@@ -496,8 +504,8 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // assertion.
     let target_shape = evidence_value(finding, "typescript_oracle_observed: ").map(|observed| {
         typescript_target_assertion_shape(
+            &finding.probe.family,
             observed,
-            oracle_expected,
             missing_discriminator.as_deref(),
             owner_name.as_deref(),
         )
@@ -574,7 +582,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // Evidence IDs: the finding's own id.
     let evidence_ids = vec![finding.id.clone()];
 
-    Some(GapRecord {
+    let mut record = GapRecord {
         source_currentness: Some(finding.source_currentness.as_str().to_string()),
         gap_id: finding.id.clone(),
         canonical_gap_id,
@@ -596,12 +604,20 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         projection_eligibility,
         verification_commands: vec![verify_command.to_string()],
         command_specs: None,
-        receipt_command: Some(receipt_command),
+        receipt_command: None,
         regeneration_commands: Vec::new(),
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: TS_AUTHORITY_BOUNDARY.to_string(),
-    })
+    };
+    // Receipt command (RIPR-SPEC-0079 `canonical_receipt_command` field rule):
+    // the canonical `ripr receipt write …` form built by the shared receipt-write
+    // owner from this record's canonical gap id, verify command, and default
+    // preview receipt path. The gap ledger synthesizes the same string for the
+    // same record, so the packet and the ledger agree. `ripr outcome` is a
+    // movement command and must not appear here.
+    record.receipt_command = Some(preview_receipt_write_command(&record));
+    Some(record)
 }
 
 /// Derive the content-addressed `gap:typescript:<probe_family>:<fp8>` canonical
@@ -625,30 +641,6 @@ pub(crate) fn typescript_canonical_gap_id(finding_id: &str) -> String {
         // Fallback: use the whole normalized id as a slug.
         format!("gap:typescript:{normalized}")
     }
-}
-
-/// Derive the receipt command for a TypeScript preview finding (§3.2 / F6/F7).
-///
-/// The command is a fixed `ripr outcome …` invocation that mirrors the Rust
-/// receipt shape without any external provider call, curl, or http request.
-pub(crate) fn typescript_receipt_command(canonical_gap_id: &str, verify_command: &str) -> String {
-    // F7: fixed `ripr outcome` shape only — no external provider or curl.
-    // The receipt path uses the canonical_gap_id as a slug (slashes replaced
-    // with underscores so the path is a single filename component).
-    let slug = canonical_gap_id
-        .chars()
-        .map(|c| if c == ':' || c == '/' { '_' } else { c })
-        .collect::<String>();
-    let receipt_path = format!("target/ripr/receipts/{slug}.targeted-test-outcome.json");
-    // Route both operator-supplied values through the shared bash encoder
-    // rather than wrapping them in double quotes here: a verify command
-    // containing `$`, a backtick, or a redirect would otherwise execute when
-    // this advisory string is copied into a shell (#2347).
-    format!(
-        "ripr outcome --before <baseline> --after <repair> --verify-cmd {} --out {}",
-        shell_arg(verify_command),
-        shell_arg(&receipt_path)
-    )
 }
 
 /// Map the probe family to a `GapRepairRoute` route_kind (§3.2).
@@ -822,6 +814,22 @@ mod tests {
         );
     }
 
+    /// The target shape keeps the borrowed call but never the borrowed literal:
+    /// the borrowed assertion belongs to a weaker check that does not pin the
+    /// change, so `toBe(<its literal>)` would be a fabricated expectation.
+    #[test]
+    fn assertion_shape_keeps_the_call_and_drops_the_borrowed_literal() -> Result<(), String> {
+        let finding = complete_finding();
+        let record = typescript_gap_record_for(&finding)
+            .ok_or_else(|| "complete finding must produce a GapRecord".to_string())?;
+        let shape = record
+            .repair_route
+            .and_then(|route| route.assertion_shape)
+            .ok_or_else(|| "complete packet must carry an assertion shape".to_string())?;
+        assert_eq!(shape, "expect(applyDiscount(100, 100)).toBe(expected)");
+        Ok(())
+    }
+
     /// §7.4: Missing verify command → validator fails (cond. 3), stays preview.
     #[test]
     fn validator_parity_missing_verify_command_returns_none() {
@@ -944,22 +952,31 @@ mod tests {
         assert!(gap_id.starts_with("gap:typescript:"));
     }
 
+    /// RIPR-SPEC-0079 `canonical_receipt_command` field rule: the projected
+    /// record's `receipt_command` is the canonical `ripr receipt write …`
+    /// form carrying the record's canonical gap id, its verify command, and
+    /// the ledger's default preview receipt path — never `ripr outcome`.
     #[test]
-    fn receipt_command_is_ripr_outcome_shape() {
-        let cmd = typescript_receipt_command(
-            "gap:typescript:typescript_preview:a1b2c3d4",
-            "jest tests/discount.test.ts",
+    fn projected_receipt_command_is_canonical_receipt_write() -> Result<(), String> {
+        let record = typescript_gap_record_for(&complete_finding())
+            .ok_or("complete finding must produce a GapRecord")?;
+        let cmd = record
+            .receipt_command
+            .as_deref()
+            .ok_or("projected record must carry a receipt command")?;
+        assert_eq!(
+            cmd,
+            "ripr receipt write --gap gap:typescript:typescript_preview:a1b2c3d4 \
+             --verify-command 'jest tests/discount.test.ts' --status not_run \
+             --out target/ripr/receipts/gap-typescript-typescript_preview-a1b2c3d4.json"
         );
         assert!(
-            cmd.starts_with("ripr outcome "),
-            "must start with ripr outcome"
-        );
-        assert!(
-            cmd.contains("target/ripr/receipts/"),
-            "must reference receipts path"
+            !cmd.contains("ripr outcome"),
+            "receipt_command must not be a movement command: {cmd}"
         );
         assert!(!cmd.contains("curl"), "F7: must not contain curl");
         assert!(!cmd.contains("http"), "F7: must not contain http");
+        Ok(())
     }
 
     /// §3.2 / F14: The shared `gap_record_packet_do_not_do` function must include
@@ -1031,7 +1048,7 @@ mod tests {
             .as_deref()
             .ok_or_else(|| "shape must be present".to_string())?;
         assert_eq!(
-            shape, "login(/* boundary input for user.length == 3 */).toBe('session-for-alice')",
+            shape, "login(/* boundary input for user.length == 3 */).toBe(expected)",
             "shape must name the boundary, not the observed input"
         );
         assert!(
@@ -1077,7 +1094,7 @@ mod tests {
             .ok_or_else(|| "repair route must be present".to_string())?;
         assert_eq!(
             route.assertion_shape.as_deref(),
-            Some("expect(login('abc')).toBe('session-for-alice')"),
+            Some("expect(login('abc')).toBe(expected)"),
             "boundary-hitting observed input keeps the derived shape"
         );
         if let Err(error) = validate_agent_gap_record_packet(&record) {
@@ -1106,7 +1123,7 @@ mod tests {
             .ok_or_else(|| "repair route must be present".to_string())?;
         assert_eq!(
             route.assertion_shape.as_deref(),
-            Some("expect(login('alice', true)).toBe('session-for-alice')")
+            Some("expect(login('alice', true)).toBe(expected)")
         );
         if let Err(error) = validate_agent_gap_record_packet(&record) {
             return Err(format!(
@@ -1129,7 +1146,7 @@ mod tests {
             .ok_or_else(|| "repair route must be present".to_string())?;
         assert_eq!(
             route.assertion_shape.as_deref(),
-            Some("expect(helper('alice')).toBe('session-for-alice')")
+            Some("expect(helper('alice')).toBe(expected)")
         );
         if let Err(error) = validate_agent_gap_record_packet(&record) {
             return Err(format!(
@@ -1141,12 +1158,16 @@ mod tests {
 
     #[test]
     fn target_shape_numeric_boundary_miss_downgrades_to_placeholder() {
-        let shape =
-            typescript_target_assertion_shape("limit(5)", "0", Some("amount == 3"), Some("limit"));
+        let shape = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "limit(5)",
+            Some("amount == 3"),
+            Some("limit"),
+        );
         assert_eq!(
             shape,
             TargetAssertionShape::Unreachable {
-                shape: "limit(/* boundary input for amount == 3 */).toBe(0)".to_string(),
+                shape: "limit(/* boundary input for amount == 3 */).toBe(expected)".to_string(),
                 observed_call: "limit(5)".to_string(),
                 discriminator: "amount == 3".to_string(),
             }
@@ -1155,12 +1176,16 @@ mod tests {
 
     #[test]
     fn target_shape_numeric_boundary_hit_keeps_observed() {
-        let shape =
-            typescript_target_assertion_shape("limit(3)", "0", Some("amount == 3"), Some("limit"));
+        let shape = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "limit(3)",
+            Some("amount == 3"),
+            Some("limit"),
+        );
         assert_eq!(
             shape,
             TargetAssertionShape::Observed {
-                shape: "expect(limit(3)).toBe(0)".to_string(),
+                shape: "expect(limit(3)).toBe(expected)".to_string(),
             }
         );
     }
@@ -1168,30 +1193,30 @@ mod tests {
     #[test]
     fn target_shape_string_equality_boundary_respects_operator() {
         let miss = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
             "greet('bob')",
-            "'hi'",
             Some("name == 'admin'"),
             Some("greet"),
         );
         assert!(matches!(miss, TargetAssertionShape::Unreachable { .. }));
         let hit = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
             "greet('admin')",
-            "'hi'",
             Some("name == 'admin'"),
             Some("greet"),
         );
         assert!(matches!(hit, TargetAssertionShape::Observed { .. }));
         // `!=` flips both verdicts.
         let ne_miss = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
             "greet('admin')",
-            "'hi'",
             Some("name != 'admin'"),
             Some("greet"),
         );
         assert!(matches!(ne_miss, TargetAssertionShape::Unreachable { .. }));
         let ne_hit = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
             "greet('bob')",
-            "'hi'",
             Some("name != 'admin'"),
             Some("greet"),
         );
@@ -1202,24 +1227,24 @@ mod tests {
     fn target_shape_length_comparison_operators_are_evaluated() {
         // `'ab'.length == 3` is false → downgrade.
         let miss = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
             "pad('ab')",
-            "'x'",
             Some("user.length == 3"),
             Some("pad"),
         );
         assert!(matches!(miss, TargetAssertionShape::Unreachable { .. }));
         // `'abcd'.length < 3` is false → downgrade.
         let miss_lt = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
             "pad('abcd')",
-            "'x'",
             Some("user.length < 3"),
             Some("pad"),
         );
         assert!(matches!(miss_lt, TargetAssertionShape::Unreachable { .. }));
         // `'ab'.length < 3` is true → keep the observed shape.
         let hit_lt = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
             "pad('ab')",
-            "'x'",
             Some("user.length < 3"),
             Some("pad"),
         );
@@ -1230,8 +1255,8 @@ mod tests {
     fn target_shape_escaped_literal_is_undecided() {
         // Escape sequences make the static length unreliable — fail open.
         let shape = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
             "login('a\\t')",
-            "'x'",
             Some("user.length == 3"),
             Some("login"),
         );
@@ -1243,23 +1268,27 @@ mod tests {
 
     #[test]
     fn target_shape_without_discriminator_or_owner_keeps_observed() {
-        let no_discriminator =
-            typescript_target_assertion_shape("login('alice')", "'x'", None, Some("login"));
+        let no_discriminator = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "login('alice')",
+            None,
+            Some("login"),
+        );
         assert!(matches!(
             no_discriminator,
             TargetAssertionShape::Observed { .. }
         ));
         let no_owner = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
             "login('alice')",
-            "'x'",
             Some("user.length == 3"),
             None,
         );
         assert!(matches!(no_owner, TargetAssertionShape::Observed { .. }));
         // Non-literal boundaries (e.g. `amount >= threshold`) are undecided.
         let non_literal = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
             "applyDiscount(100, 100)",
-            "90",
             Some("amount >= threshold"),
             Some("applyDiscount"),
         );

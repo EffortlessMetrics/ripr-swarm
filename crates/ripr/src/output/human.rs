@@ -3,6 +3,14 @@ use crate::config::RiprConfig;
 use crate::domain::Finding;
 use std::collections::BTreeSet;
 
+/// RIPR-SPEC-0112 disclosure. Committed-history diffs (an explicit `--base`
+/// or the resolved default base) exclude staged and unstaged tracked edits;
+/// `--worktree` (RIPR-SPEC-0116) is the remedy that actually includes them.
+/// Committing works too, but staging alone does not change a `--base` diff.
+const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted changes to tracked source were not analyzed. \
+`ripr check` compares committed history only; add `--worktree` to include staged \
+and unstaged tracked edits (for example `ripr check --worktree`).\n";
+
 /// Render the bounded triage report in the default human-readable CLI format.
 pub fn render(output: &CheckOutput) -> String {
     render_bounded_with_config(output, &RiprConfig::default())
@@ -16,6 +24,25 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
 pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
     let navigation = FindingNavigation::legacy();
     render_bounded_with_config_and_navigation(output, config, Some(&navigation))
+}
+
+/// #4012: the no-scope note must describe what was actually analyzed. When
+/// the disclosure fires on an established base (empty `<base>...HEAD`
+/// range), name the compared base instead of claiming no scope was
+/// provided; only a run with no established base keeps the legacy note.
+fn render_no_scope_note(output: &CheckOutput) -> String {
+    if let Some(base) = output.base.as_deref() {
+        format!(
+            "\nNote: `{base}...HEAD` contains no changed files, so there was nothing to analyze. \
+             The compared base was `{base}`; an empty result here means no behavior changed against it.\n",
+        )
+    } else {
+        "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
+         Run `ripr check --base origin/main` to analyze your changes, or \
+         `ripr check --root . --format repo-exposure-md` for a full-repo scan. \
+         An empty result here does NOT mean your changed behavior is covered.\n"
+            .to_string()
+    }
 }
 
 pub(crate) fn render_bounded_with_config_and_navigation(
@@ -34,20 +61,11 @@ pub(crate) fn render_bounded_with_config_and_navigation(
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, navigation);
         }
-        if output.no_scope_provided {
-            out.push_str(
-                "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
-Run `ripr check --base origin/main` to analyze your changes, or \
-`ripr check --root . --format repo-exposure-md` for a full-repo scan. \
-An empty result here does NOT mean your changed behavior is covered.\n",
-            );
+        if output.no_scope_provided && !output.unanalyzed_working_tree {
+            out.push_str(&render_no_scope_note(output));
         }
         if output.unanalyzed_working_tree {
-            out.push_str(
-                "\nNote: uncommitted changes to tracked source were not analyzed. \
-`--base` compares committed history only — commit or stage these changes and re-run, \
-or analyze a committed branch with `ripr check --base origin/main`.\n",
-            );
+            out.push_str(UNANALYZED_WORKING_TREE_NOTE);
         }
         render_preview_language_advisories(&mut out, output);
         render_language_runs(&mut out, output);
@@ -58,11 +76,7 @@ or analyze a committed branch with `ripr check --base origin/main`.\n",
     triage::render_human_triage(&mut out, &triage, output, config, navigation);
     render_all_no_path_disclosure(&mut out, output);
     if output.unanalyzed_working_tree {
-        out.push_str(
-            "\nNote: uncommitted changes to tracked source were not analyzed. \
-`--base` compares committed history only; run `ripr check` (no --base) to analyze \
-your working tree.\n",
-        );
+        out.push_str(UNANALYZED_WORKING_TREE_NOTE);
     }
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);
@@ -78,26 +92,19 @@ pub(crate) fn render_full_with_config(output: &CheckOutput, config: &RiprConfig)
 
     if output.findings.is_empty() {
         out.push_str("No diff-derived static exposure probes found.\n");
-        // RIPR-SPEC-0083: disclose when no analysis scope was provided.
-        // This fires only when the caller passed no --diff/--base/--mode, so
-        // an empty result here means "nothing was analyzed", not "tests pass".
-        if output.no_scope_provided {
-            out.push_str(
-                "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
-Run `ripr check --base origin/main` to analyze your changes, or \
-`ripr check --root . --format repo-exposure-md` for a full-repo scan. \
-An empty result here does NOT mean your changed behavior is covered.\n",
-            );
+        // RIPR-SPEC-0083: disclose when no analysis scope was provided
+        // (#4012: or when the established range is empty — the note then
+        // names the compared base instead of claiming no scope).
+        // Suppressed while uncommitted working-tree edits are unanalyzed:
+        // the working-tree note owns the guidance there (f752562fb).
+        if output.no_scope_provided && !output.unanalyzed_working_tree {
+            out.push_str(&render_no_scope_note(output));
         }
-        // RIPR-SPEC-0112: disclose when --base was used but uncommitted working-tree
+        // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
         // changes were NOT analyzed. An empty result here does NOT mean those changes
         // are covered — they were excluded from the committed-history diff.
         if output.unanalyzed_working_tree {
-            out.push_str(
-                "\nNote: uncommitted changes to tracked source were not analyzed. \
-`--base` compares committed history only — commit or stage these changes and re-run, \
-or analyze a committed branch with `ripr check --base origin/main`.\n",
-            );
+            out.push_str(UNANALYZED_WORKING_TREE_NOTE);
         }
         render_preview_language_advisories(&mut out, output);
         render_language_runs(&mut out, output);
@@ -122,15 +129,11 @@ or analyze a committed branch with `ripr check --base origin/main`.\n",
         out.push('\n');
     }
     render_all_no_path_disclosure(&mut out, output);
-    // RIPR-SPEC-0112: disclose when --base was used but uncommitted working-tree
+    // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
     // changes were NOT analyzed. Fires whether or not the committed diff had findings —
     // those uncommitted edits are still unanalyzed regardless.
     if output.unanalyzed_working_tree {
-        out.push_str(
-            "\nNote: uncommitted changes to tracked source were not analyzed. \
-`--base` compares committed history only; run `ripr check` (no --base) to analyze \
-your working tree.\n",
-        );
+        out.push_str(UNANALYZED_WORKING_TREE_NOTE);
     }
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);
@@ -204,7 +207,9 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
         out.push_str(&format!(
             "; recovery: {} — {}.\n",
             limitation.recovery.kind.as_str(),
-            limitation.recovery.detail
+            // The recovery detail is often a full sentence; the line supplies
+            // its own terminal period.
+            limitation.recovery.detail.trim_end_matches('.')
         ));
     }
     out.push('\n');
@@ -449,16 +454,24 @@ pub(super) fn wrap_human_prose(
 ///   the adapter is a single edit.
 fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
     for advisory in &output.preview_language_advisories {
-        let language = capitalize_first(&advisory.language);
-        let file_label = if advisory.language == "perl" && advisory.file_count == 1 {
+        let language = language_display_name(&advisory.language);
+        let file_label = if advisory.file_count == 1 {
             format!("{language} file")
         } else {
-            format!("{language}(s)")
+            format!("{language} files")
         };
         if advisory.analyzed(&output.language_runs) {
             out.push_str(&format!(
                 "\nNote: {} {} analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.\n",
                 advisory.file_count, file_label,
+            ));
+        } else if let Some(recovery) = advisory.unavailable_adapter_recovery() {
+            // The adapter is not compiled into this binary: a `ripr.toml`
+            // edit cannot enable it (config load rejects it), so name the
+            // real prerequisites instead of the TOML block.
+            out.push_str(&format!(
+                "\nNote: this diff contains {} {}. The {} adapter is not compiled into this ripr binary, so these files were not analyzed — this is NOT a clean Rust-grade result. {recovery}.\n",
+                advisory.file_count, file_label, language,
             ));
         } else if !advisory.enabled {
             let language_lowercase = advisory.language.to_lowercase();
@@ -466,6 +479,11 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
                 "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\nenabled = [\"rust\", \"{language_lowercase}\"]\n",
                 advisory.file_count, file_label, language,
             ));
+            if let Some(prerequisite) = crate::domain::LanguageId::from_wire(&advisory.language)
+                .and_then(crate::domain::LanguageId::enable_prerequisite)
+            {
+                out.push_str(&format!("\n{prerequisite}.\n"));
+            }
         } else if let Some(run) = advisory.non_success_run(&output.language_runs) {
             out.push_str(&format!(
                 "\nNote: the {language} preview adapter did not complete successfully ({}), so {} {} were not analyzed — this is NOT a clean Rust-grade result.\n",
@@ -484,7 +502,7 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
 /// every language ran to completion.
 fn render_language_runs(out: &mut String, output: &CheckOutput) {
     for run in &output.language_runs {
-        let language = capitalize_first(&run.language);
+        let language = language_display_name(&run.language);
         let completion = if run.status == crate::analysis::LanguageRunStatus::Partial {
             "returned a partial result"
         } else {
@@ -506,6 +524,14 @@ fn render_language_runs(out: &mut String, output: &CheckOutput) {
             )),
         }
     }
+}
+
+/// Prose name for a language wire string (`typescript` -> `TypeScript`),
+/// owned by [`crate::domain::LanguageId::display_name`].
+fn language_display_name(wire: &str) -> String {
+    crate::domain::LanguageId::display_name_for_wire(wire)
+        .map(str::to_string)
+        .unwrap_or_else(|| capitalize_first(wire))
 }
 
 fn capitalize_first(s: &str) -> String {
@@ -2314,7 +2340,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("2 Typescript(s) analyzed under preview support"),
+            rendered.contains("2 TypeScript files analyzed under preview support"),
             "expected preview disclosure in output; got:\n{rendered}"
         );
         assert!(
@@ -2355,7 +2381,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("3 Python(s) analyzed under preview support"),
+            rendered.contains("3 Python files analyzed under preview support"),
             "expected python preview disclosure; got:\n{rendered}"
         );
         assert!(
@@ -2425,7 +2451,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("7 Typescript(s) analyzed under preview support"),
+            rendered.contains("7 TypeScript files analyzed under preview support"),
             "expected file_count=7 in disclosure; got:\n{rendered}"
         );
     }
@@ -2465,22 +2491,48 @@ mod tests {
             "expected not-enabled disclosure; got:\n{rendered}"
         );
         assert!(
-            rendered.contains("not enabled, so these files were not analyzed"),
+            rendered.contains("so these files were not analyzed"),
             "expected not-analyzed wording; got:\n{rendered}"
         );
         assert!(
             rendered.contains("NOT a clean Rust-grade result"),
             "expected honesty note; got:\n{rendered}"
         );
-        assert!(
-            rendered.contains("Enable it in ripr.toml"),
-            "expected enable hint; got:\n{rendered}"
-        );
-        // Must include the copy-paste TOML block.
-        assert!(
-            rendered.contains("[languages]\nenabled = [\"rust\", \"perl\"]"),
-            "expected copy-paste TOML block; got:\n{rendered}"
-        );
+        if cfg!(feature = "lang-perl") {
+            // Adapter compiled in: the ripr.toml edit is real, but it is not
+            // sufficient on its own — a fact packet/exporter is still needed.
+            assert!(
+                rendered.contains("[languages]\nenabled = [\"rust\", \"perl\"]"),
+                "expected copy-paste TOML block; got:\n{rendered}"
+            );
+            assert!(
+                rendered.contains("Perl also needs a fact packet"),
+                "expected exporter prerequisite; got:\n{rendered}"
+            );
+        } else {
+            // Adapter NOT compiled in: following a ripr.toml hint makes
+            // `ripr check` exit 2 (config rejects `perl`), so the note must
+            // not offer it and must name both real prerequisites.
+            assert!(
+                rendered.contains("not compiled into this ripr binary"),
+                "expected not-compiled disclosure; got:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains("Enable it in ripr.toml")
+                    && !rendered.contains("enabled = [\"rust\", \"perl\"]"),
+                "must not advise a ripr.toml edit this binary rejects; got:\n{rendered}"
+            );
+            for required in [
+                "cargo install ripr --features lang-perl",
+                "`perl-ripr-facts`",
+                "not yet published",
+            ] {
+                assert!(
+                    rendered.contains(required),
+                    "expected `{required}` in recovery; got:\n{rendered}"
+                );
+            }
+        }
         // Must NOT use the enabled wording.
         assert!(
             !rendered.contains("analyzed under preview support"),
@@ -3085,5 +3137,57 @@ mod tests {
             rendered.contains("ripr found no static test path"),
             "expected absence-of-path statement"
         );
+    }
+
+    #[test]
+    fn preview_disclosure_counts_files_with_language_display_names() {
+        let advisory = |language: &str, file_count: usize, enabled: bool| PreviewLanguageAdvisory {
+            language: language.to_string(),
+            file_count,
+            sample_paths: Vec::new(),
+            enabled,
+        };
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: vec![
+                advisory("typescript", 1, true),
+                advisory("python", 1, true),
+                advisory("javascript", 2, true),
+                advisory("typescript", 1, false),
+            ],
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered = render(&output);
+
+        for expected in [
+            "Note: 1 TypeScript file analyzed under preview support",
+            "Note: 1 Python file analyzed under preview support",
+            "Note: 2 JavaScript files analyzed under preview support",
+            "Note: this diff contains 1 TypeScript file. The TypeScript adapter is preview",
+        ] {
+            assert!(
+                rendered.contains(expected),
+                "expected `{expected}`; got:\n{rendered}"
+            );
+        }
+        for forbidden in ["(s) analyzed", "Typescript", "Javascript", "Python(s)"] {
+            assert!(
+                !rendered.contains(forbidden),
+                "must not render `{forbidden}`; got:\n{rendered}"
+            );
+        }
     }
 }

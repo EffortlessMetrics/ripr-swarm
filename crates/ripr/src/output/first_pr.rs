@@ -36,7 +36,56 @@ const DEFAULT_AGENT_PACKET: &str = "target/ripr/workflow/agent-packet.json";
 const DEFAULT_GATE_DECISION: &str = "target/ripr/reports/gate-decision.json";
 const DEFAULT_RECEIPTS_DIR: &str = "target/ripr/receipts";
 const REPO_EXPOSURE_LATENCY_REPORT_COMMAND: &str = "cargo xtask repo-exposure-latency-report";
+/// `selected.repair.route` for a review-card selection: the route is the
+/// carried `agent repair` transaction rather than a ledger route kind.
+const REVIEW_CARD_REPAIR_ROUTE: &str = "AgentRepairTransaction";
 pub(crate) const STATIC_EVIDENCE_BOUNDARY: &str = "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.";
+
+// Human labels for the proof path (#3906). A low-level verify compares
+// snapshots taken around a test edit and a receipt reads that verify, so
+// neither can run before the edit; the labels say when each one runs.
+// When a repair start is present, its after phase already runs verify and
+// writes the receipt, so the low-level pair is only the manual alternative.
+// JSON fields keep their names; only the human rendering changes.
+pub(crate) const VERIFY_AFTER_EDIT_LABEL: &str = "Verify after the test edit";
+pub(crate) const RECEIPT_AFTER_VERIFY_LABEL: &str = "Receipt after verify";
+pub(crate) const REPAIR_AFTER_PHASE_LABEL: &str = "After the test edit";
+pub(crate) const REPAIR_AFTER_PHASE_STEP: &str = "run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.";
+// The manual pair names its prerequisites (F60-2(c)): the low-level verify
+// reads a before snapshot taken before the test edit and an after snapshot
+// taken after it, so on a checkout without them it fails as printed. The
+// repair's before and after phases write both snapshots themselves.
+pub(crate) const MANUAL_VERIFY_LABEL: &str = "Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)";
+pub(crate) const MANUAL_RECEIPT_LABEL: &str =
+    "Manual receipt without a repair attempt (after the manual verify)";
+
+/// The one selector for the low-level verify and receipt labels (#3906).
+///
+/// With a carried repair start, its after phase runs verify and writes the
+/// receipt, so the pair is the manual alternative; without one, both are
+/// steps that run after the focused test edit. Every human surface takes
+/// its labels from here, so the transaction reads the same everywhere.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProofPathLabels {
+    pub(crate) verify: &'static str,
+    pub(crate) receipt: &'static str,
+}
+
+impl ProofPathLabels {
+    pub(crate) fn for_repair_start(has_repair_start: bool) -> Self {
+        if has_repair_start {
+            Self {
+                verify: MANUAL_VERIFY_LABEL,
+                receipt: MANUAL_RECEIPT_LABEL,
+            }
+        } else {
+            Self {
+                verify: VERIFY_AFTER_EDIT_LABEL,
+                receipt: RECEIPT_AFTER_VERIFY_LABEL,
+            }
+        }
+    }
+}
 
 mod options;
 mod preflight;
@@ -306,14 +355,7 @@ fn render_start_here_packet_with_selection(
             "review_comments",
             "PR repair cards",
             &options.review_comments,
-            Some(format!(
-                "ripr review-comments --root {} --base {} --head {} --gap-ledger {} --out {}",
-                options.root,
-                options.base,
-                options.head,
-                options.gap_ledger,
-                options.review_comments
-            )),
+            Some(review_comments_regeneration_command(root, options)),
         ),
         artifact_status(
             root,
@@ -684,7 +726,7 @@ impl Selection {
         let Self::TopGap(top_gap) = self else {
             return None;
         };
-        Some(top_gap.agent_packet_command.clone())
+        top_gap.agent_packet_command.clone()
     }
 
     fn commands_json(&self, root: &Path, options: &FirstPrOptions) -> Value {
@@ -695,10 +737,13 @@ impl Selection {
         );
         match self {
             Self::TopGap(top_gap) => {
-                commands.insert(
-                    "agent_packet".to_string(),
-                    Value::String(top_gap.agent_packet_command.clone()),
-                );
+                if let Some(command) = &top_gap.agent_packet_command {
+                    commands.insert("agent_packet".to_string(), Value::String(command.clone()));
+                }
+                // The review card's repair start stays on `selected` only: the
+                // editor's first-pr projection fails the whole packet closed on
+                // a `commands` value outside its allowlist, and `agent repair`
+                // is not on it.
                 commands.insert(
                     "verify".to_string(),
                     Value::String(top_gap.verify_command.clone()),
@@ -804,17 +849,25 @@ struct TopGapSelection {
     dedupe_fingerprint: Option<String>,
     verify_command: String,
     receipt_command: String,
-    receipt_path: String,
+    /// `None` for a review-card selection: its carried receipt command names
+    /// its own output, and first-pr does not parse commands for paths.
+    receipt_path: Option<String>,
     receipt_command_source: String,
     receipt_state: Option<String>,
     static_limit_kind: Option<String>,
     static_limit_detail: Option<String>,
-    agent_packet_command: String,
+    /// `None` for a review-card selection: `agent packet --gap-id` resolves
+    /// ledger gaps, and the card is not one of them.
+    agent_packet_command: Option<String>,
+    /// The review card's `llm_guidance.repair_command`, carried unchanged
+    /// (#3906). Ledger selections never carry one: first-pr does not build
+    /// `agent repair` from a gap id, probe id, or seam id.
+    repair_command: Option<String>,
 }
 
 impl TopGapSelection {
     fn to_json(&self) -> Value {
-        json!({
+        let mut value = json!({
             "state": "top_gap",
             "output_state": self.output_state(),
             "gap_id": self.gap_id,
@@ -849,7 +902,13 @@ impl TopGapSelection {
             "static_limit_detail": self.static_limit_detail,
             "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY,
             "agent_packet_command": self.agent_packet_command
-        })
+        });
+        // Present only when carried, like the card field it projects; ledger
+        // selections keep their existing shape.
+        if let Some(command) = &self.repair_command {
+            value["repair_command"] = Value::String(command.clone());
+        }
+        value
     }
 
     fn output_state(&self) -> &'static str {
@@ -916,11 +975,281 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
     if let Some(record) = records.iter().copied().find(is_first_run_repairable_gap) {
         return Selection::TopGap(Box::new(top_gap_from_record(record, root, options)));
     }
-    Selection::no_action(
-        "no_action",
-        "No repairable PR-local stable Rust or preview Python/TypeScript gap was selected from the gap decision ledger."
-            .to_string(),
-        records.len(),
+    match review_card_repair_start(root, options) {
+        Ok(top_gap) => Selection::TopGap(Box::new(top_gap)),
+        Err(CardFallback::Recover(selection)) => selection,
+        Err(CardFallback::NoCard(note)) => {
+            let mut reason = "No repairable PR-local stable Rust or preview Python/TypeScript gap was selected from the gap decision ledger."
+                .to_string();
+            if let Some(note) = note {
+                reason.push(' ');
+                reason.push_str(&note);
+            }
+            Selection::no_action("no_action", reason, records.len())
+        }
+    }
+}
+
+/// Second source for a start (#3906): when the ledger yields no top gap, the
+/// first review card that carries `llm_guidance.repair_command` becomes the
+/// selection. Generated CI builds the ledger from repo-exposure, whose records
+/// are all repo-scoped, so without this a PR with an eligible seam card never
+/// reaches `agent repair`.
+///
+/// The card's command is carried, never rebuilt: the card producer offers it
+/// only past the fail-closed repair-packet flip and only for a test-surface
+/// target (`evidence_record::repair_start_command_for`). Every field of the
+/// selection comes from that one card, never mixed with a ledger record.
+///
+/// Why no review card became the selection.
+///
+/// `Recover` means the cards could not be read at all (missing, unreadable,
+/// or for another root or range): first-pr stops on that input with its
+/// regeneration command, because "no actionable gap" would be a verdict on
+/// cards it never saw (F60-10). `NoCard` means current cards were read and
+/// none carries a repair start; its note is appended to the no-action reason.
+enum CardFallback {
+    Recover(Selection),
+    NoCard(Option<String>),
+}
+
+fn review_card_repair_start(
+    root: &Path,
+    options: &FirstPrOptions,
+) -> Result<TopGapSelection, CardFallback> {
+    let path = &options.review_comments;
+    let seam_route = seam_review_comments_command(options);
+    let report = match read_json(&resolve_path(root, path)) {
+        Ok(report) => report,
+        // Seam cards come from Rust seam analysis; a preview-language root
+        // has no seam-level route to name.
+        Err(ArtifactReadError::Missing) if uses_check_output_gap_ledger(root) => {
+            return Err(CardFallback::NoCard(None));
+        }
+        Err(ArtifactReadError::Missing) => {
+            let command_spec = report_regeneration_command_spec_from_display(&seam_route);
+            return Err(CardFallback::Recover(Selection::missing_artifact(
+                "review_comments",
+                "PR repair cards",
+                path,
+                seam_route,
+                command_spec,
+            )));
+        }
+        Err(ArtifactReadError::Malformed(message)) => {
+            return Err(CardFallback::Recover(Selection::blocked(
+                "malformed_artifact",
+                format!(
+                    "The review cards at `{path}` could not be read ({message}); regenerate them before first-pr can say whether this PR has a repair start."
+                ),
+                Some(seam_route),
+            )));
+        }
+    };
+    if let Some((state, problem)) = review_comments_currentness_problem(&report, root, options) {
+        return Err(CardFallback::Recover(Selection::blocked(
+            state,
+            format!(
+                "The review cards at `{path}` were not used because {problem}; regenerate them before first-pr can say whether this PR has a repair start."
+            ),
+            Some(seam_route),
+        )));
+    }
+    let cards = ["comments", "summary_only"]
+        .into_iter()
+        .filter_map(|bucket| report.get(bucket).and_then(Value::as_array))
+        .flatten();
+    for card in cards {
+        if let Some(top_gap) = top_gap_from_review_card(card, options) {
+            return Ok(top_gap);
+        }
+    }
+    // Gap-ledger-scoped cards never carry a repair start; the seam-level
+    // report is the route that can.
+    if string_path(&report, &["analysis_scope", "scope"]).as_deref() == Some("gap_ledger_artifact")
+    {
+        return Err(CardFallback::NoCard(Some(format!(
+            "No review card in `{path}` carries a repair start (`llm_guidance.repair_command`) because the cards were rendered from the gap ledger; for a seam-level repair start, run `{seam_route}`."
+        ))));
+    }
+    Err(CardFallback::NoCard(Some(format!(
+        "No review card in `{path}` carries a repair start (`llm_guidance.repair_command`)."
+    ))))
+}
+
+/// Fail closed on a review-comments report that is not a complete, current
+/// RIPR report for this invocation: a card for another root or range must not
+/// become this PR's repair start.
+fn review_comments_currentness_problem(
+    report: &Value,
+    root: &Path,
+    options: &FirstPrOptions,
+) -> Option<(&'static str, String)> {
+    if string_path(report, &["tool"]).as_deref() != Some("ripr") {
+        return Some((
+            "malformed_artifact",
+            "the file is not a RIPR review-comments report".to_string(),
+        ));
+    }
+    match string_path(report, &["status"]) {
+        Some(status) if status == "advisory" => {}
+        Some(status) => {
+            return Some((
+                "blocked_artifact",
+                format!("the report status is `{status}`"),
+            ));
+        }
+        None => {
+            return Some((
+                "malformed_artifact",
+                "the report does not record a status".to_string(),
+            ));
+        }
+    }
+    match string_path(report, &["root"]) {
+        Some(observed) if root_mismatch(root, &options.root, &observed) => {
+            return Some((
+                "wrong_root",
+                format!(
+                    "they were generated for root `{observed}`, not `{}`",
+                    options.root
+                ),
+            ));
+        }
+        Some(_) => {}
+        None => {
+            return Some((
+                "malformed_artifact",
+                "the report does not record its root".to_string(),
+            ));
+        }
+    }
+    for (field, expected) in [("base", &options.base), ("head", &options.head)] {
+        match string_path(report, &[field]) {
+            Some(observed) if observed == *expected => {}
+            Some(observed) => {
+                return Some((
+                    "stale_artifact",
+                    format!("they were generated for {field} `{observed}`, not `{expected}`"),
+                ));
+            }
+            None => {
+                return Some((
+                    "malformed_artifact",
+                    format!("the report does not record its {field}"),
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// How to regenerate the review cards first-pr reads. A Rust root needs the
+/// seam-level cards, the only ones that can carry a repair start; cards
+/// rendered from the gap ledger never do, so offering that form sent a
+/// fresh checkout to cards that could not help it. A preview-language root
+/// has no seam analysis, so its cards come from the gap ledger.
+fn review_comments_regeneration_command(root: &Path, options: &FirstPrOptions) -> String {
+    if uses_check_output_gap_ledger(root) {
+        return format!(
+            "ripr review-comments --root {} --base {} --head {} --gap-ledger {} --out {}",
+            options.root, options.base, options.head, options.gap_ledger, options.review_comments
+        );
+    }
+    seam_review_comments_command(options)
+}
+
+/// The seam-level review-comments command: without `--gap-ledger`, so the
+/// cards come from working-set seam analysis, the only cards that can carry a
+/// repair start.
+fn seam_review_comments_command(options: &FirstPrOptions) -> String {
+    format!(
+        "ripr review-comments --root {} --base {} --head {} --out {}",
+        shell_arg(&options.root),
+        shell_arg(&options.base),
+        shell_arg(&options.head),
+        shell_arg(&options.review_comments)
+    )
+}
+
+/// Project one review card into the start-here top gap, or `None` when it
+/// carries no repair start or lacks a field the top-gap contract requires.
+fn top_gap_from_review_card(card: &Value, options: &FirstPrOptions) -> Option<TopGapSelection> {
+    if string_path(card, &["gap_state"]).as_deref() != Some("actionable") {
+        return None;
+    }
+    let repair_command = string_path(card, &["llm_guidance", "repair_command"])?;
+    let verify_command = string_path(card, &["llm_guidance", "verify_command"])?;
+    let receipt_command = string_path(card, &["receipt_command"])?;
+    let changed_behavior = string_path(card, &["seam", "expression"])?;
+    let missing_discriminator = string_path(card, &["missing_discriminator"])?;
+    let canonical_gap_id = string_path(card, &["canonical_gap_id"]);
+    let gap_id = canonical_gap_id
+        .clone()
+        .or_else(|| string_path(card, &["id"]))?;
+    let suggested_test = card.get("suggested_test");
+    let target_file = string_from_sources(&[(suggested_test, &["recommended_file"])]);
+    let related_test = string_from_sources(&[(suggested_test, &["related_test", "name"])]);
+    let suggested_assertion = string_from_sources(&[(suggested_test, &["assertion_shape"])]);
+    let repair_route = REVIEW_CARD_REPAIR_ROUTE.to_string();
+    Some(TopGapSelection {
+        gap_id,
+        canonical_gap_id,
+        // The card producer builds a repair start only from a classified
+        // Rust seam; preview languages have no `agent repair` transaction.
+        language: Some("rust".to_string()),
+        language_status: Some("stable".to_string()),
+        kind: string_path(card, &["kind"]).unwrap_or_else(|| "Unknown".to_string()),
+        source_artifact: options.review_comments.clone(),
+        changed_behavior: Some(changed_behavior),
+        current_evidence_strength: current_evidence_strength_for_card(card),
+        missing_discriminator,
+        focused_proof_intent: focused_proof_intent(
+            &repair_route,
+            target_file.as_deref(),
+            suggested_assertion.as_deref(),
+            related_test.as_deref(),
+        ),
+        why: string_path(card, &["reason"]).unwrap_or_else(|| {
+            "The review card names a missing discriminator for this changed seam.".to_string()
+        }),
+        repair_route,
+        target_file,
+        related_test,
+        suggested_assertion,
+        anchor_file: string_path(card, &["seam", "file"])
+            .or_else(|| string_path(card, &["placement", "path"])),
+        anchor_line: u64_from_sources(&[
+            (Some(card), &["seam", "line"]),
+            (Some(card), &["placement", "line"]),
+        ]),
+        anchor_owner: string_path(card, &["owner"]),
+        dedupe_fingerprint: string_path(card, &["dedupe_key"]),
+        verify_command,
+        receipt_command,
+        receipt_path: None,
+        receipt_command_source: "review_comments.receipt_command".to_string(),
+        receipt_state: None,
+        static_limit_kind: None,
+        static_limit_detail: None,
+        agent_packet_command: None,
+        repair_command: Some(repair_command),
+    })
+}
+
+fn current_evidence_strength_for_card(card: &Value) -> String {
+    let grip = string_path(card, &["grip_class"]).unwrap_or_else(|| "unknown".to_string());
+    let oracle = match (
+        string_path(card, &["oracle_strength"]),
+        string_path(card, &["oracle_kind"]),
+    ) {
+        (Some(strength), Some(kind)) => {
+            format!(" with a `{strength}` `{kind}` related-test oracle")
+        }
+        _ => String::new(),
+    };
+    format!(
+        "Static evidence classifies this seam as `{grip}`{oracle}; the review card names the missing discriminator."
     )
 }
 
@@ -1221,14 +1550,15 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
         dedupe_fingerprint: string_from_sources(&[(anchor, &["dedupe_fingerprint"])]),
         verify_command,
         receipt_command,
-        receipt_path,
+        receipt_path: Some(receipt_path),
         receipt_command_source,
         receipt_state: string_path(record, &["receipt", "state"])
             .or_else(|| string_path(record, &["receipt", "movement"]))
             .map(|state| receipt_lifecycle_state(Some(&state))),
         static_limit_kind: string_path(record, &["static_limit_kind"]),
         static_limit_detail: string_path(record, &["static_limit_detail"]),
-        agent_packet_command: format!(
+        repair_command: None,
+        agent_packet_command: Some(format!(
             "ripr agent packet --root {} --gap-ledger {} --gap-id {} --json > {}",
             shell_arg(&options.root),
             shell_arg(&options.gap_ledger),
@@ -1241,7 +1571,7 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
                 &options.root,
                 &options.agent_packet
             ))
-        ),
+        )),
     }
 }
 
@@ -1637,10 +1967,15 @@ fn git_rev_exists(root: &Path, rev: &str) -> Result<bool, String> {
 }
 
 fn git_diff_range_valid(root: &Path, base: &str, head: &str) -> Result<(), String> {
+    // Validity probe only (#4006): the exit status is the entire signal —
+    // stdout is never parsed, so no path identity flows from this call. It
+    // still passes `-z` so the grammar is unambiguous and no C-quoted
+    // rendering is ever produced on this route.
     let range = format!("{base}...{head}");
     let output = Command::new("git")
         .arg("diff")
         .arg("--name-only")
+        .arg("-z")
         .arg("--no-ext-diff")
         .arg(&range)
         .current_dir(root)
@@ -1697,6 +2032,12 @@ fn verify_ref_command(options: &FirstPrOptions, rev: &str) -> String {
     )
 }
 
+/// Human-facing suggested command (#4006 named non-claim): this string is
+/// rendered into a blocked-selection message for the operator to read and
+/// run — it is never executed by ripr and its output is never machine-parsed,
+/// so no path identity flows through it. It intentionally stays
+/// human-readable (no `-z`): NUL-delimited output is a machine grammar, and
+/// suggesting it to a human reader would degrade the message it lives in.
 fn diff_range_command(options: &FirstPrOptions) -> String {
     format!(
         "git -C {} diff --name-only --no-ext-diff {}",
@@ -1997,21 +2338,21 @@ mod tests {
         });
         let markdown = render_start_here_markdown(&packet);
 
-        let bash_form = "Receipt command:\n`ripr receipt write --gap 'it'\\''s' --verify-command 'cargo test' --status not_run`\n\n";
+        let bash_form = "Receipt after verify:\n`ripr receipt write --gap 'it'\\''s' --verify-command 'cargo test' --status not_run`\n\n";
         assert!(
             markdown.contains(bash_form),
             "bash receipt command drifted:\n{markdown}"
         );
-        let powershell_form = "Receipt command (PowerShell):\n`ripr receipt write --gap 'it''s' --verify-command 'cargo test' --status not_run`";
+        let powershell_form = "Receipt after verify (PowerShell):\n`ripr receipt write --gap 'it''s' --verify-command 'cargo test' --status not_run`";
         assert!(
             markdown.contains(powershell_form),
             "powershell receipt command missing or drifted:\n{markdown}"
         );
         let bash_label = markdown
-            .find("Receipt command:\n")
+            .find("Receipt after verify:\n")
             .ok_or_else(|| format!("bash receipt label must exist: {markdown}"))?;
         let powershell_label = markdown
-            .find("Receipt command (PowerShell):\n")
+            .find("Receipt after verify (PowerShell):\n")
             .ok_or_else(|| format!("powershell receipt label must exist: {markdown}"))?;
         assert!(
             bash_label < powershell_label,
@@ -2043,12 +2384,12 @@ mod tests {
         });
         let markdown = render_start_here_markdown(&packet);
 
-        let bash_verify = "Verify command:\n`cargo test 'it'\\''s'`\n\n";
+        let bash_verify = "Verify after the test edit:\n`cargo test 'it'\\''s'`\n\n";
         assert!(
             markdown.contains(bash_verify),
             "bash verify command drifted:\n{markdown}"
         );
-        let powershell_verify = "Verify command (PowerShell):\n`cargo test 'it''s'`";
+        let powershell_verify = "Verify after the test edit (PowerShell):\n`cargo test 'it''s'`";
         assert!(
             markdown.contains(powershell_verify),
             "powershell verify command missing or drifted:\n{markdown}"
@@ -2908,11 +3249,442 @@ mod tests {
                 ]
             }),
         )?;
+        // Current review cards were read and none carries a repair start, so
+        // no-action is a verdict on evidence first-pr actually saw.
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(Vec::new()),
+        )?;
         let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
         assert_eq!(packet["status"], "no_action");
         assert_eq!(packet["selected"]["state"], "no_action");
         assert_eq!(packet["selected"]["output_state"], "no_actionable_gap");
         cleanup(&repo)
+    }
+
+    /// A carried repair start that no producer builds from the card's seam
+    /// id: the non-default `--root` makes any rebuilt command differ.
+    const CARD_REPAIR_COMMAND: &str =
+        "ripr agent repair --root crates/pricing --seam-id seam-b --phase before";
+
+    /// A ledger whose only actionable record is repo-scoped, as generated CI
+    /// builds it from repo-exposure: first-pr selects no top gap from it.
+    fn ledger_with_repo_scoped_gap_only() -> Value {
+        json!({
+            "schema_version": "0.1",
+            "kind": "gap_decision_ledger",
+            "records": [
+                {
+                    "gap_id": "gap:repo:pricing",
+                    "language": "rust",
+                    "language_status": "stable",
+                    "scope": "repo_scoped",
+                    "gap_state": "actionable",
+                    "policy_state": "new",
+                    "repairability": "repairable",
+                    "repair_route": {"route_kind": "AddBoundaryAssertion"},
+                    "verification_commands": ["cargo test -p pricing"]
+                }
+            ]
+        })
+    }
+
+    /// One working-set review card; `repair_command: None` models a card
+    /// that failed the repair-packet flip (the producer omits the field).
+    fn review_card(seam: &str, repair_command: Option<&str>) -> Value {
+        let mut guidance = json!({
+            "command": format!("ripr agent brief --root . --seam-id {seam} --json"),
+            "prompt": "Write one focused Rust test.",
+            "verify_command": format!("ripr agent verify --root . --seam {seam} --json"),
+        });
+        if let Some(command) = repair_command {
+            guidance["repair_command"] = json!(command);
+        }
+        json!({
+            "id": format!("ripr-review-{seam}"),
+            "canonical_gap_id": format!("gap:{seam}"),
+            "seam_id": seam,
+            "gap_state": "actionable",
+            "kind": "predicate_boundary",
+            "grip_class": "weakly_gripped",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong",
+            "owner": format!("pricing::{seam}"),
+            "dedupe_key": format!("ripr:{seam}:src/pricing.rs:88"),
+            "missing_discriminator": format!("{seam} == threshold"),
+            "reason": format!("Static evidence names missing discriminator `{seam} == threshold`."),
+            "receipt_command": format!("ripr agent receipt --root . --seam-id {seam} --json"),
+            "seam": {"expression": format!("{seam} >= threshold"), "file": "src/pricing.rs", "line": 88},
+            "suggested_test": {
+                "assertion_shape": format!("assert_eq!(discounted_total({seam}), 90)"),
+                "recommended_file": "tests/pricing.rs",
+                "related_test": {"file": "tests/pricing.rs", "line": 12, "name": "above_threshold_gets_discount"}
+            },
+            "llm_guidance": guidance
+        })
+    }
+
+    fn review_comments_report(comments: Vec<Value>) -> Value {
+        json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "status": "advisory",
+            "root": ".",
+            "base": "origin/main",
+            "head": "HEAD",
+            "comments": comments,
+            "summary_only": [],
+            "suppressed": []
+        })
+    }
+
+    /// Preconditions shared by the review-card tests: the ledger really
+    /// yields no top gap, so any selection must come from the cards.
+    fn write_no_top_gap_ledger(repo: &Path) -> Result<(), String> {
+        let ledger = ledger_with_repo_scoped_gap_only();
+        if gap_records(&ledger)
+            .into_iter()
+            .any(|record| is_first_run_repairable_gap(&record))
+        {
+            return Err("fixture ledger must not yield a top gap".to_string());
+        }
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger)
+    }
+
+    fn position(haystack: &str, needle: &str) -> Result<usize, String> {
+        haystack
+            .find(needle)
+            .ok_or_else(|| format!("missing {needle:?} in:\n{haystack}"))
+    }
+
+    /// #3906: with no ledger top gap, the first card carrying a repair start
+    /// becomes the selection. Its command is carried byte-for-byte into
+    /// start-here and on into pr-summary, every field comes from that card
+    /// (not the earlier card without a start), and it leads the proof path.
+    #[test]
+    fn review_card_repair_start_is_carried_when_the_ledger_selects_nothing() -> Result<(), String> {
+        let repo = temp_repo("first-pr-card-repair-start")?;
+        write_no_top_gap_ledger(&repo)?;
+        let without = review_card("seam-a", None);
+        let with = review_card("seam-b", Some(CARD_REPAIR_COMMAND));
+        if without.pointer("/llm_guidance/repair_command").is_some()
+            || with.pointer("/llm_guidance/repair_command") != Some(&json!(CARD_REPAIR_COMMAND))
+        {
+            return Err("fixture cards must differ only in the carried start".to_string());
+        }
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(vec![without, with]),
+        )?;
+
+        write_first_pr(&repo, &FirstPrOptions::default())?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        let markdown = fs::read_to_string(repo.join(DEFAULT_OUT_DIR).join(START_HERE_MD))
+            .map_err(|err| format!("read start-here markdown: {err}"))?;
+        cleanup(&repo)?;
+
+        let selected = &packet["selected"];
+        assert_eq!(packet["status"], "actionable");
+        assert_eq!(selected["state"], "top_gap");
+        assert_eq!(selected["output_state"], "actionable_gap");
+        assert_eq!(selected["repair_command"], CARD_REPAIR_COMMAND);
+        assert_eq!(selected["source_artifact"], DEFAULT_REVIEW_COMMENTS);
+        assert_eq!(selected["canonical_gap_id"], "gap:seam-b");
+        assert_eq!(selected["changed_behavior"], "seam-b >= threshold");
+        assert_eq!(selected["missing_discriminator"], "seam-b == threshold");
+        assert_eq!(
+            selected["verify_command"],
+            "ripr agent verify --root . --seam seam-b --json"
+        );
+        assert_eq!(
+            selected["receipt_command"],
+            "ripr agent receipt --root . --seam-id seam-b --json"
+        );
+        assert_eq!(selected["anchor"]["owner"], "pricing::seam-b");
+        // The card is not a ledger gap: no `agent packet --gap-id`, and the
+        // start stays off the editor-allowlisted `commands` map.
+        assert!(selected["agent_packet_command"].is_null());
+        assert!(packet["commands"].get("agent_packet").is_none());
+        assert!(packet["commands"].get("repair").is_none());
+        assert_eq!(
+            packet["commands"]["verify"],
+            "ripr agent verify --root . --seam seam-b --json"
+        );
+
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        // #3906 (F60-14): the start leads, the after phase follows it as
+        // the next step, and the low-level verify and receipt render as the
+        // manual alternative, not as peer steps of the transaction.
+        let after_phase = format!("{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n");
+        let start = position(
+            &summary,
+            &format!("Start repair: `{CARD_REPAIR_COMMAND}`\n{after_phase}"),
+        )?;
+        assert!(start < position(&summary, &format!("{MANUAL_VERIFY_LABEL}: `"))?);
+        assert!(start < position(&summary, &format!("{MANUAL_RECEIPT_LABEL}: `"))?);
+        assert!(!summary.contains("Verify command:"), "{summary}");
+        assert!(!summary.contains("Receipt command:"), "{summary}");
+        let bullet = position(
+            &markdown,
+            &format!("- Start repair: `{CARD_REPAIR_COMMAND}`\n- {after_phase}"),
+        )?;
+        assert!(bullet < position(&markdown, &format!("- {MANUAL_VERIFY_LABEL}: `"))?);
+        let block = position(
+            &markdown,
+            &format!("Start repair:\n`{CARD_REPAIR_COMMAND}`\n"),
+        )?;
+        let block_after_phase = position(&markdown, &format!("\n{after_phase}\n"))?;
+        assert!(block < block_after_phase);
+        assert!(block_after_phase < position(&markdown, &format!("{MANUAL_VERIFY_LABEL}:\n`"))?);
+        assert!(block_after_phase < position(&markdown, &format!("{MANUAL_RECEIPT_LABEL}:\n`"))?);
+        assert!(!markdown.contains("Verify command"), "{markdown}");
+        assert!(!markdown.contains("Receipt command"), "{markdown}");
+
+        // pr-summary carries start-here's command unchanged and leads the
+        // local reproduction commands with it.
+        let pr_summary = crate::app::pr_summary::build_pr_evidence_summary(
+            Some(&packet),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let summary_json: Value = serde_json::from_str(
+            &crate::app::pr_summary::render_pr_evidence_summary_json(&pr_summary),
+        )
+        .map_err(|err| format!("parse pr-summary json: {err}"))?;
+        assert_eq!(
+            summary_json["top_repair"]["repair_command"],
+            CARD_REPAIR_COMMAND
+        );
+        assert_eq!(
+            summary_json["local_reproduction_commands"][0],
+            CARD_REPAIR_COMMAND
+        );
+        let summary_md = crate::app::pr_summary::render_evidence_summary_md(&pr_summary);
+        let line = position(
+            &summary_md,
+            &format!("- start repair: `{CARD_REPAIR_COMMAND}`\n"),
+        )?;
+        assert!(
+            line < position(
+                &summary_md,
+                &format!("- {}: `", MANUAL_VERIFY_LABEL.to_lowercase())
+            )?
+        );
+        assert!(!summary_md.contains("- verify: `"), "{summary_md}");
+        Ok(())
+    }
+
+    /// #3906 negative: a card without a repair start (it failed the flip)
+    /// under-emits. First-pr never builds `agent repair` from its seam id;
+    /// the no-action reason names why.
+    #[test]
+    fn review_card_without_repair_start_stays_no_action() -> Result<(), String> {
+        let repo = temp_repo("first-pr-card-no-start")?;
+        write_no_top_gap_ledger(&repo)?;
+        let card = review_card("seam-a", None);
+        if card["seam_id"] != "seam-a" || card["gap_state"] != "actionable" {
+            return Err("fixture card must be actionable with a known seam id".to_string());
+        }
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(vec![card]),
+        )?;
+        write_first_pr(&repo, &FirstPrOptions::default())?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        let markdown = fs::read_to_string(repo.join(DEFAULT_OUT_DIR).join(START_HERE_MD))
+            .map_err(|err| format!("read start-here markdown: {err}"))?;
+        cleanup(&repo)?;
+
+        assert_eq!(packet["status"], "no_action");
+        assert_eq!(packet["selected"]["state"], "no_action");
+        assert!(
+            packet["selected"]["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains(
+                    "No review card in `target/ripr/review/comments.json` carries a repair start"
+                ))
+        );
+        let text = packet.to_string();
+        assert!(!text.contains("agent repair"), "{text}");
+        assert!(!markdown.contains("Start repair"), "{markdown}");
+        Ok(())
+    }
+
+    /// #3906 negative: a ledger top gap keeps its verify/receipt/agent-packet
+    /// route and carries no repair start, even when an eligible card exists.
+    #[test]
+    fn ledger_top_gap_keeps_its_route_beside_an_eligible_card() -> Result<(), String> {
+        let repo = temp_repo("first-pr-ledger-beside-card")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(vec![review_card("seam-b", Some(CARD_REPAIR_COMMAND))]),
+        )?;
+        write_first_pr(&repo, &FirstPrOptions::default())?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        let markdown = fs::read_to_string(repo.join(DEFAULT_OUT_DIR).join(START_HERE_MD))
+            .map_err(|err| format!("read start-here markdown: {err}"))?;
+        cleanup(&repo)?;
+
+        let selected = &packet["selected"];
+        assert_eq!(selected["state"], "top_gap");
+        assert_eq!(selected["gap_id"], "gap:pr:pricing:threshold-boundary");
+        assert_eq!(selected["source_artifact"], DEFAULT_GAP_LEDGER);
+        assert!(selected.get("repair_command").is_none());
+        assert!(
+            packet["commands"]["agent_packet"].as_str().is_some_and(
+                |command| command.contains("--gap-id gap:pr:pricing:threshold-boundary")
+            )
+        );
+        assert!(!packet.to_string().contains("agent repair"));
+        assert!(!markdown.contains("Start repair"), "{markdown}");
+
+        let pr_summary = crate::app::pr_summary::build_pr_evidence_summary(
+            Some(&packet),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let summary_json: Value = serde_json::from_str(
+            &crate::app::pr_summary::render_pr_evidence_summary_json(&pr_summary),
+        )
+        .map_err(|err| format!("parse pr-summary json: {err}"))?;
+        assert!(summary_json["top_repair"].get("repair_command").is_none());
+        assert_eq!(
+            summary_json["local_reproduction_commands"][0],
+            "ripr check --base origin/main"
+        );
+        Ok(())
+    }
+
+    /// #3906: a card from another range, root, or an incomplete report must
+    /// not become this PR's repair start. F60-10: nor may first-pr call the
+    /// PR "no actionable gap" on cards it could not use; it stops on the
+    /// review-card input with the seam-level command that regenerates it.
+    #[test]
+    fn review_card_repair_start_fails_closed_on_stale_or_missing_reports() -> Result<(), String> {
+        let eligible = || review_card("seam-b", Some(CARD_REPAIR_COMMAND));
+        let mut other_base = review_comments_report(vec![eligible()]);
+        other_base["base"] = json!("origin/release");
+        let mut incomplete = review_comments_report(vec![eligible()]);
+        incomplete["status"] = json!("incomplete");
+        let mut other_root = review_comments_report(vec![eligible()]);
+        other_root["root"] = json!("crates/other");
+        let mut other_head = review_comments_report(vec![eligible()]);
+        other_head["head"] = json!("feature-tip");
+        // The malformed branches: another tool's report, and reports that
+        // do not record their status, root, or head.
+        let mut other_tool = review_comments_report(vec![eligible()]);
+        other_tool["tool"] = json!("not-ripr");
+        let unrecorded = |field: &str| {
+            let mut report = review_comments_report(vec![eligible()]);
+            if let Some(object) = report.as_object_mut() {
+                object.remove(field);
+            }
+            report
+        };
+        let seam_route = "ripr review-comments --root . --base origin/main --head HEAD --out target/ripr/review/comments.json";
+        for (name, report, state, needle) in [
+            (
+                "base",
+                Some(other_base),
+                "stale_artifact",
+                "generated for base `origin/release`, not `origin/main`",
+            ),
+            (
+                "status",
+                Some(incomplete),
+                "blocked_artifact",
+                "the report status is `incomplete`",
+            ),
+            (
+                "root",
+                Some(other_root),
+                "wrong_root",
+                "generated for root `crates/other`, not `.`",
+            ),
+            (
+                "head",
+                Some(other_head),
+                "stale_artifact",
+                "generated for head `feature-tip`, not `HEAD`",
+            ),
+            (
+                "tool",
+                Some(other_tool),
+                "malformed_artifact",
+                "the file is not a RIPR review-comments report",
+            ),
+            (
+                "unrecorded status",
+                Some(unrecorded("status")),
+                "malformed_artifact",
+                "the report does not record a status",
+            ),
+            (
+                "unrecorded root",
+                Some(unrecorded("root")),
+                "malformed_artifact",
+                "the report does not record its root",
+            ),
+            (
+                "unrecorded head",
+                Some(unrecorded("head")),
+                "malformed_artifact",
+                "the report does not record its head",
+            ),
+            (
+                "missing",
+                None,
+                "missing_artifact",
+                "PR repair cards is missing: target/ripr/review/comments.json",
+            ),
+        ] {
+            let repo = temp_repo(&format!("first-pr-card-{name}"))?;
+            write_no_top_gap_ledger(&repo)?;
+            if let Some(report) = report {
+                write_json(&repo.join(DEFAULT_REVIEW_COMMENTS), report)?;
+            }
+            let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+            cleanup(&repo)?;
+            assert_eq!(packet["status"], "blocked", "{name}: {packet}");
+            assert_eq!(packet["selected"]["state"], state, "{name}");
+            assert_eq!(packet["commands"]["next"], seam_route, "{name}");
+            assert!(
+                packet.to_string().contains(needle),
+                "{name}: {needle} not in {packet}"
+            );
+            assert!(!packet.to_string().contains("agent repair"), "{name}");
+        }
+
+        // Cards rendered from the gap ledger were read and are current; they
+        // cannot carry a repair start, so this stays no-action and names the
+        // seam-level route.
+        let mut gap_ledger_scoped = review_comments_report(vec![review_card("seam-a", None)]);
+        gap_ledger_scoped["analysis_scope"] = json!({"scope": "gap_ledger_artifact"});
+        let repo = temp_repo("first-pr-card-scope")?;
+        write_no_top_gap_ledger(&repo)?;
+        write_json(&repo.join(DEFAULT_REVIEW_COMMENTS), gap_ledger_scoped)?;
+        let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+        cleanup(&repo)?;
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
+        assert!(
+            reason.contains(&format!(
+                "rendered from the gap ledger; for a seam-level repair start, run `{seam_route}`"
+            )),
+            "{reason}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -2966,7 +3738,7 @@ mod tests {
         );
         assert!(summary.contains("Safe next action: repair one named gap `gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold`"));
         assert!(summary.contains(
-            "Verify command: `pytest tests/test_pricing.py::test_calculate_discount_smoke`"
+            "Verify after the test edit: `pytest tests/test_pricing.py::test_calculate_discount_smoke`"
         ));
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
@@ -3240,7 +4012,7 @@ mod tests {
         assert!(summary.contains(
             "Safe next action: repair one named gap `gap:typescript:typescript_preview:2396aec1`"
         ));
-        assert!(summary.contains("Verify command: `jest tests/discount.test.ts`"));
+        assert!(summary.contains("Verify after the test edit: `jest tests/discount.test.ts`"));
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
     }

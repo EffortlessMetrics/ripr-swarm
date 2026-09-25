@@ -661,7 +661,8 @@ or a near-miss.
 
 Running a few `cargo xtask check-*` gates by hand before pushing missed two
 required gates twice in a row (`check-generated`, then `check-static-language`).
-The required CX43 "Required Rust gates" step runs the whole set. Mirror it
+The required Rust gate set runs as the named per-producer steps in
+`.github/workflows/rust-gates.yml` (routed by `routed-rust.yml`). Mirror it
 locally with one command:
 
 ```bash
@@ -2213,3 +2214,74 @@ Durable rules:
   must make the same harness fail. Also wait on the lock, not the PID, when
   simulating job death: in containers without a reaping init, `kill -0` keeps
   succeeding on a zombie long after its descriptors, and its lock, are gone.
+
+## 2026-09-24: Stale-PR sweep — two recurring repair classes
+
+Two failure classes recurred across 5+ PRs in one stale-branch sweep
+(golden-envelope class: #3986, #3984, #4023, #3956; stacked-branch handling:
+#3978, #3982).
+
+**Pre-envelope-change goldens ride along on rebased branches.** After
+squash-rebasing an old branch onto main, `cargo xtask goldens check` fails
+with `formatting_only` drift on `check.json` fixtures, first difference at
+the top-level `"base": "origin/main"` line. Cause: the branch carries goldens
+blessed before RIPR-SPEC-0084 (#4002, the no-default-base change) while main
+carries re-blessed copies. Repair: restore main's copies
+(`git checkout origin/main -- <fixture paths>`) rather than re-blessing; for
+fixtures *new* in the branch, re-bless to the new envelope (drop top-level
+`"base"`, set `base_revision` null). Rule: diff the PR's golden fixture files
+against main before pushing a rebase — re-blessing a pre-envelope file
+re-imports the drift main already repaired.
+
+**`git merge --squash` cannot be undone with `git merge --abort`.** No
+`MERGE_HEAD` is recorded, so a conflicted squash merge leaves the index
+conflicted and `checkout -B` carries the mess forward. Repair: first commit
+or back up unrelated local work (a hard reset discards tracked changes and
+may overwrite untracked files), then `git reset --hard <base>` before
+re-trying. Related: piping
+`git apply --3way` through `head` kills it with SIGPIPE mid-apply — capture
+full output to a file instead.
+
+## 2026-09-24: A shared sccache server inherits the TMP of whichever lane started it
+
+2026-09-24, multiple concurrent agent lanes on one Windows host
+(`ripr-swarm`). Two lanes lost 30+ minutes each to an sccache failure that
+looked like a broken tree. `ripr`'s `.cargo/config.toml` sets
+`[env] TMP/TEMP` to a target-relative path, so an `sccache` server auto-started
+by cargo inside a lane worktree bakes that worktree's absolute TMP into the
+user-level server process. Every later compile on the host — including lanes
+in *other* worktrees, which resolve their own TMP fine — then fails with
+`Failed to create temp dir` when the server's cached TMP points at a worktree
+that was removed (lane cleanup deletes its worktree; the server outlives it).
+The poisoned server also survived until explicitly restarted; a `tail` pipe in
+one lane's proof wrapper masked the real non-zero exit behind a success-looking
+line, which is exactly the hidden-gate failure the repo validation rules warn
+about.
+
+Durable rules:
+
+- A user-level daemon started from inside a configured workspace inherits that
+  workspace's env for its whole lifetime. Anything that auto-starts such a
+  daemon (cargo via `sccache` in `RUSTC_WRAPPER`, caches, language servers)
+  must be started once from a stable path, or its TMP/cache-dir environment
+  must be pinned explicitly, before lanes fan out.
+- Deleting a worktree is not enough lane cleanup when a host-level daemon may
+  reference it; the cleanup pass for a lane that used sccache should treat
+  `sccache --stop-server` (or a health check) as part of reaping.
+- Read the native exit status, not a piped summary: a wrapper that ends in
+  `| tail` reports the pipe's status, and a red gate behind it looks green.
+  Running wrappers under `set -o pipefail` (or the repo's `-o pipefail`
+  convention) propagates the real status instead.
+
+## 2026-09-25: Retired goal-scheduler commands survive in old playbook entries
+
+The 2026-05-04 "Step 0 Premise Check" and 2026-05-12 "Agent-Readiness" entries
+below still tell an executor to run `cargo xtask check-goals` and
+`cargo xtask goals next` against `.ripr/goals/` campaign state. That machinery
+was retired by #1701: `.ripr/goals/` is gone, and xtask now answers those
+command names with an explicit retired-command error pointing at GitHub
+issues/PRs and `cargo xtask help --all` as the live work-selection surfaces.
+Treat the retired commands in those entries as historical record only — do not
+copy them into new playbooks, and replay the premise check with
+`git fetch origin`, `git status --short`, `gh issue list --state open`,
+and `gh pr list --state open` instead.

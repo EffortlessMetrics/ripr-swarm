@@ -88,9 +88,9 @@ RIPR-SPEC-0026 owner-kind vocabulary explicitly adds a class value.
 
 Test discovery:
 
-- `pytest` test functions named `test_*` at module level
-- pytest test methods under `class Test*`
-- `unittest.TestCase` subclasses and their `test_*` methods
+- `pytest` test functions with the default `test` name prefix at module level
+- pytest test methods with the same prefix under `class Test*`
+- `unittest.TestCase` subclasses and their default `test`-prefixed methods
 - parametrized tests via `@pytest.mark.parametrize` (recognised
   syntactically)
 - pytest fixture and parameter names captured from test function signatures
@@ -100,6 +100,13 @@ Test discovery:
 - framework-shaped verify commands for related tests when the static selector
   is known: `pytest path::node` for pytest and
   `python -m unittest module.Class.test_method` for unittest
+
+The default name prefix is case-sensitive and does not require an underscore:
+`test`, `testCamelCase`, and `test_with_underscore` all qualify. `_test_private`,
+`contest`, and `TestWrongCase` do not. The prefix rule applies to both `def`
+and `async def`; it does not change test-file or class selection. Custom
+`python_functions` patterns, modified `TestLoader.testMethodPrefix` values,
+and collection hooks are not resolved by this syntax-only collector.
 
 Assertions / oracles the adapter must recognise:
 
@@ -130,9 +137,43 @@ syntactic call proximity. Direct owner calls must be token-aware. Module
 import aliases may match attribute calls such as `pricing.apply_discount(...)`;
 arbitrary object method calls must not be treated as related to a top-level
 function owner unless the changed owner is itself a method or class method.
+Free-function module identity compares a `from M import name` source module
+with the owner's dotted module path by exact equality. An owner below a
+directory named `src` (the PyPA src layout, including monorepo
+`packages/<pkg>/src/`) also matches the dotted path below that `src` import
+root, so `from pricing.discounts import f` identifies `src/pricing/discounts.py`
+while the repository-relative `src.pricing.discounts` form still matches. Bare
+file stems and arbitrary path suffixes never count as module identity.
 Test-name and fixture-name proximity may provide a suggested repair location,
 but these links must be marked uncertain, must keep weak reachability, and must
 not promote unrelated assertions to strong revealability.
+
+A Python test is related to an owner only when the test references the owner.
+Same-stem file, test-name, and fixture-name proximity only rank a test that
+already references the owner without a recognized call shape; they never
+relate a test that only exercises a sibling owner in the same module, so a new
+owner that no test references reads `no_static_path`. A reference is outside
+comments, strings, and docstrings:
+
+- function or class owner: the bare owner name (`handler = loyalty_price`),
+  unless the test binds a local of that name (a parameter or fixture, an
+  assignment, a walrus `:=`, a `for` loop target, an `as` target, a nested
+  `def` or `class`) or the name is a keyword-argument or
+  assignment target; a renamed import local
+  (`from pricing import loyalty_price as lp`, then `lp`) whose source module is
+  the owner module; or a module-qualified member through an import of the
+  owner module (`import pricing` then `pricing.loyalty_price`, or
+  `import pricing as p` then `p.loyalty_price`);
+- method or class-method owner: an attribute reference `.name`, consistent
+  with the direct rule that relates any `.name(` call for these owners; a
+  dunder method (`__init__`, `__eq__`, ...) is also referenced by a reference
+  to its class, which invokes it implicitly;
+- module-level owner: a local bound by an import of, or from, the owner
+  module.
+
+A title, a fixture name, a file stem, or an object-member use such as
+`order.loyalty_price` on a receiver that is not the owner module is not a
+reference to a free-function owner.
 
 ## Probe Facts
 
@@ -226,6 +267,27 @@ spine as other languages:
   downgrades to `weakly_exposed` with a typed reason. Reach plus a strong oracle
   alone must not credit `exposed`, or the classification degrades into coverage.
 
+A changed relational predicate (`<`, `<=`, `>`, `>=`) additionally follows the
+Rust activation boundary rule. When a strong related test calls the owner with
+at least one literal argument, `exposed` requires one of those calls to bind
+both comparison operands to equal values: each operand is a literal or an owner
+parameter bound to a literal argument or literal default (positional, keyword,
+import-alias, and method calls after `self`). Literal owner arguments, and the
+boundary equality when observed, are recorded in `observed_values`. Otherwise
+the finding fails closed to `weakly_exposed` and the infection stage reads
+`weak`. When every non-literal operand is bound by some call, the boundary is
+named as the missing discriminator (`amount == threshold`, with the observed
+operand values in its reason). An operand ripr cannot bind (an attribute such
+as `item.on_hand`, a computed `len(name)`, a comprehension local, or a line
+with several comparisons) never counts as observed, and such a boundary is not
+named as a typed repair target: the test input may already sit on it at runtime
+(`reserve(Item("a", 3), 3)`), so the finding states the unresolved operand
+instead of producing a repair card. When no strong related call binds a literal
+argument (test locals, `*args`, a construct-call passing a dict), static
+evidence cannot see the activating input either way: the oracle verdict stands
+and an `exposed` finding carries a `boundary_activation_unresolved` evidence
+line naming that limitation.
+
 Static-limit findings must fail closed. They keep any observed reachability and
 oracle facts, but their infection and propagation stages remain `unknown`, the
 finding class is `static_unknown`, a typed stop reason is emitted, and no
@@ -289,6 +351,8 @@ can show:
   framework-shaped verify commands
 - fixtures proving test-name and fixture-name proximity are related-test
   heuristics but remain explicitly uncertain
+- a fixture proving a same-stem test that only calls a sibling owner is not
+  related to an owner it never references
 - fixtures proving Python preview findings carry stable canonical gap IDs
   across human, JSON, GitHub annotation, and SARIF output while static-limit
   findings remain limitation evidence rather than repair gaps
@@ -433,6 +497,12 @@ Expected static evidence:
   registration.
 
 ## Test Mapping
+
+Default-prefix regression cases live in
+`crates/ripr/src/analysis/language/python/owners_tests/tests.rs`. They exercise
+module functions, pytest methods, unittest methods, and async definitions;
+exclude near-miss names and helpers; and check that collected tests retain
+framework-specific selectors and relate only to the referenced owner.
 
 Follow-up fixtures and tests cover the owner, test, assertion, related
 test, probe, and static-limit cases listed under Required Evidence, plus

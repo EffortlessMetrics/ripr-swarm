@@ -1,6 +1,12 @@
 use super::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Best-effort temp-dir teardown. The `io::Result` is matched with `if let`
+/// so a `#[must_use]` cleanup failure is an explicit ignore.
+fn ignore_remove_dir_all(path: impl AsRef<Path>) {
+    if let Ok(()) = fs::remove_dir_all(path) {}
+}
+
 #[test]
 fn gate_visible_only_records_pr_guidance_without_blocking() -> Result<(), String> {
     let input = fixture_input(GateMode::VisibleOnly)?;
@@ -188,7 +194,7 @@ fn gate_fails_closed_on_limited_partial_scope_pr_guidance() -> Result<(), String
         "config error must name the partial run state: {:?}",
         report.config_errors
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -230,7 +236,7 @@ fn gate_fails_closed_on_typed_incomplete_analysis_outcome() -> Result<(), String
             .iter()
             .any(|error| { error.contains("unsupported_input") && error.contains("incomplete") })
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -275,7 +281,7 @@ fn gate_gap_ledger_and_baseline_rejections_name_typed_outcome_kind() -> Result<(
         baseline_report.config_errors
     );
 
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -324,7 +330,7 @@ fn check_output_gap_ledger_preserves_incomplete_outcome_for_gate_consumers() -> 
         report.config_errors
     );
 
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -358,7 +364,7 @@ fn gate_fails_closed_on_limited_partial_scope_gap_ledger() -> Result<(), String>
         "config error must name the partial run state: {:?}",
         report.config_errors
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -389,7 +395,7 @@ fn gate_fails_closed_on_limited_partial_scope_baseline() -> Result<(), String> {
         "config error must name the partial run state: {:?}",
         report.config_errors
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -461,7 +467,7 @@ fn gate_calibrated_mode_blocks_new_supported_candidate() -> Result<(), String> {
             .confidence_effect,
         "supports_static_gap"
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -510,7 +516,7 @@ fn gate_calibrated_mode_uses_imported_mutation_support() -> Result<(), String> {
             .gate_reason
             .contains("imported mutation calibration")
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -525,7 +531,7 @@ fn gate_labels_json_acknowledges_candidate() -> Result<(), String> {
     let report = build_gate_decision_report(&input)?;
     assert_eq!(report.status, "acknowledged");
     assert_eq!(report.inputs.labels, vec!["ripr-waive".to_string()]);
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -554,7 +560,7 @@ fn gate_baseline_check_keeps_existing_candidate_advisory() -> Result<(), String>
             .gate_reason
             .contains("explicit baseline")
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -592,7 +598,7 @@ fn gate_baseline_check_reads_baseline_ledger_entries() -> Result<(), String> {
             .gate_reason
             .contains("explicit baseline")
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -691,7 +697,7 @@ fn gate_baseline_check_matches_canonical_gap_id_from_evidence_record() -> Result
             .gate_reason
             .contains("explicit baseline")
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -760,7 +766,7 @@ fn gate_baseline_fallback_only_match_discloses_warning_and_match_kind() -> Resul
         markdown.contains("matched baseline evidence by fallback path/line/static_class"),
         "fallback disclosure must be visible in human output"
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -803,7 +809,7 @@ fn gate_baseline_canonical_match_has_no_fallback_disclosure() -> Result<(), Stri
         !rendered.contains("\"baseline_match_kind\""),
         "canonical-match decisions must render byte-identical (no baseline_match_kind key)"
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -833,7 +839,7 @@ fn gate_baseline_new_candidate_has_no_fallback_disclosure() -> Result<(), String
         !rendered.contains("\"baseline_match_kind\""),
         "baseline-new decisions must render byte-identical (no baseline_match_kind key)"
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -970,7 +976,7 @@ fn gate_optional_inputs_emit_warnings_and_markdown_sections() -> Result<(), Stri
     );
     assert!(markdown.contains("## Warnings"));
     assert!(markdown.contains("manual \\| warning with newline"));
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1039,7 +1045,7 @@ fn gate_exception_policy_active_ledger_reports_section_without_blocking() -> Res
     assert!(value["inputs"]["exception_policy"].as_str().is_some());
     assert!(markdown.contains("## Exception Policy"));
     assert!(markdown.contains("total-burndown"));
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1078,7 +1084,7 @@ fn gate_exception_policy_expired_entry_blocks() -> Result<(), String> {
             || markdown.contains("quality_exception_expired"),
         "markdown missing expired violation: {markdown}"
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1109,7 +1115,7 @@ fn gate_exception_policy_review_due_warn_surfaces_warning_not_block() -> Result<
     )?;
     let report = build_gate_decision_report(&input)?;
     assert_eq!(report.status, "blocked");
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1163,7 +1169,7 @@ fn gate_exception_policy_missing_or_malformed_ledger_is_config_error() -> Result
     assert!(report.exception_policy.is_none());
     let json = render_gate_decision_json(&report)?;
     assert!(!json.contains("exception_policy"));
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1227,7 +1233,7 @@ fn gate_summary_only_and_suppressed_candidates_remain_visible() -> Result<(), St
             .iter()
             .any(|decision| decision.gate_reason.contains("configured-hidden"))
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1268,7 +1274,7 @@ fn gate_changed_test_and_missing_guidance_candidates_stay_advisory() -> Result<(
             .iter()
             .any(|decision| decision.gate_reason.contains("missing concrete"))
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1284,7 +1290,7 @@ fn gate_baseline_check_blocks_new_candidate() -> Result<(), String> {
     assert_eq!(report.status, "blocked");
     assert_eq!(report.summary.blocking, 1);
     assert!(report.decisions[0].gate_reason.contains("baseline-check"));
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1366,7 +1372,7 @@ fn gate_acknowledgeable_blocks_complete_gap_ledger_route_with_typed_seam_identit
         Value::Array(Vec::new()),
         "gap ledger records do not carry test input variants"
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1426,7 +1432,7 @@ fn gate_reads_root_planted_canonical_delta_for_causal_decisions() -> Result<(), 
         report.decisions[0].decision, "advisory",
         "a non-causal root-planted attribution must suppress blocking"
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1472,7 +1478,7 @@ fn gate_acknowledgeable_gap_ledger_block_names_the_expected_label() -> Result<()
         "gap-ledger block must name the expected label; got: {}",
         report.decisions[0].gate_reason
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1520,7 +1526,7 @@ fn conflicting_gap_ledger_seam_identities_fail_closed_as_config_error() -> Resul
     assert!(report.config_errors.iter().any(|error| {
         error.contains("conflicting seam identities for canonical gap pricing::discount::threshold")
     }));
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1566,7 +1572,7 @@ fn multiple_legacy_gap_ledger_records_remain_route_limited() -> Result<(), Strin
     assert!(report.decisions.iter().all(|decision| {
         decision.decision == "advisory" && decision.gate_reason.contains("incomplete_repair_route")
     }));
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1607,7 +1613,7 @@ fn gate_gap_ledger_static_unknown_only_stays_report_only() -> Result<(), String>
             .gate_reason
             .contains("not gate-candidate eligible")
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1646,7 +1652,7 @@ fn gate_labels_array_supports_custom_acknowledgement_label() -> Result<(), Strin
         "policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: `accepted-risk`, `ops-waiver`)"
     );
 
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1696,7 +1702,7 @@ fn gate_calibration_can_keep_candidates_advisory() -> Result<(), String> {
             .iter()
             .any(|warning| warning.contains("ambiguous file/line"))
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1743,14 +1749,32 @@ fn gate_markdown_projects_complete_repair_route_for_ci_summary() -> Result<(), S
         "  - Add: Write one focused Rust test",
         "test intent",
     )?;
+    // #3906 (F60-14): this corpus card carries a repair start, so the
+    // after phase follows it and verify and receipt are the manual
+    // alternative under the shared labels, not peer steps.
     require_contains(
         &rendered,
-        "  - Verify: `ripr agent verify",
+        &format!(
+            "  - {}: {}\n",
+            crate::output::first_pr::REPAIR_AFTER_PHASE_LABEL,
+            crate::output::first_pr::REPAIR_AFTER_PHASE_STEP
+        ),
+        "repair after phase",
+    )?;
+    require_contains(
+        &rendered,
+        &format!(
+            "  - {}: `ripr agent verify",
+            crate::output::first_pr::MANUAL_VERIFY_LABEL
+        ),
         "verify command",
     )?;
     require_contains(
         &rendered,
-        "  - Receipt: `ripr agent receipt",
+        &format!(
+            "  - {}: `ripr agent receipt",
+            crate::output::first_pr::MANUAL_RECEIPT_LABEL
+        ),
         "receipt command",
     )
 }
@@ -2089,7 +2113,7 @@ fn given_invalid_gap_ledger_json_when_evaluated_then_config_error_includes_parse
         "expected parse-failure config error, got {:?}",
         report.config_errors,
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2133,7 +2157,7 @@ fn given_unreadable_gap_ledger_when_evaluated_then_config_error_includes_read_fa
         "expected read-failure config error, got {:?}",
         report.config_errors,
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2157,7 +2181,7 @@ fn given_unreadable_baseline_in_baseline_mode_then_config_error_includes_invalid
         "expected required-baseline-invalid config error, got {:?}",
         report.config_errors,
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2190,7 +2214,7 @@ fn given_recommendation_calibration_with_unknown_outcome_then_confidence_effect_
             .confidence_effect,
         "unknown"
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2223,7 +2247,7 @@ fn given_mutation_calibration_with_unknown_outcome_then_confidence_effect_is_unk
             .confidence_effect,
         "unknown"
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2256,7 +2280,7 @@ fn given_mutation_calibration_match_without_outcome_then_confidence_effect_is_no
             .confidence_effect,
         "not_used"
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2290,7 +2314,7 @@ fn given_mutation_calibration_match_without_seam_id_then_match_is_skipped() -> R
         "match without seam_id must not populate the mutation calibration index",
     );
     assert_eq!(report.status, "advisory");
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2337,7 +2361,7 @@ fn given_guidance_with_recommended_file_only_then_recommended_test_is_file_path(
         Some("tests/pricing.rs"),
         "with no near_test the recommended file alone becomes the recommended test path",
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2430,7 +2454,7 @@ fn given_calibrated_gate_with_mutation_keeps_advisory_then_gate_reason_cites_mut
         "expected mutation-calibration advisory reason, got {:?}",
         report.decisions[0].gate_reason,
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2449,7 +2473,7 @@ fn given_calibrated_gate_without_any_calibration_then_gate_reason_falls_through_
         report.decisions[0].gate_reason, "candidate remains advisory under current policy inputs",
         "with neither calibration available the default advisory reason applies",
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2539,7 +2563,7 @@ fn given_gap_ledger_record_with_eligible_projection_but_unsafe_predicate_then_re
         "expected safe-gate-predicate reason, got {:?}",
         report.decisions[0].gate_reason,
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2623,7 +2647,7 @@ fn given_gap_ledger_record_with_safe_predicate_but_missing_anchor_then_reason_ci
         "expected missing-anchor reason, got {:?}",
         report.decisions[0].gate_reason,
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2673,7 +2697,7 @@ fn given_gap_ledger_record_without_typed_seam_identity_then_baseline_check_fails
         "expected fail-closed route reason, got {:?}",
         report.decisions[0].gate_reason,
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2723,7 +2747,7 @@ fn given_class_not_policy_eligible_with_concrete_guidance_then_reason_cites_clas
         "expected policy-eligible-class fallthrough reason, got {:?}",
         report.decisions[0].gate_reason,
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2745,7 +2769,7 @@ fn given_read_json_value_pointed_at_directory_then_error_describes_non_not_found
         error.starts_with("read not-a-file.json failed:") && !error.contains("not found"),
         "expected non-not-found read error, got {error}",
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2801,7 +2825,7 @@ fn given_non_guidance_json_object_when_gate_evaluated_then_config_error_not_advi
         report.decisions.is_empty(),
         "no decisions must be emitted for a config_error guidance doc",
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2859,7 +2883,7 @@ fn given_valid_guidance_doc_with_zero_findings_when_gate_evaluated_then_advisory
         !gate_decision_should_fail(&report),
         "gate_decision_should_fail must be false for a genuinely clean guidance doc",
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -2938,7 +2962,7 @@ fn given_well_formed_error_status_packet_when_gate_evaluated_then_config_error_n
         report.decisions.is_empty(),
         "no decisions must be emitted for a crashed-producer config_error",
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -3072,7 +3096,7 @@ fn given_cap_demoted_summary_only_gap_when_gate_evaluated_then_blocking_not_advi
         "the cap-demoted gap must resolve to 'blocking', got {:?}",
         cap_decision.decision,
     );
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -3167,7 +3191,7 @@ fn new_unsuppressed_excludes_advisory_candidates_with_incomplete_repair_routes()
         ));
     }
 
-    let _ = fs::remove_dir_all(dir);
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -3324,11 +3348,11 @@ fn gate_rebless_requires_the_explicit_opt_in_value() -> Result<(), String> {
     // leaves no tracked residue.
     let path = Path::new("target/ripr-test-rebless-probe.tmp");
     let resolved = repo_root().join(path);
-    let _ = fs::remove_file(&resolved);
+    if let Ok(()) = fs::remove_file(&resolved) {}
     let outcome = assert_repo_fixture(path, "probe-rendered", "re-bless probe");
     let written = resolved.exists();
     let content = fs::read_to_string(&resolved).unwrap_or_default();
-    let _ = fs::remove_file(&resolved);
+    if let Ok(()) = fs::remove_file(&resolved) {}
     if crate::testing::rebless::fixture_rebless_enabled() {
         // Explicit opt-in: the rewrite is authorized and must carry the
         // rendered content.

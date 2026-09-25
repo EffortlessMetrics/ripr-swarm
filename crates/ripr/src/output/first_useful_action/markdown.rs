@@ -1,4 +1,33 @@
 use super::FirstUsefulActionReport;
+use crate::output::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
+
+/// Verify and receipt labels for a first-useful-action report (#3906).
+///
+/// The bullet labels come from the shared selector, so the manual pair names
+/// its prerequisites wherever it is listed. The section headings keep their
+/// title-case form.
+struct ProofPathSections {
+    labels: ProofPathLabels,
+    verify_heading: &'static str,
+    receipt_heading: &'static str,
+}
+
+fn proof_path_sections(report: &FirstUsefulActionReport) -> ProofPathSections {
+    let repair_start = report.commands.repair.is_some();
+    let (verify_heading, receipt_heading) = if repair_start {
+        (
+            "Manual Verify Without A Repair Attempt",
+            "Manual Receipt Without A Repair Attempt",
+        )
+    } else {
+        ("Verify After The Test Edit", "Receipt After Verify")
+    };
+    ProofPathSections {
+        labels: ProofPathLabels::for_repair_start(repair_start),
+        verify_heading,
+        receipt_heading,
+    }
+}
 
 pub(crate) fn render_first_useful_action_markdown(report: &FirstUsefulActionReport) -> String {
     let mut out = String::new();
@@ -41,13 +70,22 @@ pub(crate) fn render_first_useful_action_markdown(report: &FirstUsefulActionRepo
         ));
     }
 
+    let sections = proof_path_sections(report);
+    if let Some(repair) = &report.commands.repair {
+        out.push_str("## Start Repair\n\n");
+        out.push_str(&format!("`{repair}`\n\n"));
+        out.push_str(&format!(
+            "{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n\n"
+        ));
+    }
+
     if let Some(verify) = &report.commands.verify {
-        out.push_str("## Verify\n\n");
+        out.push_str(&format!("## {}\n\n", sections.verify_heading));
         out.push_str(&format!("`{verify}`\n\n"));
     }
 
     if let Some(receipt) = &report.commands.receipt {
-        out.push_str("## Receipt\n\n");
+        out.push_str(&format!("## {}\n\n", sections.receipt_heading));
         out.push_str(&format!("`{receipt}`\n\n"));
     }
 
@@ -132,8 +170,24 @@ fn render_one_screen_recommendation_markdown(report: &FirstUsefulActionReport, o
         "- Missing discriminator: {missing_discriminator}\n"
     ));
     out.push_str(&format!("- Focused proof intent: {focused_proof_intent}\n"));
-    out.push_str(&format!("- Verify command: `{verify_command}`\n"));
-    out.push_str(&format!("- Receipt command: `{receipt_command}`\n"));
+    // #3906: a carried repair start leads the command lines; its after phase
+    // runs verify and writes the receipt, so the low-level verify and
+    // receipt commands become the manual alternative.
+    let sections = proof_path_sections(report);
+    if let Some(repair) = &report.commands.repair {
+        out.push_str(&format!("- Repair start: `{repair}`\n"));
+        out.push_str(&format!(
+            "- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+        ));
+    }
+    out.push_str(&format!(
+        "- {}: `{verify_command}`\n",
+        sections.labels.verify
+    ));
+    out.push_str(&format!(
+        "- {}: `{receipt_command}`\n",
+        sections.labels.receipt
+    ));
     if !artifacts.is_empty() {
         let joined = artifacts
             .into_iter()

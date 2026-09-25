@@ -79,7 +79,7 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "^24.13.4",
+    "@types/node": "^24.13.5",
     "@types/vscode": "~1.90.0",
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.9.2",
@@ -310,6 +310,10 @@
       {
         "command": "ripr.copyTargetedTestBrief",
         "title": "ripr: Write Targeted Test - Copy Brief"
+      },
+      {
+        "command": "ripr.copyAgentRepairCommand",
+        "title": "ripr: Start Repair - Copy Repair Command"
       },
       {
         "command": "ripr.copyAgentPacketCommand",

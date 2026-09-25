@@ -50,6 +50,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
 
     ok &= report_doctor_core_check(core_report, "root_directory");
     ok &= report_doctor_core_check(core_report, "cargo_toml");
+    ok &= report_doctor_core_check(core_report, "git_repository");
     report_config_status(&root, core_evaluation.config, &mut ok);
     report_cache_status(&root);
     report_detected_languages(&root);
@@ -121,17 +122,28 @@ fn print_doctor_start_here_guidance(root: &Path) {
     // workspace where `ripr first-pr` has never run (RIPR-SPEC-0051 names
     // the path, not its existence). `is_file` (not `exists`) so a directory
     // squatting the packet path cannot read as openable evidence.
+    // The safe next action follows the packet's existence, because `first-pr`
+    // composes the packet out of artifacts `ripr check` produces -- it runs no
+    // analysis of its own (the boundary `help --all` states). Recommending it
+    // on a fresh workspace dead-ends: measured, it returns `missing_artifacts`
+    // and answers with `Regeneration command: ripr check ...`, which is the
+    // command this same screen already prints three lines below. Two different
+    // first commands on one screen, one of which bounces straight back to the
+    // other, is not a route.
     if root.join("target/ripr/reports/start-here.md").is_file() {
         println!("- Start-here packet: target/ripr/reports/start-here.md (present; open it first)");
+        println!(
+            "- Safe next action: open that packet; `ripr first-pr --root {} --base <ref> --head HEAD` refreshes it",
+            root.display()
+        );
     } else {
         println!(
-            "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; run the safe next action below)"
+            "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; `ripr first-pr` composes it once analysis evidence exists)"
+        );
+        println!(
+            "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
         );
     }
-    println!(
-        "- Safe next action: run `ripr first-pr --root {} --base origin/main --head HEAD` after setup passes",
-        root.display()
-    );
     println!(
         "- Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, preview-limited evidence"
     );
@@ -139,7 +151,7 @@ fn print_doctor_start_here_guidance(root: &Path) {
         "- Proof rail: verify command, receipt command, and receipt path are advisory static movement evidence"
     );
     // First-run honesty: when the working tree has uncommitted changes,
-    // `ripr check --base origin/main` analyzes committed history only and would
+    // a committed-history `ripr check` analyzes committed history only and would
     // silently exclude the user's draft (the RIPR-SPEC-0112 dirty-worktree case).
     // Route them to the command that actually covers their edits instead of the
     // one that looks clean while ignoring them. Reuses the same helper as the
@@ -150,7 +162,11 @@ fn print_doctor_start_here_guidance(root: &Path) {
             "- Scope note: `--worktree` analyzes staged and unstaged tracked edits; untracked files remain out of scope until staged or supplied through `--diff`."
         );
     } else {
-        println!("- Recommended first command: ripr check --base origin/main");
+        // No `--base origin/main`: this screen is read in whatever repository
+        // the user has, and that ref does not exist in one whose default
+        // branch is not `main`. Without a base, the loader resolves the
+        // repository's own default (`analysis::diff::load::resolve_default_base`).
+        println!("- Recommended first command: ripr check");
     }
 }
 
@@ -605,10 +621,10 @@ fn detected_test_surface_lines(root: &Path) -> Vec<String> {
                     if id.is_available() {
                         lines.push("perl: adapter compiled (lang-perl feature ON)".to_string());
                     } else {
-                        lines.push(
-                            "perl: adapter NOT compiled (build with --features lang-perl)"
-                                .to_string(),
-                        );
+                        lines.push(format!(
+                            "perl: adapter NOT compiled; {}",
+                            id.unavailable_adapter_recovery()
+                        ));
                     }
                     // Report runner availability.
                     if which("prove") {
@@ -731,7 +747,7 @@ fn report_perl_preview(root: &Path) {
     if cfg!(feature = "lang-perl") {
         println!("  adapter: compiled (lang-perl feature ON)");
     } else {
-        println!("  adapter: NOT compiled (build with --features lang-perl)");
+        println!("  adapter: NOT compiled in this ripr binary (see next)");
     }
 
     // [perl] producer configured? + Perl facts exporter found? + version?
@@ -748,26 +764,13 @@ fn report_perl_preview(root: &Path) {
         None => println!("  producer: not configured (managed mode off)"),
     }
 
-    // Find the producer binary and its version. Try canonical first, then wrappers.
-    let (found_bin, version) = producer_binary_and_version(root);
-    match (found_bin.as_deref(), version.as_deref()) {
-        (Some(bin), Some(ver)) => {
-            println!("  exporter: found at {bin} (version {ver})");
-            // If only a wrapper was found (not the canonical exporter), explain.
-            if bin.contains("perllsp") || bin.contains("perl-lsp") {
-                if which("perl-ripr-facts") {
-                    // Canonical also present — no warning needed.
-                } else {
-                    println!(
-                        "  note: `{bin}` must delegate to the batch perl-ripr-facts exporter; RIPR does not use LSP protocol"
-                    );
-                }
-            }
-        }
-        (Some(bin), None) => println!("  exporter: found at {bin} (version unknown)"),
-        _ => println!(
-            "  exporter: NOT found on PATH (expected: perl-ripr-facts, perllsp, or perl-lsp)"
-        ),
+    // Find a compatible exporter: one that answers `--version` AND accepts
+    // the managed `ripr-facts` subcommand. A binary that only answers
+    // `--version` (for example the published perllsp LSP server) is reported
+    // as found-but-incompatible, never as a working exporter.
+    let exporter = probe_perl_exporter(root);
+    for line in perl_exporter_lines(&exporter) {
+        println!("  {line}");
     }
 
     // schema compatible? (always reports the schema this ripr build consumes.)
@@ -802,9 +805,14 @@ fn report_perl_preview(root: &Path) {
     };
     println!("  runners: {runners_str}");
 
-    // Exact next command: branch on whether managed mode is configured and
-    // whether the producer is present.
-    let next = perl_next_command(producer_configured.as_deref(), found_bin.as_deref());
+    // Exact next command: branch on whether the adapter is compiled in,
+    // whether managed mode is configured, and whether a COMPATIBLE exporter
+    // is present.
+    let next = perl_next_command(
+        LanguageId::Perl.is_available(),
+        producer_configured.as_deref(),
+        exporter.compatible_bin(),
+    );
     println!("  next: {next}");
 }
 
@@ -815,44 +823,140 @@ fn perl_producer_configured(root: &Path) -> Option<String> {
     config.perl().producer().map(|s| s.to_string())
 }
 
-/// Resolve the producer binary path and version. Honors `[perl].executable`
+/// Result of probing for a Perl fact exporter.
+#[derive(Debug, PartialEq, Eq)]
+enum PerlExporterProbe {
+    /// Answers `--version` and accepts the managed `ripr-facts` subcommand.
+    Compatible { bin: String, version: String },
+    /// Answers `--version` but rejects `ripr-facts`, so managed mode would
+    /// fail against it. Not an exporter ripr can use.
+    Incompatible { bin: String, version: String },
+    /// No candidate answered `--version`.
+    NotFound,
+}
+
+impl PerlExporterProbe {
+    fn compatible_bin(&self) -> Option<&str> {
+        match self {
+            PerlExporterProbe::Compatible { bin, .. } => Some(bin),
+            _ => None,
+        }
+    }
+}
+
+/// Upper bound on bytes captured from each probe stream. Help and version
+/// text is small; an unknown binary must not flood the doctor.
+const PERL_EXPORTER_PROBE_OUTPUT_LIMIT: usize = 64 * 1024;
+
+/// Probe for a compatible Perl fact exporter. Honors `[perl].executable`
 /// when set; otherwise probes PATH for `perl-ripr-facts` (canonical, post
-/// perl-lsp-swarm #3294), then `perllsp`/`perl-lsp` (compatibility wrappers).
-/// Returns (resolved_path, version_string) where version comes from
-/// `--version` stdout.
-fn producer_binary_and_version(root: &Path) -> (Option<String>, Option<String>) {
-    // Honor explicit [perl].executable first.
-    let explicit = crate::config::load_for_root(root)
-        .ok()
+/// perl-lsp-swarm #3294), then `perllsp` (the compatibility name managed
+/// mode invokes for `producer = "perllsp"` or `"perl-lsp"`). A bare
+/// `perl-lsp` binary is not probed: managed mode never invokes that name,
+/// and unrelated crates install binaries called `perl-lsp`.
+///
+/// Compatibility is a capability probe, not an end-to-end proof: the
+/// candidate must exit successfully for `ripr-facts --help` and its help
+/// must mention `--schema`, the first flag of the managed argv. Both probes
+/// run under the configured `[perl].timeout_ms` deadline with bounded
+/// capture and a null stdin, so an LSP server that waits on stdin cannot
+/// hang the doctor. Packet validity is still only checked by `ripr check`.
+fn probe_perl_exporter(root: &Path) -> PerlExporterProbe {
+    let config = crate::config::load_for_root(root).ok();
+    let timeout =
+        std::time::Duration::from_millis(config.as_ref().map_or(30_000, |c| c.perl().timeout_ms()));
+    let explicit = config
+        .as_ref()
         .and_then(|c| c.perl().executable().map(|p| p.display().to_string()));
     let candidates: Vec<String> = match explicit {
         Some(path) => vec![path],
         None => vec![
-            "perl-ripr-facts".to_string(),
+            crate::domain::PERL_FACT_EXPORTER.to_string(),
             "perllsp".to_string(),
-            "perl-lsp".to_string(),
         ],
     };
+    let mut first_incompatible = None;
     for candidate in &candidates {
-        let probe = std::process::Command::new(candidate)
-            .arg("--version")
-            .output();
-        if let Ok(output) = probe
-            && output.status.success()
-        {
-            let version = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            let resolved = which(candidate)
-                .then(|| resolve_binary_path(candidate))
-                .flatten();
-            return (resolved.or_else(|| Some(candidate.clone())), Some(version));
+        let Some(version) = run_exporter_probe(candidate, &["--version"], timeout)
+            .filter(|output| output.status.success())
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            })
+        else {
+            continue;
+        };
+        let version = if version.is_empty() {
+            "version unknown".to_string()
+        } else {
+            version
+        };
+        let bin = which(candidate)
+            .then(|| resolve_binary_path(candidate))
+            .flatten()
+            .unwrap_or_else(|| candidate.clone());
+        if exporter_accepts_ripr_facts(candidate, timeout) {
+            return PerlExporterProbe::Compatible { bin, version };
         }
+        first_incompatible.get_or_insert(PerlExporterProbe::Incompatible { bin, version });
     }
-    (None, None)
+    first_incompatible.unwrap_or(PerlExporterProbe::NotFound)
+}
+
+/// Whether `candidate ripr-facts --help` succeeds and documents `--schema`.
+fn exporter_accepts_ripr_facts(candidate: &str, timeout: std::time::Duration) -> bool {
+    run_exporter_probe(candidate, &["ripr-facts", "--help"], timeout).is_some_and(|output| {
+        output.status.success()
+            && (String::from_utf8_lossy(&output.stdout).contains("--schema")
+                || String::from_utf8_lossy(&output.stderr).contains("--schema"))
+    })
+}
+
+/// The single exporter spawn site for doctor: bounded, deadline-enforced,
+/// null stdin. `None` when the binary cannot be spawned, times out, or
+/// exceeds the capture limit.
+fn run_exporter_probe(
+    candidate: &str,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Option<std::process::Output> {
+    let mut command = std::process::Command::new(candidate);
+    command.args(args);
+    crate::git::collect_output_with_deadline_and_limit(
+        command,
+        timeout,
+        PERL_EXPORTER_PROBE_OUTPUT_LIMIT,
+        &format!("Perl fact exporter probe `{candidate}`"),
+    )
+    .ok()
+}
+
+/// Doctor lines for an exporter probe result.
+fn perl_exporter_lines(exporter: &PerlExporterProbe) -> Vec<String> {
+    match exporter {
+        PerlExporterProbe::Compatible { bin, version } => vec![format!(
+            "exporter: compatible `{bin}` ({version}) accepts `ripr-facts` (capability probe only; packets are validated by `ripr check`)"
+        )],
+        PerlExporterProbe::Incompatible { bin, version } => vec![
+            format!(
+                "exporter: found `{bin}` ({version}) but it does not accept `ripr-facts`; not a compatible exporter"
+            ),
+            format!(
+                "note: managed mode runs `<exporter> ripr-facts --schema {} ...`; the compatible exporter is `{}`, which is not yet published",
+                crate::app::PERL_FACT_PACKET_SCHEMA,
+                crate::domain::PERL_FACT_EXPORTER
+            ),
+        ],
+        PerlExporterProbe::NotFound => vec![format!(
+            "exporter: NOT found (expected `{}` or a `perllsp` wrapper on PATH, or [perl].executable); `{}` is not yet published",
+            crate::domain::PERL_FACT_EXPORTER,
+            crate::domain::PERL_FACT_EXPORTER
+        )],
+    }
 }
 
 /// Best-effort resolution of a PATH binary to an absolute path for display.
@@ -941,22 +1045,34 @@ fn detect_perl_frameworks(root: &Path) -> String {
     }
 }
 
-/// Choose the exact next command based on producer configuration + presence.
-fn perl_next_command(producer_configured: Option<&str>, found_bin: Option<&str>) -> String {
-    let managed = matches!(
-        producer_configured,
-        Some("perl-ripr-facts") | Some("perllsp") | Some("perl-lsp")
-    );
-    if managed && found_bin.is_some() {
-        // Managed mode + producer present: ripr invokes the exporter
-        // itself. There is no --languages flag (#2105): perl is enabled
-        // through config, and check then runs the enabled set.
+/// Choose the exact next command based on adapter availability, producer
+/// configuration, and whether a COMPATIBLE exporter was found.
+///
+/// An uncompiled adapter comes first: every other recommendation (a
+/// `ripr.toml` edit, `--perl-facts`) fails against this binary, so the only
+/// honest next step is the shared prerequisite text.
+fn perl_next_command(
+    adapter_compiled: bool,
+    producer_configured: Option<&str>,
+    compatible_exporter: Option<&str>,
+) -> String {
+    if !adapter_compiled {
+        return LanguageId::Perl.unavailable_adapter_recovery();
+    }
+    let managed = producer_configured.is_some_and(crate::app::is_managed_perl_producer);
+    if managed && compatible_exporter.is_some() {
+        // Managed mode + compatible producer present: ripr invokes the
+        // exporter itself. There is no --languages flag (#2105): perl is
+        // enabled through config, and check then runs the enabled set.
         // Name the additive edit, not a replacement list, so a user with
         // TypeScript/Python already enabled keeps them (#2105 review).
         "add \"perl\" to [languages] enabled in ripr.toml, then: ripr check --base origin/main --head HEAD".to_string()
     } else if managed {
-        // Managed mode configured but producer missing.
-        "install perllsp on PATH (or set [perl].executable) and add \"perl\" to [languages] enabled in ripr.toml, then: ripr check --base origin/main --head HEAD".to_string()
+        // Managed mode configured but no compatible producer.
+        format!(
+            "install a compatible Perl fact exporter (`{}`, not yet published) on PATH or set [perl].executable, and add \"perl\" to [languages] enabled in ripr.toml, then: ripr check --base origin/main --head HEAD",
+            crate::domain::PERL_FACT_EXPORTER
+        )
     } else {
         // Explicit packet mode (or producer absent): supply --perl-facts.
         "ripr check --perl-facts <packet.json> --diff <diff.patch> --json".to_string()
@@ -1384,25 +1500,98 @@ mod tests {
     fn perl_next_command_never_recommends_a_flag_check_rejects() {
         // #2105: `ripr check` has no --languages flag; every doctor
         // recommendation must stay within the check parser's contract.
-        for (producer, found) in [
-            (Some("perllsp"), Some("perllsp")),
-            (Some("perllsp"), None),
-            (Some("perl-ripr-facts"), None),
-            (None, None),
-        ] {
-            let command = perl_next_command(producer, found);
-            assert!(
-                !command.contains("--languages"),
-                "recommendation must not name --languages: {command}"
-            );
+        for compiled in [true, false] {
+            for (producer, found) in [
+                (Some("perllsp"), Some("perllsp")),
+                (Some("perllsp"), None),
+                (Some("perl-ripr-facts"), None),
+                (None, None),
+            ] {
+                let command = perl_next_command(compiled, producer, found);
+                assert!(
+                    !command.contains("--languages"),
+                    "recommendation must not name --languages: {command}"
+                );
+            }
         }
         // The managed-present branch points at the config-driven route.
-        let managed = perl_next_command(Some("perllsp"), Some("perllsp"));
+        let managed = perl_next_command(true, Some("perllsp"), Some("perllsp"));
         assert!(managed.contains("[languages]"));
         assert!(managed.contains("ripr check --base origin/main --head HEAD"));
         // The packet-mode branch is unchanged.
-        let packet = perl_next_command(None, None);
+        let packet = perl_next_command(true, None, None);
         assert!(packet.contains("--perl-facts"));
+    }
+
+    #[test]
+    fn perl_next_command_names_the_unpublished_exporter_not_perllsp() {
+        // Managed mode without a compatible exporter: the install hint must
+        // name the canonical exporter and say it is not published, not the
+        // argv-incompatible `perllsp` LSP server.
+        let missing = perl_next_command(true, Some("perllsp"), None);
+        assert!(
+            !missing.contains("install perllsp"),
+            "must not recommend installing perllsp: {missing}"
+        );
+        assert!(
+            missing.contains("`perl-ripr-facts`") && missing.contains("not yet published"),
+            "must name the unpublished canonical exporter: {missing}"
+        );
+    }
+
+    #[test]
+    fn perl_next_command_without_adapter_never_suggests_a_rejected_edit() {
+        // In a build without `lang-perl`, adding perl to [languages] makes
+        // `ripr check` exit 2, and --perl-facts cannot be analyzed either,
+        // so every branch must return the shared prerequisite text.
+        for (producer, found) in [
+            (Some("perllsp"), Some("perllsp")),
+            (Some("perl-ripr-facts"), None),
+            (None, None),
+        ] {
+            let command = perl_next_command(false, producer, found);
+            assert_eq!(command, LanguageId::Perl.unavailable_adapter_recovery());
+            assert!(
+                !command.contains("then: ripr check") && !command.contains("--perl-facts <"),
+                "uncompiled adapter must not get a runnable-looking next step: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn perl_exporter_lines_never_call_an_incompatible_binary_found() {
+        let incompatible = perl_exporter_lines(&PerlExporterProbe::Incompatible {
+            bin: "/opt/bin/perllsp".to_string(),
+            version: "perllsp 0.17.0".to_string(),
+        });
+        let first = incompatible.first().map(String::as_str).unwrap_or("");
+        assert!(
+            first.contains("does not accept `ripr-facts`")
+                && first.contains("not a compatible exporter")
+                && !first.starts_with("exporter: found at"),
+            "incompatible exporter must not read as found/working: {incompatible:?}"
+        );
+        // The second line is the prerequisite pointer: the argv ripr sends and
+        // the exporter that would accept it.
+        assert_eq!(incompatible.len(), 2, "{incompatible:?}");
+        let note = incompatible.get(1).map(String::as_str).unwrap_or("");
+        assert!(
+            note.starts_with("note: ")
+                && note.contains(crate::app::PERL_FACT_PACKET_SCHEMA)
+                && note.contains(crate::domain::PERL_FACT_EXPORTER)
+                && note.contains("not yet published"),
+            "incompatible exporter must name the argv and the compatible exporter: {note:?}"
+        );
+        let compatible = perl_exporter_lines(&PerlExporterProbe::Compatible {
+            bin: "/opt/bin/perl-ripr-facts".to_string(),
+            version: "perl-ripr-facts 0.1.0".to_string(),
+        });
+        assert!(
+            compatible
+                .first()
+                .is_some_and(|line| line.starts_with("exporter: compatible")),
+            "compatible exporter line: {compatible:?}"
+        );
     }
 
     #[test]
@@ -1457,9 +1646,14 @@ mod tests {
         let json = report.render_json()?;
         let value: serde_json::Value =
             serde_json::from_str(&json).map_err(|err| format!("parse report JSON: {err}"))?;
-        if value["status"] != "fail"
-            || value["checks"][2]["name"] != "config"
-            || value["checks"][2]["status"] != "fail"
+        // Found by name, not by position: the check list grows, and an index
+        // pins the order rather than the claim.
+        let config_in_json = value["checks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|check| check["name"] == "config");
+        if value["status"] != "fail" || config_in_json.is_none_or(|check| check["status"] != "fail")
         {
             return Err(format!("unexpected invalid-config JSON report: {value}"));
         }

@@ -8,7 +8,8 @@
 use crate::agent::loop_commands::{display_path, shell_arg};
 use crate::analysis::is_test_surface_path;
 use crate::edit_cage::{
-    AttemptBaseline, EditCagePolicy, EditCageVerdict, evaluate_repository_edit_cage_with_delta,
+    AttemptBaseline, EditCagePolicy, EditCageVerdict, HeadMovement,
+    evaluate_repository_edit_cage_with_head_movement,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,6 +28,11 @@ const REPAIR_ATTEMPT_COMMITMENT: &str = "before-commitment.sha256";
 const REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY: &str = "artifacts";
 const REPAIR_ATTEMPT_ID_PREFIX: &str = "repair-attempt-";
 const REPAIR_ATTEMPT_ID_HEX_LEN: usize = 24;
+/// Cargo's default build directory, relative to the workspace root.
+const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
+/// The lockfile Cargo writes at the workspace root when it resolves
+/// dependencies.
+const CARGO_WORKSPACE_LOCKFILE: &str = "Cargo.lock";
 
 static ATTEMPT_NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -97,6 +103,29 @@ pub(crate) struct RepairAttemptManifest {
     pub(crate) non_claims: Vec<String>,
     #[serde(default)]
     pub(crate) after: Option<RepairAttemptAfter>,
+    /// The refusal of this attempt's most recent after phase, when that phase
+    /// refused after selecting the attempt. It is an observation, not a state:
+    /// it never changes `state` or `after`, the before commitment excludes it,
+    /// and the next after phase that reaches the durable finish clears it.
+    /// Absent (not `null`) when no refusal is recorded, so manifests without
+    /// one keep their exact bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) last_after_refusal: Option<RepairAttemptAfterRefusal>,
+}
+
+/// Why the last after phase of an attempt refused, recorded by the attempt
+/// authority so `ripr agent status` can report the outcome instead of
+/// repeating the refused command as if nothing had happened.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RepairAttemptAfterRefusal {
+    /// The refusal message the after phase exited with, bounded to
+    /// `REPAIR_ATTEMPT_REFUSAL_MAX_BYTES`.
+    pub(crate) reason: String,
+    /// The repository HEAD when the refusal was recorded, or `None` when it
+    /// could not be read.
+    pub(crate) repository_head: Option<String>,
+    pub(crate) recorded_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -134,7 +163,6 @@ pub(crate) fn receipt_binding(
             .map_err(|error| format!("repair packet is not UTF-8: {error}"))?,
         seam_id,
     )?;
-    validate_trusted_head_surface(&root, &policy)?;
     let (manifest_path, manifest) = if let Some(attempt_id) = attempt_id {
         let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
         let loaded = load_repair_attempt_by_id(&root, &attempt_id)?;
@@ -187,8 +215,18 @@ pub(crate) fn receipt_binding(
             after.verdict.status
         ));
     }
+    // The receipt names the after head the finish recorded. That head is the
+    // prepared head, or a descendant reached only by commits the edit cage
+    // evaluated (a committed focused test); anything else is stale.
     let current_head = crate::agent::artifact::current_git_head(&root)?;
-    if current_head != manifest.repository_head || current_head != after.repository_head {
+    if current_head != after.repository_head
+        || (current_head != manifest.repository_head
+            && !crate::agent::artifact::git_merge_base_is_ancestor(
+                &root,
+                &manifest.repository_head,
+                &current_head,
+            )?)
+    {
         return Err("repair attempt receipt is stale relative to repository HEAD".to_string());
     }
     let packet_artifact = find_manifest_artifact(&manifest, "agent_packet")?;
@@ -208,12 +246,34 @@ pub(crate) fn receipt_binding(
     }
     let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
         .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
-    let (delta, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+    // Recomputed under the admitting rule: for an attempt whose head did not
+    // move it is identical to the exact-head rule, and an attempt whose finish
+    // required the exact head and saw it move is already refused as stale.
+    let (delta, _) = evaluate_repository_edit_cage_with_head_movement(
+        &baseline,
+        HeadMovement::AdmitDescendantCommits,
+    )?;
+    // The after phase, a rerun of `ripr agent receipt`, and `ripr agent
+    // status` write command-owned files under `target/ripr` after the finish
+    // bound its verdict. Those later operational writes are not part of the
+    // attempt; any other movement still breaks the binding.
+    let delta = crate::edit_cage::without_later_operational_writes(
+        baseline.policy(),
+        &delta,
+        &after.verdict.changed_paths,
+    );
+    let verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let delta_bytes = serde_json::to_vec(&delta)
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
     if sha256_bytes(&delta_bytes) != after.delta_sha256 || verdict != after.verdict {
         return Err("repair attempt after verdict binding is tampered or stale".to_string());
     }
+    validate_trusted_head_surface(
+        &root,
+        &policy,
+        &verdict.changed_paths,
+        &manifest.repository_head,
+    )?;
     let manifest_path = display_path(&manifest_path);
     Ok(serde_json::json!({
         "attempt_id": after.attempt_id.as_str(),
@@ -293,6 +353,8 @@ pub(crate) struct BeginRepairAttemptResult {
 pub(crate) struct ResolvedRepairAttempt {
     pub(crate) attempt_id: RepairAttemptId,
     pub(crate) seam_id: String,
+    /// The repository HEAD the before phase prepared the attempt at.
+    pub(crate) repository_head: String,
     pub(crate) manifest_path: PathBuf,
     pub(crate) before_snapshot_path: PathBuf,
     pub(crate) packet_path: PathBuf,
@@ -456,6 +518,7 @@ fn complete_repair_attempt(
                     "this manifest does not authorize mutation execution or merge".to_string(),
                 ],
                 after: None,
+                last_after_refusal: None,
             };
             let manifest_path = write_repair_attempt_manifest(canonical_root, &manifest)?;
             Ok(BeginRepairAttemptResult {
@@ -487,6 +550,56 @@ pub(crate) fn load_repair_attempt_manifest(
         .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
     let (_, manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
     Ok(manifest)
+}
+
+/// One entry of the read-only attempt inventory: a fully validated manifest,
+/// or the directory name and the reason its manifest was refused.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RepairAttemptInventoryEntry {
+    Valid(Box<RepairAttemptManifest>),
+    Invalid { directory: String, error: String },
+}
+
+/// Lists every attempt under `target/ripr/repair-attempts` without changing
+/// any of them, ordered by directory name. Each manifest goes through the same
+/// validation as the after phase, so a consumer never sees an attempt the
+/// after phase would refuse. Ordering is by identity, not creation time:
+/// consumers must not read "newest" into it (docs/REPAIR_ATTEMPT.md).
+/// A missing attempts directory is an empty inventory.
+pub(crate) fn inventory_repair_attempts(
+    root: &Path,
+) -> Result<Vec<RepairAttemptInventoryEntry>, String> {
+    let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+    if !manifests_root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&manifests_root)
+        .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
+    {
+        let entry = entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
+        let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
+        if !path.is_file() {
+            continue;
+        }
+        let directory = entry.file_name().to_string_lossy().into_owned();
+        entries.push(match read_repair_attempt_manifest_at(&root, &path) {
+            Ok(manifest) => RepairAttemptInventoryEntry::Valid(Box::new(manifest)),
+            Err(error) => RepairAttemptInventoryEntry::Invalid { directory, error },
+        });
+    }
+    entries.sort_by(|left, right| inventory_key(left).cmp(inventory_key(right)));
+    Ok(entries)
+}
+
+fn inventory_key(entry: &RepairAttemptInventoryEntry) -> &str {
+    match entry {
+        RepairAttemptInventoryEntry::Valid(manifest) => manifest.repair_attempt_id.as_str(),
+        RepairAttemptInventoryEntry::Invalid { directory, .. } => directory,
+    }
 }
 
 /// Finds one staged artifact by role, if the attempt carries it.
@@ -576,6 +689,7 @@ fn manifest_before_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, St
     let mut before = manifest.clone();
     before.state = RepairAttemptState::AwaitingEdit;
     before.after = None;
+    before.last_after_refusal = None;
     serde_json::to_vec_pretty(&before)
         .map_err(|error| format!("serialize repair attempt commitment failed: {error}"))
 }
@@ -715,6 +829,34 @@ pub(crate) fn edit_cage_policy_from_packet(
         .first()
         .cloned()
         .ok_or_else(|| "repair packet has no selected edit target".to_string())?;
+    // A Rust repair's focused test is built and run with Cargo, whose default
+    // build directory is `target/` at the workspace root this attempt is bound
+    // to. The documented loop runs the project tests between the phases, so
+    // the git-ignored contents of that directory are expected build output,
+    // not edits. The cage still observes tracked and untracked-not-ignored
+    // paths there, every rule path named here (including `target/ripr`), and
+    // every other ignored path. Other languages keep observing every ignored
+    // path: the trust-bound Python verify phase executes tests and retains
+    // its full ignored-path guard.
+    let ignored_build_output =
+        if Path::new(selected_target.path()).extension() == Some(std::ffi::OsStr::new("rs")) {
+            Some(crate::edit_cage::CagePathRule::subtree(
+                CARGO_DEFAULT_BUILD_OUTPUT_DIR,
+            )?)
+        } else {
+            None
+        };
+    // The same Rust repair runs Cargo, which writes the workspace-root
+    // `Cargo.lock` when the project does not commit one (the first
+    // `cargo test` of a library crate). While Git does not track it, it is
+    // build state, and the analysis input identity does not count it either.
+    let untracked_build_lockfile = if ignored_build_output.is_some() {
+        Some(crate::edit_cage::CagePathRule::exact(
+            CARGO_WORKSPACE_LOCKFILE,
+        )?)
+    } else {
+        None
+    };
     Ok(EditCagePolicy {
         selected_target,
         allowed_edit_surface: allowed,
@@ -724,6 +866,8 @@ pub(crate) fn edit_cage_policy_from_packet(
             .transpose()?
             .unwrap_or_default(),
         expected_operational_writes: vec![crate::edit_cage::CagePathRule::subtree("target/ripr")?],
+        ignored_build_output,
+        untracked_build_lockfile,
     })
 }
 
@@ -758,6 +902,7 @@ pub(crate) fn resolve_awaiting_repair_attempt(
     attempt_id: Option<&str>,
     seam_id: Option<&str>,
 ) -> Result<ResolvedRepairAttempt, String> {
+    let root_argument = root;
     let root = root
         .canonicalize()
         .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
@@ -777,10 +922,9 @@ pub(crate) fn resolve_awaiting_repair_attempt(
         }
     };
     if manifest.state != RepairAttemptState::AwaitingEdit {
-        return Err(format!(
-            "repair attempt {} is {:?}; after phase requires awaiting_edit",
-            manifest.repair_attempt_id.as_str(),
-            manifest.state
+        return Err(after_phase_not_awaiting_error(
+            &display_path(root_argument),
+            &manifest,
         ));
     }
     let before_snapshot_path =
@@ -789,6 +933,7 @@ pub(crate) fn resolve_awaiting_repair_attempt(
     Ok(ResolvedRepairAttempt {
         attempt_id: manifest.repair_attempt_id,
         seam_id: manifest.seam_id,
+        repository_head: manifest.repository_head,
         manifest_path,
         before_snapshot_path,
         packet_path,
@@ -799,7 +944,7 @@ pub(crate) fn resolve_awaiting_repair_attempt(
 /// publication stays retryable. `finish_repair_attempt` commits the terminal
 /// after state before the compatibility apply record is rendered, so a record
 /// write failure would otherwise strand the attempt: the identical retry is
-/// rejected (`after phase requires awaiting_edit`) and the record can never
+/// rejected (the attempt reads as already finished) and the record can never
 /// be recreated. The restore is the inverse transition owned by this
 /// authority: it requires the committed after state and rewrites exactly
 /// `state = awaiting_edit, after = None`, which the immutable before
@@ -834,20 +979,26 @@ pub(crate) fn restore_repair_attempt_to_awaiting_edit(
     Ok(())
 }
 
+/// Records the after-phase verdict. `movement` states whether commits made
+/// on top of the prepared head belong to the attempt: the ordinary repair
+/// transaction admits them (the cage evaluates every committed path), while
+/// a trust-bound attempt, whose selection pins the head, requires the exact
+/// prepared head. Any other head movement records `stale`.
 pub(crate) fn finish_repair_attempt(
     root: &Path,
     attempt_id: &RepairAttemptId,
     packet_path: &Path,
+    movement: HeadMovement,
 ) -> Result<RepairAttemptAfter, String> {
+    let root_argument = root;
     let root = root
         .canonicalize()
         .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
     let (manifest_path, mut manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
     if manifest.state != RepairAttemptState::AwaitingEdit {
-        return Err(format!(
-            "repair attempt {} is {:?}; after phase requires awaiting_edit",
-            attempt_id.as_str(),
-            manifest.state
+        return Err(after_phase_not_awaiting_error(
+            &display_path(root_argument),
+            &manifest,
         ));
     }
     let packet_artifact = find_manifest_artifact(&manifest, "agent_packet")?;
@@ -892,8 +1043,16 @@ pub(crate) fn finish_repair_attempt(
         return Err("edit-cage baseline root does not match selected repository".to_string());
     }
     let current_head = crate::agent::artifact::current_git_head(&root)?;
-    let current = current_head == manifest.repository_head;
-    let (delta, mut verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+    let (delta, mut verdict) =
+        evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    let current = current_head == crate::agent::artifact::current_git_head(&root)?
+        && (current_head == manifest.repository_head
+            || (movement == HeadMovement::AdmitDescendantCommits
+                && crate::agent::artifact::git_merge_base_is_ancestor(
+                    &root,
+                    &manifest.repository_head,
+                    &current_head,
+                )?));
     if !current {
         verdict.status = crate::edit_cage::EditCageVerdictStatus::Incomparable;
     }
@@ -908,6 +1067,9 @@ pub(crate) fn finish_repair_attempt(
         verdict,
     };
     manifest.after = Some(after.clone());
+    // This after phase reached the durable finish, so an earlier refusal no
+    // longer describes the attempt's last after phase.
+    manifest.last_after_refusal = None;
     manifest.state = if after.current {
         match after.verdict.status {
             crate::edit_cage::EditCageVerdictStatus::Compliant => RepairAttemptState::ReadyToFinish,
@@ -924,6 +1086,300 @@ pub(crate) fn finish_repair_attempt(
     bytes.push(b'\n');
     replace_manifest_bytes(&manifest_path, &bytes)?;
     Ok(after)
+}
+
+/// Records why the most recent after phase of an attempt refused. The attempt
+/// authority owns the write: the manifest is re-validated (before commitment
+/// and artifact digests) before and after the field changes, and only
+/// `last_after_refusal` moves, so the refusal can never alter the attempt's
+/// state, its after verdict, or its receipt binding. A later after phase that
+/// reaches `finish_repair_attempt` clears it.
+pub(crate) fn record_repair_attempt_after_refusal(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+    reason: &str,
+) -> Result<(), String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let (manifest_path, mut manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    let reason = bounded_refusal_reason(reason);
+    if reason.is_empty() {
+        return Err("an after-phase refusal needs a non-empty reason".to_string());
+    }
+    manifest.last_after_refusal = Some(RepairAttemptAfterRefusal {
+        reason,
+        repository_head: crate::agent::artifact::current_git_head(&root).ok(),
+        recorded_unix_ms: current_unix_ms()?,
+    });
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize repair attempt refusal failed: {error}"))?;
+    bytes.push(b'\n');
+    replace_manifest_bytes(&manifest_path, &bytes)?;
+    read_repair_attempt_manifest_at(&root, &manifest_path).map(|_| ())
+}
+
+/// Upper bound on a recorded after-phase refusal message.
+const REPAIR_ATTEMPT_REFUSAL_MAX_BYTES: usize = 4096;
+
+fn bounded_refusal_reason(reason: &str) -> String {
+    let reason = reason.trim();
+    if reason.len() <= REPAIR_ATTEMPT_REFUSAL_MAX_BYTES {
+        return reason.to_string();
+    }
+    let mut end = REPAIR_ATTEMPT_REFUSAL_MAX_BYTES;
+    while !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{} [truncated]", &reason[..end])
+}
+
+/// Where the repository HEAD stands relative to an attempt's prepared head.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AttemptHeadLineage {
+    /// HEAD is the prepared head.
+    Prepared,
+    /// HEAD moved only forward, by commits on top of the prepared head.
+    Descendant { current_head: String },
+    /// HEAD moved to a commit that does not descend from the prepared head
+    /// (an amend, rebase, reset, or checkout).
+    Diverged { current_head: String },
+}
+
+pub(crate) fn attempt_head_lineage(
+    root: &Path,
+    prepared_head: &str,
+) -> Result<AttemptHeadLineage, String> {
+    let current_head = crate::agent::artifact::current_git_head(root)?;
+    if current_head == prepared_head {
+        return Ok(AttemptHeadLineage::Prepared);
+    }
+    if crate::agent::artifact::git_merge_base_is_ancestor(root, prepared_head, &current_head)? {
+        Ok(AttemptHeadLineage::Descendant { current_head })
+    } else {
+        Ok(AttemptHeadLineage::Diverged { current_head })
+    }
+}
+
+/// How an after phase would treat the current repository HEAD for one
+/// attempt. The after phase and `ripr agent status` both read it, so status
+/// resumes exactly the attempts whose after phase would evaluate the current
+/// HEAD, and reports the same refusal and recovery for the rest.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AfterPhaseHeadAdmission {
+    /// The after phase evaluates the current HEAD as the attempt's with
+    /// `movement`: the prepared head, or, for an ordinary attempt, a commit
+    /// that descends from it (a committed focused test).
+    Current { movement: HeadMovement },
+    /// A trust-bound attempt whose HEAD is no longer its prepared head: the
+    /// after phase still runs, but the finish records the attempt `stale`.
+    FinishesStale { current_head: String },
+    /// An ordinary attempt whose HEAD does not descend from its prepared head
+    /// (an amend, rebase, reset, or checkout): the after phase refuses before
+    /// finishing, so the attempt keeps awaiting the edit and restoring the
+    /// prepared head makes it usable again.
+    RefusedDiverged { current_head: String },
+}
+
+/// The head movement an attempt's after phase applies. A trust-bound attempt
+/// (one that retains a Python repair-trust binding) pins its selection to the
+/// exact prepared head; an ordinary attempt admits commits made on top of it.
+pub(crate) fn after_phase_head_movement(manifest: &RepairAttemptManifest) -> HeadMovement {
+    if find_manifest_artifact_by_role(
+        manifest,
+        crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+    )
+    .is_some()
+    {
+        HeadMovement::RequireBaselineHead
+    } else {
+        HeadMovement::AdmitDescendantCommits
+    }
+}
+
+/// The after phase's head rule for one attempt at the current HEAD. The
+/// lineage is asked of Git only for an ordinary attempt: a trust-bound
+/// attempt compares the exact head.
+pub(crate) fn after_phase_head_admission(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Result<AfterPhaseHeadAdmission, String> {
+    let movement = after_phase_head_movement(manifest);
+    if movement == HeadMovement::RequireBaselineHead {
+        let current_head = crate::agent::artifact::current_git_head(root)?;
+        return Ok(if current_head == manifest.repository_head {
+            AfterPhaseHeadAdmission::Current { movement }
+        } else {
+            AfterPhaseHeadAdmission::FinishesStale { current_head }
+        });
+    }
+    Ok(
+        match attempt_head_lineage(root, &manifest.repository_head)? {
+            AttemptHeadLineage::Prepared | AttemptHeadLineage::Descendant { .. } => {
+                AfterPhaseHeadAdmission::Current { movement }
+            }
+            AttemptHeadLineage::Diverged { current_head } => {
+                AfterPhaseHeadAdmission::RefusedDiverged { current_head }
+            }
+        },
+    )
+}
+
+/// [`after_phase_head_admission`] for an attempt selected by identity.
+pub(crate) fn after_phase_head_admission_by_id(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<AfterPhaseHeadAdmission, String> {
+    let manifest = load_repair_attempt_manifest(root, attempt_id)?;
+    after_phase_head_admission(root, &manifest)
+}
+
+/// Recovery for an ordinary attempt whose HEAD no longer descends from its
+/// prepared head. The after phase prints it when it refuses, and `ripr agent
+/// status` repeats it for the same state, so both name the same cause and the
+/// same two routes: restore the prepared head, or prepare a new attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DivergedHeadRecovery {
+    /// Which HEAD moved where, and which history changes are accepted.
+    pub(crate) cause: String,
+    /// Restore the prepared head, then rerun the attempt's after phase.
+    pub(crate) reset: String,
+    /// Prepare a new attempt at the current HEAD instead.
+    pub(crate) restart: String,
+}
+
+impl DivergedHeadRecovery {
+    /// The after phase's narration, in order.
+    pub(crate) fn lines(&self) -> Vec<String> {
+        vec![
+            self.cause.clone(),
+            "the attempt was not finished and is still awaiting the focused test edit.".to_string(),
+            self.reset.clone(),
+            self.restart.clone(),
+        ]
+    }
+}
+
+pub(crate) fn diverged_head_recovery(
+    root_display: &str,
+    attempt_id: &str,
+    seam_id: &str,
+    prepared_head: &str,
+    current_head: &str,
+) -> DivergedHeadRecovery {
+    let root_arg = shell_arg(root_display);
+    let attempt_arg = shell_arg(attempt_id);
+    let seam_arg = shell_arg(seam_id);
+    DivergedHeadRecovery {
+        cause: format!(
+            "HEAD {} does not descend from {}, the head attempt `{attempt_id}` was prepared at (for example after `git commit --amend`, a rebase, a reset, or a checkout); commits made on top of that head are accepted, other history changes are not.",
+            short_head(current_head),
+            short_head(prepared_head),
+        ),
+        reset: format!(
+            "to recover when only your own test commit was rewritten: `git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged; then rerun `ripr agent repair --root {root_arg} --attempt {attempt_arg} --phase after`."
+        ),
+        restart: format!(
+            "otherwise, prepare a new attempt at the current HEAD: set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the edit, then run the new --attempt command it prints."
+        ),
+    }
+}
+
+fn short_head(head: &str) -> &str {
+    head.get(..12).unwrap_or(head)
+}
+
+/// The refusal an after phase gives for an attempt that is no longer awaiting
+/// its edit. It names the state in its documented spelling, says whether the
+/// attempt already finished, where its receipt was written, and what to run
+/// next, instead of a bare state name.
+fn after_phase_not_awaiting_error(root_display: &str, manifest: &RepairAttemptManifest) -> String {
+    let root_arg = shell_arg(root_display);
+    let attempt_id = manifest.repair_attempt_id.as_str();
+    let seam_id = &manifest.seam_id;
+    let status = format!("ripr agent status --root {root_arg}");
+    let restart = format!(
+        "ripr agent repair --root {root_arg} --seam-id {} --phase before",
+        shell_arg(seam_id)
+    );
+    let after_head = manifest
+        .after
+        .as_ref()
+        .map_or("an unrecorded HEAD", |after| {
+            short_head(&after.repository_head)
+        });
+    match manifest.state {
+        RepairAttemptState::ReadyToFinish => format!(
+            "repair attempt {attempt_id} (seam `{seam_id}`) already finished: its after phase ran at HEAD {after_head} and the edit cage admitted the edit (state `ready_to_finish`), so there is no after phase left to run. Its receipt, when that after phase issued one, is `{receipt}` until a later attempt's after phase replaces that file. Next: `{status}` reads the attempt's outcome; if the receipt leaves the gap open, start a new attempt with `{restart}`",
+            receipt = crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT,
+        ),
+        RepairAttemptState::Stale
+        | RepairAttemptState::Incomparable
+        | RepairAttemptState::Failed => format!(
+            "repair attempt {attempt_id} (seam `{seam_id}`) already ended `{state}` at its after phase (HEAD {after_head}); an ended attempt cannot run again or produce a receipt. Next: `{status}` says why it ended; while the gap is still open, start a new attempt with `{restart}`",
+            state = repair_attempt_state_label(&manifest.state),
+        ),
+        RepairAttemptState::Prepared => format!(
+            "repair attempt {attempt_id} (seam `{seam_id}`) was prepared but never published, so it has no after phase to run. Next: start a new attempt with `{restart}`"
+        ),
+        RepairAttemptState::AwaitingEdit => {
+            format!("repair attempt {attempt_id} (seam `{seam_id}`) is awaiting its edit")
+        }
+    }
+}
+
+/// The documented (serialized) spelling of an attempt state.
+pub(crate) fn repair_attempt_state_label(state: &RepairAttemptState) -> &'static str {
+    match state {
+        RepairAttemptState::Prepared => "prepared",
+        RepairAttemptState::AwaitingEdit => "awaiting_edit",
+        RepairAttemptState::ReadyToFinish => "ready_to_finish",
+        RepairAttemptState::Stale => "stale",
+        RepairAttemptState::Incomparable => "incomparable",
+        RepairAttemptState::Failed => "failed",
+    }
+}
+
+/// Repository paths that feed the repo-exposure analysis input identity and
+/// changed since the attempt's before phase: Cargo manifests, Git-tracked
+/// Cargo lockfiles, and the root `ripr.toml`. Read-only: it evaluates the
+/// retained edit-cage baseline (committed changes included) without
+/// finishing the attempt, so an after phase refused for incomparable
+/// analysis inputs can name what moved.
+pub(crate) fn analysis_input_changes(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<Vec<String>, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let (_, manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    let baseline_artifact = find_manifest_artifact(&manifest, "edit_cage_baseline")?;
+    let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
+        .map_err(|error| format!("read staged edit-cage baseline failed: {error}"))?;
+    if sha256_bytes(&baseline_bytes) != baseline_artifact.sha256 {
+        return Err("repair attempt edit-cage baseline binding failed".to_string());
+    }
+    let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
+        .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
+    let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
+        &baseline,
+        HeadMovement::AdmitDescendantCommits,
+    )?;
+    Ok(verdict
+        .changed_paths
+        .into_iter()
+        .filter(|path| is_analysis_input_path(path))
+        .collect())
+}
+
+fn is_analysis_input_path(path: &str) -> bool {
+    path == crate::config::CONFIG_FILE_NAME
+        || matches!(
+            path.rsplit('/').next(),
+            Some("Cargo.toml" | CARGO_WORKSPACE_LOCKFILE)
+        )
 }
 
 fn select_awaiting_repair_attempt_by_seam(
@@ -1174,6 +1630,13 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     if has_after != state_requires_after {
         return Err("repair attempt state/after boundary is inconsistent".to_string());
     }
+    if manifest
+        .last_after_refusal
+        .as_ref()
+        .is_some_and(|refusal| refusal.reason.trim().is_empty())
+    {
+        return Err("repair attempt after-phase refusal has an empty reason".to_string());
+    }
     if manifest.artifacts.iter().any(|artifact| {
         artifact.role.is_empty() || artifact.path.is_empty() || !is_sha256_digest(&artifact.sha256)
     }) {
@@ -1249,10 +1712,47 @@ fn validate_manifest_at(
     Ok(())
 }
 
-fn validate_trusted_head_surface(root: &Path, policy: &EditCagePolicy) -> Result<(), String> {
-    let tracked = git_paths(root, &["diff", "--name-only", "-z", "HEAD"])?;
+/// Refuses receipt admission when the repository differs from the trusted
+/// surface.
+///
+/// Tracked content is compared in full with the head the attempt was
+/// prepared at (`before_head`): that covers uncommitted edits and every commit
+/// made on top of it, so any tracked difference outside the trusted surface,
+/// pre-existing or not, committed or not, blocks admission. An untracked path belongs to no
+/// commit; it blocks admission only when the attempt observably wrote it,
+/// which is exactly the edit cage's baseline-relative delta
+/// (`observed_changes`, built from exact content digests of untracked files).
+/// A pre-existing untracked file whose bytes are unchanged since the before
+/// phase (for example a `Cargo.lock` an earlier build generated) is not an
+/// attempt write, and the cage's compliant verdict already reported it as
+/// unchanged, so refusing it here would contradict the cage's own delta.
+fn validate_trusted_head_surface(
+    root: &Path,
+    policy: &EditCagePolicy,
+    observed_changes: &[String],
+    before_head: &str,
+) -> Result<(), String> {
+    let tracked = git_paths(
+        root,
+        &[
+            "diff",
+            "--no-renames",
+            "--no-ext-diff",
+            "--name-only",
+            "-z",
+            before_head,
+            "--",
+        ],
+    )?;
     let untracked = git_paths(root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-    for path in tracked.into_iter().chain(untracked) {
+    let observed = observed_changes
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let written_untracked = untracked
+        .into_iter()
+        .filter(|path| observed.contains(path.as_str()));
+    for path in tracked.into_iter().chain(written_untracked) {
         if !policy.allows_path(&path) {
             return Err(format!(
                 "repair receipt observed repository path outside trusted edit surface: {path}"
@@ -1263,6 +1763,11 @@ fn validate_trusted_head_surface(root: &Path, policy: &EditCagePolicy) -> Result
 }
 
 fn git_paths(root: &Path, args: &[&str]) -> Result<Vec<String>, String> {
+    // Callers pass `-z` output, which is never C-quoted; decoding rules
+    // come from the shared NUL path-record authority (#4006). Strict:
+    // non-UTF-8 or empty records fail loudly instead of collapsing through
+    // lossy conversion, which refuses admission in the trusted-surface
+    // validator rather than admitting a rewritten path.
     let output = Command::new("git")
         .current_dir(root)
         .args(args)
@@ -1275,11 +1780,27 @@ fn git_paths(root: &Path, args: &[&str]) -> Result<Vec<String>, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .split('\0')
-        .filter(|path| !path.is_empty())
-        .map(str::to_owned)
-        .collect())
+    decode_git_paths(&output.stdout, &args.join(" "))
+}
+
+/// Decode raw `-z` path-inventory bytes through the shared NUL path-record
+/// authority (#4006). Strict: non-UTF-8 or empty records fail loudly.
+fn decode_git_paths(output: &[u8], argv: &str) -> Result<Vec<String>, String> {
+    crate::analysis::parse_git_path_records(output)
+        .map_err(|err| format!("git {argv} path inventory: {err}"))
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| {
+                    path.to_str().map(str::to_string).ok_or_else(|| {
+                        format!(
+                            "git {argv} path inventory: decoded path {} is not valid UTF-8",
+                            path.display()
+                        )
+                    })
+                })
+                .collect()
+        })
 }
 
 /// Schema 0.1 artifact digest shape: `sha256:` plus 64 lowercase hex digits.
@@ -1430,6 +1951,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: vec!["not merge authority".to_string()],
             after: None,
+            last_after_refusal: None,
         })
     }
 
@@ -1531,6 +2053,25 @@ mod tests {
                 return Err(format!(
                     "selected target `{}` does not match `{target}`",
                     policy.selected_target.path()
+                ));
+            }
+            // A Rust repair runs Cargo: its build directory and the
+            // workspace-root lockfile it may generate are declared build
+            // state. A Python repair declares neither.
+            let rust = target.ends_with(".rs");
+            let expected_lockfile = if rust {
+                Some(crate::edit_cage::CagePathRule::exact(
+                    CARGO_WORKSPACE_LOCKFILE,
+                )?)
+            } else {
+                None
+            };
+            if policy.untracked_build_lockfile != expected_lockfile
+                || policy.ignored_build_output.is_some() != rust
+            {
+                return Err(format!(
+                    "`{target}` declared build state {:?} / {:?}",
+                    policy.untracked_build_lockfile, policy.ignored_build_output
                 ));
             }
         }
@@ -1980,6 +2521,7 @@ mod tests {
             &root,
             &first.manifest.repair_attempt_id,
             &second_exact.packet_path,
+            HeadMovement::AdmitDescendantCommits,
         );
         match wrong_packet {
             Err(error) if error.contains("retained agent_packet") => {}
@@ -1999,8 +2541,12 @@ mod tests {
         std::fs::write(&test_path, "#[test]\nfn focused() {}\n")
             .map_err(|error| format!("write {} failed: {error}", test_path.display()))?;
 
-        let after =
-            finish_repair_attempt(&root, &first.manifest.repair_attempt_id, &exact.packet_path)?;
+        let after = finish_repair_attempt(
+            &root,
+            &first.manifest.repair_attempt_id,
+            &exact.packet_path,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
         if after.attempt_id != first.manifest.repair_attempt_id
             || !after.current
             || after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant
@@ -2106,6 +2652,100 @@ mod tests {
         Ok(())
     }
 
+    /// The receipt's tracked-surface check compares with the prepared head,
+    /// so a production change the attempt committed on top of it is refused
+    /// even though it is no longer a difference from the current HEAD.
+    #[test]
+    fn trusted_surface_includes_changes_committed_after_the_prepared_head() -> Result<(), String> {
+        let root = test_repo_root("trusted-surface-commits")?;
+        let result = (|| -> Result<(), String> {
+            let packet = serde_json::json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": ["tests/target.rs"],
+                "forbidden_files": []
+            });
+            let policy = edit_cage_policy_from_packet(
+                &serde_json::to_string(&packet).map_err(|error| error.to_string())?,
+                "seam:sample",
+            )?;
+            let prepared_head = crate::agent::artifact::current_git_head(&root)?;
+            std::fs::create_dir_all(root.join("tests"))
+                .map_err(|error| format!("create tests: {error}"))?;
+            std::fs::write(root.join("tests/target.rs"), "#[test]\nfn focused() {}\n")
+                .map_err(|error| format!("write test: {error}"))?;
+            run_git(&root, &["add", "tests/target.rs"])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-qm", "focused test"])?;
+            validate_trusted_head_surface(&root, &policy, &[], &prepared_head)?;
+
+            std::fs::write(root.join("src.rs"), "pub fn moved() {}\n")
+                .map_err(|error| format!("write production file: {error}"))?;
+            run_git(&root, &["add", "src.rs"])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-qm", "production"])?;
+            // Precondition: the production change is not a difference from
+            // the current HEAD, only from the prepared head.
+            if !git_paths(&root, &["diff", "--name-only", "-z", "HEAD"])?.is_empty() {
+                return Err("the production change must be committed".to_string());
+            }
+            match validate_trusted_head_surface(&root, &policy, &[], &prepared_head) {
+                Err(error) if error.contains("outside trusted edit surface: src.rs") => Ok(()),
+                other => Err(format!(
+                    "a committed production change must block the receipt: {other:?}"
+                )),
+            }
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn strict_git_paths_inventory_rejects_non_utf8() -> Result<(), String> {
+        // The strict-failure side of the NUL authority at the repair-attempt
+        // decode boundary: non-UTF-8 records fail loudly instead of
+        // collapsing through lossy conversion (which would admit a rewritten
+        // path in the trusted-surface validator).
+        let err = match decode_git_paths(b"ok.txt\0\xffbad\0", "diff --name-only -z") {
+            Err(err) => err,
+            Ok(paths) => {
+                return Err(format!("non-UTF-8 inventory must fail, decoded {paths:?}"));
+            }
+        };
+        if !err.contains("not valid UTF-8") {
+            return Err(format!("unexpected strict-decode error: {err}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn git_paths_decode_exotic_names_exact() -> Result<(), String> {
+        // No-regression pin for the #4006 strict-decode migration: this
+        // route already passed `-z`, so space and non-ASCII names decoded
+        // before and must decode after. The migration's behavior delta is
+        // strictness (non-UTF-8/empty records fail instead of collapsing),
+        // pinned by `strict_git_paths_inventory_rejects_non_utf8`; live
+        // non-UTF-8 names are impractical on Windows runners. Asserts
+        // through the real `git_paths` production path.
+        let root = test_repo_root("nul-paths")?;
+        let result = (|| -> Result<(), String> {
+            std::fs::write(root.join("sp ace.txt"), "spaces\n")
+                .map_err(|error| format!("write fixture failed: {error}"))?;
+            std::fs::write(root.join("uni-\u{e9}.txt"), "unicode\n")
+                .map_err(|error| format!("write fixture failed: {error}"))?;
+            run_git(&root, &["add", "-A"])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-qm", "exotic"])?;
+            let mut paths = git_paths(&root, &["diff", "--name-only", "-z", "HEAD~1", "HEAD"])?;
+            paths.sort();
+            let expected = vec!["sp ace.txt".to_string(), "uni-\u{e9}.txt".to_string()];
+            if paths != expected {
+                return Err(format!(
+                    "exotic path inventory mismatch: got {paths:?}, want {expected:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
     #[test]
     fn restore_returns_a_finished_attempt_to_retryable_awaiting_edit() -> Result<(), String> {
         let root = test_repo_root("restore")?;
@@ -2115,7 +2755,12 @@ mod tests {
 
         // Finish without the focused edit: a terminal after state the apply
         // path can no longer retry through.
-        finish_repair_attempt(&root, &attempt_id, &resolved.packet_path)?;
+        finish_repair_attempt(
+            &root,
+            &attempt_id,
+            &resolved.packet_path,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
         let (_, finished) = load_repair_attempt_by_id(&root, &attempt_id)?;
         if finished.state == RepairAttemptState::AwaitingEdit || finished.after.is_none() {
             return Err(format!(
@@ -2145,6 +2790,159 @@ mod tests {
                     "restoring an awaiting attempt was not refused: {other:?}"
                 ));
             }
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// A recorded after-phase refusal is an observation on the attempt: the
+    /// manifest still validates against its before commitment, the attempt
+    /// stays resumable, the reason is bounded, and the next after phase that
+    /// reaches the durable finish clears it.
+    #[test]
+    fn recorded_after_refusal_keeps_the_attempt_resumable_until_finish() -> Result<(), String> {
+        let root = test_repo_root("refusal")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "refusal")?;
+        let attempt_id = prepared.manifest.repair_attempt_id.clone();
+        let (manifest_path, _) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        let before_bytes = std::fs::read(&manifest_path)
+            .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
+        if String::from_utf8_lossy(&before_bytes).contains("last_after_refusal") {
+            return Err("a manifest without a refusal must not carry the field".to_string());
+        }
+
+        let long_reason = format!("agent verify refused: {}", "x".repeat(10_000));
+        record_repair_attempt_after_refusal(&root, &attempt_id, &long_reason)?;
+        let (_, refused) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        let refusal = refused
+            .last_after_refusal
+            .clone()
+            .ok_or_else(|| "the refusal was not recorded".to_string())?;
+        if refused.state != RepairAttemptState::AwaitingEdit || refused.after.is_some() {
+            return Err(format!(
+                "recording a refusal moved the attempt: {:?}",
+                refused.state
+            ));
+        }
+        if !refusal.reason.starts_with("agent verify refused: ")
+            || !refusal.reason.ends_with(" [truncated]")
+            || refusal.reason.len() > REPAIR_ATTEMPT_REFUSAL_MAX_BYTES + " [truncated]".len()
+        {
+            return Err(format!(
+                "the refusal reason is not bounded: {} bytes",
+                refusal.reason.len()
+            ));
+        }
+        if refusal.repository_head.as_deref() != Some(refused.repository_head.as_str()) {
+            return Err(format!(
+                "the refusal did not record the current HEAD: {:?}",
+                refusal.repository_head
+            ));
+        }
+        // The inventory status reads sees the same refusal, and the after
+        // phase can still select the attempt.
+        let inventory = inventory_repair_attempts(&root)?;
+        match inventory.as_slice() {
+            [RepairAttemptInventoryEntry::Valid(manifest)]
+                if manifest.last_after_refusal.as_ref() == Some(&refusal) => {}
+            other => return Err(format!("inventory lost the refusal: {other:?}")),
+        }
+        let resolved = resolve_awaiting_repair_attempt(&root, Some(attempt_id.as_str()), None)?;
+
+        if record_repair_attempt_after_refusal(&root, &attempt_id, "  ").is_ok() {
+            return Err("an empty refusal reason must be refused".to_string());
+        }
+
+        // The sample attempt is an ordinary (not trust-bound) attempt, so its
+        // after phase admits commits on top of the prepared head.
+        finish_repair_attempt(
+            &root,
+            &attempt_id,
+            &resolved.packet_path,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        let (_, finished) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        if finished.last_after_refusal.is_some() {
+            return Err("finish must clear the earlier refusal".to_string());
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// One head rule for the after phase and `ripr agent status`: an
+    /// ordinary attempt is current at its prepared head and at a commit on
+    /// top of it, and refused (still awaiting the edit) once history is
+    /// rewritten; a trust-bound attempt is current only at the exact
+    /// prepared head and otherwise finishes stale.
+    #[test]
+    fn after_phase_head_admission_follows_the_attempt_lineage() -> Result<(), String> {
+        let root = test_repo_root("head-admission")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "admission")?;
+        let manifest = prepared.manifest;
+        let current = || AfterPhaseHeadAdmission::Current {
+            movement: HeadMovement::AdmitDescendantCommits,
+        };
+        if after_phase_head_admission(&root, &manifest)? != current() {
+            return Err("an ordinary attempt at its prepared head is current".to_string());
+        }
+        let mut trust_bound = manifest.clone();
+        trust_bound.artifacts.push(RepairAttemptArtifact {
+            role: crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE.to_string(),
+            path: "unused".to_string(),
+            sha256: "unused".to_string(),
+            bytes: 0,
+        });
+        if after_phase_head_admission(&root, &trust_bound)?
+            != (AfterPhaseHeadAdmission::Current {
+                movement: HeadMovement::RequireBaselineHead,
+            })
+        {
+            return Err("a trust-bound attempt at its prepared head is current".to_string());
+        }
+
+        run_git(
+            &root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "--allow-empty",
+                "-qm",
+                "focused test",
+            ],
+        )?;
+        let descendant = crate::agent::artifact::current_git_head(&root)?;
+        if after_phase_head_admission(&root, &manifest)? != current() {
+            return Err("an ordinary attempt admits a descendant commit".to_string());
+        }
+        if after_phase_head_admission(&root, &trust_bound)?
+            != (AfterPhaseHeadAdmission::FinishesStale {
+                current_head: descendant,
+            })
+        {
+            return Err("a trust-bound attempt pins the exact prepared head".to_string());
+        }
+
+        // Rewrite the prepared commit itself (as `git commit --amend` right
+        // after the before phase would).
+        run_git(&root, &["reset", "-q", "--soft", &manifest.repository_head])?;
+        run_git(
+            &root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "--amend",
+                "--allow-empty",
+                "-qm",
+                "rewritten",
+            ],
+        )?;
+        let rewritten = crate::agent::artifact::current_git_head(&root)?;
+        match after_phase_head_admission(&root, &manifest)? {
+            AfterPhaseHeadAdmission::RefusedDiverged { current_head }
+                if current_head == rewritten => {}
+            other => return Err(format!("rewritten history must refuse: {other:?}")),
         }
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;

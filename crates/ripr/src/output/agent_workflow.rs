@@ -2,7 +2,7 @@ use crate::app::agent_workflow::{
     AGENT_WORKFLOW_SCHEMA_VERSION, AgentWorkflowArtifact, AgentWorkflowCommand,
     AgentWorkflowManifest, AgentWorkflowSeam,
 };
-use crate::output::markdown::{POWERSHELL_UNAVAILABLE_DISCLOSURE, powershell_command};
+use crate::output::markdown::{POWERSHELL_UNAVAILABLE_DISCLOSURE, PowershellForm, powershell_form};
 use serde_json::{Value, json};
 
 /// Shell that every `command` string in this packet is written for.
@@ -83,7 +83,7 @@ fn artifact_json(artifact: &AgentWorkflowArtifact) -> Value {
         "name": artifact.name,
         "label": artifact.label,
         "path": artifact.path,
-        "required": true,
+        "required": artifact.required,
         "state": artifact.state.as_str(),
     })
 }
@@ -113,7 +113,8 @@ fn command_label(step: &str) -> String {
 
 mod markdown {
     use super::{
-        AgentWorkflowManifest, POWERSHELL_UNAVAILABLE_DISCLOSURE, command_label, powershell_command,
+        AgentWorkflowManifest, POWERSHELL_UNAVAILABLE_DISCLOSURE, PowershellForm, command_label,
+        powershell_form,
     };
 
     pub(super) fn render_commands_document(manifest: &AgentWorkflowManifest) -> String {
@@ -178,15 +179,19 @@ mod markdown {
             lines.push(command.command.clone());
             lines.push("```".to_string());
             lines.push(String::new());
-            match powershell_command(&command.command) {
-                Some(line) => {
+            match powershell_form(&command.command) {
+                PowershellForm::Translated(line) => {
                     lines.push("```powershell".to_string());
                     lines.push(line);
                     lines.push("```".to_string());
+                    lines.push(String::new());
                 }
-                None => lines.push(format!("{POWERSHELL_UNAVAILABLE_DISCLOSURE}.")),
+                PowershellForm::SameAsBash => {}
+                PowershellForm::Unavailable => {
+                    lines.push(format!("{POWERSHELL_UNAVAILABLE_DISCLOSURE}."));
+                    lines.push(String::new());
+                }
             }
-            lines.push(String::new());
         }
     }
 
@@ -254,6 +259,7 @@ mod tests {
                 name: "before_snapshot".to_string(),
                 label: "before snapshot".to_string(),
                 path: "target/ripr/workflow/before.repo-exposure.json".to_string(),
+                required: true,
                 state: AgentWorkflowArtifactState::Missing,
             }],
             commands: vec![AgentWorkflowCommand {
@@ -283,6 +289,9 @@ mod tests {
         assert_eq!(value["status"], "ready");
         assert_eq!(value["seam"]["seam_id"], "67fc764ba37d77bd");
         assert_eq!(value["boundaries"]["source_edits"], false);
+        // The artifact's `required` flag is the producer's active-loop
+        // classification, not an unconditional literal.
+        assert_eq!(value["artifacts"][0]["required"], true);
         assert_eq!(
             value["next_command"]["command"],
             "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json"

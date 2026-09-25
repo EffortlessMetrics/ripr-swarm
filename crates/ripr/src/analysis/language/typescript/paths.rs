@@ -26,7 +26,7 @@ pub(crate) fn normalized_path(path: &Path) -> String {
 
 pub(crate) fn output_language_for(path: &Path) -> DomainLanguageId {
     match path.extension().and_then(|extension| extension.to_str()) {
-        Some("js" | "jsx") => DomainLanguageId::JavaScript,
+        Some("js" | "jsx" | "mjs" | "cjs") => DomainLanguageId::JavaScript,
         _ => DomainLanguageId::TypeScript,
     }
 }

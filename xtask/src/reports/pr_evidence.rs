@@ -1,10 +1,11 @@
 use super::pr_causal_delta::write_canonical_delta;
 use super::write_parented_file;
 use crate::run::{
-    capture_output_with_timeout, run_output_owned, run_output_owned_with_timeout,
-    tool_build_timeout,
+    capture_output_with_timeout, capture_process_output, run_output_owned,
+    run_output_owned_with_timeout, tool_build_timeout,
 };
 use serde_json::{Map, Value, json};
+use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
@@ -288,23 +289,54 @@ fn verify_revision(repo: &Path, rev: &str) -> Result<(), String> {
 }
 
 fn changed_files(repo: &Path, options: &PrEvidenceOptions) -> Result<Vec<String>, String> {
+    // Raw NUL-delimited inventory (#4004, #4006): `-z` output is never
+    // C-quoted, so exotic names survive byte-exact; parsing rules come from
+    // the shared authority below, not from line splitting here. The
+    // `--diff-filter=ACMR` scope is the retained packet contract.
     let range = format!("{}...{}", options.base, options.head);
-    let output = run_git_output(
-        repo,
-        &["diff", "--name-only", "--diff-filter=ACMR", range.as_str()],
-    )?;
-    Ok(output
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_string)
-        .collect())
+    let git_args = vec![
+        "-C".to_string(),
+        repo.display().to_string(),
+        "diff".to_string(),
+        "--name-only".to_string(),
+        "-z".to_string(),
+        "--diff-filter=ACMR".to_string(),
+        range,
+    ];
+    let output = capture_process_output("git", &git_args, &[])
+        .map_err(|error| format!("git diff --name-only -z inventory: {}", error.message))?;
+    decode_changed_files(&output)
+}
+
+/// Decode raw `--name-only -z` bytes through the shared NUL path-record
+/// authority (#4006). Strict: non-UTF-8, empty, or truncated records fail
+/// loudly instead of collapsing through lossy conversion.
+fn decode_changed_files(output: &[u8]) -> Result<Vec<String>, String> {
+    ripr::analysis::parse_git_path_records(output)
+        .map_err(|err| format!("PR evidence changed-file inventory: {err}"))
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| {
+                    path.to_str().map(str::to_string).ok_or_else(|| {
+                        format!(
+                            "PR evidence changed-file inventory: decoded path {} is not valid UTF-8",
+                            path.display()
+                        )
+                    })
+                })
+                .collect()
+        })
 }
 
 fn write_diff(repo: &Path, options: &PrEvidenceOptions) -> Result<(), String> {
     let out = repo.join(PR_DIFF);
-    let range = format!("{}...{}", options.base, options.head);
-    let diff = run_git_output(repo, &["diff", "--binary", "--no-ext-diff", range.as_str()])?;
+    // Route the packet diff through the shared pinned Git assembly (#3930,
+    // #4004): ambient textconv, color, external-diff, and context config must
+    // not change what the packet analyzes. The assembly pins `-c
+    // core.quotePath=true`, `--no-ext-diff`, `--no-textconv`, `--no-color`,
+    // `--binary`, and three-context presentation.
+    let diff = ripr::analysis::load_pr_evidence_diff_range(repo, &options.base, &options.head)?;
     write_parented_file(&out, PR_DIFF, diff)
 }
 
@@ -488,6 +520,7 @@ fn pr_evidence_packet(
     } else {
         Value::Null
     };
+    let targeted_mutation_route = targeted_mutation_route(check_value, ripr_severe_gap);
 
     json!({
         "schema_version": "0.1",
@@ -509,7 +542,8 @@ fn pr_evidence_packet(
             "severe_gaps": severe_gaps,
             "requires_targeted_mutation": ripr_severe_gap,
             "ripr_severe_gap": ripr_severe_gap,
-            "routing_reason": routing_reason
+            "routing_reason": routing_reason,
+            "targeted_mutation_route": targeted_mutation_route
         },
         "artifacts": [
             {
@@ -569,7 +603,12 @@ fn pr_evidence_error_packet(
             "severe_gaps": 0,
             "requires_targeted_mutation": false,
             "ripr_severe_gap": false,
-            "routing_reason": null
+            "routing_reason": null,
+            "targeted_mutation_route": {
+                "status": "not_required",
+                "candidates": [],
+                "limitations": []
+            }
         },
         "artifacts": [
             {
@@ -609,6 +648,119 @@ fn pr_evidence_error_packet(
             "PR evidence generation did not complete, so this packet must not be treated as proof of no gaps."
         ]
     })
+}
+
+/// Mirrors `targeted_mutation_route` in `crates/ripr/src/app/pr_evidence.rs`
+/// so the compatibility shim emits the same schema-required route the
+/// `ripr pr-evidence` producer emits. Candidates derive only from
+/// producer-owned probe facts on findings whose `source_currentness` is
+/// `candidate_current` — a current head obligation, never base-side evidence.
+/// Inputs that cannot yield a safe candidate produce honest limitations,
+/// never invented candidates.
+fn targeted_mutation_route(check_value: &Value, required: bool) -> Value {
+    let mut candidates = Vec::new();
+    let mut limitations = Vec::new();
+    let mut seen = BTreeSet::new();
+    for finding in check_value
+        .get("findings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(classification) = finding.get("classification").and_then(Value::as_str) else {
+            continue;
+        };
+        // Candidate-actionable eligibility (#3281): mutation candidates are
+        // current obligations; base-side evidence never names a head target.
+        if finding.get("source_currentness").and_then(Value::as_str) != Some("candidate_current") {
+            continue;
+        }
+        if !matches!(
+            classification,
+            "weakly_exposed" | "reachable_unrevealed" | "no_static_path"
+        ) {
+            continue;
+        }
+        let Some(probe) = finding.get("probe").and_then(Value::as_object) else {
+            limitations.push(json!({
+                "kind": "no_safe_candidate",
+                "message": "finding has no producer-owned probe facts from which to derive a safe mutation candidate"
+            }));
+            continue;
+        };
+        let family = probe
+            .get("family")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let file = probe.get("file").and_then(Value::as_str);
+        let line = probe.get("line").and_then(Value::as_u64);
+        let expression = probe.get("expression").and_then(Value::as_str);
+        let Some((from, to)) = (family == "predicate")
+            .then(|| expression.and_then(predicate_operator_flip))
+            .flatten()
+        else {
+            limitations.push(json!({
+                "kind": "no_safe_candidate",
+                "family": family,
+                "message": format!("no safe concrete mutation candidate could be derived for {family} producer evidence")
+            }));
+            continue;
+        };
+        let Some(file) = file.filter(|file| !file.trim().is_empty()) else {
+            limitations.push(json!({
+                "kind": "no_safe_candidate",
+                "family": family,
+                "message": "predicate mutation candidate has no producer-owned source file"
+            }));
+            continue;
+        };
+        let Some(line) = line else {
+            limitations.push(json!({
+                "kind": "no_safe_candidate",
+                "family": family,
+                "message": "predicate mutation candidate has no unambiguous source line"
+            }));
+            continue;
+        };
+        let key = format!("{file}:{line}:{from}:{to}");
+        if !seen.insert(key) {
+            continue;
+        }
+        candidates.push(json!({
+            "file": file,
+            "line": line,
+            "kind": "predicate_operator_flip",
+            "from": from,
+            "to": to,
+            "command": format!("cargo mutants --file \"{}\"", file.replace('"', "\\\"")),
+            "expected_observation": format!("the focused boundary test should observe the predicate change {from} -> {to}")
+        }));
+    }
+    let status = if !required {
+        "not_required"
+    } else if candidates.is_empty() {
+        "static_limitation"
+    } else {
+        "candidate"
+    };
+    json!({
+        "status": status,
+        "candidates": candidates,
+        "limitations": limitations
+    })
+}
+
+fn predicate_operator_flip(expression: &str) -> Option<(&'static str, &'static str)> {
+    [
+        (">=", ">"),
+        ("<=", "<"),
+        ("==", "!="),
+        ("!=", "=="),
+        (">", ">="),
+        ("<", "<="),
+    ]
+    .into_iter()
+    .find_map(|(from, to)| expression.contains(from).then_some((from, to)))
 }
 
 fn first_line(text: &str) -> String {
@@ -687,6 +839,7 @@ fn validate_packet_value(
     {
         violations.push("summary.routing_reason is missing or not string/null".to_string());
     }
+    validate_targeted_mutation_route(summary, &mut violations);
 
     validate_artifacts(packet, &mut violations);
     if !markdown_exists {
@@ -701,6 +854,49 @@ fn validate_packet_value(
         None => violations.push("advisory_limits is missing or not an array".to_string()),
     }
     violations
+}
+
+/// Presence and eligibility check for the schema-required
+/// `summary.targeted_mutation_route`. The app producer
+/// (`crates/ripr/src/app/pr_evidence.rs`) pairs `status: "not_required"`
+/// with `requires_targeted_mutation: false` and never derives candidates
+/// from base-side evidence, so a packet whose route disagrees with the
+/// eligibility rule is producer drift, not a softer state.
+fn validate_targeted_mutation_route(summary: &Map<String, Value>, violations: &mut Vec<String>) {
+    let Some(route) = summary
+        .get("targeted_mutation_route")
+        .and_then(Value::as_object)
+    else {
+        violations.push("summary.targeted_mutation_route is missing or not an object".to_string());
+        return;
+    };
+    let status = route.get("status").and_then(Value::as_str);
+    match status {
+        Some("not_required" | "candidate" | "static_limitation") => {}
+        Some(other) => violations.push(format!(
+            "summary.targeted_mutation_route.status {other:?} is not contract-valid"
+        )),
+        None => violations
+            .push("summary.targeted_mutation_route.status is missing or not a string".to_string()),
+    }
+    for key in ["candidates", "limitations"] {
+        if !route.get(key).is_some_and(Value::is_array) {
+            violations.push(format!(
+                "summary.targeted_mutation_route.{key} is missing or not an array"
+            ));
+        }
+    }
+    let required = summary
+        .get("requires_targeted_mutation")
+        .is_some_and(|value| value == &Value::Bool(true));
+    if let Some(status) = status
+        && (status == "not_required") == required
+    {
+        violations.push(format!(
+            "summary.targeted_mutation_route.status {status:?} disagrees with \
+             summary.requires_targeted_mutation {required}"
+        ));
+    }
 }
 
 fn expect_string(packet: &Value, key: &str, expected: &str, violations: &mut Vec<String>) {
@@ -904,6 +1100,121 @@ mod tests {
         assert_eq!(packet["summary"]["severe_gaps"], 3);
         assert_eq!(packet["summary"]["requires_targeted_mutation"], true);
         assert_eq!(packet["summary"]["routing_reason"], "ripr severe gap");
+    }
+
+    #[test]
+    fn packet_derives_targeted_mutation_route_from_candidate_current_findings() {
+        let check = json!({
+            "summary": {
+                "weakly_exposed": 1,
+                "reachable_unrevealed": 0,
+                "no_static_path": 0
+            },
+            "findings": [
+                {
+                    "classification": "weakly_exposed",
+                    "source_currentness": "candidate_current",
+                    "probe": {
+                        "family": "predicate",
+                        "file": "src/pricing.rs",
+                        "line": 42,
+                        "expression": "amount >= threshold"
+                    }
+                },
+                {
+                    "classification": "weakly_exposed",
+                    "source_currentness": "base_only",
+                    "probe": {
+                        "family": "predicate",
+                        "file": "src/base.rs",
+                        "line": 7,
+                        "expression": "count >= limit"
+                    }
+                }
+            ]
+        });
+        let packet = pr_evidence_packet(&options(), &["src/pricing.rs".to_string()], &check);
+        let route = &packet["summary"]["targeted_mutation_route"];
+        assert_eq!(route["status"], "candidate");
+        assert_eq!(route["candidates"].as_array().map(Vec::len), Some(1));
+        assert_eq!(route["candidates"][0]["file"], "src/pricing.rs");
+        assert_eq!(route["candidates"][0]["from"], ">=");
+        assert_eq!(route["candidates"][0]["to"], ">");
+        let candidates = route["candidates"].as_array();
+        assert!(
+            candidates.is_some_and(|candidates| candidates
+                .iter()
+                .all(|candidate| candidate["file"] != "src/base.rs")),
+            "base-side evidence must never name a head mutation target"
+        );
+        assert_eq!(route["limitations"], json!([]));
+        let violations = validate_packet_value(&packet, &options(), 1, true);
+        assert_eq!(violations, Vec::<String>::new());
+    }
+
+    #[test]
+    fn packet_marks_required_route_static_limitation_without_safe_candidate() {
+        let check = json!({
+            "summary": {
+                "weakly_exposed": 1,
+                "reachable_unrevealed": 0,
+                "no_static_path": 0
+            },
+            "findings": [
+                {
+                    "classification": "weakly_exposed",
+                    "source_currentness": "candidate_current"
+                }
+            ]
+        });
+        let packet = pr_evidence_packet(&options(), &["src/lib.rs".to_string()], &check);
+        let route = &packet["summary"]["targeted_mutation_route"];
+        assert_eq!(route["status"], "static_limitation");
+        assert_eq!(route["candidates"], json!([]));
+        assert_eq!(route["limitations"][0]["kind"], "no_safe_candidate");
+        let violations = validate_packet_value(&packet, &options(), 1, true);
+        assert_eq!(violations, Vec::<String>::new());
+    }
+
+    #[test]
+    fn validation_rejects_route_status_that_disagrees_with_eligibility() {
+        let packet = pr_evidence_packet(
+            &options(),
+            &["src/lib.rs".to_string()],
+            &json!({
+                "summary": {
+                    "weakly_exposed": 0,
+                    "reachable_unrevealed": 0,
+                    "no_static_path": 0
+                }
+            }),
+        );
+        let mut drifted = packet.clone();
+        drifted["summary"]["targeted_mutation_route"]["status"] = "candidate".into();
+        let violations = validate_packet_value(&drifted, &options(), 1, true);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation
+                    .contains("disagrees with summary.requires_targeted_mutation")),
+            "a not_required route claiming candidates must be rejected: {violations:?}"
+        );
+
+        let mut missing = packet;
+        assert!(
+            matches!(missing.get_mut("summary"), Some(Value::Object(_))),
+            "summary must be an object for the removal test"
+        );
+        if let Some(summary) = missing.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.remove("targeted_mutation_route");
+        }
+        let violations = validate_packet_value(&missing, &options(), 1, true);
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("summary.targeted_mutation_route is missing")
+            }),
+            "an absent route must be rejected: {violations:?}"
+        );
     }
 
     #[test]
@@ -1225,6 +1536,202 @@ mod tests {
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
     }
+
+    #[test]
+    fn pinned_diff_keeps_edit_under_hostile_color_config() -> Result<(), String> {
+        // Discriminates the pinned `--no-color` assembly: repo-local
+        // `color.diff=always` must not move packet bytes.
+        let repo = temp_repo("ripr-pr-color")?;
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr-pr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR PR Test"])?;
+        run_git(&repo, &["config", "color.diff", "always"])?;
+        let body = (1..=9).map(|n| format!("line {n}\n")).collect::<String>();
+        write_repo_file(&repo, "notes.txt", &body)?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        let changed = body.replace("line 5\n", "line FIVE\n");
+        write_repo_file(&repo, "notes.txt", &changed)?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "edit"])?;
+
+        let options = PrEvidenceOptions {
+            base: "HEAD~1".to_string(),
+            head: "HEAD".to_string(),
+            ..options()
+        };
+        write_pr_evidence_from_check_json(&repo, &options, MINIMAL_CHECK_JSON)?;
+        check_pr_evidence(&repo, &options)?;
+
+        let diff =
+            fs::read(repo.join(PR_DIFF)).map_err(|err| format!("read {}: {err}", PR_DIFF))?;
+        if diff.contains(&0x1b) {
+            return Err("hostile color.diff config leaked ANSI escapes into pr.diff".to_string());
+        }
+        let text = String::from_utf8(diff).map_err(|err| format!("pr.diff not UTF-8: {err}"))?;
+        if !text.contains("+line FIVE") {
+            return Err("pr.diff lost the edited line".to_string());
+        }
+        // Three-context presentation pin: an unchanged line three away from
+        // the edit must survive, distinguishing the packet view from a
+        // zero-context diff.
+        if !text.contains(" line 2") || !text.contains(" line 8") {
+            return Err("pr.diff lost three-context presentation lines".to_string());
+        }
+
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn pinned_diff_survives_textconv_driver() -> Result<(), String> {
+        // Discriminates the pinned `--no-textconv` assembly: a repository
+        // textconv driver that censors content must not hide the edit.
+        let repo = temp_repo("ripr-pr-textconv")?;
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr-pr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR PR Test"])?;
+        write_repo_file(&repo, ".gitattributes", "*.txt diff=riprcensor\n")?;
+        run_git(
+            &repo,
+            &["config", "diff.riprcensor.textconv", "echo CENSORED"],
+        )?;
+        write_repo_file(&repo, "secret.txt", "alpha\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        write_repo_file(&repo, "secret.txt", "alpha\nbravo\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "edit"])?;
+
+        let options = PrEvidenceOptions {
+            base: "HEAD~1".to_string(),
+            head: "HEAD".to_string(),
+            ..options()
+        };
+        write_pr_evidence_from_check_json(&repo, &options, MINIMAL_CHECK_JSON)?;
+        check_pr_evidence(&repo, &options)?;
+
+        let diff =
+            fs::read(repo.join(PR_DIFF)).map_err(|err| format!("read {}: {err}", PR_DIFF))?;
+        let text = String::from_utf8(diff).map_err(|err| format!("pr.diff not UTF-8: {err}"))?;
+        if !text.contains("+bravo") {
+            return Err("textconv driver hid the edited line from pr.diff".to_string());
+        }
+
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn written_diff_matches_pinned_authority() -> Result<(), String> {
+        // Parity/currentness pin (#4004 item 5): the bytes the xtask route
+        // writes must stay identical to the shared authority's output for the
+        // same repository and range. A deliberate divergence in either route
+        // fails here.
+        let repo = temp_repo("ripr-pr-parity")?;
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr-pr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR PR Test"])?;
+        write_repo_file(&repo, "src/lib.rs", "pub fn value() -> u8 { 1 }\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        write_repo_file(&repo, "src/lib.rs", "pub fn value() -> u8 { 2 }\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "edit"])?;
+
+        let options = PrEvidenceOptions {
+            base: "HEAD~1".to_string(),
+            head: "HEAD".to_string(),
+            ..options()
+        };
+        write_pr_evidence_from_check_json(&repo, &options, MINIMAL_CHECK_JSON)?;
+
+        let written =
+            fs::read(repo.join(PR_DIFF)).map_err(|err| format!("read {}: {err}", PR_DIFF))?;
+        let authority = ripr::analysis::load_pr_evidence_diff_range(&repo, "HEAD~1", "HEAD")
+            .map_err(|err| format!("pinned authority: {err}"))?;
+        if written != authority.as_bytes() {
+            return Err("xtask pr.diff diverged from the pinned diff authority".to_string());
+        }
+
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn nul_inventory_survives_exotic_names() -> Result<(), String> {
+        // Discriminates NUL-delimited inventory: space, non-ASCII, and rename
+        // records must decode exact; the old line parser C-quoted or split
+        // them. Asserts through the real `changed_files` production path.
+        let repo = temp_repo("ripr-pr-names")?;
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr-pr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR PR Test"])?;
+        write_repo_file(&repo, "base.txt", "base\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        write_repo_file(&repo, "sp ace.txt", "spaces\n")?;
+        write_repo_file(&repo, "uni-\u{e9}.txt", "unicode\n")?;
+        fs::remove_file(repo.join("base.txt")).map_err(|err| format!("remove base.txt: {err}"))?;
+        write_repo_file(&repo, "renamed.txt", "base\n")?;
+        run_git(&repo, &["add", "-A"])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "exotic"])?;
+
+        let options = PrEvidenceOptions {
+            base: "HEAD~1".to_string(),
+            head: "HEAD".to_string(),
+            ..options()
+        };
+        let mut files = changed_files(&repo, &options)?;
+        files.sort();
+        let expected = vec![
+            "renamed.txt".to_string(),
+            "sp ace.txt".to_string(),
+            "uni-\u{e9}.txt".to_string(),
+        ];
+        if files != expected {
+            return Err(format!(
+                "exotic inventory mismatch: got {files:?}, want {expected:?}"
+            ));
+        }
+        write_pr_evidence_from_check_json(&repo, &options, MINIMAL_CHECK_JSON)?;
+        check_pr_evidence(&repo, &options)?;
+
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn strict_inventory_rejects_non_utf8() -> Result<(), String> {
+        // The strict-failure side of the NUL authority at the xtask decode
+        // boundary: non-UTF-8 records fail loudly instead of collapsing
+        // through lossy conversion. Live non-UTF-8 git names are impractical
+        // on Windows runners, so this pins the mapping directly; the
+        // end-to-end byte path is covered by `nul_inventory_survives_exotic_names`.
+        let err = match decode_changed_files(b"ok.txt\0\xffbad\0") {
+            Err(err) => err,
+            Ok(files) => {
+                return Err(format!("non-UTF-8 inventory must fail, decoded {files:?}"));
+            }
+        };
+        if !err.contains("not valid UTF-8") {
+            return Err(format!("unexpected strict-decode error: {err}"));
+        }
+        Ok(())
+    }
+
+    const MINIMAL_CHECK_JSON: &str = r#"{
+      "schema_version": "0.2",
+      "tool": "ripr",
+      "mode": "draft",
+      "root": ".",
+      "summary": {
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0
+      },
+      "findings": []
+    }"#;
 
     #[test]
     fn stale_check_artifact_is_removed_before_revision_setup_failure() -> Result<(), String> {

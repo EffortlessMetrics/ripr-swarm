@@ -201,11 +201,20 @@ and gaps; it does not claim runtime mutation outcomes.
 The Rust/Cargo gap-repair transaction is `usable alpha`: its fixture, package,
 editor, bounded test-only packet, and before/after receipt paths are proved when
 a valid route exists, while governed real-repository route yield and
-ordinary-user success remain unestablished. Python repair-routing is `usable
-alpha` for selected pytest/unittest workflows (repair cards, verify commands,
-bounded agent packets, before/after receipts); TypeScript is an opt-in
+ordinary-user success remain unestablished. Python analysis is `preview`: the
+CLI reports `Language status: preview` for every Python finding. Inside it, a
+scoped repair-routing loop is `usable alpha` for selected pytest/unittest
+workflows: a Python repair card, with its verify command, bounded agent packet,
+and before/after receipt, appears only for a `weakly_exposed` finding whose
+related test reaches the change and for which ripr names the missing
+discriminator, a test location, and a verify command. `exposed`,
+`no_static_path` (no test references the owner), heuristic-only, and
+static-limited findings get no card, so `repair cards: 0` is normal for such a
+diff. TypeScript is an opt-in
 `preview`. `ripr` is advisory static analysis — not a merge gate and not a
-mutation runner. Perl repair routing is `preview`/advisory; its next
+mutation runner. Perl repair routing is `preview`/advisory and not yet usable
+from a released install: it needs a `lang-perl` ripr build plus the
+`perl-ripr-facts` fact exporter, which is not yet published. Its next
 checkpoint is `dogfood/perl-real-repo-evals-v2` before any usable-alpha
 claim. This README is
 a front door, not the metric source of truth: see

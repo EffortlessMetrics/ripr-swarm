@@ -1,7 +1,7 @@
 use crate::config::RiprConfig;
 use crate::domain::{
     ExposureClass, Finding, LanguageId, LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX,
-    RevealEvidence, StageState,
+    RiprEvidence, StageState,
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
@@ -47,7 +47,7 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
     ));
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
-    if let Some(hint) = classification_hint(&finding.class, &finding.ripr.reveal) {
+    if let Some(hint) = classification_hint(&finding.class, &finding.ripr) {
         out.push_str(&format!("  Why {0}: {hint}\n", finding.class.as_str()));
     }
     if let Some(gap) = &finding.canonical_gap {
@@ -896,8 +896,11 @@ struct RepairPlacement<'a> {
 
 /// Returns a one-line hint explaining why a finding landed at its exposure
 /// class (#2614). Only emitted for classes where the reasoning is non-obvious
-/// from the class name alone.
-fn classification_hint(class: &ExposureClass, reveal: &RevealEvidence) -> Option<String> {
+/// from the class name alone. The hint restates the stage evidence that put
+/// the finding in its class, so it must agree with the reach/observe lines
+/// printed beneath it (F5-10).
+fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<String> {
+    let reveal = &ripr.reveal;
     match class {
         ExposureClass::WeaklyExposed => {
             if reveal.discriminate.state == StageState::Weak {
@@ -910,10 +913,24 @@ fn classification_hint(class: &ExposureClass, reveal: &RevealEvidence) -> Option
             }
         }
         ExposureClass::ReachableUnrevealed => {
-            Some("no related test was found that reaches this change".to_string())
+            if reveal.observe.state == StageState::No {
+                Some(
+                    "a related test reaches this change, but no assertion observes the changed behavior"
+                        .to_string(),
+                )
+            } else {
+                Some(
+                    "the evidence path is partially complete — see full form for details"
+                        .to_string(),
+                )
+            }
         }
         ExposureClass::NoStaticPath => {
-            Some("the changed behavior could not be traced to an observable output".to_string())
+            if ripr.reach.state == StageState::No {
+                Some("no related test was found that reaches this change".to_string())
+            } else {
+                Some("no static path from a related test to this change was found".to_string())
+            }
         }
         ExposureClass::InfectionUnknown => Some(
             "the change reaches a sink but infection could not be determined statically"
@@ -957,4 +974,73 @@ fn should_render_language_metadata(finding: &Finding) -> bool {
             .language_status
             .is_some_and(|status| status != LanguageStatus::Stable)
         || finding.owner_kind.is_some()
+}
+
+#[cfg(test)]
+mod classification_hint_tests {
+    use super::classification_hint;
+    use crate::domain::{
+        Confidence, ExposureClass, RevealEvidence, RiprEvidence, StageEvidence, StageState,
+    };
+
+    fn ripr(reach: StageState, observe: StageState) -> RiprEvidence {
+        let stage = |state: StageState| StageEvidence::new(state, Confidence::Low, "fixture");
+        RiprEvidence {
+            reach: stage(reach),
+            infect: stage(StageState::Yes),
+            propagate: stage(StageState::Yes),
+            reveal: RevealEvidence {
+                observe: stage(observe),
+                discriminate: stage(StageState::No),
+            },
+        }
+    }
+
+    #[test]
+    fn no_static_path_hint_names_the_missing_reach_not_an_output_trace() {
+        let hint = classification_hint(
+            &ExposureClass::NoStaticPath,
+            &ripr(StageState::No, StageState::No),
+        );
+        assert_eq!(
+            hint.as_deref(),
+            Some("no related test was found that reaches this change")
+        );
+    }
+
+    #[test]
+    fn no_static_path_hint_without_missing_reach_does_not_claim_no_test() {
+        let hint = classification_hint(
+            &ExposureClass::NoStaticPath,
+            &ripr(StageState::Weak, StageState::No),
+        );
+        assert_eq!(
+            hint.as_deref(),
+            Some("no static path from a related test to this change was found")
+        );
+    }
+
+    #[test]
+    fn reachable_unrevealed_hint_agrees_with_a_reaching_test() {
+        let hint = classification_hint(
+            &ExposureClass::ReachableUnrevealed,
+            &ripr(StageState::Yes, StageState::No),
+        );
+        assert_eq!(
+            hint.as_deref(),
+            Some(
+                "a related test reaches this change, but no assertion observes the changed behavior"
+            )
+        );
+        let partial = classification_hint(
+            &ExposureClass::ReachableUnrevealed,
+            &ripr(StageState::Yes, StageState::Weak),
+        );
+        assert!(
+            partial
+                .as_deref()
+                .is_some_and(|hint| !hint.contains("no related test")),
+            "a reaching test must never be described as absent: {partial:?}"
+        );
+    }
 }

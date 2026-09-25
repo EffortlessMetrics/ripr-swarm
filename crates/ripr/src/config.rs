@@ -411,8 +411,9 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
         }
         if !language.is_available() {
             return Err(format!(
-                "languages.enabled lists `{value}`, but this ripr binary was built without Cargo feature `{}`",
-                language.required_feature()
+                "languages.enabled lists `{value}`, but this ripr binary was built without Cargo feature `{}`; {}",
+                language.required_feature(),
+                language.unavailable_adapter_recovery()
             ));
         }
         parsed.push(language);

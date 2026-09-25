@@ -11,6 +11,7 @@ use crate::app::agent_brief::{
     AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
 };
 use crate::app::{self, OutputFormat};
+use crate::cli::CommandError;
 use crate::cli::agent::{
     AgentBriefOptions, AgentCommand, AgentPacketOptions, AgentReceiptOptions, AgentRepairOptions,
     AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions, AgentStatusOptions,
@@ -23,6 +24,7 @@ use crate::cli::commands_agent_support::{
 use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
 use crate::config::load_for_root;
 use crate::output;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::{
     fs::File,
@@ -33,21 +35,33 @@ use super::agent_dispatch;
 use super::agent_gap_packet::render_agent_packet_from_gap_ledger;
 use super::write_text_file;
 
-pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
+/// Schema version of the `ripr agent repair --phase after` success envelope
+/// (`kind: "repair_after_result"`). The envelope is its own versioned
+/// contract: the agent verify 0.3 document rides unchanged under `verify`
+/// and the agent status 0.1 document under `agent_status`, so every stdout
+/// document's shape is identifiable from its `schema_version`. Refusal
+/// paths keep printing the bare agent verify 0.3 document instead.
+const REPAIR_AFTER_RESULT_SCHEMA_VERSION: &str = "0.1";
+
+pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     let command = parse_agent_args(args)?;
     if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
-        return result;
+        return result.map_err(CommandError::from);
     }
 
     match command {
-        AgentCommand::Start(options) => run_agent_start(options),
-        AgentCommand::Brief(options) => run_agent_brief(options),
-        AgentCommand::Packet(options) => run_agent_packet(options),
-        AgentCommand::Verify(options) => run_agent_verify(options),
+        AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
+        AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
+        AgentCommand::Packet(options) => run_agent_packet(options).map_err(CommandError::from),
+        AgentCommand::Verify(options) => run_agent_verify(options).map_err(CommandError::from),
+        // Typed refusals carry the Decision variant (exit code 3).
         AgentCommand::VerifyExecute(options) => run_agent_verify_execute(options),
-        AgentCommand::Receipt(options) => run_agent_receipt(options),
-        AgentCommand::Status(options) => run_agent_status(options),
-        AgentCommand::ReviewSummary(options) => run_agent_review_summary(options),
+        AgentCommand::Receipt(options) => run_agent_receipt(options).map_err(CommandError::from),
+        AgentCommand::Status(options) => run_agent_status(options).map_err(CommandError::from),
+        AgentCommand::ReviewSummary(options) => {
+            run_agent_review_summary(options).map_err(CommandError::from)
+        }
+        // After-phase refusals carry the Decision variant (exit code 3).
         AgentCommand::Repair(options) => run_agent_repair(options),
         help_command @ (AgentCommand::Help
         | AgentCommand::StartHelp
@@ -59,19 +73,74 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
         | AgentCommand::StatusHelp
         | AgentCommand::ReviewSummaryHelp
         | AgentCommand::RepairHelp) => agent_dispatch::run_agent_help_command(&help_command)
-            .unwrap_or_else(|| Err("agent help command was not dispatched".to_string())),
+            .unwrap_or_else(|| Err("agent help command was not dispatched".to_string()))
+            .map_err(CommandError::from),
     }
 }
 
 fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
+    let json = options.json;
     let written = write_agent_start(options)?;
-    for path in &written.paths {
-        println!("Wrote {}", path.display());
+    if json {
+        // Machine-readable mode: one JSON document with the same information
+        // the prose lines carry. The prose output remains the default.
+        let rendered = render_agent_start_json(&written)?;
+        print!("{rendered}");
+        return Ok(());
     }
-    if let Some(next) = &written.next_command {
-        println!("Next: {next}");
+    for line in agent_start_prose_lines(&written) {
+        println!("{line}");
     }
     Ok(())
+}
+
+/// The default human output of `agent start`: one `Wrote <path>` line per
+/// written workflow artifact, then the first missing-input command when one
+/// exists.
+fn agent_start_prose_lines(written: &AgentStartWritten) -> Vec<String> {
+    let mut lines = written
+        .paths
+        .iter()
+        .map(|path| format!("Wrote {}", path.display()))
+        .collect::<Vec<_>>();
+    if let Some(next) = &written.next_command {
+        lines.push(format!("Next: {next}"));
+    }
+    lines
+}
+
+/// Render the `ripr agent start --json` document. Field names match the
+/// workflow manifest's `outputs` block (`workflow_manifest`,
+/// `commands_markdown`, `agent_brief`) and the agent status `next_command`
+/// name; `next_command` is `null` when every workflow input is present.
+fn render_agent_start_json(written: &AgentStartWritten) -> Result<String, String> {
+    use crate::agent::loop_commands::{
+        WORKFLOW_AGENT_BRIEF_ARTIFACT, WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT,
+        WORKFLOW_MANIFEST_ARTIFACT,
+    };
+    let paths = &written.paths;
+    // Match each path by artifact identity, not write order: a future
+    // reorder (or an added artifact) in `write_agent_start` must not
+    // silently remap fields.
+    let path_for = |artifact: &str| -> Option<String> {
+        let file_name = std::path::Path::new(artifact).file_name()?;
+        paths
+            .iter()
+            .find(|path| path.file_name() == Some(file_name))
+            .map(|path| path.display().to_string())
+    };
+    let value = serde_json::json!({
+        "schema_version": app::agent_workflow::AGENT_WORKFLOW_SCHEMA_VERSION,
+        "tool": "ripr",
+        "kind": "agent_start",
+        "workflow": {
+            "workflow_manifest": path_for(WORKFLOW_MANIFEST_ARTIFACT),
+            "commands_markdown": path_for(WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT),
+            "agent_brief": path_for(WORKFLOW_AGENT_BRIEF_ARTIFACT),
+        },
+        "next_command": written.next_command,
+    });
+    output::json::render_pretty_with_newline(&value, "agent start")
 }
 
 /// Files written by `agent start` and the first missing-input command.
@@ -248,7 +317,15 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     )
 }
 
-fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), String> {
+/// True when a `render_agent_verify` error is a deliberate named refusal
+/// (input-identity drift or a no-movement verify refusal) rather than an
+/// operational failure.
+fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
+    error.contains("analysis input identities differ")
+        || error.contains("no repository movement between before and after artifacts")
+}
+
+fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
     ensure_command_root(&options.root, "agent verify-execute")?;
     let outcome = app::verification_execution::execute_verify_packet(
         &options.root,
@@ -258,11 +335,17 @@ fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), St
         options.cancel_after_ms,
     );
     // The typed disposition is the contract, so it reaches stdout on every
-    // terminal state — including refusals. The exit status only distinguishes
-    // "RIPR committed a bounded observation" from "it could not".
+    // terminal state — including refusals. A typed refusal is a successfully
+    // rendered blocking answer: it maps to the decision exit code 3 so an
+    // orchestrator can branch on `0` executed, `3` refused (read the stdout
+    // JSON), `2` could not complete. Only an uncommitted observation
+    // (`verification_result_write_failed`) remains a Failure.
     print!("{}", outcome.rendered);
+    if outcome.refused {
+        return Err(CommandError::Decision(outcome.disposition.to_string()));
+    }
     if outcome.failed {
-        return Err(outcome.disposition.to_string());
+        return Err(CommandError::from(outcome.disposition.to_string()));
     }
     Ok(())
 }
@@ -475,7 +558,88 @@ fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), St
 /// by digest before recording the applied edit, and publishes the apply-phase
 /// record. The driver records no verification result, no static movement, and
 /// no closure; #3570 owns the verification phase.
-fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
+///
+/// When an after phase refuses after it selected its attempt, the refusal is
+/// recorded on that attempt through the attempt authority, so `ripr agent
+/// status` reports it instead of repeating the refused command unannotated.
+fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
+    let mut refusal = AfterPhaseRefusalContext::default();
+    let result = run_agent_repair_phase(options, &mut refusal);
+    if let (Err(error), Some((root, attempt_id))) = (&result, &refusal.selected_attempt)
+        && let Err(record_error) = crate::app::repair_attempt::record_repair_attempt_after_refusal(
+            root,
+            attempt_id,
+            &after_refusal_reason(error, &refusal.narration),
+        )
+    {
+        eprintln!(
+            "ripr: could not record the after-phase refusal on attempt `{}`: {record_error}",
+            attempt_id.as_str()
+        );
+    }
+    // A deliberate named refusal once the after phase selected its attempt
+    // (typed) is recorded above and maps to the decision exit code 3.
+    // Operational errors after selection stay ordinary failures: exit 2.
+    if refusal.selected_attempt.is_some() && refusal.typed {
+        result.map_err(CommandError::Decision)
+    } else {
+        result.map_err(CommandError::Failure)
+    }
+}
+
+/// What an after phase that refuses leaves for the attempt record: the
+/// attempt it selected, the narration it printed before the final error
+/// (the named cause and the recovery), so `ripr agent status` can repeat the
+/// same explanation instead of only the terse final error, and whether the
+/// refusal was a deliberate named refusal rather than an operational error.
+#[derive(Default)]
+struct AfterPhaseRefusalContext {
+    selected_attempt: Option<(PathBuf, crate::app::repair_attempt::RepairAttemptId)>,
+    narration: Vec<String>,
+    /// Set only at a deliberate named refusal (diverged HEAD, drifted
+    /// analysis inputs, a no-movement verify refusal, or a replaced
+    /// trust-binding manifest): a refusal the command narrates with its
+    /// cause and recovery before returning. Only this maps to the decision
+    /// exit code 3; operational errors after attempt selection (an
+    /// unreadable retained packet or manifest, a failed snapshot write,
+    /// failed receipt or apply-record publication) stay exit code 2.
+    typed: bool,
+}
+
+impl AfterPhaseRefusalContext {
+    /// Prints one narration line and keeps it for the refusal record.
+    fn narrate(&mut self, line: String) {
+        eprintln!("ripr: {line}");
+        self.narration.push(line);
+    }
+}
+
+/// The recorded refusal: the final error, then the narration that named its
+/// cause and recovery, as sentences. The attempt authority bounds its length.
+fn after_refusal_reason(error: &str, narration: &[String]) -> String {
+    let mut reason = error.trim().trim_end_matches('.').to_string();
+    for line in narration {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        reason.push_str(". ");
+        let mut chars = line.chars();
+        if let Some(first) = chars.next() {
+            reason.extend(first.to_uppercase());
+            reason.push_str(chars.as_str().trim_end_matches('.'));
+        }
+    }
+    reason
+}
+
+/// Runs one repair phase. `refusal` receives the attempt the after phase
+/// selected and the narration it printed, so a refusal past that point can
+/// be recorded on the attempt with its named cause and recovery.
+fn run_agent_repair_phase(
+    options: AgentRepairOptions,
+    refusal: &mut AfterPhaseRefusalContext,
+) -> Result<(), String> {
     let AgentRepairOptions {
         root,
         seam_id,
@@ -501,14 +665,29 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                 root.display()
             );
 
-            // Compose existing commands: start (creates workflow + brief) + packet.
-            // Stdout carries only the packet JSON. The start step's
-            // `Next: ripr check ...` hint is dropped because this phase writes
-            // that before snapshot itself; printing it sent users to redo it.
+            // Render and admit the packet first (F15-12): a seam whose repair
+            // packet names no test file ripr may edit refuses here, before any
+            // workflow artifact is written, so neither this phase nor
+            // `ripr agent status` reads as a started repair.
+            let packet = render_agent_packet(&AgentPacketOptions {
+                root: root.clone(),
+                seam_id: Some(seam_id.clone()),
+                gap_ledger: None,
+                gap_id: None,
+                json: true,
+            })?;
+            crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
+                .map_err(|error| before_phase_refusal(&seam_id, &error))?;
+
+            // Compose existing commands: start (creates workflow + brief) +
+            // packet. The start step's `Next: ripr check ...` hint is dropped
+            // because this phase writes that before snapshot itself; printing
+            // it sent users to redo it.
             let started = write_agent_start(AgentStartOptions {
                 root: root.clone(),
                 seam_id: seam_id.clone(),
                 out_dir: std::path::PathBuf::from("target/ripr/workflow"),
+                json: false,
             })?;
             for path in &started.paths {
                 eprintln!("ripr: wrote {}", path.display());
@@ -517,21 +696,24 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             let before = root.join("target/ripr/workflow/before.repo-exposure.json");
             write_agent_repo_exposure_snapshot(&root, &before)?;
 
-            let packet = render_agent_packet(&AgentPacketOptions {
-                root: root.clone(),
-                seam_id: Some(seam_id),
-                gap_ledger: None,
-                gap_id: None,
-                json: true,
-            })?;
             let packet_path = root.join("target/ripr/workflow/agent-packet.json");
             write_text_file(&packet_path, &packet)?;
-            print!("{packet}");
-
             eprintln!("ripr: wrote {}", packet_path.display());
-            eprintln!(
-                "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below."
+            // Stdout carries the packet JSON when it is piped or redirected,
+            // which is how agents and scripts read it. A terminal reader gets
+            // a short summary instead of ~13 KB of JSON (F15-7); the packet
+            // file above is the same bytes either way.
+            print!(
+                "{}",
+                before_phase_stdout(
+                    &packet,
+                    "target/ripr/workflow/agent-packet.json",
+                    std::io::stdout().is_terminal(),
+                )
             );
+            // "Complete" and the next step are printed once the attempt is
+            // published (`cli::persist_before_repair_attempt`), so a refusal
+            // there is never preceded by a completion line.
             Ok(())
         }
         AgentRepairPhase::After => {
@@ -541,6 +723,7 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                 attempt_id.as_deref(),
                 seam_id.as_deref(),
             )?;
+            refusal.selected_attempt = Some((root.clone(), attempt.attempt_id.clone()));
             eprintln!(
                 "ripr: agent repair --phase after for attempt `{}` (seam `{}`) at {}",
                 attempt.attempt_id.as_str(),
@@ -599,6 +782,49 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                 }
             };
 
+            // An ordinary attempt admits commits made on top of its prepared
+            // head (a committed focused test) and the edit cage evaluates
+            // every committed path. A HEAD that no longer descends from the
+            // prepared head is refused here, before anything is finished, so
+            // the attempt stays awaiting the edit and the recovery below can
+            // restore the prepared head. A trust-bound attempt keeps its
+            // exact-head rule and its typed `stale` record. The rule is the
+            // attempt authority's, which `ripr agent status` reads too.
+            let head_movement = match crate::app::repair_attempt::after_phase_head_admission_by_id(
+                &root,
+                &attempt.attempt_id,
+            )? {
+                crate::app::repair_attempt::AfterPhaseHeadAdmission::Current { movement } => {
+                    movement
+                }
+                crate::app::repair_attempt::AfterPhaseHeadAdmission::FinishesStale { .. } => {
+                    crate::edit_cage::HeadMovement::RequireBaselineHead
+                }
+                crate::app::repair_attempt::AfterPhaseHeadAdmission::RefusedDiverged {
+                    current_head,
+                } => {
+                    for line in crate::app::repair_attempt::diverged_head_recovery(
+                        &crate::agent::loop_commands::display_path(&root),
+                        attempt.attempt_id.as_str(),
+                        &attempt.seam_id,
+                        &attempt.repository_head,
+                        &current_head,
+                    )
+                    .lines()
+                    {
+                        refusal.narrate(line);
+                    }
+                    // A deliberate named refusal: narrated cause and recovery
+                    // above, so it maps to the decision exit code 3.
+                    refusal.typed = true;
+                    return Err(format!(
+                        "repair attempt `{}` cannot finish: HEAD {current_head} does not descend from its before-phase head {}",
+                        attempt.attempt_id.as_str(),
+                        attempt.repository_head
+                    ));
+                }
+            };
+
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing
             // the receipt so the built-in repair route cannot report a clean
@@ -613,114 +839,208 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             };
 
             let verify_json = root.join("target/ripr/workflow/agent-verify.json");
-            let rendered_verify = render_agent_verify(&verify_options)?;
-            write_text_file(&verify_json, &rendered_verify)?;
-            print!("{rendered_verify}");
-
-            // The retained binding's manifest bytes are confirmed again
-            // immediately before the durable finish: the apply verification
-            // ran before several expensive operations, and a manifest
-            // replaced inside that window must refuse instead of silently
-            // advancing the attempt against replaced trust data.
-            if let Some(binding) = &retained_binding {
-                crate::app::python_repair_binding::confirm_manifest_unchanged(binding)?;
-            }
-
-            // Finish only after all command-owned after artifacts exist. This
-            // makes the durable delta the exact delta the receipt binds, while
-            // the receipt itself remains outside the measured edit window.
-            let cage_after = crate::app::repair_attempt::finish_repair_attempt(
-                &root,
-                &attempt.attempt_id,
-                &packet_path,
-            )?;
-            eprintln!(
-                "ripr: edit-cage verdict for attempt `{}`: {:?}",
-                cage_after.attempt_id.as_str(),
-                cage_after.verdict.status
-            );
-
-            // The receipt can refuse (for example an escape verdict is not
-            // receipt-ready). The refusal must not swallow the typed apply
-            // evidence, so the outcome is carried to the end and the apply
-            // record is published either way.
-            let receipt_result = run_agent_receipt_for_attempt(
-                AgentReceiptOptions {
-                    root: root.clone(),
-                    verify_json: verify_json.clone(),
-                    seam_id: attempt.seam_id,
-                    test_changed: None,
-                    commands_run: Vec::new(),
-                    json: true,
-                    out: Some(root.join("target/ripr/reports/agent-receipt.json")),
-                },
-                Some(cage_after.attempt_id.as_str()),
-                Some(&packet_path),
-            );
-
-            run_agent_status(AgentStatusOptions {
-                root: root.clone(),
-                json: true,
-                out_dir: Some(std::path::PathBuf::from("target/ripr/workflow")),
-            })?;
-
-            // The apply record is published last: the receipt re-evaluates the
-            // edit cage over the exact delta finish measured, so no artifact
-            // write may land between finish and the receipt binding.
-            // The retained binding's manifest bytes are confirmed once more
-            // immediately before the record write: the earlier confirmation
-            // ran before the durable finish, so a manifest replaced inside
-            // that finalize window must refuse here instead of publishing an
-            // apply record against replaced trust data. The refusal restores
-            // the attempt to awaiting_edit, so the identical retry
-            // re-verifies everything.
-            let mut apply_record_result = Ok(());
-            if let (Some(binding), Some(verified)) = (&retained_binding, &verified_binding) {
-                let record_outcome =
-                    crate::app::python_repair_binding::confirm_manifest_unchanged(binding)
-                        .and_then(|()| {
-                            crate::app::python_repair_binding::write_apply_record(
-                                &root,
-                                &attempt.attempt_id,
-                                &binding.artifact_sha256,
-                                verified,
-                                edit_authorization.authority.as_deref().unwrap_or_default(),
-                                &cage_after,
-                            )
-                        });
-                match record_outcome {
-                    Ok(apply_record_path) => {
-                        eprintln!(
-                            "ripr: python repair-trust apply record: {}",
-                            apply_record_path.display()
-                        );
+            let rendered_verify = match render_agent_verify(&verify_options) {
+                Ok(rendered) => rendered,
+                Err(error) => {
+                    // Only deliberate named refusals are typed (exit 3):
+                    // drifted analysis inputs and a no-movement verify
+                    // refusal. Snapshot canonicalization, reads, artifact
+                    // validation, and rendering failures are operational
+                    // (exit 2) even though the attempt was already selected.
+                    if agent_verify_error_is_typed_refusal(&error) {
+                        if error.contains("analysis input identities differ") {
+                            for line in repair_after_input_drift_lines(&root, &attempt) {
+                                refusal.narrate(line);
+                            }
+                        }
+                        refusal.typed = true;
                     }
-                    Err(error) => {
-                        // Finish already advanced the durable state, so a
-                        // failed record publication must restore the attempt
-                        // to awaiting_edit: the identical retry is otherwise
-                        // rejected and the record could never be recreated.
-                        match crate::app::repair_attempt::restore_repair_attempt_to_awaiting_edit(
+                    return Err(error);
+                }
+            };
+            write_text_file(&verify_json, &rendered_verify)?;
+
+            // Stdout carries exactly one JSON document on every path, like
+            // every other agent command. The verify outcome is held until the
+            // tail below settles: on success the single document is the
+            // repair-after-result envelope carrying the verify result under
+            // `verify` and the status report under `agent_status`; when the
+            // tail refuses, the verify document alone is printed — the
+            // refusal bytes this phase always produced, and still one document
+            // an orchestrator can parse with one JSON.parse call.
+            let after_tail = |refusal: &mut AfterPhaseRefusalContext| -> Result<String, String> {
+                use crate::app::python_repair_binding::{
+                    ManifestConfirmationError, confirm_manifest_unchanged, write_apply_record,
+                };
+                use crate::app::repair_attempt::{
+                    finish_repair_attempt, restore_repair_attempt_to_awaiting_edit,
+                };
+
+                // The retained binding's manifest bytes are confirmed again
+                // immediately before the durable finish: the apply
+                // verification ran before several expensive operations, and a
+                // manifest replaced inside that window must refuse instead of
+                // silently advancing the attempt against replaced trust data.
+                // This is a deliberate named refusal: it maps to exit code 3.
+                if let Some(binding) = &retained_binding
+                    && let Err(error) = confirm_manifest_unchanged(binding)
+                {
+                    // Only a manifest replaced inside the late window is a
+                    // deliberate named refusal (exit 3); a manifest or
+                    // retained binding that cannot be read or validated is
+                    // operational (exit 2).
+                    if matches!(error, ManifestConfirmationError::Replaced(_)) {
+                        refusal.typed = true;
+                    }
+                    return Err(error.into());
+                }
+
+                // Finish only after all command-owned after artifacts exist.
+                // This makes the durable delta the exact delta the receipt
+                // binds, while the receipt itself remains outside the measured
+                // edit window.
+                let cage_after =
+                    finish_repair_attempt(&root, &attempt.attempt_id, &packet_path, head_movement)?;
+                eprintln!(
+                    "ripr: edit-cage verdict for attempt `{}`: {:?}",
+                    cage_after.attempt_id.as_str(),
+                    cage_after.verdict.status
+                );
+                for line in repair_after_cage_recovery_lines(
+                    &root,
+                    &attempt.seam_id,
+                    &attempt.repository_head,
+                    &cage_after,
+                ) {
+                    eprintln!("ripr: {line}");
+                }
+
+                // The receipt can refuse (for example an escape verdict is not
+                // receipt-ready). The refusal must not swallow the typed apply
+                // evidence, so the outcome is carried to the end and the apply
+                // record is published either way.
+                let test_changed = authored_test_changed(&cage_policy, &cage_after.verdict);
+                let receipt_result = run_agent_receipt_for_attempt(
+                    AgentReceiptOptions {
+                        root: root.clone(),
+                        verify_json: verify_json.clone(),
+                        seam_id: attempt.seam_id.clone(),
+                        test_changed,
+                        commands_run: Vec::new(),
+                        json: true,
+                        out: Some(root.join("target/ripr/reports/agent-receipt.json")),
+                    },
+                    Some(cage_after.attempt_id.as_str()),
+                    Some(&packet_path),
+                );
+
+                // The status report the finished after phase embeds in its
+                // single stdout document. Built here it reads exactly what
+                // `ripr agent status --json` would print at this point: after
+                // the finish and the receipt write, before the apply record.
+                let status_report = app::agent_status::build_agent_status_report(&root, &root);
+                let status_rendered = app::agent_status::render_agent_status_json(&status_report)?;
+
+                // The apply record is published last: the receipt re-evaluates
+                // the edit cage over the exact delta finish measured, so no
+                // artifact write may land between finish and the receipt
+                // binding.
+                // The retained binding's manifest bytes are confirmed once
+                // more immediately before the record write: the earlier
+                // confirmation ran before the durable finish, so a manifest
+                // replaced inside that finalize window must refuse here
+                // instead of publishing an apply record against replaced trust
+                // data. The refusal restores the attempt to awaiting_edit, so
+                // the identical retry re-verifies everything.
+                let mut apply_record_result: Result<(), String> = Ok(());
+                let apply_inputs = (&retained_binding, &verified_binding);
+                if let (Some(binding), Some(verified)) = apply_inputs {
+                    // A manifest replaced inside the finalize window is a
+                    // deliberate named refusal (exit code 3); a manifest or
+                    // retained binding that cannot be read or validated, and
+                    // a record write failure after a successful confirmation,
+                    // are operational (exit code 2).
+                    if let Err(error) = confirm_manifest_unchanged(binding) {
+                        apply_record_result = Err(error.message().to_string());
+                        if matches!(error, ManifestConfirmationError::Replaced(_)) {
+                            refusal.typed = true;
+                        }
+                    } else {
+                        let record_outcome = write_apply_record(
                             &root,
                             &attempt.attempt_id,
-                        ) {
-                            Ok(()) => {
+                            &binding.artifact_sha256,
+                            verified,
+                            edit_authorization.authority.as_deref().unwrap_or_default(),
+                            &cage_after,
+                        );
+                        match record_outcome {
+                            Ok(apply_record_path) => {
                                 eprintln!(
-                                    "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
+                                    "ripr: python repair-trust apply record: {}",
+                                    apply_record_path.display()
                                 );
-                                apply_record_result = Err(error);
                             }
-                            Err(restore_error) => {
-                                apply_record_result = Err(format!(
-                                    "{error}; rolling the attempt back for a retry also failed: {restore_error}"
-                                ));
+                            Err(error) => {
+                                // Finish already advanced the durable state, so a
+                                // failed record publication must restore the
+                                // attempt to awaiting_edit: the identical retry is
+                                // otherwise rejected and the record could never be
+                                // recreated.
+                                match restore_repair_attempt_to_awaiting_edit(
+                                    &root,
+                                    &attempt.attempt_id,
+                                ) {
+                                    Ok(()) => {
+                                        eprintln!(
+                                            "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
+                                        );
+                                        apply_record_result = Err(error);
+                                    }
+                                    Err(restore_error) => {
+                                        apply_record_result = Err(format!(
+                                            "{error}; rolling the attempt back for a retry also failed: {restore_error}"
+                                        ));
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            }
-            receipt_result?;
-            apply_record_result?;
+                receipt_result?;
+                apply_record_result?;
+
+                Ok(status_rendered)
+            };
+            let status_rendered = match after_tail(&mut *refusal) {
+                Ok(status_rendered) => status_rendered,
+                Err(error) => {
+                    print!("{rendered_verify}");
+                    return Err(error);
+                }
+            };
+            let document: serde_json::Value = serde_json::from_str(&rendered_verify)
+                .map_err(|error| format!("parse rendered agent verify JSON failed: {error}"))?;
+            let status_document: serde_json::Value = serde_json::from_str(&status_rendered)
+                .map_err(|error| format!("parse rendered agent status JSON failed: {error}"))?;
+            // The success output is its own versioned envelope
+            // (`repair_after_result`), not a mutated verify document: the
+            // verify outcome already owns the top-level `status` name
+            // (`advisory`), so splicing `agent_status` into the 0.3 document
+            // would leave two same-version documents with different shapes.
+            // The verify document keeps every field, name, and value under
+            // `verify`, and the status report rides beside it under
+            // `agent_status`.
+            let envelope = serde_json::json!({
+                "schema_version": REPAIR_AFTER_RESULT_SCHEMA_VERSION,
+                "kind": "repair_after_result",
+                "verify": document,
+                "agent_status": status_document,
+            });
+            let combined = serde_json::to_string_pretty(&envelope).map_err(|error| {
+                format!("serialize after-phase result document failed: {error}")
+            })?;
+            println!("{combined}");
 
             let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
             for line in repair_after_summary_lines(&receipt_path) {
@@ -853,6 +1173,230 @@ fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
     }
 }
 
+/// Upper bound on cage violations the after-phase narration lists; the attempt
+/// manifest retains all of them.
+const CAGE_RECOVERY_MAX_VIOLATIONS: usize = 10;
+
+/// The receipt's `test_changed` for an after phase: the attempt's selected
+/// test file, named only when the edit cage measured it changing and found
+/// nothing else wrong. The value is the cage's own normalized path; no test
+/// name is inferred.
+fn authored_test_changed(
+    policy: &crate::edit_cage::EditCagePolicy,
+    verdict: &crate::edit_cage::EditCageVerdict,
+) -> Option<String> {
+    if verdict.status == crate::edit_cage::EditCageVerdictStatus::Compliant {
+        let target = policy.selected_target.path();
+        if verdict.changed_paths.iter().any(|path| path == target) {
+            return Some(target.to_string());
+        }
+    }
+    None
+}
+
+/// Recovery narration for an after phase whose attempt did not finish
+/// compliant and current. Such an attempt is terminal: re-running it, or the
+/// receipt command `agent status` projects from the workflow artifacts,
+/// refuses. The lines name each cage violation (bounded) and the one route
+/// that recovers: a new attempt prepared while the gap still exists.
+fn repair_after_cage_recovery_lines(
+    root: &Path,
+    seam_id: &str,
+    before_head: &str,
+    after: &crate::app::repair_attempt::RepairAttemptAfter,
+) -> Vec<String> {
+    use crate::agent::loop_commands::{display_path, shell_arg};
+    use crate::edit_cage::EditCageVerdictStatus;
+
+    if after.current && after.verdict.status == EditCageVerdictStatus::Compliant {
+        return Vec::new();
+    }
+    let attempt_id = after.attempt_id.as_str();
+    let mut lines = Vec::new();
+    if !after.current {
+        lines.push(format!(
+            "attempt `{attempt_id}` is stale: repository HEAD moved from {} to {} after its before phase.",
+            short_head(before_head),
+            short_head(&after.repository_head)
+        ));
+    }
+    let violations = &after.verdict.violations;
+    if !violations.is_empty() {
+        lines.push(format!(
+            "the edit cage refused {} path(s); only the packet's allowed test surface may change:",
+            violations.len()
+        ));
+        for violation in violations.iter().take(CAGE_RECOVERY_MAX_VIOLATIONS) {
+            lines.push(format!(
+                "  {} ({:?}): {}",
+                violation.path, violation.kind, violation.reason
+            ));
+        }
+        if violations.len() > CAGE_RECOVERY_MAX_VIOLATIONS {
+            lines.push(format!(
+                "  ... and {} more; see the `after` block of the attempt manifest.",
+                violations.len() - CAGE_RECOVERY_MAX_VIOLATIONS
+            ));
+        }
+    }
+    let root_arg = shell_arg(&display_path(root));
+    let seam_arg = shell_arg(seam_id);
+    lines.push(format!(
+        "attempt `{attempt_id}` is terminal and cannot produce a receipt; re-running it or `ripr agent receipt` will refuse."
+    ));
+    // A committed edit cannot be stashed: when HEAD moved, the recovery
+    // first uncommits it so the rest of the route applies unchanged.
+    let uncommit = if after.repository_head == before_head {
+        ""
+    } else {
+        "if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree), "
+    };
+    lines.push(format!(
+        "to recover: {uncommit}undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+    ));
+    lines
+}
+
+/// Recovery narration for an after phase refused because the analysis input
+/// identity moved between the phases. The attempt is not finished, so it is
+/// still awaiting the edit: the lines name the changed inputs and the rerun.
+fn repair_after_input_drift_lines(
+    root: &Path,
+    attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
+) -> Vec<String> {
+    use crate::agent::loop_commands::{display_path, shell_arg};
+
+    let root_arg = shell_arg(&display_path(root));
+    let attempt_arg = shell_arg(attempt.attempt_id.as_str());
+    let seam_arg = shell_arg(&attempt.seam_id);
+    let mut lines = Vec::new();
+    match crate::app::repair_attempt::analysis_input_changes(root, &attempt.attempt_id) {
+        Ok(paths) if !paths.is_empty() => {
+            lines.push(format!(
+                "analysis inputs changed after the before phase: {}. The before and after snapshots must analyze the same Cargo manifests, Git-tracked Cargo.lock files, and ripr.toml (an untracked Cargo.lock that the build writes does not count).",
+                paths.join(", ")
+            ));
+            lines.push(format!(
+                "attempt `{}` was not finished and is still awaiting the focused test edit.",
+                attempt.attempt_id.as_str()
+            ));
+            // A committed input change cannot be restored in the worktree
+            // alone: the edit cage also reads the committed range.
+            let uncommit = match crate::app::repair_attempt::attempt_head_lineage(
+                root,
+                &attempt.repository_head,
+            ) {
+                Ok(crate::app::repair_attempt::AttemptHeadLineage::Prepared) => String::new(),
+                _ => format!(
+                    "if a commit made after the before phase changed them, first run `git reset --soft {}` (the changes stay in the worktree); then ",
+                    attempt.repository_head
+                ),
+            };
+            // Name the untrack route only when a lockfile is among the
+            // changed inputs; a manifest-only change has no lockfile to
+            // untrack, and the advice would send the reader after the wrong
+            // file.
+            let untrack = paths
+                .iter()
+                .find(|path| Path::new(path.as_str()).file_name() == Some("Cargo.lock".as_ref()))
+                .map(|path| {
+                    format!(", or `git rm --cached {path}` for a lockfile that became tracked")
+                })
+                .unwrap_or_default();
+            lines.push(format!(
+                "to recover: {uncommit}restore those files to their before-phase state (for example `git checkout {} -- <path>`{untrack}), then rerun `ripr agent repair --root {root_arg} --attempt {attempt_arg} --phase after`. To keep the change, set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before`, restore the edit, then run the new --attempt command it prints.",
+                attempt.repository_head
+            ));
+        }
+        Ok(_) => {
+            lines.push(
+                "no Cargo manifest, Git-tracked Cargo.lock, or ripr.toml changed after the before phase, so the analyzer build or its configuration differs (for example ripr was reinstalled between the phases)."
+                    .to_string(),
+            );
+            lines.push(format!(
+                "to recover: set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` with the ripr you will use for the after phase, restore the edit, then run the new --attempt command it prints."
+            ));
+        }
+        Err(error) => lines.push(format!(
+            "could not determine which analysis inputs changed: {error}"
+        )),
+    }
+    lines
+}
+
+/// A before phase refused because the seam's repair packet cannot bound a
+/// test-only edit. Names the seam and the reason in plain words, says that
+/// nothing was started, and points at the surfaces that only offer a repair
+/// start for seams that pass this check.
+fn before_phase_refusal(seam_id: &str, error: &str) -> String {
+    format!(
+        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. Pick a seam whose `ripr pilot` output or review card shows a repair start. Cause: {error}"
+    )
+}
+
+/// What the before phase prints on stdout: the packet JSON for a pipe or
+/// file, a short summary for a terminal. A packet the summary cannot read
+/// falls back to the JSON, so nothing is hidden.
+fn before_phase_stdout(packet: &str, packet_path: &str, terminal: bool) -> String {
+    if terminal && let Some(summary) = before_phase_summary(packet, packet_path) {
+        return summary;
+    }
+    packet.to_string()
+}
+
+fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(packet).ok()?;
+    let item = value.get("packets")?.as_array()?.first()?;
+    let text = |pointer: &str| {
+        item.pointer(pointer)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+    };
+    let seam_id = text("/seam_id")?;
+    let test_file = text("/recommended_test/file")?;
+    let mut lines = Vec::new();
+    let location = match (
+        text("/file"),
+        item.get("line").and_then(serde_json::Value::as_u64),
+    ) {
+        (Some(file), Some(line)) => format!(" at {file}:{line}"),
+        (Some(file), None) => format!(" at {file}"),
+        _ => String::new(),
+    };
+    let owner = text("/owner")
+        .map(|owner| format!(" in {owner}"))
+        .unwrap_or_default();
+    lines.push(format!(
+        "Repair prepared for seam {seam_id}{location}{owner}."
+    ));
+    if let Some(expression) = text("/changed_expression") {
+        lines.push(format!("  changed behavior: {expression}"));
+    }
+    if let Some(missing) = text("/missing_discriminators/0/value") {
+        lines.push(format!("  missing discriminator: {missing}"));
+    }
+    match text("/recommended_test/name") {
+        Some(name) => lines.push(format!(
+            "  edit one test file: {test_file} (suggested test `{name}`); leave production code unchanged"
+        )),
+        None => lines.push(format!(
+            "  edit one test file: {test_file}; leave production code unchanged"
+        )),
+    }
+    if let Some(assertion) = text("/suggested_assertions/0") {
+        lines.push(format!("  assertion shape: {assertion}"));
+    }
+    lines.push(format!(
+        "  full repair packet (JSON): {packet_path}; stdout carries it when piped"
+    ));
+    Some(lines.join("\n") + "\n")
+}
+
+fn short_head(head: &str) -> &str {
+    head.get(..12).unwrap_or(head)
+}
+
 /// One-line human result for the repair after phase, read from the receipt
 /// that owns it. The JSON streams on stdout carry the full evidence; this
 /// names the movement so a person does not have to parse them. A receipt
@@ -876,7 +1420,13 @@ fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
             "result for seam `{seam_id}`: {before} -> {after} ({movement}).{summary}"
         ));
     }
-    if let Some(action) = text("/summary/next_action/recommended_action") {
+    // The receipt producer owns which next step fits its status: only an
+    // `advisory` receipt recommends including it in review, and any other
+    // status states that it is not review evidence and how to recover. A
+    // receipt without a status is not vouched for, so nothing is forwarded.
+    if text("/status").is_some()
+        && let Some(action) = text("/summary/next_action/recommended_action")
+    {
         lines.push(format!("next: {action}"));
     }
     lines
@@ -948,11 +1498,63 @@ mod tests {
     fn agent_rejects_unknown_subcommands() {
         assert_eq!(
             agent(&args(&["unknown"])),
-            Err(
+            Err(CommandError::Failure(
                 "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
                     .to_string()
-            )
+            ))
         );
+    }
+
+    #[test]
+    fn agent_verify_execute_refusal_maps_to_decision_exit_code() -> Result<(), String> {
+        let dir = unique_command_test_dir("agent-verify-execute-refusal");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        // A missing packet is a typed refusal (`verification_rejected_policy`),
+        // printed as the stdout JSON document: the command ran successfully
+        // and declined, so it maps to the decision exit code 3.
+        let result = agent(&args(&[
+            "verify-execute",
+            "--root",
+            &dir.display().to_string(),
+            "--packet",
+            &dir.join("missing-packet.json").display().to_string(),
+            "--result-json",
+            &dir.join("result.json").display().to_string(),
+            "--json",
+        ]));
+        let Err(error) = result else {
+            return Err("expected a typed refusal, got Ok".to_string());
+        };
+        assert!(
+            matches!(
+                &error,
+                CommandError::Decision(message)
+                    if message.contains("verification_rejected_policy")
+            ),
+            "typed refusal must carry the Decision variant: {error:?}"
+        );
+        assert_eq!(error.exit_code(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn agent_repair_failure_before_attempt_selection_stays_a_failure() {
+        // A missing root refuses before the after phase selects its attempt,
+        // so it is an ordinary Failure (exit code 2), not a Decision: only
+        // errors after attempt selection are recorded refusals.
+        assert!(matches!(
+            agent(&args(&[
+                "repair",
+                "--root",
+                "target/ripr/missing-agent-repair-root",
+                "--seam-id",
+                "seam-a",
+                "--phase",
+                "after",
+            ])),
+            Err(CommandError::Failure(message)) if message.contains("is not a directory")
+        ));
     }
 
     #[test]
@@ -965,10 +1567,10 @@ mod tests {
                 "--seam-id",
                 "f3c9e4d21a0b7c88",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent start root target/ripr/missing-agent-start-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -981,10 +1583,10 @@ mod tests {
                 "target/ripr/missing-agent-status-root",
                 "--json",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent status root target/ripr/missing-agent-status-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -997,10 +1599,10 @@ mod tests {
                 "target/ripr/missing-agent-review-summary-root",
                 "--json",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent review-summary root target/ripr/missing-agent-review-summary-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -1015,10 +1617,10 @@ mod tests {
                 "f3c9e4d21a0b7c88",
                 "--json",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent packet root target/ripr/missing-agent-packet-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -1040,9 +1642,11 @@ mod tests {
             &dir.join("missing-after.json").display().to_string(),
             "--json",
         ]));
-        assert!(
-            matches!(missing_before, Err(message) if message.contains("canonicalize agent verify --before"))
-        );
+        assert!(matches!(
+            missing_before,
+            Err(CommandError::Failure(message))
+                if message.contains("canonicalize agent verify --before")
+        ));
 
         let missing_after = agent(&args(&[
             "verify",
@@ -1054,9 +1658,11 @@ mod tests {
             &dir.join("missing-after.json").display().to_string(),
             "--json",
         ]));
-        assert!(
-            matches!(missing_after, Err(message) if message.contains("canonicalize agent verify --after"))
-        );
+        assert!(matches!(
+            missing_after,
+            Err(CommandError::Failure(message))
+                if message.contains("canonicalize agent verify --after")
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
@@ -1085,7 +1691,10 @@ mod tests {
             "--json",
         ]));
 
-        assert!(matches!(result, Err(message) if message.contains("must stay under root")));
+        assert!(matches!(
+            result,
+            Err(CommandError::Failure(message)) if message.contains("must stay under root")
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
         Ok(())
@@ -1106,9 +1715,11 @@ mod tests {
             "seam-a",
             "--json",
         ]));
-        assert!(
-            matches!(missing, Err(message) if message.contains("canonicalize agent receipt --verify-json"))
-        );
+        assert!(matches!(
+            missing,
+            Err(CommandError::Failure(message))
+                if message.contains("canonicalize agent receipt --verify-json")
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
@@ -1133,7 +1744,10 @@ mod tests {
             "--json",
         ]));
 
-        assert!(matches!(result, Err(message) if message.contains("must stay under root")));
+        assert!(matches!(
+            result,
+            Err(CommandError::Failure(message)) if message.contains("must stay under root")
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
         Ok(())
@@ -1150,10 +1764,10 @@ mod tests {
                 "change.diff",
                 "--json",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent brief root target/ripr/missing-agent-brief-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -1347,6 +1961,7 @@ mod repair_summary_tests {
     #[test]
     fn repair_summary_names_movement_and_next_action_from_the_receipt() {
         let receipt = r#"{
+            "status": "advisory",
             "seam": {"seam_id": "67fc764ba37d77bd"},
             "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"},
             "summary": {"next_action": {"summary": "Static grip improved.", "recommended_action": "Keep the focused test and include this receipt in review."}}
@@ -1373,8 +1988,170 @@ mod repair_summary_tests {
     }
 
     #[test]
+    fn repair_summary_forwards_the_receipt_owned_next_step_for_a_non_advisory_receipt() {
+        let movement = r#""seam": {"seam_id": "s"},
+            "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"}"#;
+        let result =
+            "result for seam `s`: weakly_gripped -> strongly_gripped (improved). Static grip improved."
+                .to_string();
+        let step = "This receipt is not review evidence because its status is `invalid` (Analysis outcome artifact base does not match its typed identity); do not include it in review.";
+        let invalid = format!(
+            r#"{{"status": "invalid", {movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "{step}"}}}}}}"#
+        );
+        assert_eq!(
+            repair_receipt_summary_lines(&invalid),
+            vec![result.clone(), format!("next: {step}")]
+        );
+        // Without a status nothing vouches for the receipt, so its
+        // recommendation is not forwarded.
+        let unstated = format!(
+            r#"{{{movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "Keep the focused test and include this receipt in review."}}}}}}"#
+        );
+        assert_eq!(repair_receipt_summary_lines(&unstated), vec![result]);
+    }
+
+    #[test]
     fn repair_summary_is_empty_when_the_receipt_lacks_movement() {
         assert!(repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#).is_empty());
         assert!(repair_receipt_summary_lines("not json").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod before_phase_stdout_tests {
+    use super::before_phase_stdout;
+
+    const PACKET: &str = r#"{
+  "schema_version": "0.1",
+  "packets": [
+    {
+      "seam_id": "0d196886bad1b124",
+      "owner": "src/lib.rs::discounted_total",
+      "file": "src/lib.rs",
+      "line": 11,
+      "changed_expression": "amount >= DISCOUNT_THRESHOLD",
+      "recommended_test": {
+        "name": "discounted_total_boundary_discriminator",
+        "file": "tests/pricing.rs"
+      },
+      "missing_discriminators": [
+        { "value": "DISCOUNT_THRESHOLD (equality boundary)" }
+      ],
+      "suggested_assertions": ["assert_eq!(discounted_total(10_000), 9_000)"]
+    }
+  ]
+}"#;
+
+    /// F15-7: a pipe or file gets the packet JSON byte for byte, so agents
+    /// and scripts that parse stdout keep their contract.
+    #[test]
+    fn piped_stdout_is_the_packet_json_unchanged() {
+        assert_eq!(
+            before_phase_stdout(PACKET, "target/ripr/workflow/agent-packet.json", false),
+            PACKET
+        );
+    }
+
+    /// F15-7: a terminal gets a short summary naming the seam, the one test
+    /// file to edit, and where the full packet is, instead of the JSON.
+    #[test]
+    fn terminal_stdout_is_a_short_summary_of_the_same_packet() {
+        let summary = before_phase_stdout(PACKET, "target/ripr/workflow/agent-packet.json", true);
+        assert!(!summary.contains('{'), "{summary}");
+        assert!(summary.lines().count() <= 8, "{summary}");
+        for expected in [
+            "Repair prepared for seam 0d196886bad1b124 at src/lib.rs:11 in src/lib.rs::discounted_total.",
+            "  changed behavior: amount >= DISCOUNT_THRESHOLD",
+            "  missing discriminator: DISCOUNT_THRESHOLD (equality boundary)",
+            "  edit one test file: tests/pricing.rs (suggested test `discounted_total_boundary_discriminator`); leave production code unchanged",
+            "  assertion shape: assert_eq!(discounted_total(10_000), 9_000)",
+            "  full repair packet (JSON): target/ripr/workflow/agent-packet.json; stdout carries it when piped",
+        ] {
+            assert!(
+                summary.lines().any(|line| line == expected),
+                "missing `{expected}` in:\n{summary}"
+            );
+        }
+    }
+
+    /// A packet the summary cannot read (no test file) falls back to the JSON
+    /// rather than hiding it behind an empty summary.
+    #[test]
+    fn unreadable_packet_falls_back_to_the_json_on_a_terminal() {
+        let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
+        assert_eq!(before_phase_stdout(packet, "p", true), packet);
+    }
+}
+
+#[cfg(test)]
+mod start_output_tests {
+    use super::{AgentStartWritten, agent_start_prose_lines, render_agent_start_json};
+    use std::path::PathBuf;
+
+    fn written(next_command: Option<String>) -> AgentStartWritten {
+        AgentStartWritten {
+            paths: vec![
+                PathBuf::from("target/ripr/workflow/workflow.json"),
+                PathBuf::from("target/ripr/workflow/commands.md"),
+                PathBuf::from("target/ripr/workflow/agent-brief.json"),
+            ],
+            next_command,
+        }
+    }
+
+    #[test]
+    fn agent_start_json_carries_workflow_paths_and_next_command() -> Result<(), String> {
+        let rendered = render_agent_start_json(&written(Some(
+            "ripr check --root . --format json > target/ripr/workflow/before.repo-exposure.json"
+                .to_string(),
+        )))?;
+        let value: serde_json::Value = serde_json::from_str(&rendered)
+            .map_err(|err| format!("agent start JSON must parse: {err}"))?;
+        assert_eq!(value["schema_version"], "0.1");
+        assert_eq!(value["kind"], "agent_start");
+        assert_eq!(
+            value["workflow"]["workflow_manifest"],
+            "target/ripr/workflow/workflow.json"
+        );
+        assert_eq!(
+            value["workflow"]["commands_markdown"],
+            "target/ripr/workflow/commands.md"
+        );
+        assert_eq!(
+            value["workflow"]["agent_brief"],
+            "target/ripr/workflow/agent-brief.json"
+        );
+        assert_eq!(
+            value["next_command"],
+            "ripr check --root . --format json > target/ripr/workflow/before.repo-exposure.json"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_start_json_next_command_is_null_when_every_input_is_present() -> Result<(), String> {
+        let rendered = render_agent_start_json(&written(None))?;
+        let value: serde_json::Value = serde_json::from_str(&rendered)
+            .map_err(|err| format!("agent start JSON must parse: {err}"))?;
+        assert_eq!(value["next_command"], serde_json::Value::Null);
+        assert!(value["workflow"]["agent_brief"].is_string());
+        Ok(())
+    }
+
+    #[test]
+    fn agent_start_prose_default_names_every_written_path() {
+        let lines = agent_start_prose_lines(&written(Some("ripr pilot --root .".to_string())));
+        assert_eq!(
+            lines,
+            vec![
+                "Wrote target/ripr/workflow/workflow.json".to_string(),
+                "Wrote target/ripr/workflow/commands.md".to_string(),
+                "Wrote target/ripr/workflow/agent-brief.json".to_string(),
+                "Next: ripr pilot --root .".to_string(),
+            ]
+        );
+        let without_next = agent_start_prose_lines(&written(None));
+        assert_eq!(without_next.len(), 3);
+        assert!(!without_next.iter().any(|line| line.starts_with("Next:")));
     }
 }

@@ -249,9 +249,12 @@ pub(crate) fn perl_gap_record_for(finding: &Finding) -> Option<GapRecord> {
 
 /// Derive the receipt command for a Perl preview finding.
 ///
-/// Mirrors `typescript_receipt_command`: a fixed `ripr outcome …` shape with
-/// no external provider, curl, or http request. The shared validator only
-/// checks `receipt_command` is non-empty (`agent_seam_packets.rs:904-911`).
+/// A fixed `ripr outcome …` shape with no external provider, curl, or http
+/// request. It feeds only the shared validator, which checks that
+/// `receipt_command` is non-empty (`agent_seam_packets.rs:904-911`); public
+/// Perl output carries `receipt.command = null`. The TypeScript projection
+/// that this once mirrored now emits the canonical `ripr receipt write` form
+/// (RIPR-SPEC-0079).
 pub(crate) fn perl_receipt_command(canonical_gap_id: &str, verify_command: &str) -> String {
     let slug = canonical_gap_id
         .chars()

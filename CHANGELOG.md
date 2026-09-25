@@ -295,6 +295,51 @@ are scoped or reviewed.
 
 ### Changed
 
+- xtask tests no longer discard `remove_dir_all`, `remove_file`, or
+  panic-path `set_current_dir` with `let _ =`. Directory cleanup matches
+  the `io::Result` in `ignore_remove_dir_all` and still ignores a failure.
+  The file cleanup and cwd restores match the same way. Fixture strings
+  that spell `let _ =` are unchanged. `clippy-debt-0001` stays deferred;
+  its `blocked_by` text now counts the remaining `let _ =` sites
+  ([#4046](https://github.com/EffortlessMetrics/ripr-swarm/issues/4046)).
+
+- Eval-sweep refresh no longer discards cleanup or sealed-dir restore
+  `Result`s with `let _ =`. `discard_partial_dir` matches `remove_dir_all`
+  and still ignores a failure. `remove_file`, the unix permission restore,
+  and the windows `icacls` restore match the same way.
+  `clippy-debt-0001` stays deferred; its `blocked_by` text now counts
+  the remaining `let _ =` sites
+  ([#4040](https://github.com/EffortlessMetrics/ripr-swarm/issues/4040)).
+
+- Diff load tests no longer discard `remove_dir_all` or `remove_file`
+  with `let _ =`. Directory cleanup matches the `io::Result` in
+  `ignore_remove_dir_all` and still ignores a failure. The one file
+  cleanup matches the same way. `clippy-debt-0001` stays deferred; its
+  `blocked_by` text now counts the remaining `let _ =` sites
+  ([#4038](https://github.com/EffortlessMetrics/ripr-swarm/issues/4038)).
+
+- Gate tests no longer discard `remove_dir_all` or `remove_file` with
+  `let _ =`. Directory cleanup matches the `io::Result` in
+  `ignore_remove_dir_all` and still ignores a failure. The two probe-file
+  cleanups match the same way. `clippy-debt-0001` stays deferred; its
+  `blocked_by` text now counts the remaining `let _ =` sites
+  ([#4029](https://github.com/EffortlessMetrics/ripr-swarm/issues/4029)).
+
+- `cli_smoke` tests no longer discard `remove_dir_all` or `remove_file`
+  with `let _ =`. Directory cleanup matches the `io::Result` in
+  `ignore_remove_dir_all` and still ignores a failure. The one file
+  cleanup matches the same way. `cleanup_temp_dir` is unchanged.
+  `clippy-debt-0001` stays deferred; its `blocked_by` text now counts
+  the remaining `let _ =` sites
+  ([#4027](https://github.com/EffortlessMetrics/ripr-swarm/issues/4027)).
+
+- `seam_cache` tests no longer discard `remove_dir_all` with `let _ =`.
+  Cleanup matches the `io::Result` in `ignore_remove_dir_all` and still
+  ignores a failure. The same file uses its `Iterator::next` and
+  `write!` results. `clippy-debt-0001` stays deferred; its `blocked_by`
+  text now counts the remaining `let _ =` sites
+  ([#4013](https://github.com/EffortlessMetrics/ripr-swarm/issues/4013)).
+
 - `path_dependencies.rs` no longer carries `allow(dead_code)`.
   `cycle_manifests`, `contains_node`, `forward_walk`, and the scope
   expansion `status` accessor are `#[cfg(test)]`. Cycle-set recording

@@ -1,6 +1,9 @@
-use super::{STATIC_EVIDENCE_BOUNDARY, string_path};
+use super::{
+    ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, STATIC_EVIDENCE_BOUNDARY,
+    string_path,
+};
 use crate::agent::loop_commands::display_path;
-use crate::output::markdown::powershell_command;
+use crate::output::markdown::{PowershellForm, powershell_command, powershell_form};
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state,
 };
@@ -101,11 +104,21 @@ pub(super) fn start_here_cli_summary(
             if let Some(intent) = string_path(selected, &["focused_proof_intent"]) {
                 out.push_str(&format!("Focused proof intent: {intent}\n"));
             }
+            // The carried review-card repair start (#3906) leads the proof
+            // path; its before phase prints the after-phase command, which
+            // runs verify and writes the receipt.
+            let labels = proof_path_labels(selected);
+            if let Some(command) = string_path(selected, &["repair_command"]) {
+                out.push_str(&format!("Start repair: `{command}`\n"));
+                out.push_str(&format!(
+                    "{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+                ));
+            }
             if let Some(command) = string_path(selected, &["verify_command"]) {
-                out.push_str(&format!("Verify command: `{command}`\n"));
+                out.push_str(&format!("{}: `{command}`\n", labels.verify));
             }
             if let Some(command) = string_path(selected, &["receipt_command"]) {
-                out.push_str(&format!("Receipt command: `{command}`\n"));
+                out.push_str(&format!("{}: `{command}`\n", labels.receipt));
             }
             out.push_str(&format!(
                 "Receipt path: `{}`\n",
@@ -320,11 +333,18 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     if let Some(intent) = selected.get("focused_proof_intent").and_then(Value::as_str) {
         out.push_str(&format!("- Focused proof intent: {intent}\n"));
     }
+    let labels = proof_path_labels(selected);
+    if let Some(command) = string_path(selected, &["repair_command"]) {
+        out.push_str(&format!("- Start repair: `{command}`\n"));
+        out.push_str(&format!(
+            "- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
+        ));
+    }
     if let Some(command) = selected.get("verify_command").and_then(Value::as_str) {
-        out.push_str(&format!("- Verify command: `{command}`\n"));
+        out.push_str(&format!("- {}: `{command}`\n", labels.verify));
     }
     if let Some(command) = selected.get("receipt_command").and_then(Value::as_str) {
-        out.push_str(&format!("- Receipt command: `{command}`\n"));
+        out.push_str(&format!("- {}: `{command}`\n", labels.receipt));
     }
     if let Some(path) = selected.get("receipt_path").and_then(Value::as_str) {
         out.push_str(&format!("- Receipt path: `{path}`\n"));
@@ -374,15 +394,30 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         }
         out.push('\n');
     }
+    if let Some(command) = string_path(selected, &["repair_command"]) {
+        push_shell_command_pair(out, "Start repair", &command, true);
+        out.push_str(&format!(
+            "{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n\n"
+        ));
+    }
     if let Some(command) = selected.get("verify_command").and_then(Value::as_str) {
-        push_shell_command_pair(out, "Verify command", command, true);
+        push_shell_command_pair(out, labels.verify, command, true);
     }
+    let agent_packet_command = selected.get("agent_packet_command").and_then(Value::as_str);
     if let Some(command) = selected.get("receipt_command").and_then(Value::as_str) {
-        push_shell_command_pair(out, "Receipt command", command, true);
+        // A review-card selection has no agent packet block, so the receipt
+        // block closes the section without a trailing blank line.
+        push_shell_command_pair(out, labels.receipt, command, agent_packet_command.is_some());
     }
-    if let Some(command) = selected.get("agent_packet_command").and_then(Value::as_str) {
+    if let Some(command) = agent_packet_command {
         push_shell_command_pair(out, "Agent packet command", command, false);
     }
+}
+
+/// Labels for the selected gap's low-level verify and receipt commands,
+/// through the shared selector (#3906).
+fn proof_path_labels(selected: &Value) -> ProofPathLabels {
+    ProofPathLabels::for_repair_start(string_path(selected, &["repair_command"]).is_some())
 }
 
 /// Present one generated start-here command for both shells (#2628).
@@ -402,17 +437,23 @@ fn push_shell_command_pair(
 ) {
     out.push_str(&format!("{label}:\n"));
     out.push_str(&format!("`{command}`\n\n"));
-    match powershell_command(command) {
-        Some(line) => {
+    match powershell_form(command) {
+        PowershellForm::Translated(line) => {
             out.push_str(&format!("{label} (PowerShell):\n"));
             out.push_str(&format!("`{line}`\n\n"));
+            out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
         }
-        None => out.push_str(&format!(
-            "{}: `{command}`\n\n",
-            crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
-        )),
+        PowershellForm::SameAsBash => {
+            out.push_str("It runs unchanged in Bash and PowerShell; cmd.exe is not supported.\n");
+        }
+        PowershellForm::Unavailable => {
+            out.push_str(&format!(
+                "{}: `{command}`\n\n",
+                crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
+            ));
+            out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
+        }
     }
-    out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
     if trailing_blank_line {
         out.push('\n');
     }

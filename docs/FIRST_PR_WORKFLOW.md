@@ -50,8 +50,10 @@ target/ripr/pilot/pilot-summary.md
 ```
 
 The pilot summary is the first screen. It should name the top actionable gap,
-why it matters, the related test to inspect when available, and the command to
-capture after evidence.
+why it matters, and the related test to inspect when available. When the gap is
+eligible for a repair transaction, it ends with the `ripr agent repair ...
+--phase before` command for that seam (step 5). Otherwise it ends with the
+snapshot commands in step 7.
 
 If the pilot reports `partial`, use the retry command it prints. Do not guess
 at cache or timeout settings.
@@ -143,6 +145,35 @@ The before phase prints the exact `--attempt` command; see
 and receipt commands below remain available for gap-ledger records and explicit
 control.
 
+When the gap ledger selects no top gap, `ripr first-pr` reads the review cards
+(`--review-comments`, default `target/ripr/review/comments.json`) and selects
+the first card that carries `llm_guidance.repair_command`. `start-here.md`
+then shows a `Start repair` line followed by the after-phase step (run the
+`--attempt ... --phase after` command the before phase prints; it verifies
+movement and writes the receipt). The lower-level verify and receipt commands
+follow as `Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)` and `Manual receipt without a repair attempt (after the manual verify)`, not as peer steps: the manual verify
+compares a before snapshot taken before the test edit with an after snapshot
+taken after it, so it fails as printed on a checkout without them. Without a repair start, they read
+`Verify after the test edit` and `Receipt after verify`, because neither can
+run before the test edit. `ripr pr-summary` carries the same start command as
+its first local reproduction command, and its Markdown, like
+`gate-decision.md`, follows the start with the after-phase step and the same
+manual labels. The generated CI job summary leads its `First-run status` block
+with it, and its `Agent review packet` block says no receipt is expected before
+a repair and leads with the same start. Only cards past the fail-closed repair-packet flip carry the command;
+first-pr copies it and never builds one from a seam id.
+
+On a Rust root, first-pr does not report "no actionable gap" from cards it
+could not use. When the cards are missing it stops with `missing_artifact`;
+when they are unreadable, incomplete, or were built for another root, base, or
+head it stops with the matching blocked state. Either way the next command is
+the seam-level
+`ripr review-comments --root . --base origin/main --head HEAD --out target/ripr/review/comments.json`.
+On a fresh checkout that makes three regeneration steps before the start:
+repo exposure, gap ledger, then review cards. Each run names the next one.
+Only current cards that carry no repair start, or cards rendered from the gap
+ledger, end in no-action; the reason says which.
+
 For a gap-ledger-backed task, create the focused agent packet:
 
 ```bash
@@ -184,11 +215,15 @@ movement is not a replacement for the test suite.
 
 ## 7. Verify Movement
 
-Capture the after snapshot with the command from the pilot, first-action report,
-or agent packet. The common shape is:
+If you started a repair attempt in step 5, run the `--attempt ... --phase after`
+command its before phase printed. It captures the after snapshot, compares it,
+and writes the verify and receipt artifacts; steps 7 and 8 need nothing else.
+
+Without a repair attempt, capture the after snapshot with the command from the
+pilot, first-action report, or agent packet. The common shape is:
 
 ```bash
-ripr check --root . --mode ready --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json
+ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json
 ```
 
 Then compare before and after:

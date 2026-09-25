@@ -1806,25 +1806,7 @@ fn attach_check_output_preview_receipt_routes(records: &mut [GapRecord], root: &
                 .as_deref()
                 .is_some_and(|command| command.starts_with("ripr receipt write --gap "))
         {
-            let fallback_slug = if record.language == "typescript" {
-                "typescript-gap"
-            } else {
-                "python-gap"
-            };
-            let receipt_path = default_preview_receipt_path(record, fallback_slug);
-            let gap_id_for_receipt = non_empty(&record.canonical_gap_id)
-                .or_else(|| non_empty(&record.gap_id))
-                .unwrap_or(fallback_slug);
-            let verify_cmd = record
-                .verification_commands
-                .first()
-                .map(|s| s.as_str())
-                .unwrap_or("ripr check --root . --json");
-            record.receipt_command = Some(receipt_write_command(
-                gap_id_for_receipt,
-                verify_cmd,
-                Some(&receipt_path),
-            ));
+            record.receipt_command = Some(preview_receipt_write_command(record));
         }
         if !record
             .regeneration_commands
@@ -1836,6 +1818,31 @@ fn attach_check_output_preview_receipt_routes(records: &mut [GapRecord], root: &
                 .push(after_check_command.clone());
         }
     }
+}
+
+/// Canonical `ripr receipt write` command for a Python or TypeScript preview
+/// gap record (RIPR-SPEC-0079).
+///
+/// Shared by the ledger's check-output fallback and the TypeScript preview
+/// packet projection so every surface emits the same command string for the
+/// same gap: the record's canonical gap id, its first verification command,
+/// and the ledger's default preview receipt path.
+pub(crate) fn preview_receipt_write_command(record: &GapRecord) -> String {
+    let fallback_slug = if record.language == "typescript" {
+        "typescript-gap"
+    } else {
+        "python-gap"
+    };
+    let receipt_path = default_preview_receipt_path(record, fallback_slug);
+    let gap_id_for_receipt = non_empty(&record.canonical_gap_id)
+        .or_else(|| non_empty(&record.gap_id))
+        .unwrap_or(fallback_slug);
+    let verify_cmd = record
+        .verification_commands
+        .first()
+        .map(|s| s.as_str())
+        .unwrap_or("ripr check --root . --json");
+    receipt_write_command(gap_id_for_receipt, verify_cmd, Some(&receipt_path))
 }
 
 fn default_preview_receipt_path(record: &GapRecord, fallback_slug: &str) -> String {
@@ -3946,7 +3953,12 @@ mod tests {
                 }
             }
         }
-        if (direct, no_strong, orthogonal) != (2, 28, 10) {
+        // RIPR-SPEC-0028 boundary rule: downgrading the src-layout
+        // `bulk_discount` finding from `exposed` to `weakly_exposed` gives it a
+        // repair card it previously could not carry, raising the direct-aligned
+        // repair-card inventory from 2 to 3 (the boundary-downgraded card in
+        // `python_src_layout_package_import`).
+        if (direct, no_strong, orthogonal) != (3, 28, 11) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
             ));

@@ -49,7 +49,32 @@ input.
 | `initialization_options` | 64 KiB (size estimate) | Only a handful of known keys are read (`lsp/config.rs`). |
 | `previousResultIds` | 4096 entries; 4096 B/URI; 1024 B/value | One entry per tracked document must tolerate monorepo pull-diagnostic sessions; bounds the URI-set clone and per-document scan. |
 | `executeCommand` arguments | 8 entries; 64 KiB total (size estimate) | Every RIPR command takes zero or one argument object; bounds all downstream identifiers (gap/seam/snapshot ids) transitively. |
+| `ripr/listActionableItems` params | 16 KiB (size estimate) | The live handler reads no client-supplied fields (#1603); the bound caps the params blob as one opaque value at handler entry, before any snapshot access or early-return fast path. |
 | JSON nesting depth | 128 | Enforced by serde_json's default recursion limit; the `unbounded_depth` feature is not enabled anywhere in the workspace. Over-deep bodies are bounded codec errors. |
+
+## Typed-size traversal work
+
+The 64 KiB typed limits use the existing decoded-value estimate, not exact
+serialized JSON bytes. Scalars retain their 16-byte allowance, strings and
+keys contribute their UTF-8 byte lengths, and containers contribute their
+entry counts. The limits are inclusive, and command arguments share one
+budget rather than receiving a fresh budget per argument.
+
+The validator stops at the first charge that cannot fit (#3844). Container
+cardinality is checked before its children; an oversized object key skips
+its value; a rejected argument skips all later arguments. It neither
+serializes nor clones the payload. The existing depth guard is unchanged.
+
+The payload-bound unit tests include a legacy-accounting parity oracle,
+exact-limit and aggregate-limit controls, and test-only visit counters for
+oversized containers, rejected array tails, object keys, and later command
+arguments. These are deterministic work controls, not wall-clock thresholds,
+and run in the existing Rust test lane without a new workflow.
+
+This bounds avoidable typed-validation traversal only. JSON decoding,
+already-allocated payload memory, value destruction, and transport delivery
+remain separate costs; no end-to-end latency or peak-memory improvement is
+claimed by these controls alone. Measured LSP envelopes remain #1578's scope.
 
 ## Composition with existing budget machinery
 
@@ -84,10 +109,11 @@ These bounds compose with, and do not duplicate, the existing authorities:
   client EOF. Full lifecycle cleanup is #2030's scope.
 - **The queued-future bound (100)** is a tower-lsp internal constant,
   bounded but not configurable without forking the transport.
-- **`riprAgent/*` requests are capability-only** in this slice
-  (`lsp/agent_protocol.rs`); there is no live request family to bound. When
-  handlers land they must register payload bounds in
-  `lsp/payload_bounds.rs` first.
+- **`ripr/listActionableItems` is the one live `riprAgent/*` request** (#1603);
+  its params blob is bounded at handler entry in `lsp/payload_bounds.rs`
+  (16 KiB serialized estimate, rejected before any snapshot access). Any
+  additional riprAgent handler must register its typed bounds there before
+  it lands.
 - **Slow-reader egress** cannot be given a per-message write deadline
   without forking the transport; the enforced posture is bounded memory
   (rendezvous response channel) plus the session-level write-stall trip.

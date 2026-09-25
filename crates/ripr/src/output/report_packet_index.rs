@@ -1,3 +1,4 @@
+use super::assistant_loop_health::ASSISTANT_PROOF_COMMAND;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -203,7 +204,7 @@ pub(crate) fn build_report_packet_index_report(
         || entries.iter().any(|grouped| {
             matches!(
                 grouped.entry.status.as_str(),
-                "warn" | "incomplete" | "unreadable"
+                "warn" | "incomplete" | "unreadable" | "acknowledged"
             )
         })
     {
@@ -314,7 +315,7 @@ fn push_entry(out: &mut String, entry: &IndexEntry) {
     } else {
         out.push_str(&format!("- {}: missing\n", entry.label));
         if let Some(next_command) = &entry.next_command {
-            out.push_str(&format!("  - next: `{next_command}`\n"));
+            push_next_command(out, &entry.id, next_command);
         }
     }
     if entry.authority {
@@ -378,7 +379,7 @@ pub(crate) fn render_report_packet_index_markdown(report: &ReportPacketIndexRepo
         for missing in &report.missing_expected {
             out.push_str(&format!("- {}: {}\n", missing.label, missing.reason));
             if let Some(next_command) = &missing.next_command {
-                out.push_str(&format!("  - next: `{next_command}`\n"));
+                push_next_command(&mut out, &missing.id, next_command);
             }
         }
         out.push('\n');
@@ -389,6 +390,19 @@ pub(crate) fn render_report_packet_index_markdown(report: &ReportPacketIndexRepo
         out.push_str(&format!("- {limit}\n"));
     }
     out
+}
+
+/// Render one missing artifact's regeneration command, naming the step it
+/// waits on when it cannot run yet (#3906). The assistant proof joins the
+/// after snapshot and the agent receipt, which only the repair's after phase
+/// writes, so before a repair its command is a post-repair step.
+fn push_next_command(out: &mut String, id: &str, next_command: &str) {
+    match id {
+        "assistant_proof" => out.push_str(&format!(
+            "  - next, after the repair's after phase writes the agent receipt: `{next_command}`\n"
+        )),
+        _ => out.push_str(&format!("  - next: `{next_command}`\n")),
+    }
 }
 
 fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
@@ -422,7 +436,7 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             description: "First-screen PR review story.",
             default_status: "available",
             next_command: Some(
-                "ripr pr-review front-panel --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md",
+                "ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md",
             ),
         },
         ArtifactSpec {
@@ -462,9 +476,7 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             authority: false,
             description: "Joined repair proof packet.",
             default_status: "available",
-            next_command: Some(
-                "ripr assistant-loop proof --out target/ripr/reports/test-oracle-assistant-proof.json --out-md target/ripr/reports/test-oracle-assistant-proof.md",
-            ),
+            next_command: Some(ASSISTANT_PROOF_COMMAND),
         },
         ArtifactSpec {
             id: "assistant_loop_health",
@@ -530,7 +542,9 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             required: false,
             authority: true,
             description: "Configured gate pass/fail authority.",
-            default_status: "pass",
+            // Fail closed: when the gate-decision sidecar cannot be read the
+            // entry must not claim a pass it never verified.
+            default_status: "incomplete",
             next_command: None,
         },
         ArtifactSpec {
@@ -689,23 +703,30 @@ fn status_for_spec(spec: &ArtifactSpec) -> String {
 
 fn gate_status(status: &str) -> String {
     match status {
+        "pass" => "pass".to_string(),
         "blocked" => "blocked".to_string(),
         "config_error" | "fail" | "failure" => "fail".to_string(),
+        "advisory" | "warn" => "warn".to_string(),
         "acknowledged" => "acknowledged".to_string(),
         "suppressed" => "suppressed".to_string(),
-        "warn" => "warn".to_string(),
-        "incomplete" => "incomplete".to_string(),
-        _ => "pass".to_string(),
+        // Fail closed: the gate decision is authority, so an unrecognized
+        // producer token is reported as incomplete rather than credited as
+        // a pass the index never verified. `incomplete` lands here too.
+        _ => "incomplete".to_string(),
     }
 }
 
 fn front_panel_status(status: &str) -> String {
     match status {
+        "pass" => "available".to_string(),
         "blocked" => "blocked".to_string(),
         "fail" | "config_error" => "fail".to_string(),
+        "advisory" => "warn".to_string(),
+        "acknowledged" => "acknowledged".to_string(),
         "warn" => "warn".to_string(),
-        "incomplete" => "incomplete".to_string(),
-        _ => "available".to_string(),
+        // Fail closed: a required front panel with an unrecognized producer
+        // token is not credited as available. `incomplete` lands here too.
+        _ => "incomplete".to_string(),
     }
 }
 
@@ -1081,9 +1102,20 @@ mod tests {
     }
 
     #[test]
-    fn gate_status_unknown_falls_through_to_pass() -> Result<(), String> {
+    fn gate_status_pass_returns_pass() -> Result<(), String> {
         assert_eq!(gate_status("pass"), "pass");
-        assert_eq!(gate_status("anything_else"), "pass");
+        Ok(())
+    }
+
+    #[test]
+    fn gate_status_advisory_returns_warn() -> Result<(), String> {
+        assert_eq!(gate_status("advisory"), "warn");
+        Ok(())
+    }
+
+    #[test]
+    fn gate_status_unknown_fails_closed_to_incomplete() -> Result<(), String> {
+        assert_eq!(gate_status("anything_else"), "incomplete");
         Ok(())
     }
 
@@ -1110,9 +1142,26 @@ mod tests {
     }
 
     #[test]
-    fn front_panel_status_unknown_returns_available() -> Result<(), String> {
+    fn front_panel_status_pass_returns_available() -> Result<(), String> {
         assert_eq!(front_panel_status("pass"), "available");
-        assert_eq!(front_panel_status("ok"), "available");
+        Ok(())
+    }
+
+    #[test]
+    fn front_panel_status_advisory_returns_warn() -> Result<(), String> {
+        assert_eq!(front_panel_status("advisory"), "warn");
+        Ok(())
+    }
+
+    #[test]
+    fn front_panel_status_acknowledged_returns_acknowledged() -> Result<(), String> {
+        assert_eq!(front_panel_status("acknowledged"), "acknowledged");
+        Ok(())
+    }
+
+    #[test]
+    fn front_panel_status_unknown_fails_closed_to_incomplete() -> Result<(), String> {
+        assert_eq!(front_panel_status("ok"), "incomplete");
         Ok(())
     }
 
@@ -1302,6 +1351,9 @@ mod tests {
     #[test]
     fn status_for_spec_gate_decision_falls_back_to_default() -> Result<(), String> {
         let root = temp_root("gate-default")?;
+        // Mirrors the production gate_decision spec: the default is
+        // "incomplete" so a missing/unreadable sidecar fails closed instead
+        // of claiming a pass.
         let spec = ArtifactSpec {
             id: "gate_decision",
             label: "Gate decision",
@@ -1312,10 +1364,10 @@ mod tests {
             required: false,
             authority: true,
             description: "desc",
-            default_status: "pass",
+            default_status: "incomplete",
             next_command: None,
         };
-        assert_eq!(status_for_spec(&spec), "pass");
+        assert_eq!(status_for_spec(&spec), "incomplete");
         Ok(())
     }
 
@@ -1693,6 +1745,28 @@ mod tests {
             has_assistant_proof_missing,
             "expected assistant_proof in missing_expected"
         );
+
+        // #3906 (F60-2b): the printed regeneration command carries the
+        // explicit inputs the proof requires (a bare `--out` form exits 2),
+        // and says it waits on the repair's receipt.
+        let markdown = render_report_packet_index_markdown(&report);
+        let labelled = format!(
+            "  - next, after the repair's after phase writes the agent receipt: `{ASSISTANT_PROOF_COMMAND}`\n"
+        );
+        assert_eq!(markdown.matches(labelled.as_str()).count(), 2, "{markdown}");
+        assert!(
+            !markdown.contains("  - next: `ripr assistant-loop proof"),
+            "{markdown}"
+        );
+        for input in [
+            "--pr-guidance ",
+            "--agent-packet ",
+            "--before ",
+            "--after ",
+            "--receipt ",
+        ] {
+            assert!(ASSISTANT_PROOF_COMMAND.contains(input), "{input}");
+        }
         Ok(())
     }
 
@@ -2071,7 +2145,157 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn gate_decision_advisory_produces_warn_entry_and_overall_status() -> Result<(), String> {
+        let root = temp_root("gate-advisory")?;
+        write(
+            &root.join("target/ripr/reports/gate-decision.md"),
+            "content\n",
+        )?;
+        write(
+            &root.join("target/ripr/reports/gate-decision.json"),
+            r#"{"decision":"advisory"}"#,
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let gate_entry = report
+            .groups
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .find(|e| e.id == "gate_decision");
+        let Some(entry) = gate_entry else {
+            return Err("expected gate_decision entry".to_string());
+        };
+        assert_eq!(entry.status, "warn");
+        assert_eq!(report.status, "warn");
+        Ok(())
+    }
+
+    #[test]
+    fn gate_decision_unknown_token_fails_closed_to_incomplete() -> Result<(), String> {
+        let root = temp_root("gate-unknown-token")?;
+        write(
+            &root.join("target/ripr/reports/gate-decision.md"),
+            "content\n",
+        )?;
+        write(
+            &root.join("target/ripr/reports/gate-decision.json"),
+            r#"{"decision":"surprising_new_token"}"#,
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let gate_entry = report
+            .groups
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .find(|e| e.id == "gate_decision");
+        let Some(entry) = gate_entry else {
+            return Err("expected gate_decision entry".to_string());
+        };
+        assert_eq!(entry.status, "incomplete");
+        assert_eq!(report.status, "warn");
+        Ok(())
+    }
+
+    #[test]
+    fn gate_decision_missing_sidecar_fails_closed_to_incomplete() -> Result<(), String> {
+        let root = temp_root("gate-missing-sidecar")?;
+        // Markdown is present (so the entry is available and authority-backed)
+        // but the JSON sidecar is absent: the entry must not claim a pass.
+        write(
+            &root.join("target/ripr/reports/gate-decision.md"),
+            "content\n",
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let gate_entry = report
+            .groups
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .find(|e| e.id == "gate_decision");
+        let Some(entry) = gate_entry else {
+            return Err("expected gate_decision entry".to_string());
+        };
+        assert_eq!(entry.status, "incomplete");
+        assert_eq!(report.status, "warn");
+        Ok(())
+    }
+
     // ── front_panel: warn and incomplete in full pipeline ────────────────────
+
+    #[test]
+    fn front_panel_advisory_json_status_produces_warn_overall() -> Result<(), String> {
+        let root = temp_root("front-panel-advisory")?;
+        write(
+            &root.join("target/ripr/reports/pr-review-front-panel.md"),
+            "content\n",
+        )?;
+        write(
+            &root.join("target/ripr/reports/pr-review-front-panel.json"),
+            r#"{"status":"advisory"}"#,
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let entry = report
+            .groups
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .find(|e| e.id == "pr_review_front_panel");
+        let Some(e) = entry else {
+            return Err("expected pr_review_front_panel entry".to_string());
+        };
+        assert_eq!(e.status, "warn");
+        assert_eq!(report.status, "warn");
+        Ok(())
+    }
+
+    #[test]
+    fn front_panel_acknowledged_json_status_stays_acknowledged() -> Result<(), String> {
+        let root = temp_root("front-panel-acknowledged")?;
+        write(
+            &root.join("target/ripr/reports/pr-review-front-panel.md"),
+            "content\n",
+        )?;
+        write(
+            &root.join("target/ripr/reports/pr-review-front-panel.json"),
+            r#"{"status":"acknowledged"}"#,
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let entry = report
+            .groups
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .find(|e| e.id == "pr_review_front_panel");
+        let Some(e) = entry else {
+            return Err("expected pr_review_front_panel entry".to_string());
+        };
+        assert_eq!(e.status, "acknowledged");
+        // Acknowledged is visible state, not hidden success: the aggregate
+        // must not read pass while an entry carries it.
+        assert_eq!(report.status, "warn");
+        Ok(())
+    }
+
+    #[test]
+    fn front_panel_unknown_json_status_fails_closed_to_incomplete() -> Result<(), String> {
+        let root = temp_root("front-panel-unknown-token")?;
+        write(
+            &root.join("target/ripr/reports/pr-review-front-panel.md"),
+            "content\n",
+        )?;
+        write(
+            &root.join("target/ripr/reports/pr-review-front-panel.json"),
+            r#"{"status":"surprising_new_token"}"#,
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let entry = report
+            .groups
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .find(|e| e.id == "pr_review_front_panel");
+        let Some(e) = entry else {
+            return Err("expected pr_review_front_panel entry".to_string());
+        };
+        assert_eq!(e.status, "incomplete");
+        assert_eq!(report.status, "warn");
+        Ok(())
+    }
 
     #[test]
     fn front_panel_incomplete_json_status_produces_warn_overall() -> Result<(), String> {

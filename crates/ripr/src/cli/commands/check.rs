@@ -7,6 +7,7 @@
 
 use crate::analysis;
 use crate::app::{self, CheckInput, OutputFormat};
+use crate::cli::commands_context::ensure_command_root;
 use crate::cli::help;
 use crate::cli::parse::{expect_value, parse_format, parse_mode};
 use crate::cli::suggest::unknown_argument;
@@ -220,7 +221,18 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
-    if !root_explicitly_provided {
+    if root_explicitly_provided {
+        // An explicit --root that is not a directory reached the diff loader
+        // and surfaced git's spawn failure, complete with the full argv:
+        // `failed to run git diff: failed to run git -C /no/such/dir ["-c",
+        // "core.quotePath=true", "diff", ...]: No such file or directory`.
+        // Validate it through the same authority `rerun`, `agent`, and
+        // `swarm` already use, so the user is told which path is wrong rather
+        // than being handed the invocation that failed on it. Only an explicit
+        // root is checked: the implicit path below legitimately walks up from
+        // the current directory.
+        ensure_command_root(&input.root, "check")?;
+    } else {
         resolve_implicit_workspace_root(&mut input)?;
     }
     // RIPR-SPEC-0084: when no --base was explicitly given AND no --diff file
@@ -491,9 +503,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )?;
     }
     // RIPR-SPEC-0083: disclose when no scope was provided and the result is empty.
-    // The guidance fires only when scope was NOT explicitly provided — it must
-    // NOT fire when --diff/--base/--mode produced a real analyzed-empty result.
-    if !scope_explicitly_provided && output.findings.is_empty() {
+    // #4012: gate on what was actually analyzed, not on what was typed. A
+    // resolved default branch that analyzed changed files is a real
+    // analyzed-empty result (ordinary no_behavioral_candidates), not
+    // missing scope — so the producer outcome's changed_file_count is the
+    // discriminator. Repo-scope formats analyze the whole repo by
+    // definition, so the diff-scope disclosure never applies to them.
+    let analyzed_changed_files = output
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.counts.changed_file_count > 0);
+    if !scope_explicitly_provided
+        && output.findings.is_empty()
+        && !analyzed_changed_files
+        && !format.is_repo_scope()
+    {
         output.no_scope_provided = true;
     }
     // #2425: when --diff was explicitly provided but produced zero findings
@@ -522,18 +546,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             suppression.warnings.len()
         );
     }
-    // RIPR-SPEC-0112: disclose when --base was explicitly provided (committed-history
-    // diff) AND the working tree has uncommitted changes to tracked source files.
-    // Those changes were NOT analyzed. A zero-finding result in this state must NOT
-    // be read as a clean pass — the user's uncommitted edits were excluded from the diff.
-    // Fires independent of findings.is_empty() (honest whether or not committed diff
-    // had findings), but the false-clean risk is highest when findings are empty.
-    // Does NOT fire when --diff was used (file-based diff; no live worktree scope).
-    if base_explicitly_provided
-        && !worktree_explicitly_provided
+    // RIPR-SPEC-0112: disclose when the analyzed diff was committed history (an
+    // explicit --base or the resolved default base; both run `git diff
+    // <base>...HEAD`) AND the working tree has uncommitted changes to tracked
+    // source files. Those changes were NOT analyzed. A zero-finding result in this
+    // state must NOT be read as a clean pass — the user's uncommitted edits were
+    // excluded from the diff. Fires independent of findings.is_empty() (honest
+    // whether or not committed diff had findings), but the false-clean risk is
+    // highest when findings are empty. Does NOT fire for --diff (file-based
+    // diff), --worktree (edits included), --candidate-tree (exact trees, no live
+    // worktree), or repo-scope formats (they read the live files).
+    let committed_history_diff = !worktree_explicitly_provided
         && !input_diff_file_is_some
-        && analysis::working_tree_has_tracked_changes(&input_root)
-    {
+        && candidate_tree.is_none()
+        && !format.is_repo_scope();
+    if committed_history_diff && analysis::working_tree_has_tracked_changes(&input_root) {
         output.unanalyzed_working_tree = true;
     }
     let navigation = if worktree_explicitly_provided && write_artifact.is_none() {

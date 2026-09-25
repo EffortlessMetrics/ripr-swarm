@@ -322,14 +322,15 @@ pub(super) fn outcome(args: &[String]) -> Result<(), String> {
         output::outcome::display_path(&options.before),
         output::outcome::display_path(&options.after),
     )?;
-    // The before/after artifacts do not carry a head SHA, so we cannot
-    // verify they came from the same repository or adjacent commits. The
-    // comparison matches seams/findings by id only. Disclose this on stderr
-    // (machine JSON output on stdout is unchanged) so a user who did not
-    // read the help knows the movement report assumes same-repo/same-base
-    // before/after. See #1942.
+    // Disclose on stderr (machine JSON output on stdout is unchanged) what
+    // can actually be said about the two snapshots' provenance, so a user who
+    // did not read the help knows what the movement report assumes. See
+    // #1942; the line used to assert unconditionally that the artifacts carry
+    // no head SHA, which is false for any snapshot written through the
+    // artifact-identity path.
     eprintln!(
-        "ripr outcome: comparison matches seams/findings by id only; the before/after artifacts do not carry a head SHA, so ensure both snapshots are from the same repository and adjacent commits."
+        "{}",
+        output::outcome::head_provenance_disclosure(&before_json, &after_json)
     );
     let rendered = match options.format {
         OutcomeFormat::Markdown => output::outcome::render_targeted_test_outcome_md(&report),
@@ -3617,6 +3618,11 @@ pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::agent_review_summary::NO_RECEIPT_BEFORE_REPAIR;
+    use crate::output::first_pr::{
+        MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
+        REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
+    };
     use sha2::{Digest, Sha256};
 
     pub(super) fn args(values: &[&str]) -> Vec<String> {
@@ -3703,9 +3709,6 @@ mod tests {
                 "ripr agent start",
                 "ripr agent packet",
                 "ripr check",
-                "ripr agent verify",
-                "ripr agent receipt",
-                "ripr outcome",
                 "reports gap-ledger",
                 "ripr review-comments",
                 "gate evaluate",
@@ -3728,7 +3731,6 @@ mod tests {
                 "pr-comments plan",
                 "ripr agent status",
                 "ripr agent review-summary",
-                "cargo xtask operator-cockpit",
             ],
             artifact_paths: &[
                 "target/ripr/pilot",
@@ -3737,16 +3739,13 @@ mod tests {
                 "target/ripr/reports",
                 "target/ripr/review",
                 "target/ripr/workflow/before.repo-exposure.json",
-                "target/ripr/workflow/after.repo-exposure.json",
                 "target/ripr/workflow/agent-packet.json",
                 "target/ripr/workflow/agent-brief.json",
-                "target/ripr/workflow/agent-verify.json",
                 "target/ripr/reports/agent-receipt.json",
                 "target/ripr/workflow/agent-status.json",
                 "target/ripr/workflow/agent-status.md",
                 "target/ripr/workflow/agent-review-summary.json",
                 "target/ripr/workflow/agent-review-summary.md",
-                "target/ripr/reports/targeted-test-outcome.json",
                 "target/ripr/reports/gap-decision-ledger.json",
                 "target/ripr/reports/gap-decision-ledger.md",
                 "target/ripr/reports/ripr-findings.sarif",
@@ -3849,7 +3848,6 @@ mod tests {
                 "Prepare RIPR editor-agent artifacts",
                 "Generate RIPR agent loop artifacts",
                 "Render RIPR repo badge artifacts",
-                "Render RIPR operator cockpit",
                 "Render RIPR baseline debt delta",
                 "Render RIPR Zero status",
                 "Render RIPR PR evidence ledger",
@@ -3898,6 +3896,13 @@ mod tests {
                 "RIPR_GATE_MODE: \"acknowledgeable\"",
                 "RIPR_GATE_MODE: \"baseline-check\"",
                 "RIPR_GATE_MODE: \"calibrated-gate\"",
+                // #3906: CI has no test edit between snapshots, so it
+                // never runs the post-edit half of the loop.
+                "ripr agent receipt",
+                "ripr outcome",
+                "> target/ripr/workflow/agent-verify.json",
+                "> target/ripr/workflow/after.repo-exposure.json",
+                "target/ripr/reports/targeted-test-outcome.json",
             ],
         }
     }
@@ -6730,6 +6735,229 @@ language = "rust"
         assert_eq!(outcome(&args(&["--help"])), Ok(()));
     }
 
+    /// Run the retained `ripr check` production path over the
+    /// `ts_repair_packet_complete` fixture and return the rendered check JSON.
+    #[cfg(feature = "lang-typescript")]
+    fn ts_repair_packet_complete_check_json() -> Result<serde_json::Value, String> {
+        let fixture = repo_root().join("fixtures/ts_repair_packet_complete");
+        let mut input = crate::app::CheckInput {
+            root: fixture.join("input"),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: crate::app::Mode::Draft,
+            ..crate::app::CheckInput::default()
+        };
+        let config = crate::config::load_for_root(&input.root)?;
+        crate::config::apply_to_check_input(
+            &mut input,
+            &config,
+            crate::config::CheckInputExplicit::default(),
+        );
+        let output = crate::app::check_workspace_with_config(input, &config)?;
+        let rendered = crate::output::json::render_with_config(&output, &config);
+        serde_json::from_str(&rendered).map_err(|err| format!("check JSON did not parse: {err}"))
+    }
+
+    /// The single TypeScript repair packet the fixture's check JSON carries.
+    #[cfg(feature = "lang-typescript")]
+    fn ts_repair_packet(check: &serde_json::Value) -> Result<&serde_json::Value, String> {
+        let packets: Vec<&serde_json::Value> = check["findings"]
+            .as_array()
+            .ok_or("check JSON must carry a findings array")?
+            .iter()
+            .filter_map(|finding| finding.get("typescript_repair_packet"))
+            .collect();
+        match packets.as_slice() {
+            [packet] => Ok(packet),
+            other => Err(format!(
+                "expected exactly one TypeScript repair packet, got {}",
+                other.len()
+            )),
+        }
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    fn ts_packet_receipt_command(packet: &serde_json::Value) -> Result<String, String> {
+        packet["receipt_command"]
+            .as_str()
+            .map(ToString::to_string)
+            .ok_or_else(|| format!("TypeScript repair packet has no receipt_command: {packet}"))
+    }
+
+    /// Split a copied bash command into argv the way a POSIX shell does for
+    /// the quoting `shell_arg` emits: whitespace-separated words, single-quoted
+    /// spans taken literally, and backslash escapes outside quotes. Any other
+    /// shell-active character fails instead of being guessed at.
+    fn posix_words(command: &str) -> Result<Vec<String>, String> {
+        let mut words = Vec::new();
+        let mut current: Option<String> = None;
+        let mut chars = command.chars();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\'' => {
+                    let word = current.get_or_insert_with(String::new);
+                    loop {
+                        match chars.next() {
+                            Some('\'') => break,
+                            Some(inner) => word.push(inner),
+                            None => return Err(format!("unterminated quote in `{command}`")),
+                        }
+                    }
+                }
+                '\\' => {
+                    let escaped = chars
+                        .next()
+                        .ok_or_else(|| format!("dangling escape in `{command}`"))?;
+                    current.get_or_insert_with(String::new).push(escaped);
+                }
+                '"' | '$' | '`' | ';' | '&' | '|' | '<' | '>' | '(' | ')' => {
+                    return Err(format!("shell-active `{ch}` in `{command}`"));
+                }
+                ch if ch.is_whitespace() => {
+                    if let Some(word) = current.take() {
+                        words.push(word);
+                    }
+                }
+                ch => current.get_or_insert_with(String::new).push(ch),
+            }
+        }
+        if let Some(word) = current {
+            words.push(word);
+        }
+        Ok(words)
+    }
+
+    /// #3906 / RIPR-SPEC-0079 `canonical_receipt_command` field rule: the
+    /// receipt command the TypeScript preview packet emits is copied verbatim
+    /// into a shell, so it must be the canonical `ripr receipt write` form and
+    /// every argument it carries must be accepted by that command's parser.
+    #[test]
+    #[cfg(feature = "lang-typescript")]
+    fn typescript_preview_receipt_command_parses_as_receipt_write() -> Result<(), String> {
+        let check = ts_repair_packet_complete_check_json()?;
+        let packet = ts_repair_packet(&check)?;
+        let command = ts_packet_receipt_command(packet)?;
+        let words = posix_words(&command)?;
+        let rest = words
+            .strip_prefix(&[
+                "ripr".to_string(),
+                "receipt".to_string(),
+                "write".to_string(),
+            ])
+            .ok_or_else(|| format!("not a `ripr receipt write` command: {command}"))?;
+        let options = receipt_command::parse_receipt_write_options(rest)
+            .map_err(|err| format!("`{command}` is rejected by ripr receipt write: {err}"))?;
+        assert_eq!(
+            options.canonical_gap_id,
+            "gap:typescript:typescript_preview:2396aec1"
+        );
+        assert_eq!(
+            Some(options.canonical_gap_id.as_str()),
+            packet["canonical_gap_id"].as_str(),
+            "receipt must bind to the packet's canonical gap id"
+        );
+        assert_eq!(options.verify_command, "jest tests/discount.test.ts");
+        assert_eq!(
+            Some(options.verify_command.as_str()),
+            packet["verify_command"].as_str(),
+            "receipt must carry the packet's real verify command"
+        );
+        assert_eq!(options.verify_status, "not_run");
+        assert_eq!(
+            options.out,
+            Some(PathBuf::from(
+                "target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json"
+            ))
+        );
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0079 "`ripr outcome` is not a receipt command": the emitted
+    /// TypeScript receipt command is not a movement invocation, `ripr outcome`
+    /// rejects its arguments, and the retired movement form it replaced is not
+    /// a receipt write either. The gap ledger also synthesizes the same string
+    /// for the same gap when the packet supplies none, so both surfaces agree.
+    #[test]
+    #[cfg(feature = "lang-typescript")]
+    fn typescript_preview_receipt_command_is_not_ripr_outcome() -> Result<(), String> {
+        let check = ts_repair_packet_complete_check_json()?;
+        let command = ts_packet_receipt_command(ts_repair_packet(&check)?)?;
+        if command.contains("ripr outcome") {
+            return Err(format!(
+                "receipt_command must not be a ripr outcome invocation: {command}"
+            ));
+        }
+        let words = posix_words(&command)?;
+        if words.get(..3)
+            != Some(
+                &[
+                    "ripr".to_string(),
+                    "receipt".to_string(),
+                    "write".to_string(),
+                ][..],
+            )
+        {
+            return Err(format!(
+                "receipt_command must be a ripr receipt write invocation: {command}"
+            ));
+        }
+        let receipt_args = words.get(3..).ok_or("receipt command has no arguments")?;
+        if parse_outcome_options(receipt_args).is_ok() {
+            return Err(format!(
+                "ripr outcome must reject the receipt-write arguments of `{command}`"
+            ));
+        }
+        let retired_movement_form = args(&[
+            "--before",
+            "<baseline>",
+            "--after",
+            "<repair>",
+            "--out",
+            "target/ripr/receipts/gap_typescript_typescript_preview_2396aec1.targeted-test-outcome.json",
+        ]);
+        if receipt_command::parse_receipt_write_options(&retired_movement_form).is_ok() {
+            return Err("ripr receipt write must reject the retired movement form".to_string());
+        }
+
+        let mut without_packet_receipt = check.clone();
+        if let Some(packet) = without_packet_receipt["findings"]
+            .as_array_mut()
+            .and_then(|findings| findings.first_mut())
+            .and_then(|finding| finding.get_mut("typescript_repair_packet"))
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            packet.remove("receipt_command");
+        }
+        let ledger = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+            crate::output::gap_decision_ledger::GapDecisionLedgerInput {
+                root: ".".to_string(),
+                generated_at: "test".to_string(),
+                source_kind:
+                    crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::CheckOutput,
+                records_path: "target/ripr/reports/check.json".to_string(),
+                records_json: Ok(without_packet_receipt.to_string()),
+            },
+        );
+        let ledger: serde_json::Value = serde_json::from_str(
+            &crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&ledger)?,
+        )
+        .map_err(|err| format!("gap ledger JSON did not parse: {err}"))?;
+        let synthesized = match ledger["records"].as_array().map(Vec::as_slice) {
+            Some([record]) => record["receipt_command"].as_str().map(ToString::to_string),
+            other => {
+                return Err(format!(
+                    "expected one gap-ledger record, got {:?}",
+                    other.map(<[serde_json::Value]>::len)
+                ));
+            }
+        };
+        assert_eq!(
+            synthesized.as_deref(),
+            Some(command.as_str()),
+            "gap ledger and TypeScript packet must emit the same receipt command"
+        );
+        Ok(())
+    }
+
     #[test]
     fn evidence_health_help_returns_ok() {
         assert_eq!(evidence_health(&args(&["--help"])), Ok(()));
@@ -7084,11 +7312,8 @@ language = "rust"
         assert!(workflow.contains("ripr pilot"));
         assert!(workflow.contains("ripr agent start"));
         assert!(workflow.contains("ripr agent packet"));
-        assert!(workflow.contains("ripr agent verify"));
-        assert!(workflow.contains("ripr agent receipt"));
         assert!(workflow.contains("ripr agent status"));
         assert!(workflow.contains("ripr agent review-summary"));
-        assert!(workflow.contains("ripr outcome"));
         assert!(workflow.contains("target/ripr/workflow/agent-packet.json"));
         assert!(workflow.contains("target/ripr/workflow/agent-brief.json"));
         assert!(workflow.contains("target/ripr/workflow/agent-verify.json"));
@@ -7099,9 +7324,6 @@ language = "rust"
         assert!(workflow.contains("target/ripr/workflow/agent-review-summary.md"));
         assert!(workflow.contains("target/ripr/agent/agent-packet.json"));
         assert!(workflow.contains("target/ripr/agent/agent-brief.json"));
-        assert!(workflow.contains("target/ripr/agent/agent-verify.json"));
-        assert!(workflow.contains("target/ripr/agent/agent-receipt.json"));
-        assert!(workflow.contains("target/ripr/reports/targeted-test-outcome.json"));
         assert!(workflow.contains("target/ripr/reports/gate-decision.json"));
         assert!(workflow.contains("target/ripr/reports/gate-decision.md"));
         assert!(workflow.contains("target/ripr/reports/baseline-debt-delta.json"));
@@ -7287,7 +7509,8 @@ language = "rust"
         assert!(workflow.contains("RIPR_TOP_SEAM_ID"));
         assert!(workflow.contains(".top_actionable_seams[0].seam_id"));
         assert!(!workflow.contains(".top_seams[0].seam_id"));
-        assert!(workflow.contains("cargo xtask operator-cockpit"));
+        // An adopter repository has no xtask; the workflow must not call it.
+        assert!(!workflow.contains("cargo xtask"));
         assert!(workflow.contains("cat target/ripr/pilot/pilot-summary.md"));
         assert!(workflow.contains("cat target/ripr/workflow/agent-review-summary.md"));
         assert!(workflow.contains("repo-ripr-badge.json"));
@@ -7328,6 +7551,13 @@ language = "rust"
         assert!(workflow.contains(".coverage_grip_frontier.status // \"not_available\""));
         assert!(workflow.contains(".history.trend // \"not_available\""));
         assert!(workflow.contains("Counts: new_policy_eligible=\\`$ledger_new_policy_eligible\\`"));
+        // F60-4: counts with no baseline delta or RIPR Zero status behind them
+        // print as not measured, not as zeros.
+        assert!(workflow.contains(".movement.count_source // \"unknown\""));
+        assert!(
+            workflow
+                .contains("gap counts not measured (no baseline debt delta or RIPR Zero status)")
+        );
         assert!(workflow.contains("sed 's/`/\\\\`/g'"));
         assert!(workflow.contains("Blocking reason (\\`$blocking\\`): \\`$blocking_reason\\`"));
         assert!(workflow.contains("Boundary: $limits_note"));
@@ -7382,8 +7612,9 @@ language = "rust"
         assert!(workflow.contains("index_has_input=true"));
         assert!(workflow.contains("Set `RIPR_GATE_MODE`"));
         assert!(workflow.contains("No runtime mutation execution is performed"));
-        assert!(workflow.contains("hashFiles('crates/ripr/Cargo.toml')"));
-        assert!(workflow.contains("hashFiles('xtask/src/reports/operator.rs')"));
+        // The RIPR-source-tree-only cockpit step is gone from the adopter
+        // workflow (F60-8).
+        assert!(!workflow.contains("hashFiles('xtask/src/reports/operator.rs')"));
         assert!(workflow.contains("if: env.RIPR_UPLOAD_SARIF == 'true'"));
         assert!(workflow.contains(
             "if: env.RIPR_UPLOAD_SARIF == 'true' && github.event_name == 'pull_request'"
@@ -7427,7 +7658,7 @@ language = "rust"
             "Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, and preview-limited evidence"
         ));
         assert!(summary.contains(
-            "Proof rail: verify command, receipt command, and receipt path are static movement evidence only."
+            "Proof rail: the repair start, verify, receipt, and receipt path are static movement evidence only; verify and receipt run after the test edit."
         ));
         assert!(summary.contains(
             "Preview boundary: preview-limited evidence stays syntax-first and advisory"
@@ -7469,27 +7700,98 @@ language = "rust"
         assert!(summary.contains("Repair target: \\`$start_target\\`"));
         assert!(summary.contains("Related test: \\`$start_related\\`"));
         assert!(summary.contains("Static limit: \\`$start_limit\\`"));
-        assert!(summary.contains("Verify command: \\`$start_verify\\`"));
-        assert!(summary.contains("Receipt command: \\`$start_receipt\\`"));
+        // #3906 (F60-3, F60-14): a carried repair start leads the block and
+        // the low-level pair becomes the manual alternative.
+        assert!(summary.contains(".selected.repair_command // empty"));
+        assert!(summary.contains("echo \"- Start repair: \\`$start_repair_command\\`\""));
+        // The labels are the shared first-pr constants, substituted into
+        // the workflow so one owner holds the text.
+        assert!(summary.contains(&format!(
+            "echo '- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}'"
+        )));
+        assert!(summary.contains(&format!("start_verify_label='{MANUAL_VERIFY_LABEL}'")));
+        assert!(summary.contains(&format!("start_verify_label='{VERIFY_AFTER_EDIT_LABEL}'")));
+        assert!(summary.contains(&format!(
+            "start_receipt_label='{RECEIPT_AFTER_VERIFY_LABEL}'"
+        )));
+        assert!(
+            !summary.contains("@RIPR_"),
+            "unsubstituted workflow placeholder"
+        );
+        assert!(summary.contains("- $start_verify_label: \\`$start_verify\\`"));
+        assert!(summary.contains("- $start_receipt_label: \\`$start_receipt\\`"));
+        let lead = summary
+            .find("echo \"- Start repair: \\`$start_repair_command\\`\"")
+            .unwrap_or(usize::MAX);
+        let status = summary
+            .find("echo \"- Status: \\`$start_status\\`\"")
+            .unwrap_or(0);
+        assert!(
+            lead < status,
+            "the repair start must lead the first-run block"
+        );
         assert!(summary.contains("Receipt path: \\`$start_receipt_path\\`"));
         assert!(summary.contains("Receipt state: \\`$start_receipt_state\\`"));
         assert!(summary.contains("Safe next action command: \\`$start_next\\`"));
         assert!(
             summary
-                .contains(".selected.next_command // .selected.regeneration_command // \"none\"")
+                .contains(".selected.repair_command // .selected.next_command // .selected.regeneration_command // \"none\"")
         );
         assert!(summary.contains(".action_kind // \"unknown\""));
         assert!(summary.contains(".commands.context_packet // \"not_available\""));
+        // #3906: the first-action summary surfaces the carried repair start.
+        assert!(summary.contains(".commands.repair // \"not_available\""));
+        assert!(summary.contains("Repair start: \\`$first_repair\\`"));
+        assert!(summary.contains("Repair start: \\`$action_repair\\`"));
+        // #3906 (F60-14): in both first-action blocks the carried repair
+        // start leads, followed by its after phase; verify and receipt are
+        // the manual alternative, else steps after the test edit.
+        for (prefix, status_line) in [
+            ("first", "echo \"- Status: \\`$first_status\\`\""),
+            ("action", "echo \"- Status: \\`$action_status\\`\""),
+        ] {
+            let guard = format!(
+                "if [ \"${prefix}_repair\" != not_available ] && [ \"${prefix}_repair\" != unknown ]; then"
+            );
+            let lead = format!("echo \"- Repair start: \\`${prefix}_repair\\`\"");
+            assert!(summary.contains(&guard), "{prefix} guard");
+            let lead_at = summary.find(&lead).unwrap_or(usize::MAX);
+            let status_at = summary.find(status_line).unwrap_or(0);
+            assert!(lead_at < status_at, "{prefix} repair start must lead");
+            assert!(summary.contains(&format!("{prefix}_verify_label='{MANUAL_VERIFY_LABEL}'")));
+            assert!(summary.contains(&format!("{prefix}_receipt_label='{MANUAL_RECEIPT_LABEL}'")));
+            assert!(summary.contains(&format!(
+                "{prefix}_verify_label='{VERIFY_AFTER_EDIT_LABEL}'"
+            )));
+            assert!(summary.contains(&format!(
+                "{prefix}_receipt_label='{RECEIPT_AFTER_VERIFY_LABEL}'"
+            )));
+            assert!(summary.contains(&format!(
+                "echo \"- ${prefix}_verify_label: \\`${prefix}_verify\\`\""
+            )));
+        }
+        for prefix in ["panel", "ledger"] {
+            assert!(summary.contains(&format!(
+                "if [ \"${prefix}_repair\" != not_available ] && [ \"${prefix}_repair\" != unknown ]; then\n"
+            )));
+            assert!(summary.contains(&format!("echo \"- Repair start: \\`${prefix}_repair\\`\"")));
+            assert!(summary.contains(&format!("{prefix}_verify_label='{MANUAL_VERIFY_LABEL}'")));
+            assert!(summary.contains(&format!(
+                "echo \"- ${prefix}_verify_label: \\`${prefix}_verify\\`\""
+            )));
+        }
+        assert!(!summary.contains("Verify command: \\`$first_verify\\`"));
+        assert!(!summary.contains("Verify command: \\`$action_verify\\`"));
         assert!(summary.contains("missing_start_here"));
         assert!(summary.contains("State: \\`missing_artifact\\`"));
         assert!(summary.contains(
-            "Safe next action: run \\`ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json"
+            "Safe next action: run \\`ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json"
         ));
         assert!(summary.contains(
             "start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority"
         ));
         assert!(summary.contains(
-            "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json"
+            "ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json"
         ));
         assert!(summary.contains(
             "Fallback safe next action: run \\`ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md\\`"
@@ -7582,6 +7884,12 @@ language = "rust"
 
         let prepare = workflow_step(&workflow, "Prepare RIPR editor-agent artifacts");
         assert!(prepare.contains("RIPR_TOP_SEAM_ID"));
+        // first-pr checks the review cards were built for its base; the
+        // cards use the PR's base, so first-pr must too (F60-8).
+        let first_pr = workflow_step(&workflow, "Render RIPR first-pr start-here");
+        assert!(first_pr.contains(
+            "--base \"origin/${{ github.base_ref || github.event.repository.default_branch }}\""
+        ));
         assert!(prepare.contains(".top_actionable_seams[0].seam_id"));
         assert!(
             !prepare.contains(".top_seams[0].seam_id"),
@@ -7589,13 +7897,32 @@ language = "rust"
         );
 
         let agent_loop = workflow_step(&workflow, "Generate RIPR agent loop artifacts");
+        assert!(agent_loop.contains("ripr agent start"));
+        assert!(agent_loop.contains("ripr agent packet"));
         assert!(agent_loop.contains("cp target/ripr/workflow/agent-packet.json"));
         assert!(agent_loop.contains("cp target/ripr/workflow/agent-brief.json"));
-        assert!(agent_loop.contains("cp target/ripr/workflow/agent-verify.json"));
-        assert!(agent_loop.contains("cp target/ripr/reports/agent-receipt.json"));
-        assert!(agent_loop.contains("--format repo-exposure-json"));
-        assert!(agent_loop.contains("--format json"));
-        assert!(agent_loop.contains("target/ripr/workflow/analysis-outcome.json"));
+        // A failed packet render must not leave an empty JSON behind.
+        assert!(agent_loop.contains("> \"$packet_tmp\""));
+        assert!(agent_loop.contains("mv \"$packet_tmp\" target/ripr/workflow/agent-packet.json"));
+        // #3906 (F60-1): before and after would both be this HEAD, so
+        // verify has no movement to compare and exits 2 on every run.
+        // CI writes the before side only; the repair's after phase writes
+        // the rest where the test edit happens.
+        for post_edit in [
+            "ripr check",
+            "ripr agent verify",
+            "ripr agent receipt",
+            "ripr outcome",
+            "after.repo-exposure.json",
+            "analysis-outcome.json",
+            "agent-verify.json",
+            "agent-receipt.json",
+        ] {
+            assert!(
+                !agent_loop.contains(post_edit),
+                "agent-loop step must not run the post-edit step `{post_edit}`:\n{agent_loop}"
+            );
+        }
 
         let guidance = workflow_step(&workflow, "Run RIPR PR guidance report");
         assert!(guidance.contains("github.event_name == 'pull_request'"));
@@ -8192,7 +8519,7 @@ language = "rust"
             "Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, and preview-limited evidence"
         ));
         assert!(summary.contains(
-            "Proof rail: verify command, receipt command, and receipt path are static movement evidence only."
+            "Proof rail: the repair start, verify, receipt, and receipt path are static movement evidence only; verify and receipt run after the test edit."
         ));
         assert!(summary.contains("Start-here artifact: `target/ripr/reports/start-here.md`"));
         assert!(summary.contains("start_json=target/ripr/reports/start-here.json"));
@@ -8214,13 +8541,13 @@ language = "rust"
         assert!(summary.contains(".selected.receipt_path // \"not_available\""));
         assert!(
             summary
-                .contains(".selected.next_command // .selected.regeneration_command // \"none\"")
+                .contains(".selected.repair_command // .selected.next_command // .selected.regeneration_command // \"none\"")
         );
         assert!(summary.contains("cat target/ripr/reports/start-here.md"));
         assert!(summary.contains("Boundary: \\`$start_boundary\\`"));
         assert!(summary.contains("missing_start_here"));
         assert!(summary.contains(
-            "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json"
+            "ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json"
         ));
         assert!(summary.contains(".summary.start_here // \"not_available\""));
         assert!(
@@ -8239,6 +8566,38 @@ language = "rust"
         assert!(summary.contains("Recommended next test was not generated"));
         assert!(summary.contains("cat target/ripr/pilot/pilot-summary.md"));
         assert!(summary.contains("cat target/ripr/workflow/agent-review-summary.md"));
+        // #3906 (N5): before any test edit the review packet names the
+        // missing receipt as expected and leads with the carried repair
+        // start and its after phase, not the post-edit snapshot loop.
+        let packet = summary
+            .find("echo '### Agent review packet'")
+            .unwrap_or(usize::MAX);
+        let packet_block = summary.get(packet..).unwrap_or_default();
+        let packet_end = packet_block
+            .find("echo '### Artifact packet'")
+            .unwrap_or(packet_block.len());
+        let packet_block = packet_block.get(..packet_end).unwrap_or_default();
+        let receipt = packet_block
+            .find(&format!("echo '- Receipt: {NO_RECEIPT_BEFORE_REPAIR}'"))
+            .unwrap_or(usize::MAX);
+        let start = packet_block
+            .find("echo \"- Start repair: \\`$review_repair_command\\`\"")
+            .unwrap_or(usize::MAX);
+        let after = packet_block
+            .find(&format!(
+                "echo '- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}'"
+            ))
+            .unwrap_or(usize::MAX);
+        let full = packet_block
+            .find("cat target/ripr/workflow/agent-review-summary.md")
+            .unwrap_or(0);
+        assert!(
+            receipt < start && start < after && after < full,
+            "{packet_block}"
+        );
+        assert!(packet_block.contains(".static_movement.state // empty"));
+        assert!(packet_block.contains("[ \"$review_movement\" = missing_artifact ]"));
+        assert!(packet_block.contains(".selected.repair_command // empty"));
         assert!(summary.contains("### Uploaded review artifacts"));
         assert!(summary.contains("#### Uploaded artifacts at a glance"));
         assert!(summary.contains("target/ripr/reports/index.json"));

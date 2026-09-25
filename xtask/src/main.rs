@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -278,14 +279,15 @@ pub(crate) use reports::{
     extract_json_object_usize_map, extract_json_string, extract_json_warnings,
     limited_badge_artifacts_json, limited_badge_artifacts_markdown,
     parse_repo_badge_artifact_options, parse_repo_exposure_summary_counts,
-    read_repo_exposure_summary_artifact, repo_badge_artifact_command_args,
-    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-    ripr_plus_receipt_from_badge, ripr_plus_receipt_from_options,
-    ripr_plus_receipt_from_repo_badge_json, ripr_plus_receipt_from_repo_exposure_summary_json,
+    read_badge_artifact_diff_governed, read_repo_exposure_summary_artifact,
+    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+    repo_badge_artifacts_summary_markdown, ripr_plus_receipt_from_badge,
+    ripr_plus_receipt_from_options, ripr_plus_receipt_from_repo_badge_json,
+    ripr_plus_receipt_from_repo_exposure_summary_json,
     ripr_plus_receipt_from_repo_exposure_summary_json_with_source, ripr_plus_receipt_markdown,
     run_repo_badge_artifact_command, validate_shields_endpoint_bytes,
-    write_badge_artifacts_after_build, write_badge_artifacts_from_diff,
+    write_badge_artifacts_after_build, write_badge_artifacts_from_diff, write_badge_input_identity,
 };
 pub(crate) use reports::{
     FixtureCheckFormat, fixture_dirs, goldens_check, is_manifest_only_fixture_dir,
@@ -346,7 +348,8 @@ pub(crate) use ripr_swarm::{
 use run::{
     TimedFileOutput, TimedOutput, capture_output, capture_output_with_timeout,
     capture_stdout_to_file_with_timeout, command_success_owned, run, run_in_dir,
-    run_in_dir_with_envs, run_output, run_output_optional, run_output_owned, run_output_owned_in,
+    run_in_dir_with_envs, run_output, run_output_bytes, run_output_optional,
+    run_output_optional_bytes, run_output_owned, run_output_owned_in,
     run_output_owned_with_timeout, run_owned, run_with_envs, tool_build_timeout,
 };
 
@@ -754,9 +757,13 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
 }
 
 fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
+    // Raw NUL-delimited inventory (#4006): `-z` output is never C-quoted,
+    // so exotic names survive byte-exact; parsing rules come from the
+    // shared authority in `decode_changed_files`, not from line splitting
+    // here. The spawn site is unchanged (gate-runner policy entry).
     let output = std::process::Command::new("git")
         .current_dir(root)
-        .args(["diff", "--name-only", "origin/main...HEAD"])
+        .args(["diff", "--name-only", "-z", "origin/main...HEAD"])
         .output()
         .map_err(|err| format!("git diff --name-only failed: {err}"))?;
     if !output.status.success() {
@@ -770,8 +777,28 @@ fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
             "git diff --name-only origin/main...HEAD failed: {detail};              if origin/main is not available, run `git fetch origin main` first"
         ));
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    Ok(text.lines().map(String::from).collect())
+    decode_changed_files(&output.stdout)
+}
+
+/// Decode raw `--name-only -z` bytes through the shared NUL path-record
+/// authority (#4006). Strict: non-UTF-8 or empty records fail loudly
+/// instead of collapsing through lossy conversion.
+fn decode_changed_files(output: &[u8]) -> Result<Vec<String>, String> {
+    ripr::analysis::parse_git_path_records(output)
+        .map_err(|err| format!("changed-file inventory: {err}"))
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| {
+                    path.to_str().map(str::to_string).ok_or_else(|| {
+                        format!(
+                            "changed-file inventory: decoded path {} is not valid UTF-8",
+                            path.display()
+                        )
+                    })
+                })
+                .collect()
+        })
 }
 
 /// Origin-main rooted selector for callers that run from the repository
@@ -852,6 +879,61 @@ mod check_fast_selector_tests {
             report.contains("Selector: failed") && report.contains("Base: origin/main"),
             "report must disclose selector status and base: {report}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn exotic_names_survive_the_changed_file_selector() -> Result<(), String> {
+        // Discriminates NUL-delimited inventory (#4006): a non-ASCII name
+        // must decode byte-exact; the old line parser kept git's C-quoted
+        // octal form. Asserts through the real `changed_files_vs_base`
+        // production path.
+        let root =
+            std::env::temp_dir().join(format!("ripr-check-fast-names-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create names fixture: {err}"))?;
+        let run = |args: &[&str]| run_fixture_git(&root, args);
+        run(&["init", "--initial-branch=main"])?;
+        run(&["config", "user.email", "ripr@example.invalid"])?;
+        run(&["config", "user.name", "ripr test"])?;
+        std::fs::write(root.join("base.txt"), "fixture\n")
+            .map_err(|err| format!("write names fixture: {err}"))?;
+        run(&["add", "."])?;
+        run(&["commit", "-m", "fixture"])?;
+        run(&["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+        std::fs::write(root.join("sp ace.txt"), "spaces\n")
+            .map_err(|err| format!("write names fixture: {err}"))?;
+        std::fs::write(root.join("uni-\u{e9}.txt"), "unicode\n")
+            .map_err(|err| format!("write names fixture: {err}"))?;
+        run(&["add", "-A"])?;
+        run(&["commit", "-m", "exotic"])?;
+
+        let mut files = changed_files_vs_base(&root)?;
+        files.sort();
+        let expected = vec!["sp ace.txt".to_string(), "uni-\u{e9}.txt".to_string()];
+        let _ = std::fs::remove_dir_all(&root);
+        if files != expected {
+            return Err(format!(
+                "exotic selector inventory mismatch: got {files:?}, want {expected:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn strict_selector_inventory_rejects_non_utf8() -> Result<(), String> {
+        // The strict-failure side of the NUL authority at the selector
+        // decode boundary: non-UTF-8 records fail loudly instead of
+        // collapsing through lossy conversion.
+        let err = match decode_changed_files(b"ok.txt\0\xffbad\0") {
+            Err(err) => err,
+            Ok(files) => {
+                return Err(format!("non-UTF-8 inventory must fail, decoded {files:?}"));
+            }
+        };
+        if !err.contains("not valid UTF-8") {
+            return Err(format!("unexpected strict-decode error: {err}"));
+        }
         Ok(())
     }
 
@@ -10634,6 +10716,10 @@ struct LspCockpitFixture {
 struct LspCockpitContext {
     seam_packet_available: bool,
     targeted_test_brief_available: bool,
+    /// The repair start (`ripr agent repair ... --phase before`) is offered
+    /// only for a seam past the repair-packet flip, so it is reported on its
+    /// own and is not part of `agent_loop_commands_available` (#3906).
+    agent_repair_command_available: bool,
     agent_packet_command_available: bool,
     agent_brief_command_available: bool,
     after_snapshot_command_available: bool,
@@ -10848,6 +10934,10 @@ fn lsp_cockpit_fixture_report(
             "ripr.copyTargetedTestBrief" => {
                 context.targeted_test_brief_available = action_has_string_argument(action, "brief");
             }
+            "ripr.copyAgentRepairCommand" => {
+                context.agent_repair_command_available =
+                    action_has_string_argument(action, "command");
+            }
             "ripr.copyAgentPacketCommand" => {
                 context.agent_packet_command_available =
                     action_has_string_argument(action, "command");
@@ -11012,6 +11102,7 @@ fn lsp_cockpit_report_json(report: &LspCockpitReport) -> Result<String, String> 
                 "context": {
                     "seam_packet_available": fixture.context.seam_packet_available,
                     "targeted_test_brief_available": fixture.context.targeted_test_brief_available,
+                    "agent_repair_command_available": fixture.context.agent_repair_command_available,
                     "agent_packet_command_available": fixture.context.agent_packet_command_available,
                     "agent_brief_command_available": fixture.context.agent_brief_command_available,
                     "after_snapshot_command_available": fixture.context.after_snapshot_command_available,
@@ -11083,6 +11174,10 @@ fn lsp_cockpit_report_markdown(report: &LspCockpitReport) -> String {
         out.push_str(&format!(
             "- targeted test brief available: {}\n",
             yes_no(fixture.context.targeted_test_brief_available)
+        ));
+        out.push_str(&format!(
+            "- agent repair command available: {}\n",
+            yes_no(fixture.context.agent_repair_command_available)
         ));
         out.push_str(&format!(
             "- agent packet command available: {}\n",
@@ -14727,6 +14822,7 @@ fn check_readme_state() -> Result<(), String> {
 
 fn markdown_links() -> Result<(), String> {
     let mut violations = Vec::new();
+    let mut heading_cache: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
     for file in tracked_files()? {
         if !file.ends_with(".md") {
             continue;
@@ -14740,16 +14836,44 @@ fn markdown_links() -> Result<(), String> {
         }
         let text = read_text_lossy(path)?;
         for link in markdown_links_in_text(&text) {
-            let Some(target_path) = local_markdown_target(&link.target) else {
+            let Some(target) = local_markdown_target(&link.target) else {
                 continue;
             };
-            let resolved = resolve_markdown_link(path, &target_path);
-            if !resolved.exists() {
-                violations.push(format!(
-                    "{file}:{} links to missing local target `{}`",
-                    link.line, link.target
-                ));
+            let resolved = match target.path.as_deref() {
+                Some(target_path) => {
+                    let resolved = resolve_markdown_link(path, target_path);
+                    if !resolved.exists() {
+                        violations.push(format!(
+                            "{file}:{} links to missing local target `{}`",
+                            link.line, link.target
+                        ));
+                        continue;
+                    }
+                    resolved
+                }
+                None => path.to_path_buf(),
+            };
+            let Some(fragment) = target.fragment else {
+                continue;
+            };
+            // Only a Markdown document has headings to name. A fragment on any
+            // other target (`src/lib.rs#L20`) is not this check's subject.
+            if !resolved
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+            {
+                continue;
             }
+            let slugs = match heading_cache.entry(resolved.clone()) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    let target_text = read_text_lossy(&resolved)?;
+                    entry.insert(heading_slugs(&target_text))
+                }
+            };
+            violations.extend(missing_anchor_violation(
+                &file, &link, &resolved, &fragment, slugs,
+            ));
         }
     }
 
@@ -14757,10 +14881,11 @@ fn markdown_links() -> Result<(), String> {
         PolicyReportSpec {
             report_file: "markdown-links.md",
             check: "markdown-links",
-            why_it_matters: "Markdown links are repo state for humans and long-context agents; links to deleted or renamed docs should fail before review.",
+            why_it_matters: "Markdown links are repo state for humans and long-context agents; links to deleted or renamed docs, and deep links to headings that have been renamed, should fail before review.",
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Update links when docs are renamed or deleted.",
+                "Update `#anchor` fragments when a heading is renamed.",
                 "Use relative links for repo-local Markdown targets.",
                 "Run cargo xtask markdown-links before opening docs-heavy PRs.",
             ],
@@ -14769,6 +14894,103 @@ fn markdown_links() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// The violation a link's `#fragment` produces against the anchors `slugs`
+/// offers, or `None` when the fragment names one of them.
+///
+/// This is the decision the whole check exists to make, so it is its own
+/// function and has its own test: a refactor that stopped producing the
+/// violation would otherwise leave a tree that passes and a gate that no
+/// longer gates.
+fn missing_anchor_violation(
+    file: &str,
+    link: &MarkdownLink,
+    resolved: &Path,
+    fragment: &str,
+    slugs: &BTreeSet<String>,
+) -> Option<String> {
+    if slugs.contains(fragment) {
+        return None;
+    }
+    Some(format!(
+        "{file}:{} links to `{}`, and `{}` has no heading with that anchor",
+        link.line,
+        link.target,
+        resolved.display()
+    ))
+}
+
+/// The anchor GitHub gives a heading whose text is `text`.
+///
+/// GitHub lowercases the text, turns each space into `-`, and drops every other
+/// character that is not a letter, digit, `_` or `-`. Dropping rather than
+/// collapsing is load-bearing: an em-dash or a slash surrounded by spaces
+/// leaves both of those spaces behind and so produces a doubled dash, which
+/// links into this repository's own headings depend on.
+fn heading_slug(text: &str) -> String {
+    let mut slug = String::new();
+    for ch in text.chars() {
+        if ch.is_alphanumeric() || ch == '_' || ch == '-' {
+            slug.extend(ch.to_lowercase());
+        } else if ch == ' ' {
+            slug.push('-');
+        }
+    }
+    slug
+}
+
+/// Every anchor the headings of `text` offer.
+///
+/// Headings that slugify the same way are numbered the way GitHub numbers them:
+/// the first keeps the bare slug and later ones gain `-1`, `-2`, and so on.
+fn heading_slugs(text: &str) -> BTreeSet<String> {
+    let mut slugs = BTreeSet::new();
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    let mut in_fence = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let Some(title) = atx_heading_title(trimmed) else {
+            continue;
+        };
+        let base = heading_slug(title);
+        let count = seen.entry(base.clone()).or_insert(0);
+        let slug = if *count == 0 {
+            base
+        } else {
+            format!("{base}-{count}")
+        };
+        *count += 1;
+        slugs.insert(slug);
+    }
+    slugs
+}
+
+/// The heading text of an ATX heading line, or `None` when `trimmed` is not one.
+fn atx_heading_title(trimmed: &str) -> Option<&str> {
+    let rest = trimmed.trim_start_matches('#');
+    let level = trimmed.len() - rest.len();
+    if level == 0 || level > 6 {
+        return None;
+    }
+    if !rest.is_empty() && !rest.starts_with(' ') {
+        // `#hashtag` is body text, not a heading.
+        return None;
+    }
+    let title = rest.trim();
+    // A closing sequence of hashes is decoration when a space precedes it.
+    let without_closing = title.trim_end_matches('#');
+    if without_closing.len() < title.len() && without_closing.ends_with(' ') {
+        return Some(without_closing.trim_end());
+    }
+    Some(title)
 }
 
 fn next_checkpoints_from_capabilities(text: &str) -> Result<Vec<String>, String> {
@@ -14828,7 +15050,7 @@ fn markdown_links_in_line(line: &str, line_number: usize) -> Vec<MarkdownLink> {
     links
 }
 
-fn local_markdown_target(raw_target: &str) -> Option<String> {
+fn local_markdown_target(raw_target: &str) -> Option<LocalMarkdownTarget> {
     let mut target = raw_target.trim();
     if target.starts_with('<') {
         let end = target.find('>')?;
@@ -14836,7 +15058,7 @@ fn local_markdown_target(raw_target: &str) -> Option<String> {
     } else if let Some((first, _)) = target.split_once(char::is_whitespace) {
         target = first;
     }
-    if target.is_empty() || target.starts_with('#') {
+    if target.is_empty() {
         return None;
     }
     let lower = target.to_ascii_lowercase();
@@ -14848,14 +15070,25 @@ fn local_markdown_target(raw_target: &str) -> Option<String> {
     {
         return None;
     }
-    let without_query = target.split('?').next().unwrap_or(target);
-    let without_anchor = without_query.split('#').next().unwrap_or(without_query);
-    let local = without_anchor.trim();
-    if local.is_empty() {
+    let (document, fragment) = match target.split_once('#') {
+        Some((document, fragment)) => (document, Some(fragment)),
+        None => (target, None),
+    };
+    let without_query = document.split('?').next().unwrap_or(document);
+    let local = without_query.trim();
+    let path = if local.is_empty() {
         None
     } else {
         Some(local.trim_start_matches('/').to_string())
+    };
+    let fragment = fragment
+        .map(str::trim)
+        .filter(|fragment| !fragment.is_empty())
+        .map(str::to_string);
+    if path.is_none() && fragment.is_none() {
+        return None;
     }
+    Some(LocalMarkdownTarget { path, fragment })
 }
 
 fn resolve_markdown_link(source: &Path, target: &str) -> PathBuf {
@@ -18132,21 +18365,32 @@ fn report_index_next_commands(
 }
 
 fn collect_pr_changes() -> Result<Vec<ChangedPath>, String> {
+    // Raw NUL-delimited inventories (#4006): every git call below passes
+    // `-z`, so records are never C-quoted and never line-split; parsing
+    // rules come from the shared authority, not from tab/line splitting
+    // here. The advisory-packet contract is unchanged (path plus status
+    // set); only identity handling is exact now.
     let mut changes = BTreeMap::<String, BTreeSet<String>>::new();
 
-    add_name_status_output(
+    add_name_status_bytes(
         &mut changes,
-        &run_output_optional("git", &["diff", "--name-status", "origin/main...HEAD"])?,
-    );
-    add_name_status_output(
+        &run_output_optional_bytes(
+            "git",
+            &["diff", "--name-status", "-z", "origin/main...HEAD"],
+        )?,
+    )?;
+    add_name_status_bytes(
         &mut changes,
-        &run_output("git", &["diff", "--name-status"])?,
-    );
-    add_name_status_output(
+        &run_output_bytes("git", &["diff", "--name-status", "-z"])?,
+    )?;
+    add_name_status_bytes(
         &mut changes,
-        &run_output("git", &["diff", "--cached", "--name-status"])?,
-    );
-    add_short_status_output(&mut changes, &run_output("git", &["status", "--short"])?);
+        &run_output_bytes("git", &["diff", "--cached", "--name-status", "-z"])?,
+    )?;
+    add_porcelain_bytes(
+        &mut changes,
+        &run_output_bytes("git", &["status", "--porcelain=v1", "-z"])?,
+    )?;
 
     Ok(changes
         .into_iter()
@@ -18156,51 +18400,115 @@ fn collect_pr_changes() -> Result<Vec<ChangedPath>, String> {
 
 fn collect_worktree_status_changes() -> Result<Vec<ChangedPath>, String> {
     let mut changes = BTreeMap::<String, BTreeSet<String>>::new();
-    add_short_status_output(&mut changes, &run_output("git", &["status", "--short"])?);
+    add_porcelain_bytes(
+        &mut changes,
+        &run_output_bytes("git", &["status", "--porcelain=v1", "-z"])?,
+    )?;
     Ok(changes
         .into_iter()
         .map(|(path, statuses)| ChangedPath { path, statuses })
         .collect())
 }
 
-fn add_name_status_output(changes: &mut BTreeMap<String, BTreeSet<String>>, output: &str) {
-    for line in output.lines() {
-        let parts = line.split('\t').collect::<Vec<_>>();
-        if parts.len() < 2 {
-            continue;
-        }
-        let status = parts[0].trim();
-        let Some(path) = parts.last() else {
-            continue;
-        };
-        add_changed_path(changes, path, status);
+/// Decode raw `--name-status -z` bytes through the shared NUL status-record
+/// authority (#4006). Strict: truncated records and non-UTF-8 fields fail
+/// loudly instead of attributing a change to half a record or collapsing
+/// through lossy conversion (the old tab-split route did both: it kept
+/// C-quoted octal names verbatim and silently dropped rename sources).
+/// Rename/copy records attribute the target path — the path present at the
+/// head — matching the old `parts.last()` projection with exact bytes.
+fn add_name_status_bytes(
+    changes: &mut BTreeMap<String, BTreeSet<String>>,
+    output: &[u8],
+) -> Result<(), String> {
+    let records = ripr::analysis::parse_git_status_records(output)
+        .map_err(|err| format!("pr-change name-status inventory: {err}"))?;
+    for record in &records {
+        let path = record.path.to_str().ok_or_else(|| {
+            format!(
+                "pr-change name-status inventory: decoded path {} is not valid UTF-8",
+                record.path.display()
+            )
+        })?;
+        add_changed_path(changes, path, &record.status);
     }
+    Ok(())
 }
 
-fn add_short_status_output(changes: &mut BTreeMap<String, BTreeSet<String>>, output: &str) {
-    for line in output.lines() {
-        if line.len() < 4 {
-            continue;
-        }
-        let status = line[..2].trim();
-        let mut path = line[3..].trim();
-        if let Some((_, new_path)) = path.split_once(" -> ") {
-            path = new_path.trim();
-        }
-        if status.is_empty() {
-            continue;
-        }
-        add_changed_path(changes, path, status);
+/// Decode raw `git status --porcelain=v1 -z` bytes (#4006). Entries are
+/// `XY␣path\0`; rename/copy entries append the source as a bare second
+/// field (`XY␣new\0old\0`, verified against real git output for both the
+/// staged `R ` and the worktree ` R` columns — the latter occurs for
+/// intent-to-add renames). Output is never C-quoted and never line-split,
+/// so exotic names survive byte-exact — including names containing ` -> `,
+/// which the old `split_once(" -> ")` projection mis-split. Rename entries
+/// attribute the target path, matching the old projection with exact bytes.
+/// A non-empty input missing its trailing NUL fails loudly: real git always
+/// terminates every record, so a missing terminator is truncation, not a
+/// final field.
+fn add_porcelain_bytes(
+    changes: &mut BTreeMap<String, BTreeSet<String>>,
+    output: &[u8],
+) -> Result<(), String> {
+    if output.is_empty() {
+        return Ok(());
     }
+    if output.last() != Some(&0) {
+        return Err(
+            "pr-change porcelain inventory: output is truncated or misframed (missing trailing NUL)"
+                .to_string(),
+        );
+    }
+    let mut fields: Vec<&[u8]> = output.split(|byte| *byte == 0).collect();
+    fields.pop();
+    let mut fields = fields.into_iter();
+    while let Some(field) = fields.next() {
+        let (status, path) = porcelain_entry(field)?;
+        if status.iter().any(|byte| matches!(byte, b'R' | b'C')) {
+            let _source = fields.next().ok_or_else(|| {
+                format!("pr-change porcelain inventory: rename entry for `{path}` is missing its paired path")
+            })?;
+        }
+        let status_text = std::str::from_utf8(status)
+            .map_err(|err| format!("pr-change porcelain inventory: status is not ASCII: {err}"))?;
+        add_changed_path(changes, path, status_text.trim());
+    }
+    Ok(())
+}
+
+/// Split one `XY␣path` porcelain field into its status prefix and path.
+/// Fails loudly on misframed input instead of inventing an entry.
+fn porcelain_entry(field: &[u8]) -> Result<(&[u8], &str), String> {
+    if field.len() < 4 || field[2] != b' ' {
+        return Err(format!(
+            "pr-change porcelain inventory: misframed entry of {} bytes",
+            field.len()
+        ));
+    }
+    let path = std::str::from_utf8(&field[3..]).map_err(|err| {
+        format!("pr-change porcelain inventory: entry path is not valid UTF-8: {err}")
+    })?;
+    if path.is_empty() {
+        return Err("pr-change porcelain inventory: entry path is empty".to_string());
+    }
+    Ok((&field[..2], path))
 }
 
 fn add_changed_path(changes: &mut BTreeMap<String, BTreeSet<String>>, path: &str, status: &str) {
-    let normalized = normalize_slashes(path.trim().trim_matches('"'));
-    if normalized.is_empty() {
+    // Identity-exact (#4006 item 5): the map key is the decoded path
+    // verbatim. All feeders pass `-z` git output, which always uses `/`
+    // separators even on Windows, so there is no separator folding to do —
+    // and folding would be wrong: the literal-backslash filename `a\b.rs`
+    // and the nested path `a/b.rs` are distinct tracked paths that folding
+    // collapsed to one key, omitting an inventory path while returning
+    // success. No trimming either: leading/trailing spaces are path bytes.
+    // Display-time normalization, if ever needed, belongs at the render
+    // call site — never in the identity map.
+    if path.is_empty() {
         return;
     }
     changes
-        .entry(normalized)
+        .entry(path.to_string())
         .or_default()
         .insert(status.to_string());
 }

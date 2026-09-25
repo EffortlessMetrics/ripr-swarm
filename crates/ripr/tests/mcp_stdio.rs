@@ -276,6 +276,73 @@ fn legacy_stdio_lifecycle_lists_and_reads_the_same_bounded_status() -> Result<()
 }
 
 #[test]
+fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
+    let root = workspace_root()?;
+    let request_bytes = [
+        line(json!({
+            "jsonrpc": "2.0",
+            "id": "discover",
+            "method": "server/discover",
+            "params": { "_meta": current_meta() }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0",
+            "id": "unknown-tool",
+            "method": "tools/call",
+            "params": {
+                "_meta": current_meta(),
+                "name": "ripr_everything",
+                "arguments": {}
+            }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0",
+            "id": "with-arguments",
+            "method": "tools/call",
+            "params": {
+                "_meta": current_meta(),
+                "name": "ripr_workspace_status",
+                "arguments": { "verbose": true }
+            }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0",
+            "id": "unknown-resource",
+            "method": "resources/read",
+            "params": {
+                "_meta": current_meta(),
+                "uri": "ripr://workspace/missing"
+            }
+        }))?,
+    ]
+    .concat();
+    let output = run_mcp(&root, &[&request_bytes])?;
+    let responses = response_lines(&output)?;
+    if responses.len() != 4 {
+        return Err(format!("expected 4 MCP responses, got {}", responses.len()));
+    }
+    let expected: [(&str, i64); 3] = [
+        ("unknown-tool", -32602),
+        ("with-arguments", -32602),
+        ("unknown-resource", -32602),
+    ];
+    for (index, (id, code)) in expected.iter().enumerate() {
+        let response = &responses[index + 1];
+        if response.pointer("/error/code").and_then(Value::as_i64) != Some(*code) {
+            return Err(format!(
+                "rejection for {id} must be invalid-params: {response}"
+            ));
+        }
+        if response.pointer("/id").and_then(Value::as_str) != Some(id) {
+            return Err(format!(
+                "rejection for {id} must echo the request id: {response}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn current_discovery_requires_metadata_and_rejects_legacy_ping() -> Result<(), String> {
     let root = std::env::temp_dir().join(format!("ripr-mcp-missing-root-{}", std::process::id()));
     if root.is_dir() {

@@ -89,6 +89,13 @@ pub(crate) fn source_type_for(path: &Path) -> SourceType {
         Some("tsx") => SourceType::tsx(),
         Some("ts") => SourceType::ts(),
         Some("jsx") => SourceType::jsx(),
+        // oxc 0.130 exposes no `mts()`/`cts()` constructors, so build the
+        // TypeScript ESM/CJS flavors from `ts()` plus the module-kind
+        // markers, mirroring how `js` maps onto `mjs()` below.
+        Some("mts") => SourceType::ts().with_module(true),
+        Some("cts") => SourceType::ts().with_commonjs(true),
+        Some("mjs") => SourceType::mjs(),
+        Some("cjs") => SourceType::cjs(),
         Some("js") => SourceType::mjs(),
         _ => SourceType::mjs(),
     }
@@ -116,16 +123,36 @@ impl LanguageAdapter for TypeScriptAdapter {
         let mut all_owners: Vec<TypeScriptOwner> = Vec::new();
         let mut all_tests: Vec<TypeScriptTest> = Vec::new();
         let mut parse_limits: Vec<TypeScriptParseLimit> = Vec::new();
+        let mut read_failures: Vec<TypeScriptReadFailure> = Vec::new();
+        let mut extraction_gaps: Vec<TypeScriptTestExtractionGap> = Vec::new();
+        // Files that vanished from the index entirely (unreadable): the real
+        // count is reported instead of a hardcoded 0 so downstream consumers
+        // can tell an empty workspace from a silently incomplete one.
+        let mut skipped_files = 0usize;
         for relative in &workspace_files {
             let absolute = options.root.join(relative);
-            let Ok(source) = std::fs::read_to_string(&absolute) else {
-                continue;
+            let source = match std::fs::read_to_string(&absolute) {
+                Ok(source) => source,
+                Err(err) => {
+                    skipped_files += 1;
+                    read_failures.push(TypeScriptReadFailure {
+                        file: relative.clone(),
+                        error: err.to_string(),
+                    });
+                    continue;
+                }
             };
             if let Some(reason) = parse_error_reason(relative, &source) {
-                if !is_test_file(relative)
-                    && changed_paths
-                        .iter()
-                        .any(|changed| changed == &normalized_path(relative))
+                // Disclose parse failures for CHANGED files of either role:
+                // a changed production file's added lines are never
+                // classified, and a changed test file's tests silently vanish
+                // from `all_tests` (which can flip owners to false
+                // `no_static_path`). Unchanged-file parse errors stay out of
+                // the diff-scoped limitation set; the per-file index effect is
+                // bounded to owners this diff touches.
+                if changed_paths
+                    .iter()
+                    .any(|changed| changed == &normalized_path(relative))
                 {
                     parse_limits.push(TypeScriptParseLimit {
                         file: relative.clone(),
@@ -135,7 +162,16 @@ impl LanguageAdapter for TypeScriptAdapter {
                 continue;
             }
             if is_test_file(relative) {
-                all_tests.extend(extract_tests(relative, &source));
+                let tests = extract_tests(relative, &source);
+                // A recognized test file that parses but registers test
+                // shapes the extractor drops (template-literal titles,
+                // tagged-template `.each`, tests generated in loops or
+                // callbacks) gets a partial-extraction disclosure so a
+                // confident `no_static_path` is known to be possibly false.
+                if let Some(gap) = detect_partial_test_extraction(relative, &source, &tests) {
+                    extraction_gaps.push(gap);
+                }
+                all_tests.extend(tests);
             } else {
                 all_owners.extend(extract_owners(relative, &source));
             }
@@ -160,9 +196,9 @@ impl LanguageAdapter for TypeScriptAdapter {
         // line that falls inside an owner.
         let mut findings: Vec<Finding> = Vec::new();
         let mut changed_count: usize = 0;
-        // Per-output-language tally (#2103 review): this adapter covers both
-        // typescript (.ts/.tsx) and javascript (.js/.jsx), so the summary
-        // must not attribute JS files to typescript.
+        // Per-output-language tally (#2103 review): this adapter covers
+        // typescript (.ts/.tsx/.mts/.cts) and javascript (.js/.jsx/.mjs/.cjs),
+        // so the summary must not attribute JS files to typescript.
         let mut changed_typescript: usize = 0;
         let mut changed_javascript: usize = 0;
         for changed in changed_files {
@@ -209,6 +245,9 @@ impl LanguageAdapter for TypeScriptAdapter {
                 continue;
             }
             for added in &changed.added_lines {
+                if should_ignore_typescript_changed_line(&added.text) {
+                    continue;
+                }
                 if let Some(mut finding) = classify_change(
                     &changed.path,
                     added.line,
@@ -252,14 +291,18 @@ impl LanguageAdapter for TypeScriptAdapter {
                             }
                         }
                         finding.evidence.retain(|ev| !ev.is_empty());
-                    } else if pkg_discovery.framework_hint.is_none() {
-                        // No command resolved AND no framework detected — emit
-                        // the named limitation so the card surface shows the
-                        // correct gap.  When a framework IS detected (e.g. ava)
-                        // the `typescript_test_runner: <name>` evidence line was
-                        // already injected via `discovery_evidence` above;
-                        // suppress the unresolved limitation so consumers see the
-                        // detected runner name instead of a false negative.
+                    } else {
+                        // Fail-closed: no verify command resolved. Emit the
+                        // named limitation so consumers know why no command is
+                        // available. This must fire whenever the inferred
+                        // command is `None` — not only when no framework was
+                        // detected: mocha has no file-target command mapping,
+                        // so a detected mocha framework with no lockfile/runner
+                        // evidence previously produced NEITHER a command NOR a
+                        // limitation, contradicting the contract documented
+                        // above. (When the command IS resolved the
+                        // `typescript_test_runner: <name>` evidence line
+                        // already identifies the runner, so no limitation.)
                         finding.evidence.push(
                             "typescript_package_limitation: typescript_test_runner_unresolved"
                                 .to_string(),
@@ -276,7 +319,7 @@ impl LanguageAdapter for TypeScriptAdapter {
         if changed_javascript > 0 {
             changed_files_by_language.push((LanguageId::JavaScript, changed_javascript));
         }
-        let limitations = parse_limits
+        let mut limitations = parse_limits
             .iter()
             .map(|limit| {
                 AnalysisLimitation::new(
@@ -292,6 +335,54 @@ impl LanguageAdapter for TypeScriptAdapter {
                 .with_detail(limit.reason.clone())
             })
             .collect::<Result<Vec<_>, String>>()?;
+        // Unreadable CHANGED files: their added lines are never classified
+        // (production) or their tests vanish from the index (test files), so
+        // the diff-scoped result must name the path and the read failure
+        // instead of silently dropping the file. Unreadable unchanged files
+        // are counted in `skipped_files` above but stay out of the
+        // diff-scoped limitation set.
+        for failure in &read_failures {
+            if !changed_paths
+                .iter()
+                .any(|changed| changed == &normalized_path(&failure.file))
+            {
+                continue;
+            }
+            limitations.push(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisStage::LanguageAdapter,
+                    AnalysisRecovery::new(
+                        AnalysisRecoveryKind::Retry,
+                        "Restore read access to the file (check permissions and UTF-8 encoding), then re-run the analysis.",
+                    )?,
+                )
+                .with_path(failure.file.to_string_lossy())?
+                .with_affected_items(1)?
+                .with_detail(format!("read failed: {}", failure.error))?,
+            );
+        }
+        // Partial test extraction: one typed limitation per affected test
+        // file, carrying the taxonomy name so JSON consumers can key on it.
+        for gap in &extraction_gaps {
+            let limitation = test_extraction_partial_limitation(gap);
+            limitations.push(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisStage::LanguageAdapter,
+                    AnalysisRecovery::new(
+                        AnalysisRecoveryKind::Retry,
+                        "Re-run analysis after the adapter learns to extract the disclosed test shape.",
+                    )?,
+                )
+                .with_path(gap.file.to_string_lossy())?
+                .with_affected_items(1)?
+                .with_detail(format!(
+                    "typescript_test_extraction_partial: {} at {}",
+                    gap.shape, limitation.sample_source
+                ))?,
+            );
+        }
         Ok(LanguageDiffResult {
             findings,
             harness_projections: Vec::new(),
@@ -299,7 +390,7 @@ impl LanguageAdapter for TypeScriptAdapter {
             candidate_line_count: 0,
             changed_files_by_language,
             partial_scope: None,
-            skipped_files: 0,
+            skipped_files,
             limitations,
         })
     }

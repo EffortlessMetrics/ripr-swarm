@@ -1,9 +1,14 @@
 use crate::agent::loop_commands;
+use crate::app::agent_review_summary::NO_RECEIPT_BEFORE_REPAIR;
 use crate::cli::commands_options::{InitCi, InitOptions};
 use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CONFIG_FILE_NAME, generated_init_config};
+use crate::output::first_pr::{
+    MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
+    REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
+};
 use std::path::{Path, PathBuf};
 
 pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
@@ -334,7 +339,13 @@ on:
 
 permissions:
   contents: read
+  # Used only when RIPR_COMMENT_MODE is `inline`, to post review comments.
+  # With the default `off`, nothing writes to the pull request. Set this to
+  # `read` if you keep RIPR_COMMENT_MODE at `off`.
   pull-requests: write
+  # Used only to upload SARIF to code scanning while RIPR_UPLOAD_SARIF is
+  # "true" (the default). Remove this line and set RIPR_UPLOAD_SARIF to
+  # "false" if the repository does not use code scanning.
   security-events: write
 
 env:
@@ -427,48 +438,27 @@ jobs:
       - name: Generate RIPR agent loop artifacts
         if: always() && env.RIPR_TOP_SEAM_ID != ''
         continue-on-error: true
+        # CI writes the before side of the repair loop only: the workflow
+        # manifest, brief, and packet the focused-test edit starts from.
+        # The after snapshot, verify, and receipt need that edit between
+        # the snapshots, so the repair's `--attempt ... --phase after`
+        # command produces them where the edit happens (#3906). The packet
+        # lands through a temporary file so a failed render never leaves an
+        # empty JSON artifact for later steps or the upload.
         run: |
           ripr agent start \
             --root . \
             --seam-id "$RIPR_TOP_SEAM_ID" \
             --out target/ripr/workflow
+          packet_tmp="$(mktemp)"
           ripr agent packet \
             --root . \
             --seam-id "$RIPR_TOP_SEAM_ID" \
             --json \
-            > target/ripr/workflow/agent-packet.json
+            > "$packet_tmp"
+          mv "$packet_tmp" target/ripr/workflow/agent-packet.json
           cp target/ripr/workflow/agent-packet.json target/ripr/agent/agent-packet.json
           cp target/ripr/workflow/agent-brief.json target/ripr/agent/agent-brief.json
-          ripr check \
-            --root . \
-            --mode ready \
-            --format repo-exposure-json \
-            > target/ripr/workflow/after.repo-exposure.json
-          cp target/ripr/workflow/after.repo-exposure.json target/ripr/pilot/after.repo-exposure.json
-          ripr check \
-            --root . \
-            --mode draft \
-            --format json \
-            > target/ripr/workflow/analysis-outcome.json
-          ripr agent verify \
-            --root . \
-            --before target/ripr/workflow/before.repo-exposure.json \
-            --after target/ripr/workflow/after.repo-exposure.json \
-            --json \
-            > target/ripr/workflow/agent-verify.json
-          cp target/ripr/workflow/agent-verify.json target/ripr/agent/agent-verify.json
-          ripr agent receipt \
-            --root . \
-            --verify-json target/ripr/workflow/agent-verify.json \
-            --seam-id "$RIPR_TOP_SEAM_ID" \
-            --json \
-            --out target/ripr/reports/agent-receipt.json
-          cp target/ripr/reports/agent-receipt.json target/ripr/agent/agent-receipt.json
-          ripr outcome \
-            --before target/ripr/workflow/before.repo-exposure.json \
-            --after target/ripr/workflow/after.repo-exposure.json \
-            --format json \
-            --out target/ripr/reports/targeted-test-outcome.json
 
       - name: Render RIPR gap decision ledger
         if: always() && hashFiles('target/ripr/reports/repo-exposure.json') != ''
@@ -485,7 +475,31 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           mkdir -p target/ripr/reports
-          git diff --binary "origin/${{ github.base_ref }}...HEAD" > target/ripr/reports/pr.diff
+          # Pinned diff contract (#4005): the same presentation pins as the
+          # production loaders. Ambient external-diff, textconv, color,
+          # context, and path-quoting configuration must not change the
+          # bytes RIPR analyzes.
+          base_ref="origin/${{ github.base_ref }}"
+          base_sha="$(git rev-parse --verify "${base_ref}^{commit}")" || { echo "ripr: cannot resolve base ref $base_ref" >&2; exit 1; }
+          head_sha="$(git rev-parse --verify "HEAD^{commit}")" || { echo "ripr: cannot resolve HEAD" >&2; exit 1; }
+          git -c core.quotePath=true diff --binary --no-ext-diff --no-textconv --no-color --unified=3 --inter-hunk-context=0 "${base_sha}...${head_sha}" > target/ripr/reports/pr.diff || { echo "ripr: git diff failed for ${base_sha}...${head_sha}" >&2; exit 1; }
+          byte_count="$(wc -c < target/ripr/reports/pr.diff | tr -d ' ')"
+          digest="$(sha256sum target/ripr/reports/pr.diff)" || {
+            echo "ripr: failed to compute SHA-256 for patch" >&2
+            exit 1
+          }
+          digest="${digest%% *}"
+          jq -n --arg base_ref "$base_ref" --arg base_sha "$base_sha" --arg head_sha "$head_sha" --argjson byte_count "$byte_count" --arg digest "$digest" '{tool:"ripr",kind:"pr-diff-receipt",base_ref:$base_ref,base_sha:$base_sha,head_sha:$head_sha,byte_count:$byte_count,sha256:$digest}' > target/ripr/reports/pr-diff.receipt.json
+          if [ "$byte_count" -eq 0 ]; then
+            name_list="$(mktemp)" || { echo "ripr: cannot create temp file for path inventory" >&2; exit 1; }
+            git -c core.quotePath=true diff --name-only -z "${base_sha}...${head_sha}" > "$name_list" || { echo "ripr: git diff --name-only failed for ${base_sha}...${head_sha}" >&2; exit 1; }
+            changed_paths="$(tr -cd '\0' < "$name_list" | wc -c | tr -d ' ')"
+            rm -f "$name_list"
+            if [ "$changed_paths" -ne 0 ]; then
+              echo "ripr: empty patch but $changed_paths changed path(s); refusing an absent result" >&2
+              exit 1
+            fi
+          fi
 
       - name: Run RIPR PR guidance report
         if: github.event_name == 'pull_request'
@@ -719,11 +733,6 @@ jobs:
             --mode ready \
             --format repo-badge-shields \
             > target/ripr/reports/repo-ripr-badge-shields.json
-
-      - name: Render RIPR operator cockpit
-        if: always() && hashFiles('crates/ripr/Cargo.toml') != '' && hashFiles('xtask/src/reports/operator.rs') != ''
-        continue-on-error: true
-        run: cargo xtask operator-cockpit
 
       - name: Evaluate RIPR gate decision
         if: always() && env.RIPR_GATE_MODE != '' && hashFiles('target/ripr/review/comments.json') != ''
@@ -1177,10 +1186,16 @@ jobs:
       - name: Render RIPR first-pr start-here
         if: always()
         continue-on-error: true
+        # first-pr checks its base resolves and that the review cards were
+        # built for the same base. Without --base it assumes origin/main,
+        # so a repository whose PRs target another branch got a blocked
+        # start-here. A manual run has no PR base; use the default branch.
         run: |
           mkdir -p target/ripr/reports
           ripr first-pr \
             --root . \
+            --base "origin/${{ github.base_ref || github.event.repository.default_branch }}" \
+            --head HEAD \
             --gap-ledger target/ripr/reports/gap-decision-ledger.json \
             --first-action target/ripr/reports/first-useful-action.json \
             --review-comments target/ripr/review/comments.json \
@@ -1291,11 +1306,15 @@ jobs:
             printf '%s' "$value"
           }
 
-          jq -r '.comments[]? | select(.placement.path and .placement.line) | [.placement.path, (.placement.line | tostring), (.reason // "RIPR targeted test guidance"), (.llm_guidance.command // "")] | @tsv' target/ripr/review/comments.json \
-            | while IFS="$(printf '\t')" read -r path line reason command; do
+          # An annotation names the repair start only for a card past the
+          # repair-packet flip. The brief command it used to show redirects
+          # into this runner's absolute checkout path, which does not exist
+          # on the machine that reads the annotation.
+          jq -r '.comments[]? | select(.placement.path and .placement.line) | [.placement.path, (.placement.line | tostring), (.reason // "RIPR targeted test guidance"), (.llm_guidance.repair_command // "")] | @tsv' target/ripr/review/comments.json \
+            | while IFS="$(printf '\t')" read -r path line reason repair_start; do
                 message="$reason"
-                if [ -n "$command" ] && [ "$command" != "null" ]; then
-                  message="$message Command: $command"
+                if [ -n "$repair_start" ] && [ "$repair_start" != "null" ]; then
+                  message="$message Start the repair: $repair_start"
                 fi
                 annotation_path="$(escape_github_property "$path")"
                 annotation_line="$(escape_github_property "$line")"
@@ -1322,7 +1341,7 @@ jobs:
             echo '- Then open `target/ripr/reports/index.md` to navigate deeper evidence artifacts.'
             echo '- Safe next action: repair one named gap, regenerate missing or malformed artifacts, refresh stale evidence, fix wrong-root setup, or stop on no-action.'
             echo '- Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, and preview-limited evidence are explicit stop or regeneration states.'
-            echo '- Proof rail: verify command, receipt command, and receipt path are static movement evidence only.'
+            echo '- Proof rail: the repair start, verify, receipt, and receipt path are static movement evidence only; verify and receipt run after the test edit.'
             echo '- Preview boundary: preview-limited evidence stays syntax-first and advisory, with static limits before repair language.'
             echo '- Gate authority: `ripr gate evaluate` remains the pass/fail source only when `RIPR_GATE_MODE` is configured.'
             if [ -f target/ripr/reports/start-here.md ]; then
@@ -1360,7 +1379,8 @@ jobs:
               start_receipt="$(jq -r '.selected.receipt_command // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
               start_receipt_path="$(jq -r '.selected.receipt_path // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
               start_receipt_state="$(jq -r '.selected.receipt_state // "receipt_missing"' "$start_json" 2>/dev/null || echo unknown)"
-              start_next="$(jq -r '.selected.next_command // .selected.regeneration_command // "none"' "$start_json" 2>/dev/null || echo unknown)"
+              start_repair_command="$(jq -r '.selected.repair_command // empty' "$start_json" 2>/dev/null || true)"
+              start_next="$(jq -r '.selected.repair_command // .selected.next_command // .selected.regeneration_command // "none"' "$start_json" 2>/dev/null || echo unknown)"
               start_warnings="$(jq -r '(.warnings // [] | length)' "$start_json" 2>/dev/null || echo 0)"
               start_status="$(markdown_inline "$start_status")"
               start_state="$(markdown_inline "$start_state")"
@@ -1382,6 +1402,19 @@ jobs:
               start_receipt_state="$(markdown_inline "$start_receipt_state")"
               start_next="$(markdown_inline "$start_next")"
               start_warnings="$(markdown_inline "$start_warnings")"
+              # A carried repair start leads the block (#3906): its after
+              # phase runs verify and writes the receipt, so the low-level
+              # verify and receipt commands below are the manual alternative.
+              if [ -n "$start_repair_command" ]; then
+                start_repair_command="$(markdown_inline "$start_repair_command")"
+                echo "- Start repair: \`$start_repair_command\`"
+                echo '- @RIPR_REPAIR_AFTER_PHASE@'
+                start_verify_label='@RIPR_MANUAL_VERIFY_LABEL@'
+                start_receipt_label='@RIPR_MANUAL_RECEIPT_LABEL@'
+              else
+                start_verify_label='@RIPR_VERIFY_AFTER_EDIT_LABEL@'
+                start_receipt_label='@RIPR_RECEIPT_AFTER_VERIFY_LABEL@'
+              fi
               echo "- Status: \`$start_status\`"
               echo "- Selected state: \`$start_state\`"
               echo "- Canonical gap: \`$start_gap\`"
@@ -1396,8 +1429,8 @@ jobs:
               echo "- Repair target: \`$start_target\`"
               echo "- Related test: \`$start_related\`"
               echo "- Static limit: \`$start_limit\`"
-              echo "- Verify command: \`$start_verify\`"
-              echo "- Receipt command: \`$start_receipt\`"
+              echo "- $start_verify_label: \`$start_verify\`"
+              echo "- $start_receipt_label: \`$start_receipt\`"
               echo "- Receipt path: \`$start_receipt_path\`"
               echo "- Receipt state: \`$start_receipt_state\`"
               echo "- Safe next action command: \`$start_next\`"
@@ -1406,7 +1439,11 @@ jobs:
               echo "- Boundary: start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority when configured."
               if [ -f target/ripr/reports/start-here.md ]; then
                 echo
+                echo '<details><summary>Full report: target/ripr/reports/start-here.md</summary>'
+                echo
                 cat target/ripr/reports/start-here.md
+                echo
+                echo '</details>'
               fi
             elif [ -f target/ripr/reports/first-useful-action.json ]; then
               first_json=target/ripr/reports/first-useful-action.json
@@ -1420,6 +1457,7 @@ jobs:
               first_proof="$(jq -r '.selected.focused_proof_intent // .target.suggested_assertion // .title // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
               first_gap="$(jq -r 'if .selected == null then "none" else ((.selected.path // "unknown") + (if .selected.line then ":" + (.selected.line|tostring) else "" end) + " " + (.selected.missing_discriminator // .selected.classification // .selected.seam_id // "gap")) end' "$first_json" 2>/dev/null || echo unknown)"
               first_target="$(jq -r 'if .target == null then "none" else ((.target.file // "not_available") + (if .target.related_test then " related_test=" + .target.related_test else "" end) + (if .target.suggested_test_name then " suggested=" + .target.suggested_test_name else "" end)) end' "$first_json" 2>/dev/null || echo unknown)"
+              first_repair="$(jq -r '.commands.repair // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
               first_packet="$(jq -r '.commands.context_packet // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
               first_verify="$(jq -r '.commands.verify // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
               first_receipt="$(jq -r '.commands.receipt // "not_available"' "$first_json" 2>/dev/null || echo unknown)"
@@ -1435,11 +1473,24 @@ jobs:
               first_proof="$(markdown_inline "$first_proof")"
               first_gap="$(markdown_inline "$first_gap")"
               first_target="$(markdown_inline "$first_target")"
+              first_repair="$(markdown_inline "$first_repair")"
               first_packet="$(markdown_inline "$first_packet")"
               first_verify="$(markdown_inline "$first_verify")"
               first_receipt="$(markdown_inline "$first_receipt")"
               first_fallback="$(markdown_inline "$first_fallback")"
               first_warnings="$(markdown_inline "$first_warnings")"
+              # #3906: a carried repair start leads the block; its after phase
+              # runs verify and writes the receipt, so verify and receipt below are
+              # the manual alternative. Without one they run after the test edit.
+              if [ "$first_repair" != not_available ] && [ "$first_repair" != unknown ]; then
+                echo "- Repair start: \`$first_repair\`"
+                echo '- @RIPR_REPAIR_AFTER_PHASE@'
+                first_verify_label='@RIPR_MANUAL_VERIFY_LABEL@'
+                first_receipt_label='@RIPR_MANUAL_RECEIPT_LABEL@'
+              else
+                first_verify_label='@RIPR_VERIFY_AFTER_EDIT_LABEL@'
+                first_receipt_label='@RIPR_RECEIPT_AFTER_VERIFY_LABEL@'
+              fi
               echo "- Status: \`$first_status\`"
               echo "- Safe next action: \`$first_action_kind\`"
               echo "- Title: \`$first_title\`"
@@ -1451,8 +1502,8 @@ jobs:
               echo "- Gap: \`$first_gap\`"
               echo "- Repair target: \`$first_target\`"
               echo "- Agent packet: \`$first_packet\`"
-              echo "- Verify command: \`$first_verify\`"
-              echo "- Receipt command: \`$first_receipt\`"
+              echo "- $first_verify_label: \`$first_verify\`"
+              echo "- $first_receipt_label: \`$first_receipt\`"
               echo "- Fallback/no-action: \`$first_fallback\`"
               echo "- Warnings: \`$first_warnings\`"
               echo "- Artifacts: \`target/ripr/reports/first-useful-action.json\`, \`target/ripr/reports/first-useful-action.md\`, \`target/ripr/workflow/agent-packet.json\`"
@@ -1460,7 +1511,7 @@ jobs:
             else
               echo "- Status: \`missing_start_here\`"
               echo "- State: \`missing_artifact\`"
-              echo "- Safe next action: run \`ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports\`."
+              echo "- Safe next action: run \`ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports\`."
               echo "- Fallback safe next action: run \`ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md\` after attaching at least one explicit input."
               echo "- Boundary: missing start-here packet does not fail generated CI or create gate authority."
             fi
@@ -1579,6 +1630,7 @@ jobs:
                 panel_suggested="$(jq -r '.top_issue.suggested_test // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_verify="$(jq -r '.top_issue.verify_command // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_agent="$(jq -r '.top_issue.agent_command // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
+                panel_repair="$(jq -r '.top_issue.repair_command // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_receipt="$(jq -r '.top_issue.receipt.artifact // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_gate_mode="$(jq -r '.policy.mode // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_gate_decision="$(jq -r '.policy.decision // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
@@ -1603,11 +1655,21 @@ jobs:
                 panel_suggested="$(markdown_inline "$panel_suggested")"
                 panel_verify="$(markdown_inline "$panel_verify")"
                 panel_agent="$(markdown_inline "$panel_agent")"
+                panel_repair="$(markdown_inline "$panel_repair")"
                 panel_receipt="$(markdown_inline "$panel_receipt")"
                 panel_gate_mode="$(markdown_inline "$panel_gate_mode")"
                 panel_gate_decision="$(markdown_inline "$panel_gate_decision")"
                 panel_warning_count="$(markdown_inline "$panel_warning_count")"
                 echo '#### PR review at a glance'
+                # #3906: a carried repair start leads; its after phase runs verify,
+                # so the verify command is the manual alternative.
+                if [ "$panel_repair" != not_available ] && [ "$panel_repair" != unknown ]; then
+                  echo "- Repair start: \`$panel_repair\`"
+                  echo '- @RIPR_REPAIR_AFTER_PHASE@'
+                  panel_verify_label='@RIPR_MANUAL_VERIFY_LABEL@'
+                else
+                  panel_verify_label='@RIPR_VERIFY_AFTER_EDIT_LABEL@'
+                fi
                 echo "- Status: \`$panel_status\`"
                 echo "- Headline: \`$panel_headline\`"
                 echo "- Top issue state: \`$panel_top_state\`"
@@ -1620,8 +1682,10 @@ jobs:
                 echo "- Missing discriminator: \`$panel_missing\`"
                 echo "- Suggested focused test: \`$panel_suggested\`"
                 echo "- Related test: \`$panel_related\`"
-                echo "- Verify command: \`$panel_verify\`"
-                echo "- Agent handoff: \`$panel_agent\`"
+                echo "- $panel_verify_label: \`$panel_verify\`"
+                if [ "$panel_agent" != "$panel_repair" ]; then
+                  echo "- Agent handoff: \`$panel_agent\`"
+                fi
                 echo "- Receipt: \`$panel_receipt\`"
                 echo "- Gate: mode=\`$panel_gate_mode\`, decision=\`$panel_gate_decision\`"
                 echo "- Warnings: \`$panel_warning_count\`"
@@ -1630,7 +1694,11 @@ jobs:
                 echo
               fi
               if [ -f target/ripr/reports/pr-review-front-panel.md ]; then
+                echo '<details><summary>Full report: target/ripr/reports/pr-review-front-panel.md</summary>'
+                echo
                 cat target/ripr/reports/pr-review-front-panel.md
+                echo
+                echo '</details>'
               fi
             else
               echo 'PR review summary was not generated. It runs when existing PR guidance, first-useful-action, assistant proof, health, ledger, baseline, gate, calibration, coverage/grip, or receipt artifacts are available.'
@@ -1647,6 +1715,7 @@ jobs:
                 action_why="$(jq -r '.why // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_seam="$(jq -r '.selected.seam_id // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_target="$(jq -r '(.target.file // "not_available") + (if .target.related_test then " related_test=" + .target.related_test else "" end)' "$action_json" 2>/dev/null || echo unknown)"
+                action_repair="$(jq -r '.commands.repair // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_verify="$(jq -r '.commands.verify // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_receipt="$(jq -r '.commands.receipt // "not_available"' "$action_json" 2>/dev/null || echo unknown)"
                 action_fallback="$(jq -r '.fallback.kind // "none"' "$action_json" 2>/dev/null || echo unknown)"
@@ -1657,19 +1726,32 @@ jobs:
                 action_why="$(markdown_inline "$action_why")"
                 action_seam="$(markdown_inline "$action_seam")"
                 action_target="$(markdown_inline "$action_target")"
+                action_repair="$(markdown_inline "$action_repair")"
                 action_verify="$(markdown_inline "$action_verify")"
                 action_receipt="$(markdown_inline "$action_receipt")"
                 action_fallback="$(markdown_inline "$action_fallback")"
                 action_warning_count="$(markdown_inline "$action_warning_count")"
                 echo '#### Recommended next test at a glance'
+                # #3906: a carried repair start leads; its after phase runs verify
+                # and writes the receipt, so verify and receipt are the manual
+                # alternative. Without one they run after the focused test edit.
+                if [ "$action_repair" != not_available ] && [ "$action_repair" != unknown ]; then
+                  echo "- Repair start: \`$action_repair\`"
+                  echo '- @RIPR_REPAIR_AFTER_PHASE@'
+                  action_verify_label='@RIPR_MANUAL_VERIFY_LABEL@'
+                  action_receipt_label='@RIPR_MANUAL_RECEIPT_LABEL@'
+                else
+                  action_verify_label='@RIPR_VERIFY_AFTER_EDIT_LABEL@'
+                  action_receipt_label='@RIPR_RECEIPT_AFTER_VERIFY_LABEL@'
+                fi
                 echo "- Status: \`$action_status\`"
                 echo "- Safe next action: \`$action_kind\`"
                 echo "- Title: \`$action_title\`"
                 echo "- Why: \`$action_why\`"
                 echo "- Seam: \`$action_seam\`"
                 echo "- Target: \`$action_target\`"
-                echo "- Verify command: \`$action_verify\`"
-                echo "- Receipt command: \`$action_receipt\`"
+                echo "- $action_verify_label: \`$action_verify\`"
+                echo "- $action_receipt_label: \`$action_receipt\`"
                 echo "- Fallback: \`$action_fallback\`"
                 echo "- Warnings: \`$action_warning_count\`"
                 echo "- Action artifacts: \`target/ripr/reports/first-useful-action.json\`, \`target/ripr/reports/first-useful-action.md\`"
@@ -1677,7 +1759,11 @@ jobs:
                 echo
               fi
               if [ -f target/ripr/reports/first-useful-action.md ]; then
+                echo '<details><summary>Full report: target/ripr/reports/first-useful-action.md</summary>'
+                echo
                 cat target/ripr/reports/first-useful-action.md
+                echo
+                echo '</details>'
               fi
             else
               echo 'Recommended next test was not generated. It runs when existing PR guidance, assistant proof, ledger, baseline, receipt, gate, coverage/grip, or editor context artifacts are available.'
@@ -1686,14 +1772,44 @@ jobs:
             echo
             echo '### Top recommendation'
             if [ -f target/ripr/pilot/pilot-summary.md ]; then
+              echo '<details><summary>Full report: target/ripr/pilot/pilot-summary.md</summary>'
+              echo
               cat target/ripr/pilot/pilot-summary.md
+              echo
+              echo '</details>'
             else
               echo "Pilot summary was not generated. Inspect the uploaded artifact packet and job logs."
             fi
             echo
             echo '### Agent review packet'
-            if [ -f target/ripr/workflow/agent-review-summary.md ]; then
+            # CI runs before any test edit, so no receipt exists yet (#3906,
+            # N5). The packet then leads with the carried repair start and
+            # its after phase, like every other block, instead of the
+            # low-level post-edit loop; the full summary stays an artifact.
+            review_movement=''
+            if [ -f target/ripr/workflow/agent-review-summary.json ]; then
+              review_movement="$(jq -r '.static_movement.state // empty' target/ripr/workflow/agent-review-summary.json 2>/dev/null || true)"
+            fi
+            if [ "$review_movement" = missing_artifact ]; then
+              echo '- Receipt: @RIPR_NO_RECEIPT_BEFORE_REPAIR@'
+              review_repair_command=''
+              if [ -f target/ripr/reports/start-here.json ]; then
+                review_repair_command="$(jq -r '.selected.repair_command // empty' target/ripr/reports/start-here.json 2>/dev/null || true)"
+              fi
+              if [ -n "$review_repair_command" ]; then
+                review_repair_command="$(markdown_inline "$review_repair_command")"
+                echo "- Start repair: \`$review_repair_command\`"
+                echo '- @RIPR_REPAIR_AFTER_PHASE@'
+              else
+                echo '- No repair start is available; `ripr agent status --root .` names the next step on a local checkout.'
+              fi
+              echo '- Full packet: `target/ripr/workflow/agent-review-summary.md` (workflow artifact).'
+            elif [ -f target/ripr/workflow/agent-review-summary.md ]; then
+              echo '<details><summary>Full report: target/ripr/workflow/agent-review-summary.md</summary>'
+              echo
               cat target/ripr/workflow/agent-review-summary.md
+              echo
+              echo '</details>'
             else
               echo 'Agent review summary was not generated. Run `ripr agent status --root .` locally or inspect uploaded workflow artifacts.'
             fi
@@ -1746,7 +1862,11 @@ jobs:
                 echo
               fi
               if [ -f target/ripr/reports/index.md ]; then
+                echo '<details><summary>Full report: target/ripr/reports/index.md</summary>'
+                echo
                 cat target/ripr/reports/index.md
+                echo
+                echo '</details>'
               fi
             else
               echo 'Uploaded review artifacts summary was not generated. It runs when existing RIPR report, review, receipt, workflow, agent, pilot, or CI artifacts are available.'
@@ -1771,6 +1891,7 @@ jobs:
               ledger_route="$(jq -r '(.top_repair_route | if . == null then "none" else ((.path // "unknown") + (if .line then ":" + (.line|tostring) else "" end) + " " + (.missing_discriminator // "missing discriminator unavailable")) end)' "$ledger_json" 2>/dev/null || echo unknown)"
               ledger_verify="$(jq -r '.top_repair_route.verify_command // "not_available"' "$ledger_json" 2>/dev/null || echo unknown)"
               ledger_agent="$(jq -r '.top_repair_route.agent_command // "not_available"' "$ledger_json" 2>/dev/null || echo unknown)"
+              ledger_repair="$(jq -r '.top_repair_route.repair_command // "not_available"' "$ledger_json" 2>/dev/null || echo unknown)"
               ledger_status="$(markdown_inline "$ledger_status")"
               ledger_gate_mode="$(markdown_inline "$ledger_gate_mode")"
               ledger_gate_decision="$(markdown_inline "$ledger_gate_decision")"
@@ -1786,13 +1907,32 @@ jobs:
               ledger_route="$(markdown_inline "$ledger_route")"
               ledger_verify="$(markdown_inline "$ledger_verify")"
               ledger_agent="$(markdown_inline "$ledger_agent")"
+              ledger_repair="$(markdown_inline "$ledger_repair")"
               echo '#### PR movement at a glance'
+              # #3906: a carried repair start leads; its after phase runs verify,
+              # so the verify command is the manual alternative.
+              if [ "$ledger_repair" != not_available ] && [ "$ledger_repair" != unknown ]; then
+                echo "- Repair start: \`$ledger_repair\`"
+                echo '- @RIPR_REPAIR_AFTER_PHASE@'
+                ledger_verify_label='@RIPR_MANUAL_VERIFY_LABEL@'
+              else
+                ledger_verify_label='@RIPR_VERIFY_AFTER_EDIT_LABEL@'
+              fi
               echo "- Status: \`$ledger_status\`"
               echo "- Gate: mode=\`$ledger_gate_mode\`, decision=\`$ledger_gate_decision\`"
-              echo "- Counts: new_policy_eligible=\`$ledger_new_policy_eligible\`, baseline_still_present=\`$ledger_still_present\`, baseline_resolved=\`$ledger_resolved\`, acknowledged=\`$ledger_acknowledged\`, suppressed=\`$ledger_suppressed\`, blocking_candidates=\`$ledger_blocking\`, visible_unresolved=\`$ledger_visible\`"
+              # F60-4: counts with no baseline delta or RIPR Zero status
+              # behind them were never measured; do not print their zeros.
+              ledger_count_source="$(jq -r '.movement.count_source // "unknown"' "$ledger_json" 2>/dev/null || echo unknown)"
+              if [ "$ledger_count_source" = "not_measured" ]; then
+                echo "- Counts: gap counts not measured (no baseline debt delta or RIPR Zero status); acknowledged=\`$ledger_acknowledged\`, suppressed=\`$ledger_suppressed\`, blocking_candidates=\`$ledger_blocking\`"
+              else
+                echo "- Counts: new_policy_eligible=\`$ledger_new_policy_eligible\`, baseline_still_present=\`$ledger_still_present\`, baseline_resolved=\`$ledger_resolved\`, acknowledged=\`$ledger_acknowledged\`, suppressed=\`$ledger_suppressed\`, blocking_candidates=\`$ledger_blocking\`, visible_unresolved=\`$ledger_visible\`"
+              fi
               echo "- Top repair route: \`$ledger_route\`"
-              echo "- Verify command: \`$ledger_verify\`"
-              echo "- Agent command: \`$ledger_agent\`"
+              echo "- $ledger_verify_label: \`$ledger_verify\`"
+              if [ "$ledger_agent" != "$ledger_repair" ]; then
+                echo "- Agent command: \`$ledger_agent\`"
+              fi
               echo "- Coverage/grip frontier: \`$ledger_coverage_status\`"
               echo "- History trend: \`$ledger_trend\`"
               echo "- Ledger artifacts: \`target/ripr/reports/pr-evidence-ledger.json\`, \`target/ripr/reports/pr-evidence-ledger.md\`"
@@ -1800,7 +1940,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/pr-evidence-ledger.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/pr-evidence-ledger.md</summary>'
+              echo
               cat target/ripr/reports/pr-evidence-ledger.md
+              echo
+              echo '</details>'
             elif [ -f target/ripr/review/comments.json ]; then
               echo 'PR evidence ledger was not generated. Inspect `target/ripr/review/comments.json` and rerun `ripr pr-ledger record` locally.'
             else
@@ -1844,7 +1988,11 @@ jobs:
                 echo
               fi
               if [ -f target/ripr/reports/test-oracle-assistant-proof.md ]; then
+                echo '<details><summary>Full report: target/ripr/reports/test-oracle-assistant-proof.md</summary>'
+                echo
                 cat target/ripr/reports/test-oracle-assistant-proof.md
+                echo
+                echo '</details>'
               fi
               echo
             fi
@@ -1891,7 +2039,11 @@ jobs:
                 echo
               fi
               if [ -f target/ripr/reports/assistant-loop-health.md ]; then
+                echo '<details><summary>Full report: target/ripr/reports/assistant-loop-health.md</summary>'
+                echo
                 cat target/ripr/reports/assistant-loop-health.md
+                echo
+                echo '</details>'
               fi
               echo
             fi
@@ -1931,7 +2083,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/policy-readiness.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/policy-readiness.md</summary>'
+              echo
               cat target/ripr/reports/policy-readiness.md
+              echo
+              echo '</details>'
             else
               echo 'Policy readiness was not generated. It is advisory and requires existing policy artifacts to be useful.'
             fi
@@ -1966,7 +2122,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/policy-operations.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/policy-operations.md</summary>'
+              echo
               cat target/ripr/reports/policy-operations.md
+              echo
+              echo '</details>'
             else
               echo 'Policy operations was not generated. It requires policy-readiness and keeps promotion advisory until packet review.'
             fi
@@ -2003,7 +2163,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/policy-history.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/policy-history.md</summary>'
+              echo
               cat target/ripr/reports/policy-history.md
+              echo
+              echo '</details>'
             else
               echo 'Policy history was not generated. It requires policy-operations and never writes history automatically.'
             fi
@@ -2047,7 +2211,11 @@ jobs:
               target/ripr/reports/policy-promotion-calibrated-gate.md; do
               if [ -f "$promotion_md" ]; then
                 echo
+                echo "<details><summary>Full report: $promotion_md</summary>"
+                echo
                 cat "$promotion_md"
+                echo
+                echo '</details>'
               fi
             done
             echo
@@ -2082,7 +2250,11 @@ jobs:
             for preview_md in target/ripr/reports/preview-promotion-*-*.md; do
               if [ -f "$preview_md" ]; then
                 echo
+                echo "<details><summary>Full report: $preview_md</summary>"
+                echo
                 cat "$preview_md"
+                echo
+                echo '</details>'
               fi
             done
             echo
@@ -2114,7 +2286,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/waiver-aging.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/waiver-aging.md</summary>'
+              echo
               cat target/ripr/reports/waiver-aging.md
+              echo
+              echo '</details>'
             elif [ -f target/ripr/reports/pr-evidence-ledger.json ]; then
               echo 'Waiver aging was not generated. Inspect `target/ripr/reports/pr-evidence-ledger.json` and rerun `ripr policy waiver-aging` locally.'
             else
@@ -2156,7 +2332,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/suppression-health.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/suppression-health.md</summary>'
+              echo
               cat target/ripr/reports/suppression-health.md
+              echo
+              echo '</details>'
             else
               echo 'Suppression health was not generated. It is advisory and reads the durable suppression manifest when present.'
             fi
@@ -2214,7 +2394,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/gate-decision.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/gate-decision.md</summary>'
+              echo
               cat target/ripr/reports/gate-decision.md
+              echo
+              echo '</details>'
             else
               echo 'Gate decision was not run. Set `RIPR_GATE_MODE` to `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate` to opt in.'
             fi
@@ -2252,7 +2436,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/baseline-debt-delta.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/baseline-debt-delta.md</summary>'
+              echo
               cat target/ripr/reports/baseline-debt-delta.md
+              echo
+              echo '</details>'
             elif [ -n "${RIPR_GATE_BASELINE:-}" ]; then
               echo 'Baseline debt delta was not generated. Check that `RIPR_GATE_MODE` produced `target/ripr/reports/gate-decision.json` and that `RIPR_GATE_BASELINE` points at a readable baseline.'
             else
@@ -2305,7 +2493,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/ripr-zero-status.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/ripr-zero-status.md</summary>'
+              echo
               cat target/ripr/reports/ripr-zero-status.md
+              echo
+              echo '</details>'
             elif [ -f target/ripr/reports/baseline-debt-delta.json ]; then
               echo 'RIPR Zero status was not generated. Inspect `target/ripr/reports/baseline-debt-delta.json` and rerun `ripr zero status` locally.'
             else
@@ -2356,7 +2548,11 @@ jobs:
               echo "- Boundary: inline comments remain opt-in; gate decisions remain separate pass/fail authority."
               echo
               if [ -f target/ripr/review/comment-publish-plan.md ]; then
+                echo '<details><summary>Full report: target/ripr/review/comment-publish-plan.md</summary>'
+                echo
                 cat target/ripr/review/comment-publish-plan.md
+                echo
+                echo '</details>'
               fi
             else
               echo '- Inline comments are disabled by default. Set `RIPR_COMMENT_MODE` to `plan` to inspect a publish plan or `inline` to publish same-repo changed-line comments when permissions are safe.'
@@ -2425,6 +2621,15 @@ jobs:
           sarif_file: target/ripr/reports/ripr-seams.sarif
           category: ripr-seams
 "#
+    .replace(
+        "@RIPR_REPAIR_AFTER_PHASE@",
+        &format!("{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}"),
+    )
+    .replace("@RIPR_MANUAL_VERIFY_LABEL@", MANUAL_VERIFY_LABEL)
+    .replace("@RIPR_MANUAL_RECEIPT_LABEL@", MANUAL_RECEIPT_LABEL)
+    .replace("@RIPR_VERIFY_AFTER_EDIT_LABEL@", VERIFY_AFTER_EDIT_LABEL)
+    .replace("@RIPR_RECEIPT_AFTER_VERIFY_LABEL@", RECEIPT_AFTER_VERIFY_LABEL)
+    .replace("@RIPR_NO_RECEIPT_BEFORE_REPAIR@", NO_RECEIPT_BEFORE_REPAIR)
     .replace(
         "target/ripr/pilot/repo-exposure.json",
         loop_commands::PILOT_BEFORE_SNAPSHOT_ARTIFACT,
@@ -2504,6 +2709,28 @@ mod tests {
     use super::*;
     use crate::cli::commands_options::InitCi;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// The workflow carries the shared proof-path labels (#3906) inside
+    /// single-quoted shell strings, so none may hold a single quote, and
+    /// every placeholder must be substituted.
+    #[test]
+    fn generated_workflow_substitutes_shared_labels_into_single_quoted_strings() {
+        for text in [
+            REPAIR_AFTER_PHASE_LABEL,
+            REPAIR_AFTER_PHASE_STEP,
+            MANUAL_VERIFY_LABEL,
+            MANUAL_RECEIPT_LABEL,
+            VERIFY_AFTER_EDIT_LABEL,
+            RECEIPT_AFTER_VERIFY_LABEL,
+            NO_RECEIPT_BEFORE_REPAIR,
+        ] {
+            assert!(!text.contains('\''), "{text}");
+        }
+        let workflow = generated_github_actions_workflow();
+        assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
+        assert!(workflow.contains(&format!("='{MANUAL_VERIFY_LABEL}'")));
+        assert!(workflow.contains(&format!("echo '- Receipt: {NO_RECEIPT_BEFORE_REPAIR}'")));
+    }
 
     /// The `cli_smoke` tests drive `ripr init` as a subprocess, so they prove
     /// end-to-end behavior but leave the planning logic uninstrumented. These

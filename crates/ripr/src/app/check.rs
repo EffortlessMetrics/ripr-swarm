@@ -129,8 +129,11 @@ fn run_check(
         // If invocation fails (missing binary, timeout, non-zero exit, no
         // packet), leave perl_facts_path as None so the pipeline records a
         // Perl `unavailable` language_runs[] entry and the other languages'
-        // findings still emit. The error is surfaced as the language_runs
-        // reason string.
+        // findings still emit. Known gap: the producer error is surfaced
+        // only as the stderr warning below. The Perl `language_runs` reason
+        // and the typed outcome limitation carry the adapter's generic
+        // missing-packet reason, because the pipeline has no carrier for
+        // this error (threading one needs a new `AnalysisOptions` field).
         match invoke_perl_lsp_producer(perl_config, &input) {
             Ok(packet_path) => input.perl_facts_path = Some(packet_path),
             Err(reason) => {
@@ -412,7 +415,10 @@ fn invoke_perl_lsp_producer(
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
-    let mut child = command.spawn().map_err(|e| {
+    // The shared owned-subprocess authority (#3803) owns containment: on
+    // Windows the exporter is assigned to a Job Object before its user code
+    // runs, so the timeout/cancellation kill below terminates the whole tree.
+    let mut child = crate::process_owner::OwnedProcess::spawn(command).map_err(|e| {
         format!(
             "failed to spawn Perl facts exporter at `{}`: {e}. Configure [perl].executable or \
              put `perl-ripr-facts` on PATH.",
@@ -471,6 +477,14 @@ fn invoke_perl_lsp_producer(
         crate::git::ChildWait::WaitFailed(err) => {
             // The shared wait already terminated + reaped the child.
             Err(format!("Perl facts exporter failed while waiting: {err}"))
+        }
+        crate::git::ChildWait::CleanupFailed(cleanup) => {
+            // The wait ended abnormally and the terminate-and-reap could
+            // not be confirmed: the exporter or its tree may still be
+            // running, so the partial packet is discarded and never
+            // renamed.
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(cleanup)
         }
     }
 }

@@ -12,7 +12,7 @@ Packet summary:
 
 Start here:
 - PR review front panel: missing
-  - next: `ripr pr-review front-panel --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md`
+  - next: `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md`
 
 PR review story:
 - First useful action: target/ripr/reports/first-useful-action.md
@@ -23,7 +23,7 @@ Repair and agent handoff:
 
 Missing expected:
 - PR review front panel: not_generated
-  - next: `ripr pr-review front-panel --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md`
+  - next: `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md`
 
 Limits:
 - Advisory report-packet index only.

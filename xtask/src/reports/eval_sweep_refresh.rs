@@ -226,7 +226,7 @@ pub(crate) fn run_refresh_with_env(
     // Generation staging: fresh per run, so a previous interrupted refresh
     // cannot mix its half-written generation into this one.
     let staging = out_abs.join(STAGING_DIR);
-    let _ = std::fs::remove_dir_all(&staging);
+    discard_partial_dir(&staging);
     std::fs::create_dir_all(&staging).map_err(|error| {
         format!(
             "eval-sweep refresh cannot create staging dir `{}`: {error}",
@@ -927,8 +927,10 @@ fn git_head(dir: &Path, subject_id: &str) -> Option<String> {
     if sha.is_empty() { None } else { Some(sha) }
 }
 
+/// Best-effort removal of a partial checkout. The `io::Result` is matched
+/// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
 fn discard_partial_dir(dir: &Path) {
-    let _ = std::fs::remove_dir_all(dir);
+    if let Ok(()) = std::fs::remove_dir_all(dir) {}
 }
 
 fn first_line(text: &str) -> String {
@@ -2903,7 +2905,7 @@ mod python_eval_sweep_refresh {
             "a dedicated candidate dir under target/ is accepted: {}",
             ok.display()
         );
-        let _ = std::fs::remove_dir_all(&ok);
+        super::discard_partial_dir(&ok);
         Ok(())
     }
 
@@ -2927,8 +2929,8 @@ mod python_eval_sweep_refresh {
                 std::thread::current().id()
             ));
         let target = root.join("fixtures").join("python-eval-sweep");
-        let _ = std::fs::remove_dir_all(&link);
-        let _ = std::fs::remove_file(&link);
+        super::discard_partial_dir(&link);
+        if let Ok(()) = std::fs::remove_file(&link) {}
         if let Some(parent) = link.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|error| format!("create link parent: {error}"))?;
@@ -2937,8 +2939,8 @@ mod python_eval_sweep_refresh {
 
         let refused =
             refusal_of(validate_out_separation(link.to_string_lossy().as_ref()).map(|_| ()));
-        let _ = std::fs::remove_dir_all(&link);
-        let _ = std::fs::remove_file(&link);
+        super::discard_partial_dir(&link);
+        if let Ok(()) = std::fs::remove_file(&link) {}
         let error = refused?;
         assert!(
             error.contains("accepted state"),
@@ -3166,7 +3168,7 @@ mod python_eval_sweep_refresh {
     #[test]
     fn corpus_classification_counts_by_real_path_shapes() -> Result<(), String> {
         let dir = temp_root("corpus");
-        let _ = std::fs::remove_dir_all(&dir);
+        super::discard_partial_dir(&dir);
         std::fs::create_dir_all(dir.join("src")).map_err(|error| error.to_string())?;
         std::fs::create_dir_all(dir.join("tests")).map_err(|error| error.to_string())?;
         std::fs::create_dir_all(dir.join("vendor")).map_err(|error| error.to_string())?;
@@ -3181,7 +3183,7 @@ mod python_eval_sweep_refresh {
             .map_err(|error| error.to_string())?;
         std::fs::write(dir.join("notes.md"), "not python\n").map_err(|error| error.to_string())?;
         let counts = count_corpus(&dir);
-        let _ = std::fs::remove_dir_all(&dir);
+        super::discard_partial_dir(&dir);
         assert!(counts.complete);
         assert_eq!(counts.source_files, 1);
         assert_eq!(counts.test_files, 1);
@@ -3199,7 +3201,7 @@ mod python_eval_sweep_refresh {
     #[test]
     fn unreadable_subtree_marks_corpus_selection_incomplete() -> Result<(), String> {
         let dir = temp_root("corpus-unreadable");
-        let _ = std::fs::remove_dir_all(&dir);
+        super::discard_partial_dir(&dir);
         std::fs::create_dir_all(dir.join("src")).map_err(|error| error.to_string())?;
         std::fs::create_dir_all(dir.join("sealed")).map_err(|error| error.to_string())?;
         std::fs::write(dir.join("src").join("app.py"), "x = 1\n")
@@ -3245,7 +3247,7 @@ mod python_eval_sweep_refresh {
         // Restore access BEFORE asserting, so cleanup cannot fail.
         #[cfg(windows)]
         {
-            let _ = capture_output_with_timeout(
+            if let Ok(_restored) = capture_output_with_timeout(
                 "icacls",
                 &[
                     sealed.to_string_lossy().to_string(),
@@ -3255,12 +3257,15 @@ mod python_eval_sweep_refresh {
                 &[],
                 Duration::from_secs(30),
                 "python_eval_sweep_refresh test icacls restore",
-            );
+            ) {}
         }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o755));
+            if let Ok(()) =
+                std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o755))
+            {
+            }
         }
 
         assert!(
@@ -3306,7 +3311,7 @@ mod python_eval_sweep_refresh {
             "truncated counts are omitted, not emitted: {corpus_json}"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        super::discard_partial_dir(&dir);
         Ok(())
     }
 
@@ -3318,7 +3323,7 @@ mod python_eval_sweep_refresh {
     #[test]
     fn staged_generation_finalizes_by_rename_without_residue() -> Result<(), String> {
         let root = temp_root("staging");
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         let out = root.join("out");
         let staging = out.join(STAGING_DIR);
         std::fs::create_dir_all(staging.join(RAW_DIR).join("s0"))
@@ -3359,7 +3364,7 @@ mod python_eval_sweep_refresh {
             "the rerun replaces the published generation"
         );
         assert!(!staging.exists());
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         Ok(())
     }
 
@@ -3711,7 +3716,7 @@ mod python_eval_sweep_refresh {
     #[test]
     fn binary_swap_between_subjects_is_detected() -> Result<(), String> {
         let root = temp_root("drift-binary");
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
         let binary_path = root.join("ripr-under-test");
         std::fs::write(&binary_path, b"binary bytes subject 1-3")
@@ -3751,7 +3756,7 @@ mod python_eval_sweep_refresh {
         let unreadable = binary_identity_drift(&binary)
             .ok_or_else(|| "an unreadable binary must fail closed".to_string())?;
         assert!(unreadable.contains("re-read"), "{unreadable}");
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         Ok(())
     }
 
@@ -3815,7 +3820,7 @@ mod python_eval_sweep_refresh {
     #[test]
     fn subject_ripr_toml_is_recorded_not_default() -> Result<(), String> {
         let root = temp_root("config-detect");
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
         let (profile, path) = detect_subject_config(&root);
         assert_eq!(profile, CONFIG_PROFILE_DEFAULT, "no subject config file");
@@ -3828,7 +3833,7 @@ mod python_eval_sweep_refresh {
         let (profile, path) = detect_subject_config(&root);
         assert_eq!(profile, CONFIG_PROFILE_SUBJECT);
         assert_eq!(path.as_deref(), Some("ripr.toml"));
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         Ok(())
     }
 
@@ -3840,7 +3845,7 @@ mod python_eval_sweep_refresh {
     #[test]
     fn cache_creation_failure_becomes_tempfail_and_route_completes() -> Result<(), String> {
         let root = temp_root("cache-fail");
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
         let mut pins = Vec::new();
         for index in 0..8 {
@@ -3873,7 +3878,7 @@ mod python_eval_sweep_refresh {
         ];
         let run = run_refresh_with_env(&args, Some("1"));
         if let Err(error) = &run {
-            let _ = std::fs::remove_dir_all(&root);
+            super::discard_partial_dir(&root);
             return Err(format!(
                 "the route must contain the failure, not abort: {error}"
             ));
@@ -3905,7 +3910,7 @@ mod python_eval_sweep_refresh {
             Some(out.join(RECEIPT_FILE).to_string_lossy().as_ref()),
         );
         if let Err(error) = &outcome {
-            let _ = std::fs::remove_dir_all(&root);
+            super::discard_partial_dir(&root);
             return Err(format!("the contained receipt must validate: {error}"));
         }
 
@@ -3930,7 +3935,7 @@ mod python_eval_sweep_refresh {
             limitation.contains("cache dir"),
             "the limitation names the cache-creation cause: {limitation}"
         );
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         Ok(())
     }
 
@@ -3941,7 +3946,7 @@ mod python_eval_sweep_refresh {
     #[test]
     fn refresh_candidate_validates_through_eval_sweep_check() -> Result<(), String> {
         let root = temp_root("e2e");
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
 
         // Eight local seeds; each seed's real HEAD becomes the manifest pin.
@@ -3969,7 +3974,7 @@ mod python_eval_sweep_refresh {
         ];
         let run = run_refresh_with_env(&args, Some("1"));
         if let Err(error) = &run {
-            let _ = std::fs::remove_dir_all(&root);
+            super::discard_partial_dir(&root);
             return Err(format!("authorized offline refresh must run: {error}"));
         }
 
@@ -3981,14 +3986,14 @@ mod python_eval_sweep_refresh {
             Some(receipt_path.to_string_lossy().as_ref()),
         );
         if let Err(error) = &outcome {
-            let _ = std::fs::remove_dir_all(&root);
+            super::discard_partial_dir(&root);
             return Err(format!(
                 "the produced candidate must pass eval-sweep check: {error}"
             ));
         }
         let outcome = outcome?;
         if outcome.verdict() != super::super::eval_sweep_check::Verdict::Incomplete {
-            let _ = std::fs::remove_dir_all(&root);
+            super::discard_partial_dir(&root);
             return Err(format!(
                 "expected an incomplete verdict (the synthetic manifest records no optional identities), got {:?}",
                 outcome.verdict()
@@ -4135,7 +4140,7 @@ mod python_eval_sweep_refresh {
             out.join(STAGING_DIR).display()
         );
 
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         Ok(())
     }
 
@@ -4146,7 +4151,7 @@ mod python_eval_sweep_refresh {
     #[test]
     fn stale_subject_path_keeps_the_denominator_without_loss() -> Result<(), String> {
         let root = temp_root("stale-e2e");
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
 
         // Seven seeds; the eighth subject gets a non-git candidate dir, so
@@ -4179,7 +4184,7 @@ mod python_eval_sweep_refresh {
         ];
         let run = run_refresh_with_env(&args, Some("1"));
         if let Err(error) = &run {
-            let _ = std::fs::remove_dir_all(&root);
+            super::discard_partial_dir(&root);
             return Err(format!("stale-subject refresh must still run: {error}"));
         }
 
@@ -4209,10 +4214,10 @@ mod python_eval_sweep_refresh {
             Some(out.join(RECEIPT_FILE).to_string_lossy().as_ref()),
         );
         if let Err(error) = &outcome {
-            let _ = std::fs::remove_dir_all(&root);
+            super::discard_partial_dir(&root);
             return Err(format!("stale-subject receipt must validate: {error}"));
         }
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         Ok(())
     }
 
@@ -4223,7 +4228,7 @@ mod python_eval_sweep_refresh {
     #[test]
     fn dirty_reused_checkout_is_stale_not_the_pinned_tree() -> Result<(), String> {
         let root = temp_root("dirty-reuse");
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
 
         // Eight local seeds; each seed's real HEAD becomes the manifest pin.
@@ -4267,7 +4272,7 @@ mod python_eval_sweep_refresh {
         ];
         let run = run_refresh_with_env(&args, Some("1"));
         if let Err(error) = &run {
-            let _ = std::fs::remove_dir_all(&root);
+            super::discard_partial_dir(&root);
             return Err(format!("dirty-reuse refresh must still run: {error}"));
         }
 
@@ -4296,10 +4301,10 @@ mod python_eval_sweep_refresh {
             Some(out.join(RECEIPT_FILE).to_string_lossy().as_ref()),
         );
         if let Err(error) = &outcome {
-            let _ = std::fs::remove_dir_all(&root);
+            super::discard_partial_dir(&root);
             return Err(format!("dirty-reuse receipt must validate: {error}"));
         }
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         Ok(())
     }
 
@@ -4313,7 +4318,7 @@ mod python_eval_sweep_refresh {
     #[test]
     fn drifted_recheckout_runs_under_the_configured_clone_timeout() -> Result<(), String> {
         let root = temp_root("recheckout-timeout");
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
 
         // Eight local seeds; each seed's real HEAD becomes the manifest pin.
@@ -4383,7 +4388,7 @@ mod python_eval_sweep_refresh {
         ];
         let run = run_refresh_with_env(&args, Some("1"));
         if let Err(error) = &run {
-            let _ = std::fs::remove_dir_all(&root);
+            super::discard_partial_dir(&root);
             return Err(format!(
                 "recheckout-timeout refresh must still run: {error}"
             ));
@@ -4414,10 +4419,10 @@ mod python_eval_sweep_refresh {
             Some(out.join(RECEIPT_FILE).to_string_lossy().as_ref()),
         );
         if let Err(error) = &outcome {
-            let _ = std::fs::remove_dir_all(&root);
+            super::discard_partial_dir(&root);
             return Err(format!("recheckout-timeout receipt must validate: {error}"));
         }
-        let _ = std::fs::remove_dir_all(&root);
+        super::discard_partial_dir(&root);
         Ok(())
     }
 }

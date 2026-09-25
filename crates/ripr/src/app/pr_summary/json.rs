@@ -1,6 +1,6 @@
 use super::model::{
-    GapCounts, LimitationEntry, NullableU64, PrEvidenceSummaryJson, ReceiptStatusCounts,
-    TopLimitation, TopRepair, U64OrNotAvailable,
+    GapCounts, LimitationEntry, LimitationsOrNotAvailable, NullableU64, PrEvidenceSummaryJson,
+    ReceiptStatusCounts, TopLimitation, TopRepair, U64OrNotAvailable,
 };
 use super::util::value_path;
 use serde_json::{Value, json};
@@ -39,13 +39,18 @@ pub fn build_pr_evidence_summary(
     let receipt_status =
         derive_receipt_status(gap_ledger_value, &missing_receipts, attempt_ledger_value);
     let (top_repair, top_repair_state) = derive_top_repair(start_here_value);
-    let top_limitation = limitations.first().map(|entry| TopLimitation {
+    let top_limitation = limitations.entries().first().map(|entry| TopLimitation {
         category: entry.category.clone(),
         repair_route: entry.repair_route.clone(),
         why_not_actionable: why_not_actionable_for_category(&entry.category),
     });
-    let local_reproduction_commands =
-        derive_local_reproduction_commands(start_here_value, diff_report_value);
+    let local_reproduction_commands = derive_local_reproduction_commands(
+        start_here_value,
+        diff_report_value,
+        top_repair
+            .as_ref()
+            .and_then(|repair| repair.repair_command.as_deref()),
+    );
 
     PrEvidenceSummaryJson {
         run_status,
@@ -142,13 +147,25 @@ fn derive_gaps(gap_ledger_value: Option<&Value>, baseline_value: Option<&Value>)
     }
 }
 
-fn derive_limitations(repo_exposure_value: Option<&Value>) -> Vec<LimitationEntry> {
-    let Some(limitations) =
-        value_path(repo_exposure_value, &["limitations"]).and_then(Value::as_array)
-    else {
-        return Vec::new();
+/// Read repo-exposure's `limitations[]`, keeping "not read" apart from "none".
+///
+/// `repo_exposure_value` is `None` when the artifact is missing or unparsable,
+/// which is the fail-closed case: nothing was established, so the field is
+/// `NotAvailable` rather than an empty list. A present artifact with no
+/// `limitations` key genuinely has none — `docs/OUTPUT_SCHEMA.md` documents
+/// that key as "present when repo exposure has a named run limitation or
+/// guidance disclosure" — so that case is an empty `Entries`. A `limitations`
+/// key that is not an array is malformed, so it is fail-closed too.
+fn derive_limitations(repo_exposure_value: Option<&Value>) -> LimitationsOrNotAvailable {
+    let Some(exposure) = repo_exposure_value else {
+        return LimitationsOrNotAvailable::NotAvailable;
     };
-    limitations
+    let limitations = match exposure.get("limitations") {
+        None => return LimitationsOrNotAvailable::Entries(Vec::new()),
+        Some(Value::Array(entries)) => entries,
+        Some(_) => return LimitationsOrNotAvailable::NotAvailable,
+    };
+    let entries = limitations
         .iter()
         .filter_map(|entry| {
             let category = entry.get("category")?.as_str()?.to_string();
@@ -162,7 +179,8 @@ fn derive_limitations(repo_exposure_value: Option<&Value>) -> Vec<LimitationEntr
                 repair_route,
             })
         })
-        .collect()
+        .collect();
+    LimitationsOrNotAvailable::Entries(entries)
 }
 
 fn derive_missing_receipts(gap_ledger_value: Option<&Value>) -> U64OrNotAvailable {
@@ -374,12 +392,20 @@ fn derive_top_repair(start_here_value: Option<&Value>) -> (Option<TopRepair>, Op
         .unwrap_or("receipt_missing")
         .to_string();
 
+    // Carried from start-here, never read from review comments here: a card
+    // read directly could pair with a different top gap than start-here's.
+    let repair_command = value_path(sel, &["repair_command"])
+        .and_then(Value::as_str)
+        .filter(|command| !command.trim().is_empty())
+        .map(ToString::to_string);
+
     (
         Some(TopRepair {
             canonical_gap_id,
             language,
             repair_kind,
             target,
+            repair_command,
             verify_command,
             receipt_command,
             receipt_state,
@@ -391,8 +417,15 @@ fn derive_top_repair(start_here_value: Option<&Value>) -> (Option<TopRepair>, Op
 fn derive_local_reproduction_commands(
     start_here_value: Option<&Value>,
     diff_report_value: Option<&Value>,
+    repair_command: Option<&str>,
 ) -> Vec<String> {
     let mut commands = Vec::new();
+
+    // The carried repair start leads: it is the one command that begins the
+    // repair transaction for the selected seam.
+    if let Some(command) = repair_command {
+        commands.push(command.to_string());
+    }
 
     let base = value_path(diff_report_value, &["base"])
         .and_then(Value::as_str)
@@ -460,15 +493,22 @@ fn nullable_u64(v: &NullableU64) -> Value {
 /// Render the in-memory summary as a versioned JSON string.
 pub fn render_pr_evidence_summary_json(s: &PrEvidenceSummaryJson) -> String {
     let top_repair = match &s.top_repair {
-        Some(r) => json!({
-            "canonical_gap_id": r.canonical_gap_id,
-            "language": r.language,
-            "repair_kind": r.repair_kind,
-            "target": r.target,
-            "verify_command": r.verify_command,
-            "receipt_command": r.receipt_command,
-            "receipt_state": r.receipt_state
-        }),
+        Some(r) => {
+            let mut value = json!({
+                "canonical_gap_id": r.canonical_gap_id,
+                "language": r.language,
+                "repair_kind": r.repair_kind,
+                "target": r.target,
+                "verify_command": r.verify_command,
+                "receipt_command": r.receipt_command,
+                "receipt_state": r.receipt_state
+            });
+            // Present only when start-here carried it, like its source field.
+            if let Some(command) = &r.repair_command {
+                value["repair_command"] = json!(command);
+            }
+            value
+        }
         None => Value::Null,
     };
 
@@ -481,16 +521,24 @@ pub fn render_pr_evidence_summary_json(s: &PrEvidenceSummaryJson) -> String {
         None => Value::Null,
     };
 
-    let limitations: Vec<Value> = s
-        .limitations
-        .iter()
-        .map(|l| {
-            json!({
-                "category": l.category,
-                "repair_route": l.repair_route
-            })
-        })
-        .collect();
+    // `NotAvailable` renders as the string the schema names for a field whose
+    // source artifact could not be read, the same value `changed_surfaces`,
+    // `missing_receipts` and the `receipt_status` counts already use. An empty
+    // array stays an empty array, because that is repo-exposure saying none.
+    let limitations = match &s.limitations {
+        LimitationsOrNotAvailable::NotAvailable => Value::String("not_available".to_string()),
+        LimitationsOrNotAvailable::Entries(entries) => Value::Array(
+            entries
+                .iter()
+                .map(|l| {
+                    json!({
+                        "category": l.category,
+                        "repair_route": l.repair_route
+                    })
+                })
+                .collect(),
+        ),
+    };
 
     let mut gaps = json!({
         "total_actionable": u64_or_not_available(&s.gaps.total_actionable),
@@ -666,6 +714,112 @@ mod tests {
         Ok(())
     }
 
+    /// #3906: pr-summary carries start-here's `selected.repair_command`
+    /// unchanged into `top_repair` and leads the local reproduction commands
+    /// with it; a top gap without one keeps today's shape and order.
+    #[test]
+    fn start_here_repair_command_is_carried_into_top_repair() -> Result<(), String> {
+        let command = "ripr agent repair --root crates/pricing --seam-id seam-b --phase before";
+        let start_here = |repair_command: Option<&str>| {
+            let mut value = serde_json::json!({
+                "status": "actionable",
+                "selected": {
+                    "state": "top_gap",
+                    "canonical_gap_id": "gap:seam-b",
+                    "seam_id": "seam-b",
+                    "language": "rust",
+                    "repair": {"route": "AgentRepairTransaction", "target_file": "tests/pricing.rs"},
+                    "verify_command": "ripr agent verify --root . --json",
+                    "receipt_command": "ripr agent receipt --root . --seam-id seam-b --json"
+                }
+            });
+            if let Some(command) = repair_command {
+                value["selected"]["repair_command"] = serde_json::json!(command);
+            }
+            value
+        };
+
+        let with = build_pr_evidence_summary(
+            Some(&start_here(Some(command))),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let repair = with
+            .top_repair
+            .as_ref()
+            .ok_or_else(|| "top_repair must be present".to_string())?;
+        assert_eq!(repair.repair_command.as_deref(), Some(command));
+        assert_eq!(
+            with.local_reproduction_commands.first().map(String::as_str),
+            Some(command)
+        );
+        let json: Value = serde_json::from_str(&render_pr_evidence_summary_json(&with))
+            .map_err(|err| format!("parse summary json: {err}"))?;
+        assert_eq!(json["top_repair"]["repair_command"], command);
+        let md = crate::app::pr_summary::render_evidence_summary_md(&with);
+        let start = md
+            .find(&format!("- start repair: `{command}`\n"))
+            .ok_or_else(|| format!("missing start repair line:\n{md}"))?;
+        // #3906 (F60-14): the after phase follows the start, and verify and
+        // receipt are the manual alternative, not peer steps.
+        let after = md
+            .find(&format!(
+                "- {}: {}\n",
+                crate::output::first_pr::REPAIR_AFTER_PHASE_LABEL.to_lowercase(),
+                crate::output::first_pr::REPAIR_AFTER_PHASE_STEP
+            ))
+            .ok_or_else(|| format!("missing after-phase line:\n{md}"))?;
+        let verify = md
+            .find(&format!(
+                "- {}: `",
+                crate::output::first_pr::MANUAL_VERIFY_LABEL.to_lowercase()
+            ))
+            .ok_or_else(|| format!("missing manual verify line:\n{md}"))?;
+        let receipt = md
+            .find(&format!(
+                "- {}: `",
+                crate::output::first_pr::MANUAL_RECEIPT_LABEL.to_lowercase()
+            ))
+            .ok_or_else(|| format!("missing manual receipt line:\n{md}"))?;
+        assert!(start < after && after < verify && verify < receipt, "{md}");
+        assert!(!md.contains("- verify: `"), "{md}");
+        assert!(!md.contains("- receipt: `"), "{md}");
+
+        // Negative: a top gap without a carried start renders none, and
+        // pr-summary does not rebuild one from `seam_id`.
+        let without =
+            build_pr_evidence_summary(Some(&start_here(None)), None, None, None, None, None);
+        let repair = without
+            .top_repair
+            .as_ref()
+            .ok_or_else(|| "top_repair must be present".to_string())?;
+        assert_eq!(repair.repair_command, None);
+        assert_eq!(
+            without
+                .local_reproduction_commands
+                .first()
+                .map(String::as_str),
+            Some("ripr check --base origin/main")
+        );
+        let json = render_pr_evidence_summary_json(&without);
+        assert!(!json.contains("repair_command"), "{json}");
+        assert!(!json.contains("agent repair"), "{json}");
+        let md = crate::app::pr_summary::render_evidence_summary_md(&without);
+        assert!(!md.contains("start repair"), "{md}");
+        assert!(!md.contains("without a repair attempt"), "{md}");
+        assert!(
+            md.contains(&format!(
+                "- {}: `",
+                crate::output::first_pr::VERIFY_AFTER_EDIT_LABEL.to_lowercase()
+            )),
+            "{md}"
+        );
+        Ok(())
+    }
+
     /// Local Reproduction Commands must offer both shells (#2628): each
     /// command is fenced `bash` (byte-identical command bytes) followed by its
     /// `powershell` translation, and a redirect in the verify command becomes
@@ -692,15 +846,15 @@ mod tests {
             markdown.contains("cmd.exe is not supported."),
             "command presentation must state the cmd.exe boundary:\n{markdown}"
         );
-        // The default derived commands keep byte-identical bash bytes and gain
-        // their PowerShell pairs.
+        // A command that runs unchanged in PowerShell keeps its bash bytes and
+        // gains no second, identical block (F60-12).
         assert!(
             markdown.contains("```bash\nripr check --base origin/main\n```\n\n"),
             "bash form drifted:\n{markdown}"
         );
         assert!(
-            markdown.contains("```powershell\nripr check --base origin/main\n```\n\n"),
-            "powershell form missing or drifted:\n{markdown}"
+            !markdown.contains("```powershell\nripr check --base origin/main\n```"),
+            "an unchanged command must not repeat as a PowerShell block:\n{markdown}"
         );
         // A redirecting verify command round-trips through the shared
         // translation: bash bytes unchanged, PowerShell gets the guarded
@@ -929,8 +1083,11 @@ mod tests {
         });
         let s = build_pr_evidence_summary(None, None, Some(&repo), None, None, None);
         assert_eq!(s.run_status, "unknown");
-        assert_eq!(s.limitations.len(), 1);
-        assert_eq!(s.limitations[0].category, "repo_seam_limit_applied");
+        assert_eq!(s.limitations.entries().len(), 1);
+        assert_eq!(
+            s.limitations.entries()[0].category,
+            "repo_seam_limit_applied"
+        );
         let top_lim = match s.top_limitation.as_ref() {
             Some(l) => l,
             None => return Err("top_limitation must be present".to_string()),
@@ -942,6 +1099,107 @@ mod tests {
             top_lim.why_not_actionable
         );
         Ok(())
+    }
+
+    /// An absent repo-exposure artifact leaves limitations not established,
+    /// not established as none.
+    ///
+    /// `docs/OUTPUT_SCHEMA.md` states the rule for this summary: "Failure to
+    /// load any artifact is fail-closed: the affected field is set to
+    /// `"not_available"` or `null`." Every other field already honours it, so
+    /// a run that read nothing rendered eleven `not_available` fields beside
+    /// `## Limitations` / `- none`, which reads as a finding.
+    #[test]
+    fn absent_repo_exposure_does_not_report_limitations_as_none() -> Result<(), String> {
+        let summary = build_pr_evidence_summary(None, None, None, None, None, None);
+        let json = render_pr_evidence_summary_json(&summary);
+        let markdown = crate::app::pr_summary::render_evidence_summary_md(&summary);
+
+        let mut failures: Vec<String> = Vec::new();
+        if !matches!(summary.limitations, LimitationsOrNotAvailable::NotAvailable) {
+            failures.push("limitations is not NotAvailable with no repo exposure".to_string());
+        }
+        if !json.contains("\"limitations\": \"not_available\"") {
+            failures.push(format!(
+                "json does not carry not_available limitations: {json}"
+            ));
+        }
+        if !markdown.contains("## Limitations\n\n- not_available\n") {
+            failures.push("markdown does not render limitations as not_available".to_string());
+        }
+        if markdown.contains("## Limitations\n\n- none\n") {
+            failures.push("markdown still reports no limitations as a finding".to_string());
+        }
+        if !markdown.contains("## Top Limitation\n\n- not_available\n") {
+            failures
+                .push("markdown does not render the top limitation as not_available".to_string());
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
+    /// A repo-exposure artifact that was read and names no limitation still
+    /// reports `none`, and that is the only case that may.
+    ///
+    /// `docs/OUTPUT_SCHEMA.md` documents repo-exposure's `limitations[]` as
+    /// "present when repo exposure has a named run limitation or guidance
+    /// disclosure", so the key being absent from a present artifact is the
+    /// producer saying there were none.
+    #[test]
+    fn read_repo_exposure_with_no_limitation_still_reports_none() -> Result<(), String> {
+        let repo = serde_json::json!({ "run_status": "complete" });
+        let summary = build_pr_evidence_summary(None, None, Some(&repo), None, None, None);
+        let json = render_pr_evidence_summary_json(&summary);
+        let markdown = crate::app::pr_summary::render_evidence_summary_md(&summary);
+
+        let mut failures: Vec<String> = Vec::new();
+        match &summary.limitations {
+            LimitationsOrNotAvailable::Entries(entries) if entries.is_empty() => {}
+            LimitationsOrNotAvailable::Entries(entries) => {
+                failures.push(format!(
+                    "{} limitations from an artifact with none",
+                    entries.len()
+                ));
+            }
+            LimitationsOrNotAvailable::NotAvailable => {
+                failures
+                    .push("a read artifact with no limitations reported not_available".to_string());
+            }
+        }
+        if !json.contains("\"limitations\": []") {
+            failures.push(format!(
+                "json does not carry an empty limitations array: {json}"
+            ));
+        }
+        if !markdown.contains("## Limitations\n\n- none\n") {
+            failures.push("markdown does not report none for a read artifact".to_string());
+        }
+        // Both sections answer from `empty_state_line`, so both are pinned in
+        // both states: a single-site change is what used to be possible here.
+        if !markdown.contains("## Top Limitation\n\n- none\n") {
+            failures.push("top limitation does not report none for a read artifact".to_string());
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
+    /// A `limitations` key that is not an array is malformed input, so it is
+    /// fail-closed rather than read as an absent key.
+    #[test]
+    fn malformed_limitations_are_not_read_as_none() -> Result<(), String> {
+        let repo = serde_json::json!({ "run_status": "complete", "limitations": {} });
+        let summary = build_pr_evidence_summary(None, None, Some(&repo), None, None, None);
+        if matches!(summary.limitations, LimitationsOrNotAvailable::NotAvailable) {
+            Ok(())
+        } else {
+            Err("a non-array limitations value was read as a limitation list".to_string())
+        }
     }
 
     #[test]

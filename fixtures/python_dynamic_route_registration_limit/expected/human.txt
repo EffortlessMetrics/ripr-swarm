@@ -19,11 +19,10 @@ Start here:
   Why static_unknown: the analysis could not determine a static exposure state
   Changed behavior: return {"detail": "coupon expired"}
   Analyzer limit: Static limit `dynamic_route_registration`: owner `checkout` uses dynamic route registration `api.post`; syntax-first preview evidence cannot safely match client calls to a concrete…
-  Related test: tests/test_checkout.py:1 test_expired_coupon_response_smoke
   Evidence:
-    - reach weak: 1 heuristic Python test link(s) found for owner `checkout`; relation is uncertain
+    - reach no: 0 related Python test(s) found for owner `checkout`
     - infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim.
-    - 4 more evidence line(s) hidden
+    - 7 more evidence line(s) hidden
 
 Next: drill into the top finding:
   ripr explain --root fixtures/python_dynamic_route_registration_limit/input --diff fixtures/python_dynamic_route_registration_limit/diff.patch --mode fast probe:app_checkout.py:python_preview:c1a8e812
@@ -35,9 +34,9 @@ More:
 
 
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
-  analyzed: 1 changed expression(s) and 1 statically linked related test(s). This is not a coverage
+  analyzed: 1 changed expression(s) and 0 statically linked related test(s). This is not a coverage
   assessment. A test may already exercise these changes through macros, helper-call chains, or
   integration tests that ripr's static model does not yet trace; if none does, add co-located tests
   that observe the changed behavior.
 
-Note: 1 Python(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

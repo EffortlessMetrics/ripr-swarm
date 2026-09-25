@@ -37,6 +37,7 @@ impl Notification for AnalysisStatusNotification {
 }
 
 const COPY_CONTEXT_COMMAND: &str = "ripr.copyContext";
+const COPY_AGENT_REPAIR_COMMAND: &str = "ripr.copyAgentRepairCommand";
 const COPY_AGENT_PACKET_COMMAND: &str = "ripr.copyAgentPacketCommand";
 const COPY_AGENT_BRIEF_COMMAND: &str = "ripr.copyAgentBriefCommand";
 const COPY_AFTER_SNAPSHOT_COMMAND: &str = "ripr.copyAfterSnapshotCommand";

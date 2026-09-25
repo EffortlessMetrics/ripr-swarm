@@ -8,12 +8,11 @@ changing required-check routing.
 
 ## Current producer inventory
 
-The current producer is the sequence of `Formatting preflight`,
-`Required Rust compilation and lints`, `Required Rust tests`,
-`Required Rust doctests`, and `Required Rust gates` steps in
-`.github/workflows/rust-gates.yml`. The routed implementations in
-`.github/workflows/routed-rust.yml` all delegate to that reusable workflow.
-Runner identity and matrix shape are route details, not product meaning.
+The current producer is `.github/workflows/rust-gates.yml`, called by the
+CX43, CPX42, CX53, and GitHub-hosted routes in `routed-rust.yml`. The required
+commands have separate named steps with stable IDs; they are not copied into
+each runner route. Runner identity and matrix shape are route details, not
+product meaning.
 
 | Canonical gate | Current command | Role | Surface |
 | --- | --- | --- | --- |
@@ -88,6 +87,41 @@ product-gate rows: advisory reports, uploaded artifacts, PR summaries,
 coverage telemetry, release readiness, package listing, publish dry-runs, and
 scheduled or release-only qualification. They remain operational or
 release-specific evidence until a separate contract promotes them.
+
+## Execution order and diagnostics
+
+Formatting remains before CI-tool installation and hosted-cache restoration.
+After setup, repository precommit, promotion honesty, agent-skill, dependency,
+process, and network checks run before the later workspace check, Clippy, and
+nextest stages. The first xtask invocation still builds xtask and its normal
+dependencies; this is not a zero-build preflight. Every command in the inventory
+runs once at the workflow level, without suppressing failures. A failing policy
+step prevents the later stages from starting rather than spending those stages
+before discovering the same policy error.
+
+The required nextest step retains #3852's `rust-tests` ID, explicit `ci` profile,
+fresh JUnit/context generation, original exit status, and two-file upload
+unchanged. This companion does not replace that evidence implementation or
+schedule another test suite.
+
+Each named step exposes its own timing and outcome in the Actions job view and
+workflow-jobs API. `Write gate summary` runs with `always()` and records the
+workflow commit, subject head, run/attempt, route, and the actual outcomes for
+all twelve product gates plus PR evidence. A push skips PR evidence by design;
+`skipped`, `cancelled`, and missing (`not_reported`) outcomes are never promoted
+to success. A terminated or unavailable runner can still prevent any summary
+from being written; the summary is not independent execution proof.
+
+`Ripr Rust Small Result` remains the required check. Runner routing,
+scratch-tempfail fallback, advisory reporting, artifact selection, and job
+budgets are unchanged. The summary does not decide release readiness, establish
+cargo-test/nextest equivalence (#3825), or claim a measured speedup.
+
+`xtask/tests/rust_gate_workflow_contract.rs` guards the command inventory,
+required-step shape, execution order, and outcome bindings. It includes
+negative controls for omitted or duplicated commands, optional or suppressed
+tests, late policy checks, failure-only summaries, and fabricated success.
+Run it with `cargo test -p xtask --test rust_gate_workflow_contract`.
 
 ## Selection boundary
 

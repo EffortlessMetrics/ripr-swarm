@@ -19,6 +19,56 @@ const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
 /// enough to cover a cold cache on the ripr-swarm repo itself.
 const PILOT_RETRY_TIMEOUT_MS: u64 = 240_000;
 
+/// Write pilot's `repo-exposure.json`.
+///
+/// When pilot saw the same seam population `ripr check --format
+/// repo-exposure-json` would, the snapshot carries the same producer-owned
+/// `artifact` identity, so it can be the `--before` of `ripr agent verify`
+/// that the first-PR workflow and the evidence records name (#3906). When the
+/// pilot seam budget truncated the population, the snapshot is written
+/// without that identity: a stamped partial snapshot would pass verify's
+/// comparability check against a full after snapshot and compare two
+/// different populations. Verify then refuses it rather than misreporting.
+fn write_pilot_repo_exposure_json(
+    path: &Path,
+    input: &CheckInput,
+    config: &RiprConfig,
+    classified: &[analysis::ClassifiedSeam],
+    limit_info: Option<&analysis::SeamLimitInfo>,
+    ts_guidance: Option<&output::repo_exposure::TsFullRepoGuidance>,
+    pilot_budget_truncated: bool,
+) -> Result<(), String> {
+    let write_failed = |err: String| format!("write {} failed: {err}", path.display());
+    if pilot_budget_truncated {
+        return std::fs::write(
+            path,
+            output::repo_exposure::render_repo_exposure_json(classified, limit_info, ts_guidance),
+        )
+        .map_err(|err| write_failed(err.to_string()));
+    }
+    // Base `None`: pilot's printed after-snapshot command passes no `--base`
+    // or `--diff`, so both snapshots intentionally carry no base under
+    // RIPR-SPEC-0084. Keep this explicit rather than coupling artifact
+    // identity to the `CheckInput` default.
+    let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
+        input.root.clone(),
+        input.mode.as_str().to_string(),
+        None,
+        config,
+    )?;
+    let file = std::fs::File::create(path).map_err(|err| write_failed(err.to_string()))?;
+    let mut writer = std::io::BufWriter::new(file);
+    output::repo_exposure::write_repo_exposure_json_with_context(
+        classified,
+        limit_info,
+        ts_guidance,
+        &context,
+        &mut writer,
+    )
+    .map_err(write_failed)?;
+    std::io::Write::flush(&mut writer).map_err(|err| write_failed(err.to_string()))
+}
+
 pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_pilot_help();
@@ -84,6 +134,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             timeout_ms: options.timeout_ms,
             artifacts: &artifacts,
             python_first_use: None,
+            language_routes: None,
         };
         std::fs::write(
             &artifacts.pilot_summary_json,
@@ -115,6 +166,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // manageable size.  `limit_info` carries whichever cap fired (pilot
     // budget wins when both fire; inventory limit is the outer bound).
     let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified);
+    let pilot_budget_truncated = pilot_budget_info.is_some();
     let limit_info = pilot_budget_info.or(inventory_limit_info);
     let (causal_projection, causal_projection_warning) =
         crate::app::causal_projection::CausalDeltaArtifact::load_optional(&input.root);
@@ -123,6 +175,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     }
 
     let python_first_use = collect_pilot_python_first_use(&input, &config);
+    // #3906: pilot ranks Rust seams only. Name the languages it did not rank
+    // so an empty ranking is never read as a clean result for them.
+    let language_routes = output::pilot::PilotLanguageRoutes::from_discovered(
+        &input.root,
+        !classified.is_empty(),
+        config.languages().enabled(),
+        &analysis::workspace_preview_language_files(&input.root),
+    );
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
         mode: &input.mode,
@@ -131,23 +191,19 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         timeout_ms: options.timeout_ms,
         artifacts: &artifacts,
         python_first_use: python_first_use.as_ref(),
+        language_routes: Some(&language_routes),
     };
 
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
-    std::fs::write(
+    write_pilot_repo_exposure_json(
         &artifacts.repo_exposure_json,
-        output::repo_exposure::render_repo_exposure_json(
-            &classified,
-            limit_info.as_ref(),
-            ts_guidance.as_ref(),
-        ),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.repo_exposure_json.display()
-        )
-    })?;
+        &input,
+        &config,
+        &classified,
+        limit_info.as_ref(),
+        ts_guidance.as_ref(),
+        pilot_budget_truncated,
+    )?;
     std::fs::write(
         &artifacts.repo_exposure_md,
         output::repo_exposure::render_repo_exposure_md(

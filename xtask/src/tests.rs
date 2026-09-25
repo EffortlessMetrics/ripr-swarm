@@ -3,9 +3,16 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
+/// Best-effort temp-dir teardown for tests. The `io::Result` is matched
+/// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
+fn ignore_remove_dir_all(path: impl AsRef<std::path::Path>) {
+    if let Ok(()) = std::fs::remove_dir_all(path) {}
+}
+
 use std::io::Read;
 
 use crate::acquire_test_cwd_write_guard;
+use crate::python_judged_panel_replay::sha256_hex;
 use ripr::output::receipt_lifecycle::{
     RECEIPT_MISSING, RECEIPT_MOVEMENT_IMPROVED, RECEIPT_NOT_APPLICABLE,
 };
@@ -16,6 +23,8 @@ use super::RiprSwarmAttemptLedgerReport;
 use super::RiprSwarmCommand;
 use super::RiprSwarmReadinessInput;
 use super::XtaskCommand;
+use super::add_name_status_bytes;
+use super::add_porcelain_bytes;
 use super::dispatch;
 use super::is_network_policy_candidate;
 use super::lane1_runtime_status_full;
@@ -60,7 +69,7 @@ use super::{
     GENERATED_CI_FIRST_PR_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
     GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
     Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
-    LocalContextAllow, LspCockpitFixture, LspCockpitReport, MarkdownLink,
+    LocalContextAllow, LocalMarkdownTarget, LspCockpitFixture, LspCockpitReport, MarkdownLink,
     PYTHON_REAL_REPO_EVAL_REQUIRED_CASES, PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
@@ -122,21 +131,22 @@ use super::{
     gh_pr_safe_next_action, gh_pr_status_json, gh_pr_status_markdown, gh_pr_status_readiness,
     github_event_pull_request_title_from_text, glob_matches, golden_changes_without_blessing,
     golden_drift_semantics, guarded_allow_attribute_lints, guarded_allow_attributes_in_text,
-    help_message, install_hooks_in, is_badge_refresh_context, is_bdd_test_name,
-    is_dependency_surface_candidate, is_generated_candidate, is_non_rust_programming_candidate,
-    is_public_badge_basis_surface, is_receipt_status, is_ripr_managed_hook, is_snake_case_id,
-    is_spec_id, json_escape, json_number_after, json_string_values_for_key, json_summary_count,
-    known_commands, known_xtask_command, lane1_actionable_gap_packets_json,
-    lane1_actionable_gap_packets_markdown, lane1_evidence_audit_from_repo_exposure,
-    lane1_evidence_audit_json, lane1_evidence_audit_limited_report, lane1_evidence_audit_markdown,
+    heading_slug, heading_slugs, help_message, install_hooks_in, is_badge_refresh_context,
+    is_bdd_test_name, is_dependency_surface_candidate, is_generated_candidate,
+    is_non_rust_programming_candidate, is_public_badge_basis_surface, is_receipt_status,
+    is_ripr_managed_hook, is_snake_case_id, is_spec_id, json_escape, json_number_after,
+    json_string_values_for_key, json_summary_count, known_commands, known_xtask_command,
+    lane1_actionable_gap_packets_json, lane1_actionable_gap_packets_markdown,
+    lane1_evidence_audit_from_repo_exposure, lane1_evidence_audit_json,
+    lane1_evidence_audit_limited_report, lane1_evidence_audit_markdown,
     lane1_evidence_audit_repo_exposure_args,
     lane1_evidence_audit_report_from_complete_repo_exposure, lane1_evidence_audit_timeout_error,
     lane1_readiness_packet_specs, limited_badge_artifacts_json, limited_badge_artifacts_markdown,
     line_has_static_language_inline_allow, local_context_line_findings, local_markdown_target,
     lsp_cockpit_report, lsp_cockpit_report_json, lsp_cockpit_report_markdown,
-    markdown_links_in_text, mutation_calibration_report_json, mutation_calibration_report_markdown,
-    next_checkpoints_from_capabilities, next_spec_id_from_ids,
-    non_rust_programming_retention_reason, normalize_fixture_human_output,
+    markdown_links_in_text, missing_anchor_violation, mutation_calibration_report_json,
+    mutation_calibration_report_markdown, next_checkpoints_from_capabilities,
+    next_spec_id_from_ids, non_rust_programming_retention_reason, normalize_fixture_human_output,
     normalize_fixture_json_output, normalize_golden_text, normalize_path,
     parse_actionable_gap_outcomes_args, parse_doc_artifact_ledger_text,
     parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
@@ -151,12 +161,12 @@ use super::{
     pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
     pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
     pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-    public_contract_rows, read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
-    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
-    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
-    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
-    repo_badge_artifacts_summary_markdown, repo_exposure_latency_json,
-    repo_exposure_latency_markdown, repo_exposure_latency_run,
+    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
+    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
+    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
+    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
+    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
+    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_trace, repo_exposure_summary_report_timeout_ms_from_env, repo_root,
     repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
@@ -198,7 +208,8 @@ use super::{
     windows_absolute_path_tokens, workflow_bare_self_hosted_violations,
     workflow_review_thread_mutation_violations, workflow_runtime_violations, worktree,
     worktree_doctor_findings, write_badge_artifacts_after_build, write_badge_artifacts_from_diff,
-    write_evidence_health_report_with_runner, write_evidence_health_report_with_runners,
+    write_badge_input_identity, write_evidence_health_report_with_runner,
+    write_evidence_health_report_with_runners,
     write_lane1_evidence_audit_repo_exposure_with_runner, write_repo_exposure_latency_report,
     write_repo_exposure_summary_report_with_runner,
 };
@@ -7854,6 +7865,105 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
     })
 }
 
+#[test]
+fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result<(), String> {
+    with_temp_cwd("release-server-descriptor", |root| {
+        let dist = root.join("dist");
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
+            "linux",
+        );
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+            "linux-sha\n",
+        );
+
+        let args = vec![
+            "--version".to_string(),
+            "v1.2.3".to_string(),
+            "--repository".to_string(),
+            "EffortlessMetrics/ripr".to_string(),
+        ];
+
+        super::release_server_manifest(&args)?;
+
+        let descriptor_path = root
+            .join("editors")
+            .join("vscode")
+            .join("src")
+            .join("serverDescriptor.ts");
+        let descriptor = fs::read_to_string(&descriptor_path)
+            .map_err(|err| format!("read editor distribution descriptor: {err}"))?;
+        let manifest_sha256 = super::sha256_file(&dist.join("ripr-server-manifest-v1.2.3.json"))?;
+        assert!(
+            descriptor.contains(&format!(
+                "{{ generation: \"1.2.3\", manifestSha256: \"{manifest_sha256}\" }}"
+            )),
+            "the descriptor must embed the exact generation and the manifest's raw-byte digest"
+        );
+        assert!(
+            descriptor.contains("SERVER_DISTRIBUTION_DESCRIPTORS"),
+            "the descriptor must declare the editor's admitted-descriptor list"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Result<(), String> {
+    // The editor descriptor admits a distribution generation
+    // (MAJOR.MINOR.PATCH) and the downloader only ever looks the generation
+    // up, so a prerelease or build-metadata version would embed a descriptor
+    // row no request can match and silently leave the packaged RC extension
+    // without a fallback.
+    // A four-component version can never match the downloader's
+    // three-component generation lookup either.
+    for version in ["1.2.3-rc.1", "1.2.3+meta", "1.2.3.4"] {
+        with_temp_cwd("release-server-descriptor-prerelease", |root| {
+            let dist = root.join("dist");
+            let asset_name = format!("ripr-server-v{version}-x86_64-unknown-linux-gnu.tar.gz");
+            write(&dist.join(&asset_name), "linux");
+            write(&dist.join(format!("{asset_name}.sha256")), "linux-sha\n");
+
+            let args = vec![
+                "--version".to_string(),
+                format!("v{version}"),
+                "--repository".to_string(),
+                "EffortlessMetrics/ripr".to_string(),
+            ];
+
+            let Err(err) = super::release_server_manifest(&args) else {
+                return Err(format!(
+                    "prerelease/build-metadata version `{version}` must not write the descriptor"
+                ));
+            };
+            assert!(
+                err.contains("MAJOR.MINOR.PATCH"),
+                "the error must name the required distribution generation form; got: {err}"
+            );
+
+            // The guard sits exactly at the descriptor boundary: the
+            // generation-keyed run artifacts exist, the descriptor does not.
+            assert!(
+                dist.join(format!("ripr-server-manifest-v{version}.json"))
+                    .exists(),
+                "the manifest write precedes the refused descriptor write"
+            );
+            let descriptor_path = root
+                .join("editors")
+                .join("vscode")
+                .join("src")
+                .join("serverDescriptor.ts");
+            assert!(
+                !descriptor_path.exists(),
+                "a prerelease/build-metadata version must never write the editor descriptor"
+            );
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
 pub(crate) fn with_temp_cwd<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
     let lock = acquire_test_cwd_write_guard();
     let old = std::env::current_dir().unwrap();
@@ -7863,16 +7973,16 @@ pub(crate) fn with_temp_cwd<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
     let out = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&root))) {
         Ok(result) => result,
         Err(panic_payload) => {
-            let _ = std::env::set_current_dir(&old);
+            if let Ok(()) = std::env::set_current_dir(&old) {}
             drop(lock);
-            let _ = fs::remove_dir_all(&root);
+            ignore_remove_dir_all(&root);
             std::panic::resume_unwind(panic_payload);
         }
     };
 
     std::env::set_current_dir(old).unwrap();
     drop(lock);
-    let _ = fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     out
 }
 
@@ -7895,7 +8005,7 @@ fn with_repo_cwd<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> 
     let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(result) => result,
         Err(panic_payload) => {
-            let _ = std::env::set_current_dir(&old);
+            if let Ok(()) = std::env::set_current_dir(&old) {}
             drop(guard);
             std::panic::resume_unwind(panic_payload);
         }
@@ -7944,7 +8054,7 @@ fn fixture_run_writes_its_facts_into_the_cache_the_runner_cleared() -> Result<()
             .join("target")
             .join("ripr")
             .join("cache");
-        let _ = fs::remove_dir_all(fixture.join("input").join("target"));
+        ignore_remove_dir_all(fixture.join("input").join("target"));
 
         let cache_dir = super::fixture_cache_dir(name)?;
         let stale = cache_dir
@@ -11909,14 +12019,26 @@ fn markdown_link_helpers_skip_fences_and_external_targets() {
     );
     assert_eq!(
         local_markdown_target("docs/README.md#top"),
-        Some("docs/README.md".to_string())
+        Some(LocalMarkdownTarget {
+            path: Some("docs/README.md".to_string()),
+            fragment: Some("top".to_string()),
+        })
     );
     assert_eq!(
         local_markdown_target("<docs/My File.md>"),
-        Some("docs/My File.md".to_string())
+        Some(LocalMarkdownTarget {
+            path: Some("docs/My File.md".to_string()),
+            fragment: None,
+        })
     );
     assert_eq!(local_markdown_target("https://example.com"), None);
-    assert_eq!(local_markdown_target("#section"), None);
+    assert_eq!(
+        local_markdown_target("#section"),
+        Some(LocalMarkdownTarget {
+            path: None,
+            fragment: Some("section".to_string()),
+        })
+    );
 }
 
 #[test]
@@ -19473,11 +19595,34 @@ fn dogfood_blocking_gate_report_is_self_contained() -> Result<(), String> {
             "  - Why it remains open:",
             "  - Near test:",
             "  - Add:",
-            "  - Verify:",
-            "  - Receipt:",
             "  - Inspect: `ripr agent brief --root . --seam-id",
             "  - Boundary: `static_ripr_evidence_only`",
         ] {
+            if !markdown.contains(required) {
+                return Err(format!(
+                    "blocking gate Markdown is not self-contained; missing {required:?}"
+                ));
+            }
+        }
+        // #3906 (F60-14): verify and receipt are labelled as the manual
+        // alternative beside a carried repair start (which its after phase
+        // follows), or as steps after the test edit without one.
+        let (verify, receipt) = if markdown.contains("  - Start repair: `ripr agent repair ") {
+            if !markdown.contains("  - After the test edit: run the `--attempt ... --phase after`")
+            {
+                return Err("blocking gate Markdown lacks the repair after phase".to_string());
+            }
+            (
+                "  - Manual verify without a repair attempt (",
+                "  - Manual receipt without a repair attempt (",
+            )
+        } else {
+            (
+                "  - Verify after the test edit: `",
+                "  - Receipt after verify: `",
+            )
+        };
+        for required in [verify, receipt] {
             if !markdown.contains(required) {
                 return Err(format!(
                     "blocking gate Markdown is not self-contained; missing {required:?}"
@@ -19688,13 +19833,13 @@ fn dogfood_report_packet_index_scenarios_have_checked_receipts() -> Result<(), S
     with_repo_cwd(|| {
         let scenarios = dogfood_report_packet_index_scenarios();
         for required in [
-            ("complete_packet", "pass"),
+            ("complete_packet", "warn"),
             ("sparse_advisory", "warn"),
             ("missing_front_panel", "warn"),
             ("blocked_gate", "fail"),
             ("missing_assistant_proof", "warn"),
             ("missing_receipts", "warn"),
-            ("coverage_grip_present", "pass"),
+            ("coverage_grip_present", "warn"),
         ] {
             assert!(
                 scenarios.iter().any(|scenario| scenario.name == required.0
@@ -21677,6 +21822,206 @@ fn badge_artifact_command_args_substitutes_format_only() -> Result<(), String> {
     Ok(())
 }
 
+// ---- #4003: the badge input must come from the actual resolved base through
+// the shared authorities, with a pinned Git presentation. These are real-Git
+// fixture tests: a mocked diff runner cannot prove the Git boundary. ----
+
+fn badge_fixture_git(args: &[&str]) -> Result<(), String> {
+    let status = run("git", args)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("badge fixture git command failed: {args:?}"))
+    }
+}
+
+fn badge_fixture_commit(message: &str) -> Result<(), String> {
+    badge_fixture_git(&[
+        "-c",
+        "user.email=badge-fixture@example.com",
+        "-c",
+        "user.name=badge fixture",
+        "commit",
+        "--quiet",
+        "-m",
+        message,
+    ])
+}
+
+fn badge_fixture_base_and_edit_commits() -> Result<(), String> {
+    fs::write("subject.txt", "kept line\nbadge-secret-line\n").map_err(|err| err.to_string())?;
+    badge_fixture_git(&["add", "."])?;
+    badge_fixture_commit("badge fixture base")?;
+    badge_fixture_git(&["checkout", "--quiet", "-b", "feature/badge-input"])?;
+    fs::write(
+        "subject.txt",
+        "kept line\nbadge-secret-line\nbadge-secret-line added\n",
+    )
+    .map_err(|err| err.to_string())?;
+    badge_fixture_git(&["add", "."])?;
+    badge_fixture_commit("badge fixture edit")
+}
+
+fn assert_badge_commit_identity(value: &str, label: &str) -> Result<(), String> {
+    if value.len() < 40 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(format!(
+            "expected a resolved {label} commit identity, got {value:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn badge_diff_reader_resolves_a_non_main_default_base_and_diffs_it() -> Result<(), String> {
+    with_temp_cwd(
+        "badge-diff-non-main-default",
+        |root| -> Result<(), String> {
+            // master-default repo with no remote: the shared default-base
+            // authority must pick master, not fabricate origin/main
+            // (#4003, RIPR-SPEC-0084).
+            badge_fixture_git(&["init", "--initial-branch=master", "--quiet"])?;
+            badge_fixture_base_and_edit_commits()?;
+            let input = read_badge_artifact_diff_governed(root)?;
+            if input.base_ref != "master" {
+                return Err(format!(
+                    "badge input resolved the wrong base: expected master, got {:?}",
+                    input.base_ref
+                ));
+            }
+            if !input.diff.contains("+badge-secret-line added") {
+                return Err(format!(
+                    "badge input must contain the branch edit; got: {}",
+                    input.diff
+                ));
+            }
+            assert_badge_commit_identity(&input.base_commit, "base")?;
+            assert_badge_commit_identity(&input.head_commit, "head")?;
+            assert_badge_commit_identity(&input.head_tree, "head tree")?;
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn badge_diff_reader_fails_closed_when_no_base_resolves() -> Result<(), String> {
+    with_temp_cwd("badge-diff-no-base", |root| -> Result<(), String> {
+        // A repository with no commits has no resolvable base. The badge
+        // producer must fail with a named cause, never write an empty patch
+        // that renders as a clean zero-change badge (#4003).
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        let Err(err) = read_badge_artifact_diff_governed(root) else {
+            return Err(
+                "a repo with no resolvable base must fail the badge input, not return an empty diff"
+                    .to_string(),
+            );
+        };
+        if !err.contains("base") {
+            return Err(format!(
+                "badge input failure must name the base cause: {err}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn badge_diff_reader_pins_the_git_presentation_against_ambient_config() -> Result<(), String> {
+    with_temp_cwd(
+        "badge-diff-pinned-presentation",
+        |root| -> Result<(), String> {
+            badge_fixture_git(&["init", "--initial-branch=master", "--quiet"])?;
+            // Ambient configuration the pre-#4003 producer absorbed: a textconv
+            // driver that hides the changed source line, ANSI color, an expanded
+            // ambient context, and an external diff driver that would fail
+            // loudly if spawned.
+            fs::write(".gitattributes", "*.txt diff=badge-wordifier\n")
+                .map_err(|err| err.to_string())?;
+            badge_fixture_git(&[
+                "config",
+                "diff.badge-wordifier.textconv",
+                "sed /badge-secret-line/d",
+            ])?;
+            badge_fixture_git(&["config", "color.diff", "always"])?;
+            badge_fixture_git(&["config", "diff.context", "8"])?;
+            badge_fixture_git(&[
+                "config",
+                "diff.external",
+                "ripr-badge-fixture-no-such-external-diff-driver",
+            ])?;
+            badge_fixture_base_and_edit_commits()?;
+            let input = read_badge_artifact_diff_governed(root)?;
+            if input.diff.contains('\u{1b}') {
+                return Err(
+                    "ambient color.diff=always leaked ANSI escapes into the badge input"
+                        .to_string(),
+                );
+            }
+            if !input.diff.contains("+badge-secret-line added") {
+                return Err(
+                    "the textconv driver hid the changed source from the badge input".to_string(),
+                );
+            }
+            if input.diff.lines().any(|line| line.starts_with(' ')) {
+                return Err(
+                "ambient diff.context expanded the badge input beyond the pinned zero-context presentation"
+                    .to_string(),
+            );
+            }
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn badge_input_identity_receipt_records_the_analyzed_subject() -> Result<(), String> {
+    with_temp_cwd(
+        "badge-input-identity-receipt",
+        |root| -> Result<(), String> {
+            badge_fixture_git(&["init", "--initial-branch=master", "--quiet"])?;
+            badge_fixture_base_and_edit_commits()?;
+            let input = read_badge_artifact_diff_governed(root)?;
+            write_badge_input_identity(&input, "input", &[])?;
+            let receipt_path = root.join("target/ripr/reports/badge-artifacts-identity.json");
+            let receipt = fs::read_to_string(&receipt_path)
+                .map_err(|err| format!("failed to read {}: {err}", receipt_path.display()))?;
+            let value: serde_json::Value = serde_json::from_str(&receipt)
+                .map_err(|err| format!("identity receipt is not valid JSON: {err}"))?;
+            if value["input"]["base_ref"] != "master" {
+                return Err(format!("receipt base_ref should be master: {receipt}"));
+            }
+            if value["input"]["diff_sha256"] != sha256_hex(input.diff.as_bytes()) {
+                return Err("receipt diff digest must match the badge input bytes".to_string());
+            }
+            let presentation = value["input"]["presentation"]["argv"]
+                .as_str()
+                .unwrap_or_default();
+            for pin in [
+                "core.quotePath=true",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--unified=0",
+                "--inter-hunk-context=0",
+            ] {
+                if !presentation.contains(pin) {
+                    return Err(format!("receipt presentation must name the {pin} pin"));
+                }
+            }
+            if !value["input"]["base_resolution"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("RIPR-SPEC-0084")
+            {
+                return Err("receipt must name the shared base resolution authority".to_string());
+            }
+            if value["phase"] != "input" {
+                return Err(format!("unexpected receipt phase: {receipt}"));
+            }
+            Ok(())
+        },
+    )
+}
+
 #[test]
 fn badge_artifacts_impl_with_runners_writes_diff_and_uses_built_binary() -> Result<(), String> {
     with_temp_cwd("badge-artifacts-impl-with-runners", |_root| {
@@ -22048,16 +22393,167 @@ fn local_markdown_target_filters_absolute_urls() {
     assert_eq!(local_markdown_target("https://example.com"), None);
     assert_eq!(local_markdown_target("http://example.com"), None);
     assert_eq!(local_markdown_target("mailto:test@example.com"), None);
-    assert_eq!(local_markdown_target("#anchor"), None);
+}
+
+#[test]
+fn local_markdown_target_keeps_a_same_document_anchor() {
+    assert_eq!(
+        local_markdown_target("#anchor"),
+        Some(LocalMarkdownTarget {
+            path: None,
+            fragment: Some("anchor".to_string()),
+        })
+    );
+    // A bare `#` names no heading, so there is nothing to resolve.
+    assert_eq!(local_markdown_target("#"), None);
 }
 
 #[test]
 fn local_markdown_target_returns_relative_local_paths() {
     let target = local_markdown_target("relative/path.md");
-    assert_eq!(target, Some("relative/path.md".to_string()));
+    assert_eq!(
+        target,
+        Some(LocalMarkdownTarget {
+            path: Some("relative/path.md".to_string()),
+            fragment: None,
+        })
+    );
 
     let target = local_markdown_target("../sibling.md");
-    assert_eq!(target, Some("../sibling.md".to_string()));
+    assert_eq!(
+        target,
+        Some(LocalMarkdownTarget {
+            path: Some("../sibling.md".to_string()),
+            fragment: None,
+        })
+    );
+}
+
+#[test]
+fn a_fragment_with_no_heading_names_the_link_and_the_target() -> Result<(), String> {
+    let target = Path::new("docs/CI.md");
+    let slugs = heading_slugs("# Copyable ripr advisory workflow\n");
+    let resolving = MarkdownLink {
+        line: 118,
+        target: "CI.md#copyable-ripr-advisory-workflow".to_string(),
+    };
+    let broken = MarkdownLink {
+        line: 118,
+        target: "CI.md#this-anchor-does-not-exist".to_string(),
+    };
+
+    let mut failures = Vec::new();
+    if let Some(violation) = missing_anchor_violation(
+        "docs/QUICKSTART.md",
+        &resolving,
+        target,
+        "copyable-ripr-advisory-workflow",
+        &slugs,
+    ) {
+        failures.push(format!("a resolving anchor was reported: {violation}"));
+    }
+    match missing_anchor_violation(
+        "docs/QUICKSTART.md",
+        &broken,
+        target,
+        "this-anchor-does-not-exist",
+        &slugs,
+    ) {
+        None => failures.push("a fragment with no heading was reported as a pass".to_string()),
+        Some(violation) => {
+            for expected in [
+                "docs/QUICKSTART.md:118",
+                "CI.md#this-anchor-does-not-exist",
+                "docs/CI.md",
+            ] {
+                if !violation.contains(expected) {
+                    failures.push(format!("`{violation}` does not name `{expected}`"));
+                }
+            }
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+#[test]
+fn heading_slug_drops_punctuation_without_collapsing_the_spaces_around_it() -> Result<(), String> {
+    let mut failures = Vec::new();
+    // GitHub's own anchors for headings this repository links into. The doubled
+    // dashes are not a typo: the dropped em-dash and slash leave the spaces on
+    // both sides behind.
+    let cases = [
+        (
+            "Coverage / Grip Frontier Report",
+            "coverage--grip-frontier-report",
+        ),
+        (
+            "2026-07-25: A green check is not evidence \u{2014} five ways",
+            "2026-07-25-a-green-check-is-not-evidence--five-ways",
+        ),
+        ("`ripr+ 0`", "ripr-0"),
+        (
+            "Historical Operating Sequence: 0.9.0 Release",
+            "historical-operating-sequence-090-release",
+        ),
+        ("Non-Goals", "non-goals"),
+        ("agent_context_v2", "agent_context_v2"),
+    ];
+    for (heading, expected) in cases {
+        let slug = heading_slug(heading);
+        if slug != expected {
+            failures.push(format!(
+                "`{heading}` slugified to `{slug}`, expected `{expected}`"
+            ));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+#[test]
+fn heading_slugs_number_repeated_headings_the_way_github_does() -> Result<(), String> {
+    let text = "# Added\n\n## Added\n\n### Added\n";
+    let slugs = heading_slugs(text);
+    let expected = ["added", "added-1", "added-2"];
+    let missing: Vec<&str> = expected
+        .into_iter()
+        .filter(|slug| !slugs.contains(*slug))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("heading_slugs did not offer {missing:?}"))
+    }
+}
+
+#[test]
+fn heading_slugs_read_only_real_headings() -> Result<(), String> {
+    let text = "# Title\n\n```md\n# Fenced Heading\n```\n\n#hashtag not a heading\n\n## Closing Hashes ##\n\n####### Seven Hashes\n";
+    let slugs = heading_slugs(text);
+    let mut failures = Vec::new();
+    for offered in ["title", "closing-hashes"] {
+        if !slugs.contains(offered) {
+            failures.push(format!("expected the anchor `{offered}`"));
+        }
+    }
+    for withheld in ["fenced-heading", "hashtag-not-a-heading", "seven-hashes"] {
+        if slugs.contains(withheld) {
+            failures.push(format!("`{withheld}` is not a heading in this document"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 fn write_doc_artifact_fixture(root: &Path, path: &str, id: &str) {
@@ -25864,8 +26360,8 @@ fn copy_badge_endpoints_from_reports_writes_both_files() -> Result<(), String> {
         b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"7\",\"color\":\"yellow\"}"
     );
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -25892,8 +26388,8 @@ fn copy_badge_endpoints_from_reports_creates_badges_dir_when_missing() -> Result
     assert!(repo_root.join("badges/ripr.json").exists());
     assert!(repo_root.join("badges/ripr-plus.json").exists());
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -25921,8 +26417,8 @@ fn copy_badge_endpoints_from_reports_errors_when_source_missing() -> Result<(), 
         "error should suggest regenerating the source: {err}"
     );
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -25949,8 +26445,8 @@ fn compute_badge_endpoint_violations_returns_empty_when_in_sync() -> Result<(), 
         "in-sync committed files must produce no violations: {violations:?}"
     );
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -25983,8 +26479,8 @@ fn compute_badge_endpoint_violations_flags_missing_committed_file() -> Result<()
         );
     }
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -26019,8 +26515,8 @@ fn compute_badge_endpoint_violations_flags_stale_committed_file() -> Result<(), 
         violations[0]
     );
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -26039,8 +26535,8 @@ fn compute_badge_endpoint_violations_errors_when_source_missing() -> Result<(), 
         "error should describe the read failure: {err}"
     );
 
-    let _ = std::fs::remove_dir_all(&reports);
-    let _ = std::fs::remove_dir_all(&repo_root);
+    ignore_remove_dir_all(&reports);
+    ignore_remove_dir_all(&repo_root);
     Ok(())
 }
 
@@ -29252,7 +29748,7 @@ fn lane1_evidence_audit_sampled_report_keeps_counts_and_names_limits() -> Result
     );
     assert!(lane1_evidence_audit_markdown(&report).contains("lane1_repo_exposure_sampled"));
 
-    let _ = std::fs::remove_dir_all(&root);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -30071,7 +30567,7 @@ fn evidence_health_report_artifact_completion_validator_names_bad_shapes() -> Re
         }
 
         write(json_path, &complete_evidence_health_json_fixture());
-        let _ = fs::remove_file(md_path);
+        if let Ok(()) = fs::remove_file(md_path) {}
         let err = super::evidence_health_report_artifacts_are_complete()
             .expect_err("missing Markdown artifact should be rejected");
         assert!(err.contains("failed to read evidence-health Markdown artifact"));
@@ -45602,6 +46098,7 @@ fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), St
     );
     assert!(boundary_gap.context.seam_packet_available);
     assert!(boundary_gap.context.targeted_test_brief_available);
+    assert!(boundary_gap.context.agent_repair_command_available);
     assert!(boundary_gap.context.agent_packet_command_available);
     assert!(boundary_gap.context.agent_brief_command_available);
     assert!(boundary_gap.context.after_snapshot_command_available);
@@ -45633,6 +46130,7 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
     assert_eq!(editor_fixture.seam_diagnostic_count, 1);
     assert!(editor_fixture.context.seam_packet_available);
     assert!(editor_fixture.context.targeted_test_brief_available);
+    assert!(editor_fixture.context.agent_repair_command_available);
     assert!(editor_fixture.context.agent_packet_command_available);
     assert!(editor_fixture.context.agent_brief_command_available);
     assert!(editor_fixture.context.after_snapshot_command_available);
@@ -46674,7 +47172,7 @@ fn install_hooks_creates_missing_hook() -> Result<(), String> {
     assert_eq!(hook, root.join(".git").join("hooks").join("pre-commit"));
     assert!(is_ripr_managed_hook(&text));
     assert!(text.contains("cargo xtask precommit"));
-    let _ = fs::remove_dir_all(root);
+    ignore_remove_dir_all(root);
     Ok(())
 }
 
@@ -46692,7 +47190,7 @@ fn install_hooks_is_idempotent_for_managed_hook() -> Result<(), String> {
     assert_eq!(first, hook);
     assert_eq!(second, hook);
     assert_eq!(text, ripr_pre_commit_hook());
-    let _ = fs::remove_dir_all(root);
+    ignore_remove_dir_all(root);
     Ok(())
 }
 
@@ -46710,7 +47208,7 @@ fn install_hooks_refuses_unmanaged_existing_hook() -> Result<(), String> {
 
     assert!(error.contains("refusing to overwrite unmanaged hook"));
     assert_eq!(text, user_hook);
-    let _ = fs::remove_dir_all(root);
+    ignore_remove_dir_all(root);
     Ok(())
 }
 
@@ -46723,7 +47221,7 @@ fn install_hooks_errors_outside_git_worktree() -> Result<(), String> {
         .ok_or_else(|| "expected missing git worktree error".to_string())?;
 
     assert!(error.contains("missing .git directory"));
-    let _ = fs::remove_dir_all(root);
+    ignore_remove_dir_all(root);
     Ok(())
 }
 
@@ -48509,33 +49007,6 @@ fn reusable_rust_workflow_text() -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
 }
 
-/// Extracts the run-block lines of each `- name: <step>` whose name matches
-/// `step_name`, stopping at the next step (`- ` at the same indent).
-fn routed_rust_step_run_blocks(workflow: &str, step_name: &str) -> Vec<Vec<String>> {
-    let marker = format!("- name: {step_name}");
-    let mut blocks = Vec::new();
-    let mut current: Option<Vec<String>> = None;
-    for line in workflow.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("- name: ") {
-            if let Some(block) = current.take() {
-                blocks.push(block);
-            }
-            if trimmed == marker {
-                current = Some(Vec::new());
-            }
-            continue;
-        }
-        if let Some(block) = current.as_mut() {
-            block.push(line.to_string());
-        }
-    }
-    if let Some(block) = current.take() {
-        blocks.push(block);
-    }
-    blocks
-}
-
 /// Returns an error unless `lines` mention `cargo xtask precommit` exactly
 /// once as a bare invocation line. A commented-out (`# cargo xtask
 /// precommit`) or otherwise decorated mention does not count as an
@@ -48554,49 +49025,45 @@ fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result
     Ok(())
 }
 
+/// The routed Rust lanes must delegate the required gate table to the shared
+/// reusable workflow, not inline a lane-only gate command where it could drift
+/// from `.github/workflows/rust-gates.yml`. The reusable workflow enumerates
+/// each gate as its own named per-producer step; the per-step shape (exact
+/// command, unconditional, ordered, outcome-reported) is owned by
+/// `xtask/tests/rust_gate_workflow_contract.rs`. `cargo xtask precommit` and
+/// `cargo xtask check-agent-skills` stay inline only in the docs-gate job,
+/// which `routed_rust_docs_gate_runs_full_precommit_table` covers.
 #[test]
 fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
     let workflow = routed_rust_workflow_text()?;
-    let routed_blocks = routed_rust_step_run_blocks(&workflow, "Required Rust gates");
-    if !routed_blocks.is_empty() {
-        return Err(format!(
-            "routed-rust.yml must delegate `Required Rust gates` to rust-gates.yml, found {} inline step(s)",
-            routed_blocks.len()
-        ));
-    }
-    let reusable = reusable_rust_workflow_text()?;
-    let blocks = routed_rust_step_run_blocks(&reusable, "Required Rust gates");
-    if blocks.len() != 1 {
-        return Err(format!(
-            "rust-gates.yml must have exactly 1 `Required Rust gates` step, found {}",
-            blocks.len()
-        ));
-    }
-    for (index, block) in blocks.iter().enumerate() {
-        require_single_bare_precommit_line(
-            block,
-            &format!("Required Rust gates step {}", index + 1),
-        )?;
-        if block.iter().any(|line| line.contains("if: false")) {
+    for lane_only in [
+        "cargo xtask check-evidence-promotion-honesty",
+        "cargo xtask check-dependencies",
+        "cargo xtask check-process-policy",
+        "cargo xtask check-network-policy",
+        "cargo xtask goldens check",
+        "cargo xtask fixtures",
+    ] {
+        if workflow.contains(lane_only) {
             return Err(format!(
-                "Required Rust gates step {} must not guard gates behind `if: false`",
-                index + 1
+                "routed-rust.yml must delegate `{lane_only}` to rust-gates.yml, not inline it"
             ));
         }
-        for lane_only in [
-            "cargo xtask check-evidence-promotion-honesty",
-            "cargo xtask check-dependencies",
-            "cargo xtask check-process-policy",
-            "cargo xtask check-network-policy",
-            "cargo xtask goldens check",
-            "cargo xtask fixtures",
-        ] {
-            if !block.iter().any(|line| line.trim() == lane_only) {
-                return Err(format!(
-                    "Required Rust gates step {} must keep lane-only gate `{lane_only}` enumerated",
-                    index + 1
-                ));
-            }
+    }
+    let reusable = reusable_rust_workflow_text()?;
+    for lane_only in [
+        "cargo xtask check-evidence-promotion-honesty",
+        "cargo xtask check-dependencies",
+        "cargo xtask check-process-policy",
+        "cargo xtask check-network-policy",
+        "cargo xtask goldens check",
+        "cargo xtask fixtures",
+    ] {
+        let count = reusable.matches(lane_only).count();
+        if count != 1 {
+            return Err(format!(
+                "rust-gates.yml must enumerate lane-only gate `{lane_only}` exactly once, found {count}"
+            ));
         }
     }
     Ok(())
@@ -48833,7 +49300,7 @@ fn golden_comparison_runs_consume_the_cache_the_runner_cleared() -> Result<(), S
         let name = "all_no_path_disclosure";
         let fixture = PathBuf::from("fixtures").join(name);
         let leaked = fixture.join("input").join("target");
-        let _ = fs::remove_dir_all(&leaked);
+        ignore_remove_dir_all(&leaked);
 
         let cache_dir = super::fixture_cache_dir(name)?;
         let stale = cache_dir
@@ -49284,4 +49751,195 @@ fn check_pr_report_publication_failure_is_distinguishable() {
             && err.contains("publishing the failure report also failed")),
         "a failed gate plus failed report publication must stay distinguishable and preserve the gate diagnostic and reproduce command: {result:?}"
     );
+}
+
+#[test]
+fn pr_change_name_status_bytes_decode_exotic_names_exact() -> Result<(), String> {
+    // Real `--name-status -z` grammar (space, non-ASCII UTF-8, scored
+    // rename): the old tab-split route without `-z` kept git's C-quoted
+    // octal form verbatim, so byte-exactness here discriminates the
+    // migration. Rename records attribute the target, matching the old
+    // `parts.last()` projection.
+    let mut changes = BTreeMap::new();
+    add_name_status_bytes(
+        &mut changes,
+        "M\0sp ace.txt\0A\0uni-é.txt\0R100\0old.txt\0new.txt\0".as_bytes(),
+    )?;
+    let expected: BTreeMap<String, BTreeSet<String>> = [
+        ("sp ace.txt".to_string(), ["M".to_string()].into()),
+        ("uni-é.txt".to_string(), ["A".to_string()].into()),
+        ("new.txt".to_string(), ["R100".to_string()].into()),
+    ]
+    .into();
+    if changes != expected {
+        return Err(format!(
+            "exotic name-status inventory mismatch: got {changes:?}, want {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_name_status_bytes_reject_non_utf8() -> Result<(), String> {
+    // The old route lossy-decoded through `run_output`, collapsing this
+    // record into replacement characters and returning success; the strict
+    // route must fail loudly instead.
+    let mut changes = BTreeMap::new();
+    let err = match add_name_status_bytes(&mut changes, b"M\0ok.txt\0A\0\xffbad\0") {
+        Err(err) => err,
+        Ok(()) => return Err(format!("non-UTF-8 inventory must fail, got {changes:?}")),
+    };
+    if !err.contains("not valid UTF-8") {
+        return Err(format!("unexpected strict-decode error: {err}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_name_status_bytes_reject_legacy_line_grammar() -> Result<(), String> {
+    // Legacy non-`-z` git output (C-quoted, newline-delimited) fed to the
+    // new decoder must fail, not silently mangle: this pins the `-z`
+    // requirement at the decode boundary. The old tab-split parser accepted
+    // this shape and inventoried the quoted octal form as a path.
+    let mut changes = BTreeMap::new();
+    let legacy = b"M\t\"uni-\\303\\251.txt\"\n";
+    match add_name_status_bytes(&mut changes, legacy) {
+        Err(_) => Ok(()),
+        Ok(()) => Err(format!(
+            "legacy line grammar must fail strict decode, got {changes:?}"
+        )),
+    }
+}
+
+#[test]
+fn pr_change_porcelain_bytes_decode_exotic_names_exact() -> Result<(), String> {
+    // Real `status --porcelain=v1 -z` grammar (verified against git):
+    // `XY␣path\0`, renames as `XY␣new\0old\0`, no quoting. The ` -> ` in
+    // the fourth name is literal path bytes: the old `split_once(" -> ")`
+    // projection would have inventoried `b.txt` instead.
+    let mut changes = BTreeMap::new();
+    add_porcelain_bytes(
+        &mut changes,
+        b"M  sp ace.txt\0R  new name.txt\0old name.txt\0?? uni-\xc3\xa9.txt\0M  a -> b.txt\0M  li\nne.txt\0",
+    )?;
+    let expected: BTreeMap<String, BTreeSet<String>> = [
+        ("sp ace.txt".to_string(), ["M".to_string()].into()),
+        ("new name.txt".to_string(), ["R".to_string()].into()),
+        ("uni-é.txt".to_string(), ["??".to_string()].into()),
+        ("a -> b.txt".to_string(), ["M".to_string()].into()),
+        ("li\nne.txt".to_string(), ["M".to_string()].into()),
+    ]
+    .into();
+    if changes != expected {
+        return Err(format!(
+            "exotic porcelain inventory mismatch: got {changes:?}, want {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_porcelain_bytes_attribute_worktree_column_rename() -> Result<(), String> {
+    // Worktree-column renames (` R`, e.g. intent-to-add via `git add -N`,
+    // verified against real git output) carry the paired source exactly
+    // like staged ones. Checking only the index column left the source
+    // field unconsumed, failing closed on legitimate state — or worse,
+    // misreading a source name with a space at byte index 2 as a new
+    // entry. Exactly one entry for the target, status trimmed to `R`.
+    let mut changes = BTreeMap::new();
+    add_porcelain_bytes(&mut changes, b" R new.txt\0old.txt\0")?;
+    let expected: BTreeMap<String, BTreeSet<String>> =
+        [("new.txt".to_string(), ["R".to_string()].into())].into();
+    if changes != expected {
+        return Err(format!(
+            "worktree rename inventory mismatch: got {changes:?}, want {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_porcelain_bytes_reject_missing_trailing_nul() -> Result<(), String> {
+    // Real git always NUL-terminates every record, so a non-empty input
+    // without a trailing NUL is truncation, not a final field: fail
+    // loudly instead of parsing a truncated path.
+    let mut changes = BTreeMap::new();
+    match add_porcelain_bytes(&mut changes, b"M  path_long") {
+        Err(err) if err.contains("missing trailing NUL") => Ok(()),
+        Err(err) => Err(format!("unexpected truncation error: {err}")),
+        Ok(()) => Err(format!("truncated input must fail, got {changes:?}")),
+    }
+}
+
+#[test]
+fn pr_change_porcelain_bytes_reject_truncated_rename() -> Result<(), String> {
+    // A rename entry missing its paired source must fail, not attribute
+    // the change to half a record.
+    let mut changes = BTreeMap::new();
+    let err = match add_porcelain_bytes(&mut changes, b"R  new.txt\0") {
+        Err(err) => err,
+        Ok(()) => return Err(format!("truncated rename must fail, got {changes:?}")),
+    };
+    if !err.contains("missing its paired path") {
+        return Err(format!("unexpected strict-decode error: {err}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_porcelain_bytes_reject_misframed_entries() -> Result<(), String> {
+    // Truncated fields must fail loudly instead of inventing entries. Note
+    // what is deliberately NOT rejected here: embedded newlines are legal
+    // path bytes (pinned by
+    // `pr_change_porcelain_bytes_decode_exotic_names_exact`), so a
+    // newline-bearing field decodes as one entry — the `-z` framing, not
+    // content sniffing, is what separates records.
+    let mut changes = BTreeMap::new();
+    match add_porcelain_bytes(&mut changes, b"xy") {
+        Err(_) => Ok(()),
+        Ok(()) => Err(format!(
+            "misframed porcelain input must fail, got {changes:?}"
+        )),
+    }
+}
+
+#[test]
+fn pr_change_backslash_name_stays_distinct_from_nested_path() -> Result<(), String> {
+    // Item-5 identity control (#4006): the literal-backslash filename
+    // `a\b.rs` and the nested path `a/b.rs` are distinct tracked paths
+    // (real Linux git fixture). Folding separators before map insertion
+    // collapsed them to one key, omitting an inventory path while
+    // returning success. Both decoders must preserve two entries.
+    // Byte literals carry the exact `-z` grammar (Rust string escapes,
+    // not shell quoting, keep the backslash literal).
+    let mut changes = BTreeMap::new();
+    add_name_status_bytes(&mut changes, b"M\0a\\b.rs\0M\0a/b.rs\0")?;
+    if changes.len() != 2 || !changes.contains_key("a\\b.rs") || !changes.contains_key("a/b.rs") {
+        return Err(format!(
+            "name-status backslash/nested collision: got {changes:?}, want two distinct keys"
+        ));
+    }
+    let mut porcelain = BTreeMap::new();
+    add_porcelain_bytes(&mut porcelain, b"M  a\\b.rs\0M  a/b.rs\0")?;
+    if porcelain.len() != 2
+        || !porcelain.contains_key("a\\b.rs")
+        || !porcelain.contains_key("a/b.rs")
+    {
+        return Err(format!(
+            "porcelain backslash/nested collision: got {porcelain:?}, want two distinct keys"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
+    // A real zero-change run decodes to an empty inventory on both routes.
+    let mut changes = BTreeMap::new();
+    add_name_status_bytes(&mut changes, b"")?;
+    add_porcelain_bytes(&mut changes, b"")?;
+    if !changes.is_empty() {
+        return Err(format!("empty inventory must stay empty, got {changes:?}"));
+    }
+    Ok(())
 }

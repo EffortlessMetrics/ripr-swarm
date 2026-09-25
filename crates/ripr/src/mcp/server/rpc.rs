@@ -70,8 +70,13 @@ pub(super) fn success_response(id: Value, result: Value) -> Value {
     })
 }
 
-pub(super) fn bounded_error_response(code: i64, message: &str, data: Option<Value>) -> Value {
-    error_response(None, code, message, data)
+pub(super) fn bounded_error_response(
+    id: Option<Value>,
+    code: i64,
+    message: &str,
+    data: Option<Value>,
+) -> Value {
+    error_response(id, code, message, data)
 }
 
 pub(super) fn error_response(

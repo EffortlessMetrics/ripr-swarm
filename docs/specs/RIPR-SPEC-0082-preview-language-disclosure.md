@@ -109,7 +109,13 @@ to completion.
 3. **Adapter NOT enabled (default) + preview files in scope** (`enabled ==
    false`) — the files were detected but NOT analyzed; the user is told their
    change was not analyzed and how to enable the adapter. This is the primary
-   #1111 fix.
+   #1111 fix. When the adapter is not compiled into the running binary (only
+   Perl is disclosed in that state), a `ripr.toml` edit cannot enable it —
+   config load rejects the language — so the human note, JSON/diff-report
+   `why`, and typed outcome recovery instead carry the shared
+   `LanguageId::unavailable_adapter_recovery` text naming the real
+   prerequisites (a `lang-perl` build and the not-yet-published
+   `perl-ripr-facts` exporter) and omit the TOML block.
 
 Pure-Rust diffs produce no advisory in either case.
 
@@ -121,14 +127,18 @@ When any advisory is present, a `Note:` line is appended after the findings
 Enabled case:
 
 ```
-Note: 1 Typescript(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
 ```
 
 Not-enabled (default) case:
 
 ```
-Note: this diff contains 1 Typescript(s). The Typescript adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.
+Note: this diff contains 1 TypeScript file. The TypeScript adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.
 ```
+
+The note names the language by its display name (`TypeScript`,
+`JavaScript`, `Python`, `Perl`, owned by `LanguageId::display_name`) and
+counts files as `1 <Language> file` or `N <Language> files`.
 
 The note is omitted entirely for pure-Rust diffs. The note does not change
 exit code or pass/fail status.
@@ -209,11 +219,11 @@ enabled adapter with a matching non-success `language_runs` entry carries
 
 1. **Default case (#1111 repro)**: diff contains `.ts` file, NO `ripr.toml`
    (only Rust enabled) → human output includes
-   `Note: this diff contains 1 Typescript(s). The Typescript adapter is preview and not enabled, so these files were not analyzed`,
+   `Note: this diff contains 1 TypeScript file. The TypeScript adapter is preview and not enabled, so these files were not analyzed`,
    and JSON `preview_languages[0].enabled == false`, `analyzed == false`.
 2. Enabled-success case: diff contains `.ts` file, `ripr.toml` has
    `enabled = ["typescript"]` → human output includes
-   `Note: 1 Typescript(s) analyzed under preview support`, JSON
+   `Note: 1 TypeScript file analyzed under preview support`, JSON
    `preview_languages[0].enabled == true`, `analyzed == true`.
 3. Enabled-failure case: diff contains `.pm` file, Perl is enabled, and the
    supplied facts packet fails ingestion → `language_runs` records `invalid`,

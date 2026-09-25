@@ -245,6 +245,16 @@ pub(super) fn related_test_relation(
     if local_binding_calls_owner(test, owner) {
         return Some(PythonRelationKind::LocalBinding);
     }
+    // A test is related to an owner only when it references the owner
+    // (RIPR-SPEC-0028). File-stem, test-name and fixture-name proximity are
+    // ranking labels for a test that already references the owner without a
+    // recognized call shape; they never relate a test that only exercises a
+    // sibling owner in the same module (flat layout: `loyalty_price` in
+    // `pricing.py` was linked to `tests/test_pricing.py` tests that only call
+    // `discounted_total`).
+    if !test_references_owner(test, owner) {
+        return None;
+    }
     if same_stem_related(test, owner) {
         return Some(PythonRelationKind::SameStem);
     }
@@ -489,12 +499,24 @@ pub(super) fn imported_module_matches_owner(import: &PythonImport, owner: &Pytho
         .is_some_and(|stem| import.imported.rsplit('.').next() == Some(stem))
 }
 
-/// The dotted module path of the owner file itself: `src/handler.py` →
-/// `src.handler`, `src/pkg/__init__.py` → `src.pkg`. Identity comparisons must
-/// use this full path — a bare file stem is the token-coincidence family
-/// (`src/tests/test_handler.py` importing `.handler` resolves to
-/// `src.tests.handler`, a different module with the same stem).
-fn owner_module_path(file: &Path) -> String {
+/// The dotted module paths under which the owner file can be imported.
+///
+/// The first entry is the owner file's full repository-relative module path:
+/// `src/handler.py` → `src.handler`, `src/pkg/__init__.py` → `src.pkg`.
+/// Identity comparisons must use a full dotted path — a bare file stem is the
+/// token-coincidence family (`src/tests/test_handler.py` importing `.handler`
+/// resolves to `src.tests.handler`, a different module with the same stem).
+///
+/// A directory named `src` is the PyPA *src layout* import root: with
+/// `src/pricing/discounts.py`, tests import `pricing.discounts` (pytest
+/// `pythonpath = ["src"]` or an installed package), never `src.pricing...`. So
+/// for every `src` directory segment the dotted path *below* it is also an
+/// importable name of the same file (`pricing.discounts`, and in a monorepo
+/// `packages/foo/src/foo/bar.py` → `foo.bar`). The full path is kept too, so
+/// projects that really write `from src.pricing.discounts import ...` still
+/// match. Each form is a complete module path compared by exact equality; no
+/// stem or suffix matching is introduced.
+fn owner_module_paths(file: &Path) -> Vec<String> {
     let normalized = normalized_path(file);
     let mut parts = normalized
         .split('/')
@@ -508,15 +530,29 @@ fn owner_module_path(file: &Path) -> String {
             parts.pop();
         }
     }
-    parts.join(".")
+    let mut paths = vec![parts.join(".")];
+    // Only directory segments are import roots: the final segment is the module
+    // itself (`src.py` / `src/__init__.py` is a module named `src`).
+    let directory_count = parts.len().saturating_sub(1);
+    for (idx, part) in parts.iter().enumerate().take(directory_count) {
+        if *part == "src" {
+            let below = parts.get(idx + 1..).unwrap_or_default().join(".");
+            if !below.is_empty() && !paths.contains(&below) {
+                paths.push(below);
+            }
+        }
+    }
+    paths
 }
 
-/// Whether a `from M import Y` statement's source module `M` points at the owner's
-/// module. Compares the import's `source_module` last segment against the owner
-/// file stem (`from src.handler import validate`, `from handler import validate`,
-/// and a resolved `from .handler import validate` all match an owner in
-/// `src/handler.py`). A plain `import X` has an empty `source_module` and so
-/// never matches — fail closed.
+/// Whether a `from M import Y` statement's source module `M` is the owner's
+/// module. `M` must equal one of the owner's full dotted module paths (see
+/// [`owner_module_paths`]): `from src.handler import validate`, a resolved
+/// `from .handler import validate` in a sibling file, and — for the src layout
+/// — `from handler import validate` all match an owner in `src/handler.py`;
+/// `from src.checker import validate` or `from other.handler import validate`
+/// do not. A plain `import X` has an empty `source_module` and so never
+/// matches — fail closed.
 pub(super) fn import_source_module_matches_owner(
     import: &PythonImport,
     owner: &PythonOwner,
@@ -524,7 +560,7 @@ pub(super) fn import_source_module_matches_owner(
     if import.source_module.is_empty() {
         return false;
     }
-    import.source_module == owner_module_path(&owner.file)
+    owner_module_paths(&owner.file).contains(&import.source_module)
 }
 
 /// Free-function module-identity evidence: a strong observing test imports the
@@ -768,6 +804,215 @@ pub(super) fn has_unclosed_quote(prefix: &str) -> bool {
 
 pub(super) fn is_python_identifier_char(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphanumeric()
+}
+
+/// Whether the test body references the changed owner, even when the reference
+/// is not a recognized call shape. Gates the heuristic relations (same stem,
+/// test name, fixture name); the direct relations already imply a reference.
+///
+/// Counted references, each outside comments and string literals:
+///
+/// - function or class owner: the bare owner name (`handler = loyalty_price`,
+///   `assert callable(loyalty_price)`), unless the test binds a local of the
+///   same name (parameter/fixture, assignment, nested `def`/`class`) or the name
+///   is a keyword-argument or assignment target (`f(loyalty_price=1)`); a
+///   renamed import local (`from pricing import loyalty_price as lp` then `lp`)
+///   whose source module is the owner module; or a module-qualified member
+///   (`pricing.loyalty_price`, `p.loyalty_price` after `import pricing as p`)
+///   through an import of the owner module;
+/// - method or class-method owner: an attribute reference `.name` (the direct
+///   rule already relates any `.name(` call for these owners), and for a dunder
+///   method (`__init__`, `__eq__`, ...) a reference to the owner class, since
+///   the class invokes it implicitly;
+/// - module owner: a local bound by an import of, or from, the owner module.
+///
+/// A test that names the owner only in its title, a fixture name, its file
+/// stem, a comment or a string does not reference it, and neither does an
+/// arbitrary object-member use such as `order.loyalty_price` for a free
+/// function owner.
+pub(super) fn test_references_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    if owner.is_module_owner() {
+        return test_references_owner_module(test, owner);
+    }
+    if matches!(
+        owner.owner_kind,
+        Some(OwnerKind::Method | OwnerKind::ClassMethod)
+    ) {
+        if contains_attribute_reference(&test.body_text, &owner.name) {
+            return true;
+        }
+        let is_dunder =
+            owner.name.len() > 4 && owner.name.starts_with("__") && owner.name.ends_with("__");
+        return is_dunder
+            && owner
+                .qualified_name
+                .rsplit_once('.')
+                .is_some_and(|(class, _)| test_references_module_symbol(test, owner, class));
+    }
+    test_references_module_symbol(test, owner, &owner.name)
+}
+
+/// A reference to `symbol`, a top-level name defined in the owner module: the
+/// bare name, a renamed import local from the owner module, or a member access
+/// through an import of the owner module.
+fn test_references_module_symbol(test: &PythonTest, owner: &PythonOwner, symbol: &str) -> bool {
+    let body = &test.body_text;
+    if !test_binds_local(test, symbol) && contains_name_reference(body, symbol) {
+        return true;
+    }
+    test.imports.iter().any(|import| {
+        if import.imported == symbol
+            && import.alias != symbol
+            && import_source_module_matches_owner(import, owner)
+        {
+            return !test_binds_local(test, &import.alias)
+                && contains_name_reference(body, &import.alias);
+        }
+        imported_module_matches_owner(import, owner)
+            && contains_member_reference(body, &import.alias, symbol)
+    })
+}
+
+/// Module-owner reference: the test uses a local bound by `from <owner module>
+/// import X` or by an import of the owner module itself.
+fn test_references_owner_module(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.imports.iter().any(|import| {
+        (import_source_module_matches_owner(import, owner)
+            || imported_module_matches_owner(import, owner))
+            && !test_binds_local(test, &import.alias)
+            && contains_name_reference(&test.body_text, &import.alias)
+    })
+}
+
+/// Whether the test binds its own local named `name`: a parameter (pytest
+/// fixture), a direct assignment, a walrus (`name :=`), a `for name in` loop
+/// target, an `as name` target (`with`, `except`, in-body `import`), or a
+/// nested `def`/`class`. Such a local shadows the imported owner, so bare uses
+/// of `name` are not owner references.
+fn test_binds_local(test: &PythonTest, name: &str) -> bool {
+    test.fixtures.iter().any(|fixture| fixture == name)
+        || assignment_count(&test.body_text, name) > 0
+        || walrus_binds(&test.body_text, name)
+        || ["def ", "class ", "for ", "as "]
+            .into_iter()
+            .any(|keyword| {
+                let needle = format!("{keyword}{name}");
+                test.body_text.match_indices(&needle).any(|(idx, _)| {
+                    let end = idx + needle.len();
+                    python_callee_start_has_boundary(&test.body_text, idx)
+                        && !next_char_is_identifier(&test.body_text, end)
+                        && !python_text_hides_code(&test.body_text, idx)
+                })
+            })
+}
+
+/// `name :=` with identifier boundaries, outside comments and strings.
+fn walrus_binds(body_text: &str, name: &str) -> bool {
+    body_text.match_indices(name).any(|(idx, _)| {
+        let end = idx + name.len();
+        python_callee_start_has_boundary(body_text, idx)
+            && !next_char_is_identifier(body_text, end)
+            && body_text[end..]
+                .trim_start_matches([' ', '\t'])
+                .starts_with(":=")
+            && !python_text_hides_code(body_text, idx)
+    })
+}
+
+/// Bare (possibly dotted, for a module alias) name reference: identifier
+/// boundaries on both sides, not an attribute of another receiver, not a
+/// keyword-argument or assignment target (`name=`, `name = `), and not inside a
+/// comment or string literal.
+fn contains_name_reference(body_text: &str, name: &str) -> bool {
+    if !is_dotted_python_identifier(name) {
+        return false;
+    }
+    body_text.match_indices(name).any(|(idx, _)| {
+        let end = idx + name.len();
+        python_callee_start_has_boundary(body_text, idx)
+            && !next_char_is_identifier(body_text, end)
+            && !is_binding_target(body_text, end)
+            && !python_text_hides_code(body_text, idx)
+    })
+}
+
+/// `receiver.member` with identifier boundaries, outside comments and strings.
+fn contains_member_reference(body_text: &str, receiver: &str, member: &str) -> bool {
+    if !is_dotted_python_identifier(receiver) || !is_dotted_python_identifier(member) {
+        return false;
+    }
+    let needle = format!("{receiver}.{member}");
+    body_text.match_indices(&needle).any(|(idx, _)| {
+        python_callee_start_has_boundary(body_text, idx)
+            && !next_char_is_identifier(body_text, idx + needle.len())
+            && !python_text_hides_code(body_text, idx)
+    })
+}
+
+/// `.attr` on any receiver, outside comments and strings.
+fn contains_attribute_reference(body_text: &str, attr: &str) -> bool {
+    if !is_dotted_python_identifier(attr) {
+        return false;
+    }
+    let needle = format!(".{attr}");
+    body_text.match_indices(&needle).any(|(idx, _)| {
+        !next_char_is_identifier(body_text, idx + needle.len())
+            && !python_text_hides_code(body_text, idx)
+    })
+}
+
+fn next_char_is_identifier(text: &str, idx: usize) -> bool {
+    text[idx..]
+        .chars()
+        .next()
+        .is_some_and(is_python_identifier_char)
+}
+
+/// `name=` / `name = ` (not `==`): a keyword argument or an assignment target.
+fn is_binding_target(text: &str, end: usize) -> bool {
+    let rest = text[end..].trim_start_matches([' ', '\t']);
+    rest.starts_with('=') && !rest.starts_with("==")
+}
+
+fn is_dotted_python_identifier(name: &str) -> bool {
+    !name.is_empty()
+        && name.split('.').all(|segment| {
+            !segment.is_empty()
+                && !segment.starts_with(|ch: char| ch.is_ascii_digit())
+                && segment.chars().all(is_python_identifier_char)
+        })
+}
+
+/// Whether `idx` sits in a comment or string: a `#` or an open quote earlier on
+/// the same line, or an open triple-quoted string (docstring) from an earlier
+/// line.
+fn python_text_hides_code(text: &str, idx: usize) -> bool {
+    python_prefix_hides_code(line_prefix_before(text, idx))
+        || inside_triple_quoted_string(text, idx)
+}
+
+fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
+    let mut open: Option<&str> = None;
+    let mut cursor = 0;
+    while cursor < idx {
+        let rest = &text[cursor..];
+        match open {
+            Some(delimiter) if rest.starts_with(delimiter) => {
+                open = None;
+                cursor += delimiter.len();
+            }
+            None if rest.starts_with("\"\"\"") => {
+                open = Some("\"\"\"");
+                cursor += 3;
+            }
+            None if rest.starts_with("'''") => {
+                open = Some("'''");
+                cursor += 3;
+            }
+            _ => cursor += rest.chars().next().map_or(1, char::len_utf8),
+        }
+    }
+    open.is_some()
 }
 
 pub(super) fn same_stem_related(test: &PythonTest, owner: &PythonOwner) -> bool {

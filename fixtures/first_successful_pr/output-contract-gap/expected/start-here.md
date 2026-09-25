@@ -14,8 +14,8 @@ State: actionable
 - Current evidence strength: Static evidence found changed user-facing output, but no checked output or golden proof is attached.
 - Missing discriminator: Checked output or golden proof for the changed text.
 - Focused proof intent: Add or update the output proof in `fixtures/device-labels/expected/human.txt` so `golden output contains APPLE_M3_AIR_DEVICE_LABELS_TEXT`.
-- Verify command: `cargo xtask goldens check`
-- Receipt command: `ripr receipt write --gap gap:rust:output:device-label --verify-command 'cargo xtask goldens check' --status not_run --out target/ripr/receipts/gap-pr-output-device-label.targeted-test-outcome.json`
+- Verify after the test edit: `cargo xtask goldens check`
+- Receipt after verify: `ripr receipt write --gap gap:rust:output:device-label --verify-command 'cargo xtask goldens check' --status not_run --out target/ripr/receipts/gap-pr-output-device-label.targeted-test-outcome.json`
 - Receipt path: `target/ripr/receipts/gap-pr-output-device-label.targeted-test-outcome.json`
 - Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.
 
@@ -32,21 +32,15 @@ Repair:
 - Target: `fixtures/device-labels/expected/human.txt`
 - Assertion: `golden output contains APPLE_M3_AIR_DEVICE_LABELS_TEXT`
 
-Verify command:
+Verify after the test edit:
 `cargo xtask goldens check`
 
-Verify command (PowerShell):
-`cargo xtask goldens check`
+It runs unchanged in Bash and PowerShell; cmd.exe is not supported.
 
-The first form is written for Bash; cmd.exe is not supported.
-
-Receipt command:
+Receipt after verify:
 `ripr receipt write --gap gap:rust:output:device-label --verify-command 'cargo xtask goldens check' --status not_run --out target/ripr/receipts/gap-pr-output-device-label.targeted-test-outcome.json`
 
-Receipt command (PowerShell):
-`ripr receipt write --gap gap:rust:output:device-label --verify-command 'cargo xtask goldens check' --status not_run --out target/ripr/receipts/gap-pr-output-device-label.targeted-test-outcome.json`
-
-The first form is written for Bash; cmd.exe is not supported.
+It runs unchanged in Bash and PowerShell; cmd.exe is not supported.
 
 Agent packet command:
 `ripr agent packet --root fixtures/first_successful_pr/output-contract-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:output:device-label --json > <cwd>/fixtures/first_successful_pr/output-contract-gap/target/ripr/workflow/agent-packet.json`

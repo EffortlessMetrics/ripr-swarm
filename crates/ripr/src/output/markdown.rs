@@ -1,13 +1,13 @@
 /// Shell disclosure shown before generated command fences (#2628).
 ///
 /// The command strings are bash source (`agent::loop_commands::shell_arg`), so
-/// each fenced `bash` block is paired with a PowerShell translation derived by
-/// [`powershell_command`]. Naming both shells — and the cmd.exe boundary — in
+/// a fenced `bash` block is paired with a PowerShell translation derived by
+/// [`powershell_command`] when the translation differs ([`powershell_form`]). Naming both shells — and the cmd.exe boundary — in
 /// the prose keeps the packet honest on Windows; the wording mirrors the landed
 /// `agent_workflow` disclosure so every generated-command surface states the
 /// same contract. Shared here — beside the translation it describes — so the
 /// fenced command surfaces do not fork one disclosure per module.
-pub(crate) const COMMAND_SHELL_DISCLOSURE: &str = "Each command includes Bash and PowerShell variants. The Bash form uses POSIX single-quote quoting and `>` redirection; the PowerShell form uses PowerShell's doubled-quote equivalent and UTF-8 `Out-File` redirection. cmd.exe is not supported. On Windows, use either Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
+pub(crate) const COMMAND_SHELL_DISCLOSURE: &str = "Commands are written for Bash, with POSIX single-quote quoting and `>` redirection. A PowerShell form follows a command only when PowerShell needs a different one: doubled-quote escaping, or a guarded BOM-free UTF-8 write in place of `>`. A command with no PowerShell form after it runs unchanged in PowerShell, unless a line says its PowerShell form is unavailable. cmd.exe is not supported. On Windows, use either Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
 
 pub(crate) fn render_string_section(out: &mut String, title: &str, values: &[String]) {
     out.push_str(&format!("\n## {title}\n\n"));
@@ -30,6 +30,31 @@ pub(crate) fn markdown_text(value: &str) -> String {
 /// `: <command>`.
 pub(crate) const POWERSHELL_UNAVAILABLE_DISCLOSURE: &str =
     "PowerShell form unavailable for compound commands";
+
+/// What a generated-command surface prints after a Bash command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum PowershellForm {
+    /// The command runs unchanged in PowerShell; print no second form. A
+    /// byte-identical PowerShell block read as a second, different command
+    /// (onboarding re-walk F60-12).
+    SameAsBash,
+    /// PowerShell needs this different form.
+    Translated(String),
+    /// No honest translation exists (a compound command); print
+    /// [`POWERSHELL_UNAVAILABLE_DISCLOSURE`].
+    Unavailable,
+}
+
+/// Classify [`powershell_command`]'s result for one Bash command. Every
+/// generated-command surface prints a PowerShell form only for
+/// `Translated`, so the choice is made here once.
+pub(crate) fn powershell_form(command: &str) -> PowershellForm {
+    match powershell_command(command) {
+        None => PowershellForm::Unavailable,
+        Some(line) if line == command => PowershellForm::SameAsBash,
+        Some(line) => PowershellForm::Translated(line),
+    }
+}
 
 /// Translate a bash-rendered advisory command into its PowerShell form.
 ///

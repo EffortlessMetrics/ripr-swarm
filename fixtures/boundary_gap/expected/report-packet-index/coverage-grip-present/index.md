@@ -1,6 +1,6 @@
 # RIPR Report Packet Index
 
-Status: pass
+Status: warn
 
 Start here:
 - PR review front panel: target/ripr/reports/pr-review-front-panel.md
@@ -10,9 +10,6 @@ Packet summary:
 - Missing expected artifacts: 0
 - Warnings: 0
 - Failures: 0
-
-Start here:
-- PR review front panel: target/ripr/reports/pr-review-front-panel.md
 
 PR review story:
 - First useful action: target/ripr/reports/first-useful-action.md

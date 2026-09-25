@@ -2175,6 +2175,8 @@ mod python_repair_verification_semantics {
             allowed_edit_surface: vec![crate::edit_cage::CagePathRule::exact("tests/pricing.rs")?],
             forbidden_paths: Vec::new(),
             expected_operational_writes: Vec::new(),
+            ignored_build_output: None,
+            untracked_build_lockfile: None,
         })
     }
 

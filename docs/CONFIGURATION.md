@@ -91,8 +91,8 @@ Optional. Writes a repo-local `ripr.toml` at the selected workspace root that
 materializes the built-in defaults as repo policy so a team can review, commit,
 and tune them. `ripr.toml` is not required — missing config uses the same
 defaults. With `--ci github`, `ripr init` also writes a non-blocking GitHub
-Actions workflow for pilot/report/agent artifacts, optional repo-local cockpit
-rendering, and optional SARIF rendering/upload. It does not run mutation
+Actions workflow for pilot/report/agent artifacts and optional SARIF
+rendering/upload. It does not run mutation
 testing, enable CI blocking policy, or unlock basic CLI usefulness.
 
 ```text
@@ -157,6 +157,7 @@ ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N]
 | `--out PATH` | `target/ripr/pilot` | Directory for `repo-exposure.{json,md}`, `agent-seam-packets.json`, and `pilot-summary.{json,md}`. |
 | `--mode MODE` | `ripr.toml` `analysis.mode`, otherwise `draft` | One of `instant`, `draft`, `fast`, `deep`, `ready`. |
 | `--max-seams N` | `5` | Maximum ranked seams shown in the pilot summary. Must be positive. |
+| `--timeout-ms MS` | `30000` | Maximum analysis budget in milliseconds before pilot writes a partial summary. |
 
 ### `ripr check`
 
@@ -164,13 +165,20 @@ Runs the static exposure analysis and renders findings.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
-| `--root PATH` | current directory | Workspace root used for diff and source discovery. |
-| `--base REV` | `origin/main` | Git revision used as the diff base when `--diff` is not given. |
-| `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. |
+| `--root PATH` | current directory | Workspace root used for diff and source discovery. Walks up to a `Cargo.toml` containing `[workspace]`. |
+| `--base REV` | resolved per repository | Git revision used as the diff base when `--diff` is not given. With no `--base`, ripr resolves the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists; when none does, it says so rather than analyzing nothing. An explicit `--base` is used as given and is never substituted. |
+| `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. `--diff -` reads from stdin. |
+| `--candidate-tree TREE` | _(unset)_ | Analyze exactly this immutable Git tree object, deriving the diff from Git objects alone. Mutually exclusive with `--diff` and `--base`. |
+| `--candidate-base BASE` | repository's empty tree | Base treeish for `--candidate-tree` (a commit, tag, or tree OID). |
+| `--worktree` | _(off)_ | Diff the base against the live working tree instead of `HEAD`, including staged and unstaged tracked edits. Cannot be combined with `--diff`. |
 | `--mode MODE` | `ripr.toml` `analysis.mode`, otherwise `draft` | One of `instant`, `draft`, `fast`, `deep`, `ready`. See the [mode reference](#analysis-modes). |
-| `--format FORMAT` | `human` | One of `human` (alias `text`), `json`, `github`. |
+| `--format FORMAT` | `human` | See [Output formats](#output-formats) for the full set. |
+| `--gap-ledger PATH` | _(unset)_ | For `repo-badge-*` formats only: render badge counts from explicit gap-decision-ledger projection targets. |
 | `--json` | _(off)_ | Shortcut for `--format json`. |
 | `--no-unchanged-tests` | `ripr.toml` `analysis.include_unchanged_tests`, otherwise tests included | Limits the source index to changed Rust files. By default unchanged tests are part of the index so `Reach` evidence can find them. |
+| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. |
+| `--write-artifact PATH` | _(unset)_ | Write a full-fidelity check artifact (`ripr-check-artifact-v1`) for later `ripr explain --from PATH` / `ripr context --from PATH` reuse. Diff-scoped findings runs only. A local, disposable derivative: never a gate, badge, or proof input. |
+| `--git-timeout SECS` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. `0` disables it. Also settable via `RIPR_GIT_TIMEOUT`. |
 
 ### Environment Variables
 
@@ -187,6 +195,10 @@ that needs the tuning.
 | `RIPR_PARTIAL_DIFF_LINE_BUDGET` | `1000` | Added plus removed changed lines a diff-scoped analysis inspects before returning `limited_partial_scope`. A later whole file that would exceed the remaining budget is excluded (never an overshoot); the first selected file is always analyzed even when it alone exceeds the budget (stop reason `line_budget_exceeded_on_first_file`). Values above the effective `RIPR_MAX_DIFF_CHANGED_RUST_LINES` limit (its env override when set, otherwise the `2000` default) are clamped to that effective limit with a disclosure — so a runner that raises the max limit accepts a line budget up to the same ceiling instead of silently truncating it back to the default. Must be a positive integer; invalid values fail closed as `partial_budget_invalid`. |
 | `RIPR_REPO_SEAM_CACHE_LIMIT` | `20000` | Maximum classified seam count per shard in the full repo seam cache for a completed repo-exposure run. Larger cache entries are written as bounded shard files under the cache base directory. Raise this to reduce shard count only when the machine has enough disk and time budget for larger shard writes. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_COMPACT_REPO_SEAM_CACHE_MAX_SEAMS` | `100000` | Maximum seam count per shard in the compact repo seam cache. Larger compact cache entries are written as bounded shard files under the cache base directory. Raise this for large repos when the machine has enough disk and time budget for larger shard writes. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
+| `RIPR_GIT_TIMEOUT` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. A git command that exceeds the deadline is terminated and the error names `git_invocation_timeout`. `0` disables the deadline. `ripr check --git-timeout SECS` sets the same value for one command. |
+| `RIPR_MAX_REPO_INDEX_FILES` | `800` | Maximum Rust files a repo-scoped analysis will load into the index before failing closed as `repo_scope_oversized`. The analysis is not run when the limit is exceeded, so the result is never a silently partial one. Scope the run with `ripr check --diff` or raise the limit. Must be a positive integer. |
+| `RIPR_REPO_EXPOSURE_SEAM_LIMIT` | `10000` | Maximum seams a full-repo `repo-exposure` analysis classifies before capping. When the cap fires, the run reports `run_status = "seam_limit_applied"` with a `limitations[]` entry naming the analyzed and total seam counts, this variable, and a repair route. Set to `0` to analyze all seams. `ripr doctor` reports this cap under its known limitations. |
+| `RIPR_PILOT_SEAM_BUDGET` | `2000` | Maximum seams written to `ripr pilot` artifacts (`repo-exposure.json`, `agent-seam-packets.json`). Set to `0` to disable the budget and write all seams, which may produce very large files. When the budget applies, both artifacts carry a `limitations[]` disclosure naming the variable and a repair route. |
 
 Repo seam cache entries larger than the active limit are stored as a manifest
 plus shard files, with cache-store trace status such as
@@ -457,6 +469,7 @@ The extension contributes:
 - `ripr.copyContext`
 - `ripr.copySuggestedAssertion`
 - `ripr.copyTargetedTestBrief`
+- `ripr.copyAgentRepairCommand` (offered only for a repair-eligible seam)
 - `ripr.copyAgentPacketCommand`
 - `ripr.copyAgentBriefCommand`
 - `ripr.copyAfterSnapshotCommand`
@@ -699,11 +712,32 @@ not treated as production seams.
 
 ## Output formats
 
+Analysis formats, diff-scoped:
+
 | Format | Selector | When to use |
 | --- | --- | --- |
-| `human` | default, or `--format human` / `--format text` | Local terminal review. |
+| `human` | default, or `--format human` / `--format text` | Local terminal review: one bounded `Start here:` route. |
+| `human-full` | `--format human-full` | Exhaustive evidence, including the findings `human` omits. |
 | `json` | `--json` or `--format json` | Tools, editors, CI, agents. Versioned via `schema_version`. See [Output schema](OUTPUT_SCHEMA.md). |
 | `github` | `--format github` | GitHub Actions annotations. |
+| `sarif` | `--format sarif` | SARIF consumers, including GitHub code scanning. |
+
+Badge formats, diff-scoped, for README status: `badge-json`, `badge-shields`,
+`badge-plus-json`, `badge-plus-shields`.
+
+Badge formats, repo-scoped, rendered from the gap ledger: `repo-badge-json`,
+`repo-badge-shields`, `repo-badge-plus-json`, `repo-badge-plus-shields`.
+
+Repo-scope formats, rendered against the full repo baseline rather than a diff:
+`repo-seams-json`, `repo-seams-md`, `repo-exposure-json`,
+`repo-exposure-summary-json`, `repo-exposure-md`, `repo-sarif`.
+
+Agent format, machine-readable repair evidence: `agent-seam-packets-json`.
+
+The `badge-plus-*` and `repo-badge-plus-*` formats read
+`target/ripr/reports/test-efficiency.json` when present; missing input renders a
+neutral "needs test-efficiency" badge and warns on stderr. See
+[Badge adoption](BADGE_ADOPTION.md).
 
 The `context` command always returns JSON-shaped output regardless of
 `--format`.
@@ -731,6 +765,32 @@ them. It does not enable runtime mutation execution or CI blocking policy.
 | --- | --- | --- | --- |
 | `mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Default analysis mode when not set by a CLI flag or LSP initialization option. |
 | `include_unchanged_tests` | boolean | `true` | Whether unchanged tests may be indexed as static evidence. |
+| `production_like_targets` | array of repository-relative paths | `[]` (empty — no opt-in) | Workspace-relative targets opted in as production-like test infrastructure (#3283, RIPR-SPEC-0153): analyzed as production behavior rather than test evidence. Paths must be repository-relative with `/` separators — backslashes, drive/scheme prefixes, leading `/`, and `..` escape fail closed at parse time. |
+| `test_harnesses` | array of `[[analysis.test_harnesses]]` tables | `[]` (empty — no registration recognized) | Repository-governed test-harness registrations (#3532, RIPR-SPEC-0153). Registration is explicit configuration only: without an entry, no custom harness or registered test producer is recognized. See `[analysis.test_harnesses]` entries below. |
+
+#### `[analysis.test_harnesses]` entries
+
+Each registration names one exact Cargo target and one exact harness family.
+Unknown kinds or adapters, a kind/adapter mismatch, duplicate
+`registration_id` or `target` values, or a non-exact `marker` are config
+errors that fail closed at parse time.
+
+| Field | Type | Allowed values | Effect |
+| --- | --- | --- | --- |
+| `registration_id` | string | unique across registrations | Stable identifier named in limitations and subject provenance. |
+| `target` | repository-relative path | one unique target file per registration | Exact workspace-relative Cargo target file the registration claims. |
+| `kind` | enum | `custom_harness` \| `registered_attribute` | `custom_harness`: a `[[test]]` target with `harness = false`, evidence role file-wide. `registered_attribute`: a test-producing attribute applied to functions inside one exact target file. |
+| `adapter` | enum | `libtest_mimic_v1` \| `exact_attribute_v1` | Adapter generation bound to the kind: `libtest_mimic_v1` supports `custom_harness`; `exact_attribute_v1` supports `registered_attribute`. |
+| `marker` | exact identifier path | e.g. `libtest_mimic`, `myco::contract_test` | Exact source marker: the harness crate path for `custom_harness` or the exact attribute path for `registered_attribute`. Prefix/suffix lookalikes never match. |
+
+A registration classifies source and describes a selector route; it cannot
+execute anything during passive analysis and grants no process, network,
+edit, GitHub, or publication capability.
+
+Both `production_like_targets` and `test_harnesses` are opt-in keys with
+empty defaults, so the generated `ripr.toml.example` profile (which
+materializes built-in defaults only, per the `ripr.toml` section above) does
+not list them.
 
 ### `[oracles]`
 
@@ -752,7 +812,7 @@ Use suppressions for accepted debt; Finding severities cannot be `off`.
 
 | Key | Default |
 | --- | --- |
-| `exposed` | `info` |
+| `exposed` | `warning` |
 | `weakly_exposed` | `warning` |
 | `reachable_unrevealed` | `warning` |
 | `no_static_path` | `warning` |
@@ -802,7 +862,7 @@ Seam severities affect LSP seam diagnostics. Valid values are `off`, `info`,
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `enabled` | array of strings | `["rust"]` | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.js`, and `.jsx`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
+| `enabled` | array of strings | `["rust"]` | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.js`, and `.jsx`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. `perl` is accepted only by a ripr built with Cargo feature `lang-perl`; default builds reject it at config load. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
 
 `[languages.rust]` configures the stable Rust adapter:
 
@@ -844,6 +904,15 @@ instead of publishing phantom preview diagnostics.
 
 Perl is a fact-packet consumer. It does not parse `.pm`, `.pl`, `.t`, or `.psgi`
 source directly. Use either an explicit packet or a managed exporter:
+
+> **Availability:** no released ripr build plus exporter combination analyzes
+> Perl yet. Perl analysis needs both a ripr binary built with Cargo feature
+> `lang-perl` (`cargo install ripr --features lang-perl`; default builds reject
+> `perl` in `[languages] enabled`) and a compatible fact exporter. The canonical
+> exporter, `perl-ripr-facts`, is not yet published, and the published
+> `perllsp` binary does not accept the managed `ripr-facts` argv. `ripr doctor`
+> probes the exporter's `ripr-facts` capability and reports an incompatible
+> binary as such.
 
 ```bash
 ripr check --perl-facts target/ripr/reports/perl-facts.json

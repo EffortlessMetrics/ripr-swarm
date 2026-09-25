@@ -57,9 +57,15 @@ Most adopters should choose one of these first-hour paths:
 For TypeScript, JavaScript, or broader Python static-fact evaluation, first read
 [Language adapter preview workflow](LANGUAGE_ADAPTER_PREVIEW.md). Preview
 language evidence is syntax-first, visibly preview/advisory, and not a default
-gate input. The scoped Python repair-routing loop is `usable alpha` for selected
-pytest/unittest repair cards, packets, verify commands, and receipts; it remains
-advisory and does not run imports, execute tests, or generate tests by default.
+gate input. Python findings report `Language status: preview`. Within that
+preview, the scoped Python repair-routing loop is `usable alpha` for selected
+pytest/unittest repair cards, packets, verify commands, and receipts: a repair
+card appears only for a `weakly_exposed` finding whose related test reaches the
+change and for which ripr names the missing discriminator, a test location, and
+a verify command. `exposed`, `no_static_path`, heuristic-only, and
+static-limited findings get no card, and `ripr pilot` then reports
+`repair cards: 0`. The loop remains advisory and does not run imports, execute
+tests, or generate tests by default.
 
 `ripr.toml` is optional. `ripr init` materializes repo-local policy when a team
 wants to review, version, and tune it. It is not activation, and it is not
@@ -115,7 +121,11 @@ Generate the GitHub workflow:
 ripr init --ci github
 ```
 
-Or copy the workflow from [CI strategy](CI.md) when adopting from the GitHub UI.
+Or copy the workflow from
+[CI strategy](CI.md#copyable-ripr-advisory-workflow) when adopting from the
+GitHub UI. Most of that document is this repository's own CI policy; the
+copyable recipe and the artifact packet it produces are in the section that
+link opens.
 
 The generated workflow is advisory by default. On a PR, read the job summary
 first. It should show the first-run status, top repairable gap or no-action
@@ -268,7 +278,9 @@ ripr agent repair --root . --seam-id <seam_id> --phase before
 ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
-Ask RIPR what local artifacts already exist when resuming or diagnosing:
+When resuming, ask RIPR where you are. `agent status` prints the waiting
+attempt's `--attempt ... --phase after` command, `ripr pilot` when no seam is
+known yet, or a warning listing the choices when it would have to guess:
 
 ```bash
 ripr agent status --root .
@@ -337,7 +349,8 @@ RIPR findings.
   before/after evidence and optional calibration loop.
 - [Editor extension](EDITOR_EXTENSION.md) for VS Code install, commands, and
   saved-workspace refresh behavior.
-- [CI strategy](CI.md) for the generated advisory workflow and artifact packet.
+- [CI strategy](CI.md#copyable-ripr-advisory-workflow) for the generated
+  advisory workflow and artifact packet.
 - [LLM operator guide](LLM_OPERATOR_GUIDE.md) for the source-edit-free agent
   loop.
 - [Configuration](CONFIGURATION.md) for `ripr.toml`, modes, severities, and

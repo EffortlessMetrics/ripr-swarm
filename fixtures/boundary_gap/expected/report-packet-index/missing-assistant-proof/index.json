@@ -36,7 +36,7 @@
           "kind": "markdown",
           "path": "target/ripr/reports/pr-review-front-panel.md",
           "json_path": "target/ripr/reports/pr-review-front-panel.json",
-          "status": "available",
+          "status": "warn",
           "available": true,
           "required": true,
           "authority": false,
@@ -94,7 +94,7 @@
           "required": false,
           "authority": false,
           "description": "Joined repair proof packet.",
-          "next_command": "ripr assistant-loop proof --out target/ripr/reports/test-oracle-assistant-proof.json --out-md target/ripr/reports/test-oracle-assistant-proof.md"
+          "next_command": "ripr assistant-loop proof --root . --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json --ledger target/ripr/reports/pr-evidence-ledger.json --out target/ripr/reports/test-oracle-assistant-proof.json --out-md target/ripr/reports/test-oracle-assistant-proof.md"
         }
       ]
     }
@@ -107,7 +107,7 @@
       "path": "target/ripr/reports/test-oracle-assistant-proof.md",
       "required": false,
       "reason": "missing_required_input",
-      "next_command": "ripr assistant-loop proof --out target/ripr/reports/test-oracle-assistant-proof.json --out-md target/ripr/reports/test-oracle-assistant-proof.md"
+      "next_command": "ripr assistant-loop proof --root . --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json --ledger target/ripr/reports/pr-evidence-ledger.json --out target/ripr/reports/test-oracle-assistant-proof.json --out-md target/ripr/reports/test-oracle-assistant-proof.md"
     }
   ],
   "warnings": [

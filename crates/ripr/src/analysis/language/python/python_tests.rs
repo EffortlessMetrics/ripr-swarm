@@ -1042,6 +1042,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1302,6 +1303,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1337,6 +1339,7 @@ fn same_stem_related_handles_missing_stems() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     };
     let test = PythonTest {
         name: "test_x".to_string(),
@@ -2026,7 +2029,9 @@ fn related_test_matching_falls_back_to_same_stem_when_no_call() {
     );
     let tests = extract_tests(
         Path::new("tests/test_pricing.py"),
-        "def test_unrelated():\n    do_something_else()\n",
+        // References the owner without a recognized call shape: a heuristic
+        // link requires a reference (RIPR-SPEC-0028).
+        "def test_unrelated():\n    handler = apply_discount\n    do_something_else()\n",
     );
     let candidates = related_test_candidates(&owners[0], &tests);
     assert_eq!(candidates.len(), 1);
@@ -2046,7 +2051,7 @@ fn related_test_matching_uses_test_name_similarity_as_uncertain_relation() -> Re
     );
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
-        "def test_apply_discount_boundary_case():\n    assert 90 == 90\n",
+        "def test_apply_discount_boundary_case():\n    handler = apply_discount\n    assert 90 == 90\n",
     );
     let candidates = related_test_candidates(&owners[0], &tests);
     if candidates.len() != 1 {
@@ -2077,7 +2082,7 @@ fn related_test_matching_uses_fixture_name_as_uncertain_relation() {
     );
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
-        "def test_checkout_total(pricing):\n    assert 102 == 102\n",
+        "def test_checkout_total(pricing):\n    fee = calculate_fee\n    assert 102 == 102\n",
     );
     let candidates = related_test_candidates(&owners[0], &tests);
     assert_eq!(candidates.len(), 1);
@@ -2240,11 +2245,11 @@ fn related_test_candidates_break_ties_by_oracle_then_file_then_name() {
     .remove(0);
     let mut tests = extract_tests(
         Path::new("tests/test_pricing.py"),
-        "def test_alpha():\n    assert 1 == 1\n\ndef test_beta():\n    assert 1 == 1\n",
+        "def test_alpha():\n    handler = apply_discount\n    assert 1 == 1\n\ndef test_beta():\n    handler = apply_discount\n    assert 1 == 1\n",
     );
     tests.extend(extract_tests(
         Path::new("tests/pricing_test.py"),
-        "def test_alpha():\n    assert 1 == 1\n",
+        "def test_alpha():\n    handler = apply_discount\n    assert 1 == 1\n",
     ));
     let candidates = related_test_candidates(&owner, &tests);
     assert!(
@@ -2754,6 +2759,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -2816,6 +2822,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -2871,6 +2878,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
     }
 }
 

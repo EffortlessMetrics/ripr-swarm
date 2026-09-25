@@ -14,8 +14,8 @@ State: actionable
 - Current evidence strength: Static evidence found related Rust test context, but the current proof is weak because the discriminator is missing.
 - Missing discriminator: Equality-boundary assertion for the changed behavior.
 - Focused proof intent: Add a focused boundary assertion in `tests/pricing.rs`: `assert_eq!(discount(100, 100), 90)`.
-- Verify command: `cargo xtask fixtures boundary_gap`
-- Receipt command: `ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command 'cargo xtask fixtures boundary_gap' --status not_run --out target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json`
+- Verify after the test edit: `cargo xtask fixtures boundary_gap`
+- Receipt after verify: `ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command 'cargo xtask fixtures boundary_gap' --status not_run --out target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json`
 - Receipt path: `target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json`
 - Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.
 
@@ -32,21 +32,15 @@ Repair:
 - Target: `tests/pricing.rs`
 - Assertion: `assert_eq!(discount(100, 100), 90)`
 
-Verify command:
+Verify after the test edit:
 `cargo xtask fixtures boundary_gap`
 
-Verify command (PowerShell):
-`cargo xtask fixtures boundary_gap`
+It runs unchanged in Bash and PowerShell; cmd.exe is not supported.
 
-The first form is written for Bash; cmd.exe is not supported.
-
-Receipt command:
+Receipt after verify:
 `ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command 'cargo xtask fixtures boundary_gap' --status not_run --out target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json`
 
-Receipt command (PowerShell):
-`ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command 'cargo xtask fixtures boundary_gap' --status not_run --out target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json`
-
-The first form is written for Bash; cmd.exe is not supported.
+It runs unchanged in Bash and PowerShell; cmd.exe is not supported.
 
 Agent packet command:
 `ripr agent packet --root fixtures/first_successful_pr/boundary-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:pricing:threshold-boundary --json > <cwd>/fixtures/first_successful_pr/boundary-gap/target/ripr/workflow/agent-packet.json`

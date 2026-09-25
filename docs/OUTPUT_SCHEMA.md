@@ -45,6 +45,7 @@ map is:
 | `ripr agent packet` | `schema_version` | `0.4` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
+| `ripr agent repair --phase after` success stdout | `schema_version` | `0.1` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
@@ -140,7 +141,10 @@ the explicit `--base` when one was given, the resolved default base
 (diff-file/stdin inputs and repo-scope runs). Base-matching consumers (for
 example `review-comments --check-output`, which requires the envelope `base`
 to equal its own `--base`) may rely on a present `base`; an absent `base`
-means the run cannot be attributed to a base.
+means the run cannot be attributed to a base. The typed
+`analysis_outcome.outcome.identity.base_revision` names the same value: a
+scope-less run records the resolved default there too, so the envelope and the
+identity agree and the analysis-outcome validator accepts the artifact.
 
 ```json
 {
@@ -1196,6 +1200,11 @@ JSON fields:
   optional `owner`, `verify_command`, optional `receipt_command`, `allowed_edit_surface[]`,
   `forbidden_files[]`, `must_not_change[]`, optional `assertion_shape`,
   optional `repair_kind`, optional `target_test`, and optional `missing_discriminator`.
+  When present, `receipt_command` is the canonical RIPR-SPEC-0079
+  `ripr receipt write --gap <canonical_gap_id> --verify-command <verify_command>
+  --status not_run --out target/ripr/receipts/<gap_slug>.json` command built by
+  the shared receipt-write owner — the same string the gap decision ledger
+  synthesizes for that gap — and never a `ripr outcome` movement command.
   When absent, the human output contains a named `status: not actionable` limitation
   section instead. This field is RIPR-SPEC-0088 §2.2. It is not a gate, badge, or
   public repair authority; authority boundary remains `preview_advisory_only`.
@@ -1503,15 +1512,17 @@ requires no disclosure.
 Added as an additive optional top-level boolean. Emitted (as `true`) only when
 ALL of the following are true:
 
-1. `ripr check --base <rev>` was invoked (i.e. `--base` was explicit).
-2. `--diff <file>` was NOT also supplied.
+1. The analyzed diff was committed history: `ripr check --base <rev>`, or a
+   bare `ripr check` that resolved the default base (#3888).
+2. None of `--diff <file>`, `--worktree`, or `--candidate-tree` was supplied,
+   and the format is not repo-scope.
 3. The working tree has at least one uncommitted change to a tracked source
    file, as reported by `git status --porcelain`.
 
 Absent (not emitted) when `false`. Does not bump `schema_version`.
 
-This field closes the false-clean gap where `ripr check --base HEAD` with an
-uncommitted `.rs` edit returns 0 probes and exit 0 — a result that is honest
+This field closes the false-clean gap where `ripr check --base HEAD` (or a bare
+`ripr check` on the default branch) with an uncommitted `.rs` edit returns 0 probes and exit 0 — a result that is honest
 for the committed diff but misleading if the user assumes it covers their
 working-tree change. When `unanalyzed_working_tree: true` is present, the
 result is NOT a clean pass for the uncommitted changes.
@@ -1522,8 +1533,8 @@ Example:
 "unanalyzed_working_tree": true
 ```
 
-The field is absent when the worktree is clean, when `--diff <file>` was used
-instead of `--base`, when `--worktree` was used to include staged and unstaged
+The field is absent when the worktree is clean, when `--diff <file>` or
+`--candidate-tree` was used, when a repo-scope format was requested, when `--worktree` was used to include staged and unstaged
 tracked edits in the analyzed diff, or when `git status --porcelain` cannot be
 run (fail-closed: no fabricated disclosure).
 
@@ -2331,12 +2342,12 @@ additive top-level `artifact` envelope before it is suitable for
     "format": "repo-exposure-json",
     "mode": "draft",
     "base_revision": null,
-    "input_identity": "input:v3:fnv1a64:<16-hex-fingerprint>",
+    "input_identity": "input:v4:fnv1a64:<16-hex-fingerprint>",
     "command": "ripr check --format repo-exposure-json",
     "profile": "draft",
     "worktree": "clean"
   },
-  "snapshot_identity": "snapshot:input:v3:fnv1a64:<16-hex-fingerprint>;revision:<full-head-sha>",
+  "snapshot_identity": "snapshot:input:v4:fnv1a64:<16-hex-fingerprint>;revision:<full-head-sha>",
   "content_sha256": "sha256:<64-hex-digest>"
 }
 ```
@@ -2348,9 +2359,11 @@ commitment, not a signature or runtime proof. `repository.head` and
 such an artifact is disclosed but is not accepted by `agent verify`.
 `analysis.input_identity` is the portable semantic/configuration identity of
 the analysis input. It carries an explicit algorithm version and digest shape
-(`input:v3:fnv1a64:<16 lowercase hex>`) and covers the identity version,
+(`input:v4:fnv1a64:<16 lowercase hex>`) and covers the identity version,
 mode, profile (this producer binds profile to mode and states both), base
-semantics, analysis format, manifest and lockfile content identities, the
+semantics, analysis format, manifest content identities and the content
+identities of the Cargo lockfiles Git tracks (an untracked or ignored
+`Cargo.lock` is build state the seam inventory never reads), the
 repo-exposure producer-consumed configuration boundary (the three
 oracle-strength fields `oracles.snapshot_strength`,
 `oracles.mock_expectation_strength`, and `oracles.broad_error_strength` — the
@@ -2367,7 +2380,7 @@ rejected at another. The snapshot identity
 (`snapshot:<input_identity>;revision:<head>`) binds that portable input
 identity to the concrete repository head, so two clean artifacts from
 different commits have distinct snapshot identities even when their input
-identity is unchanged. Only the current `input:v3:` identity version with the
+identity is unchanged. Only the current `input:v4:` identity version with the
 exact `fnv1a64:<16 lowercase hex>` digest shape validates as current
 evidence; a wrong version is rejected as an unsupported input identity
 version and a wrong digest shape as a malformed input identity digest. `agent verify`
@@ -6648,6 +6661,54 @@ Field contract:
 - `new_gaps[]` / `resolved_gaps[]` - seam identity and static class for seam IDs
   present in only one snapshot.
 
+### Agent repair after-phase stdout
+
+`ripr agent repair --attempt <id> --phase after` holds the verify render until
+its post-verify tail (edit-cage finish, receipt write, apply record) settles,
+then prints exactly one JSON document on stdout. On success the document is
+its own versioned envelope, not a mutated verify document:
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "repair_after_result",
+  "verify": {
+    "schema_version": "0.3",
+    "tool": "ripr",
+    "status": "advisory"
+  },
+  "agent_status": {
+    "schema_version": "0.1",
+    "status": "complete"
+  }
+}
+```
+
+Field contract:
+
+- `schema_version` - currently `"0.1"`, versioning the envelope contract
+  independently of both children. The envelope exists so every stdout
+  document's shape is identifiable from its `schema_version`: the success
+  document wraps the two children instead of splicing `agent_status` into the
+  verify 0.3 document, which would leave two documents sharing one
+  `schema_version` with different shapes depending on the invocation path.
+- `kind` - always `"repair_after_result"`.
+- `verify` - the agent verify `0.3` document: every verify field keeps its
+  name and value, including the verify outcome's own top-level `status`
+  (keys are re-serialized in sorted order, so bytes may differ from a direct
+  `ripr agent verify --json` capture even though every field is identical). Consumers must read the verify
+  outcome under `verify`, not at the envelope top level.
+- `agent_status` - what `ripr agent status --json` prints at this point (agent
+  status `0.1`), embedded beside the verify document because the verify
+  outcome already owns the `status` field name.
+- Refusal paths are the exception, not the envelope: when the after phase
+  refuses after the verify render (for example the receipt is not
+  receipt-ready or the apply record failed), stdout is the bare agent verify
+  `0.3` document alone — a pure verify document, honestly labeled, still one
+  parseable document. A consumer dispatching on `schema_version` therefore
+  sees `0.1` only for the two-child envelope and `0.3` only for the pure
+  verify document, whichever path produced it.
+
 ## Agent Verify Execute
 
 `ripr agent verify-execute --root <workspace> --packet <packet-json>
@@ -6921,12 +6982,17 @@ Field contract:
   `null` for one-sided new/resolved gaps.
 - `seam.grip_class` - one-sided grip class for `new` or `resolved` gaps, or
   `null` for matched seams.
-- `test_changed` - optional focused test name supplied by the caller.
+- `test_changed` - optional focused test the edit changed. `ripr agent receipt`
+  takes it from `--test-changed`. The after phase of `ripr agent repair` sets it
+  to the attempt's selected test file when the edit cage is compliant and
+  recorded that file changing, and leaves it null otherwise.
 - `verification.commands_run` - optional commands supplied by the caller. The
   receipt records them; it does not run them.
 - `summary.remaining_gap` / `summary.next_recommendation` - static advisory
   guidance derived from the verify bucket. It does not claim runtime
-  confirmation.
+  confirmation. When `status` is not `advisory`, `next_recommendation` instead
+  states that the receipt is not review evidence, with the status, the
+  analysis-outcome reason, and the recovery.
 - `summary.receipt_state` - canonical receipt lifecycle state for the selected
   receipt. It is one of `receipt_missing`, `receipt_found`, `receipt_stale`,
   `receipt_gap_mismatch`, `receipt_movement_improved`,
@@ -6936,6 +7002,10 @@ Field contract:
   `resolved`, or `unknown`; `summary` is a short static movement statement;
   `recommended_action` is the bounded next step; and `safe_to_merge` is always
   `false` because the static receipt is review evidence, not a merge policy.
+  Only an `advisory` receipt is review evidence: for an `incomplete` or
+  `invalid` receipt, `recommended_action` carries the same not-review-evidence
+  statement as `next_recommendation` and never recommends including the
+  receipt in review, while `kind` and `summary` still describe the movement.
 
 ## Assurance axes (design contract)
 
@@ -6962,6 +7032,63 @@ request, or editor action automatically executes a command. A future execution
 slice must bind the typed command, working root, repository revision, process
 disposition, bounded output commitments, and currentness before emitting an
 executed state. A static-only receipt must remain visibly lower assurance.
+
+## LSP riprAgent: ripr/listActionableItems (interim response shape)
+
+> **Interim record.** This section documents the response bytes the live
+> `ripr/listActionableItems` LSP custom request actually emits today
+> (#1603, producer: `ripr_list_actionable_items` in
+> `crates/ripr/src/lsp/backend.rs`). It does **not** conform to
+> `schemas/ripr/ripr-agent-success.schema.json` or
+> `schemas/ripr/ripr-agent-error.schema.json`; those envelopes stay
+> `reserved` for #3009, which owns redesigning the wire to the full schema.
+> Redesigning the envelope is out of scope here; this section exists so the
+> interim shape is documented somewhere and cannot silently drift. The
+> closed shape is pinned by
+> `list_actionable_items_interim_response_shape_is_closed` in
+> `crates/ripr/src/lsp/backend.rs`.
+
+Ingress: params are accepted but no client-supplied field is read; the
+serialized params blob is bounded to 16 KiB at handler entry
+(`crates/ripr/src/lsp/payload_bounds.rs`) and larger payloads are rejected
+with a bounded `-32602` before any handler work.
+
+Success payload (200-level result object, no `protocol_version`,
+`schema_version`, or `request` envelope fields):
+
+- `kind` — always `"actionable_items"`.
+- `status` — always `"ok"` on this path.
+- `snapshot_id` — echoes `RefreshMetadata::snapshot_id` of the committed
+  analysis snapshot. This is the interim refresh **generation identity**,
+  NOT the immutable snapshot-handle contract reserved for #1602; the
+  `riprAgent` capability advertises `snapshot_handles: false` until that
+  contract lands. `null` when the snapshot carries no generation identity.
+- `selected_count` / `omitted_count` / `total_count` — diagnostic-budget
+  counts from the committed delivery selection.
+- `budget_identity` — the snapshot profile budget identity string.
+- `complete_evidence_identity` — the complete-evidence identity string.
+- `continuation_or_inspect_route` — the route string for continuing or
+  inspecting the selection.
+- `allowed_edit_surface` — always `"read_only"`.
+- `must_not_change` — always
+  `["source_edits", "workspace_edit", "autonomous_repair"]`.
+
+Fail-closed payloads (still HTTP-success LSP results, distinguished by the
+`error` object). All variants carry exactly the same closed three-field
+error object:
+
+- `error.kind` — `no_snapshot` (no committed analysis snapshot),
+  `analysis_in_flight` (delivery selection missing, or the diagnostic
+  budget is unavailable for this snapshot).
+- `error.message` — bounded human-readable explanation.
+- `error.recovery_route` — always `"refresh"`.
+
+Error payloads never carry `snapshot_id`, `kind` (response kind), or any
+other success field.
+
+Non-claims: this response is a pure transform of the committed analysis
+snapshot; it performs no new analysis, proves no runtime adequacy, and its
+`snapshot_id` must not be read as an immutable handle.
 
 ## PR Test Guidance
 
@@ -8800,7 +8927,8 @@ JSON shape:
       "suggested_test": "Add an equality-boundary assertion.",
       "related_test": "tests/pricing.rs::applies_discount_above_threshold",
       "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
-      "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow",
+      "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
+      "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
       "static_limitations": []
     }
   ],
@@ -8849,6 +8977,12 @@ Field contract:
   test, assertion shape, verification command, and static limitations while
   preserving legacy top-level fields as fallback. The report must not invent
   missing commands or generated tests.
+- `repair_routes[].repair_command` - present only when the delta item's
+  `evidence_record.canonical_item.repair_command` carries the repair start
+  (#3906), which that record names only past the fail-closed repair-packet
+  flip. `repair_routes[].agent_command` is that carried command or `null`;
+  RIPR Zero status never builds an `agent start` or `agent repair` command
+  from a seam id, and gap-record routes name none.
 - `warnings[]` - stale baseline metadata, missing inputs, unsupported schemas,
   ambiguous identities, and trend gaps.
 - `limits_note` - advisory boundary text for generated CI summaries.
@@ -10058,7 +10192,8 @@ JSON shape:
     "suppressed": 0,
     "blocking_candidates": 0,
     "visible_unresolved": 41,
-    "ripr_zero_state": "not_yet"
+    "ripr_zero_state": "not_yet",
+    "count_source": "baseline_delta"
   },
   "gate": {
     "mode": "baseline-check",
@@ -10127,7 +10262,8 @@ JSON shape:
     "suggested_test": "Add an equality-boundary assertion.",
     "related_test": "tests/pricing.rs::applies_discount_above_threshold",
     "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
-    "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow"
+    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
+    "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before"
   },
   "history": {
     "source": ".ripr/pr-evidence-ledger.jsonl",
@@ -10151,6 +10287,11 @@ Field contract:
   or all evidence sources are missing.
 - `movement.*` - copied or derived from existing gate, baseline delta, and RIPR
   Zero status artifacts. The ledger must not recompute analyzer semantics.
+- `movement.count_source` - `baseline_delta`, `ripr_zero_status`, or
+  `not_measured`. With `not_measured` neither artifact was supplied, so
+  `new_policy_eligible`, `baseline_still_present`, `baseline_resolved`, and
+  `visible_unresolved` hold their zero defaults and are not evidence of zero
+  gaps; the Markdown renders those rows as `not measured`.
 - `gate.pass_fail_authority` - names `ripr gate evaluate` whenever a gate
   decision is present.
 - `waivers[]` - PR-time visible acknowledgement records. Waivers do not hide
@@ -10181,6 +10322,18 @@ Field contract:
   artifacts. Missing fields are `null` plus warnings, not invented.
   `top_repair_route.gap_id` and `top_repair_route.canonical_gap_id` are copied
   from the selected source artifact when available.
+- `top_repair_route.repair_command` - present only when the selected source
+  carries the repair start (#3906): a review card's
+  `llm_guidance.repair_command`, a gate route's `repair_route.repair_command`,
+  or a RIPR Zero route's `repair_command`. Those producers name it only past
+  the fail-closed repair-packet flip; the ledger carries it and never derives
+  it. `top_repair_route.agent_command` is that command when present, else a
+  carried read-only inspection command, else `null`; the ledger never builds
+  an `agent start` or `agent repair` command from a bare seam id. Markdown
+  shows the carried command as `Repair start`, followed by the after-phase
+  step, with verify and receipt labelled as the manual alternative (#3906).
+  `top_repair_route.receipt_command` for a review card is read from the card
+  root.
 - `history.*` - present only when prior ledger history or previous ledger
   summary is supplied.
 - `warnings[]` - missing inputs, unavailable coverage, unsupported schemas,
@@ -10613,6 +10766,17 @@ Field contract:
   name, and assertion shape when supplied by existing artifacts.
 - `commands.*` records copyable commands from existing command templates or
   supplied artifacts. Missing commands become `null` and warnings.
+- `commands.repair` is present only when the first review card (inline
+  comments, then summary-only) carries `llm_guidance.repair_command` and no
+  assistant proof exists yet (#3906). The card names that command only past
+  the fail-closed repair-packet flip; first-action carries it verbatim, takes
+  every `selected` field from the same card, and never builds a repair
+  command from a bare seam id. Without it, a PR with review cards but no
+  assistant proof keeps the `missing_required_artifact` route. Markdown shows
+  the command under `Start Repair` and as `Repair start` in the one-screen
+  recommendation. The after-phase step follows it, and verify and receipt are
+  labelled as the manual alternative (`Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)`); without a repair start they read `Verify after the test edit`
+  and `Receipt after verify` (#3906). JSON fields are unchanged.
 - `evidence.*` records supporting artifact paths and static movement when
   supplied. Static movement is not runtime mutation confirmation.
 - `fallback` records the reason for non-actionable statuses and the next safe
@@ -10942,10 +11106,11 @@ JSON shape:
     "focused_proof_intent": "Add an equality-boundary assertion.",
     "related_test": "tests/pricing.rs::applies_discount_above_threshold",
     "suggested_test": "Add an equality-boundary assertion.",
+    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
     "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
     "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json",
     "static_evidence_boundary": "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.",
-    "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow",
+    "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
     "receipt": {
       "artifact": "target/ripr/reports/agent-receipt.json",
       "status": "present"
@@ -11059,6 +11224,14 @@ Field contract:
   gate, baseline, and assistant-health inputs may normalize existing typed
   class/status fields, but must not infer the value from Markdown prose or code
   inspection.
+- `top_issue.repair_command` is present only when an input carries the repair
+  start (#3906): first-action `commands.repair`, a review card's
+  `llm_guidance.repair_command`, or an acknowledged gate route's
+  `repair_route.repair_command`. `top_issue.agent_command` is that command
+  when present, else a carried read-only inspection command (first-action
+  `commands.context_packet`, a card's `llm_guidance.command`, or a gate
+  route's `inspection_command`), else `null`. The panel never builds an
+  `agent start` or `agent repair` command from a bare seam id.
 - `movement.*` preserves before/after static movement when supplied. It is not
   runtime mutation confirmation.
 - `debt_delta.*` carries PR-local movement from baseline, RIPR Zero, gate, or
@@ -11617,11 +11790,30 @@ Field contract:
 - `selected.static_limit_kind` and `selected.static_limit_detail` are optional;
   surfaces must show them before suggested action language when they are
   present.
+- `selected.repair_command` is present only when the top gap was selected from
+  a review card (#3906): when the gap ledger yields no top gap, first-pr reads
+  `inputs.review_comments` and selects the first card in `comments[]`, then
+  `summary_only[]`, that is actionable and carries
+  `llm_guidance.repair_command` (`ripr agent repair ... --phase before`).
+  The command is that card's value carried unchanged; first-pr never builds it
+  from a seam, gap, or probe id. Every other selected field then comes from
+  that same card, never mixed with a ledger record: `source_artifact` is the
+  review-comments path, `repair.route` is `AgentRepairTransaction`,
+  `verify_command` and `receipt_command` are the card's
+  (`receipt_command_source = "review_comments.receipt_command"`), and
+  `receipt_path` and `agent_packet_command` are `null` because the card is not
+  a gap-ledger record. The card is used only when the review-comments report
+  is `tool = "ripr"`, `status = "advisory"`, and names the same root, base,
+  and head as the first-pr invocation. Ledger-selected top gaps never carry
+  `repair_command`. `commands` does not repeat the repair start, so editor
+  projections that allowlist `commands` values are unaffected.
 - `selected.verify_command`, `selected.receipt_command`,
   `selected.receipt_path`, `selected.receipt_command_source`, and
   `selected.receipt_state` are the static movement proof path. When the source
   gap ledger omits a receipt command, `ripr first-pr` may provide a deterministic
-  `ripr outcome` command under the configured receipts directory. A missing
+  canonical `ripr receipt write` command (RIPR-SPEC-0079) under the configured
+  receipts directory; `receipt_command_source` is then
+  `first_pr.default_receipt_write_command`. A missing
   receipt is not failure, merge approval, mutation proof, or runtime adequacy.
   `selected.receipt_state` uses the canonical receipt lifecycle vocabulary:
   `receipt_missing`, `receipt_found`, `receipt_stale`,
@@ -11634,7 +11826,12 @@ Field contract:
   missing git worktree, missing base ref, missing head ref, or invalid diff
   range.
 - `empty_diff` and `no_action` require `status = "no_action"` and must not
-  produce a repair interruption.
+  produce a repair interruption. When the gap ledger selected nothing,
+  `selected.reason` also says why no review card supplied a repair start
+  (missing, unreadable, stale, or no card carrying `repair_command`) and, when
+  the cards are missing or were rendered from the gap ledger, names the
+  seam-level `ripr review-comments --root <root> --base <base> --head <head>
+  --out <review_comments>` route.
 - `preflight` is present for the public `ripr first-pr` command path. It
   records read-only front-door checks for root, Git worktree, base/head refs,
   diff presence, supported project marker, `ripr.toml` defaulting, output
@@ -11834,6 +12031,7 @@ JSON shape:
       "modified_unix_ms": 1778179200000
     }
   ],
+  "repair_attempts": [],
   "missing_commands": [
     {
       "step": "agent_packet",
@@ -11855,10 +12053,15 @@ JSON shape:
 Field contract:
 
 - `schema_version` - currently `"0.1"`.
-- `status` - `"complete"` when every required artifact is present and there
-  are no warnings; `"warning"` when every artifact is present but a
-  stale-looking condition exists; `"incomplete"` when any required artifact is
-  missing.
+- `status` - `"complete"` when every required artifact is present, no next
+  command is selected, and there are no warnings; `"warning"` when every
+  artifact is present but a stale-looking condition exists or a finished
+  repair attempt's receipt does not report static grip improved at the current
+  `HEAD`; `"incomplete"` when any required artifact is missing or a next
+  command is selected. A finished attempt counts toward `"complete"` only when
+  the receipt issued for it is `advisory` with static movement `improved` and
+  the current `HEAD` is the head its after phase recorded (a commit made on top
+  of the prepared head, such as a committed focused test, counts).
 - `root` - the `--root` argument normalized to forward slashes for reporting.
 - `seam` - recovered seam identity when available. The current recovery order
   is receipt, verify, packet, then brief. It is `null` when no existing
@@ -11866,14 +12069,85 @@ Field contract:
 - `artifacts[]` - one entry for each required fixed artifact. `bytes` and
   `modified_unix_ms` are `null` when the artifact is missing or the filesystem
   does not expose the timestamp.
+- Volatile fields: `artifacts[].modified_unix_ms` is wall-clock state read
+  from the filesystem at report time, not analysis output. Two consecutive
+  `agent status --json` runs over an unchanged artifact tree can produce
+  different bytes for this field alone. Snapshot-based consumers must exclude
+  `artifacts[].modified_unix_ms` from snapshot assertions (and from any
+  byte-equality diff of the document). `artifacts[].bytes` is content-derived
+  and is stable while the artifact bytes are unchanged. The same rule applies
+  to the `agent_status` document embedded by `ripr agent repair --phase after`
+  (#4052), which is the same schema.
 - `missing_commands[]` - one command for each missing artifact in workflow
   order: before snapshot, packet, brief, after snapshot, verify, receipt. If no
   seam can be recovered, packet, brief, and receipt commands use `<seam-id>`.
-- `next_command` - the first entry from `missing_commands`, or `null` when no
-  required artifact is missing.
+- `repair_attempts[]` - every repair attempt under
+  `target/ripr/repair-attempts/`, validated by the attempt authority and
+  ordered by attempt ID (not by age): `attempt_id`, `seam_id`, `state` (the
+  manifest state), `head_current` (for an attempt awaiting its edit, whether
+  its after phase would evaluate the current `HEAD` as the attempt's, by the
+  attempt authority's rule: the prepared head, or for an ordinary attempt a
+  commit that descends from it; for an attempt with an after verdict, whether
+  `HEAD` is still the head that verdict recorded; `null` when `HEAD` cannot be
+  read or related to the prepared head), `disposition` (`resumable`,
+  `prepared_at_other_head`, `head_unknown`, `not_published`, `finished`,
+  `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
+  that would move this attempt or its seam forward, or `null`),
+  `receipt`, and `last_after_refusal`. A `ready_to_finish` attempt reads
+  `finished` only when its receipt is `advisory` with movement `improved`;
+  `gap_open` when its receipt shows movement `unchanged`, `changed`, or
+  `regressed` (the seam is restarted); otherwise `unconfirmed` (no restart; a
+  `repair_receipt_unconfirmed` warning says why). An attempt awaiting its
+  edit reads `prepared_at_other_head` when its after phase would not evaluate
+  the current `HEAD`: a trust-bound attempt whose `HEAD` moved, or an ordinary
+  attempt whose `HEAD` no longer descends from its prepared head, in which case
+  the restart reason repeats the after phase's recovery (`git reset --soft
+  <prepared-head>`, then the attempt's after command).
+  - `receipt` - `null` unless the attempt is `ready_to_finish`. Otherwise an
+    object read from `target/ripr/reports/agent-receipt.json`: `path`,
+    `issued_for_attempt` (whether that receipt's `repair_attempt` binding
+    matches this attempt's after verdict: attempt ID, after `HEAD`, delta and
+    packet digests), `superseded_by` (the attempt ID the receipt is bound to
+    when that is another attempt: the workflow keeps one receipt, so a later
+    attempt's after phase replaced this attempt's receipt; otherwise `null`),
+    and, when it is issued for this attempt, the receipt's `status`,
+    `movement`, `receipt_state`, `recommended_action`, and
+    `analysis_outcome_error`, plus `shows_gap_closed` (`true` only for an
+    `advisory` receipt with movement `improved`; it records improved static
+    grip, not a runtime or mutation result). Unbound receipts leave these
+    `null` and `shows_gap_closed` `false`.
+  - `last_after_refusal` - `null`, or `{reason, recorded_unix_ms}` when the
+    attempt's most recent after phase refused after selecting the attempt (the
+    attempt manifest's `last_after_refusal`: the final error followed by the
+    cause and recovery the after phase printed, such as the changed analysis
+    inputs, bounded to 4096 bytes).
+- `next_command` - selected in the order RIPR-SPEC-0011 documents (#3906): the
+  one current awaiting repair attempt's recorded after command
+  (`repair_attempt_after`; when that attempt recorded a refused after phase,
+  `reason` names the refusal before repeating the command); otherwise a new
+  attempt for the one seam whose attempts ended without a receipt or finished
+  with a receipt that leaves the gap open (`repair_attempt_before`); otherwise the
+  first `missing_commands` entry, except that an unknown seam routes to
+  `ripr pilot --root <root>` (`select_seam`) and a missing workflow directory
+  routes to a new repair attempt. It is `null` when nothing is missing, and
+  also when status cannot choose honestly: an unreadable attempt manifest,
+  several current awaiting attempts, several open seams, or an unreadable
+  `HEAD`. A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
+  `multiple_open_repair_seams`, `repair_attempt_head_unknown`) then names the
+  choices.
 - `warnings[]` - stale-looking or unreadable-artifact hints. Timestamp warnings
   are emitted when `agent verify` is older than a before/after snapshot or
-  `agent receipt` is older than `agent verify`. Hash mismatch warnings remain a
+  `agent receipt` is older than `agent verify`. For a seam with no attempt
+  awaiting its edit and no finished attempt current at `HEAD`,
+  `repair_receipt_stale` names a finished attempt whose receipt evidence was
+  recorded at a `HEAD` other than the current one (its message says the
+  receipt reports static grip improved at the recorded head), and
+  `repair_receipt_unconfirmed` names a `ready_to_finish` attempt whose receipt
+  does not report improved grip (an `invalid` or `incomplete` receipt, a
+  movement that is neither `improved` nor open, no receipt issued for it, or a
+  receipt superseded by a later attempt's, in which case the message names
+  that attempt and the new-attempt command for the seam if its gap is still
+  open). Hash mismatch warnings remain a
   later reviewer-summary/status enhancement now that receipt provenance records
   artifact SHA-256 values.
 
@@ -11956,7 +12230,7 @@ The JSON schema is version `0.1`:
       "state": "computed",
       "status": "complete",
       "required": true,
-      "summary": "6 required artifacts present, 0 missing, 0 warnings."
+      "summary": "6 of 6 required artifacts present, 0 missing, 0 warnings."
     }
   ],
   "ci_artifacts": [
@@ -12847,7 +13121,7 @@ The queue envelope is:
         "reason": "repo-exposure source input identity no longer matches the current producer configuration; regenerate the source and ledger before assignment"
       },
       "refresh_commands": [
-        "ripr agent check-repo-exposure --root . --repo-exposure target/ripr/reports/repo-exposure.json --mode draft",
+        "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/reports/repo-exposure.json",
         "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --root . --out target/ripr/reports/gap-decision-ledger.json"
       ]
     }
@@ -13764,10 +14038,15 @@ target/ripr/pilot/pilot-summary.md
     }
   ],
   "python_first_use": null,
+  "language_routes": {
+    "state": "not_detected",
+    "routes": []
+  },
   "next": {
     "inspect_packet": "target/ripr/pilot/agent-seam-packets.json",
     "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json",
-    "outcome_command": "ripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json"
+    "outcome_command": "ripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json",
+    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before"
   }
 }
 ```
@@ -13824,6 +14103,38 @@ is populated:
       "Verify success alone is not a gap-closure receipt."
     ]
   }
+}
+```
+
+Pilot ranks Rust repo seams only. When the workspace also contains TypeScript,
+JavaScript, Python or Perl files, `language_routes` names each language and the
+command that analyzes it (#3906). With no Rust seams the state is `required`:
+
+```json
+{
+  "state": "required",
+  "routes": [
+    {
+      "language": "typescript",
+      "file_count": 2,
+      "language_status": "preview",
+      "enabled": false,
+      "route": "check_diff_first",
+      "command": "ripr check --root .",
+      "guidance_category": "typescript_diff_first",
+      "guidance": "TypeScript is analyzed diff-first; run 'ripr check --base origin/main' or '--diff <file>' to evaluate changed TypeScript behavior. Full-repo TypeScript exposure is not yet modeled (named limitation)."
+    },
+    {
+      "language": "perl",
+      "file_count": 1,
+      "language_status": "unavailable",
+      "enabled": false,
+      "route": "unavailable_in_this_binary",
+      "command": null,
+      "guidance_category": null,
+      "guidance": "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it."
+    }
+  ]
 }
 ```
 
@@ -13900,14 +14211,38 @@ Field contract:
   `analysis_unavailable`), counts, supported and deferred features, and the top
   `python_repair_card` using the same advisory card fields emitted by
   `ripr check --json`.
+- `language_routes` — additive; `null` only when not collected. `state` is
+  `not_detected` (no TypeScript, JavaScript, Python or Perl files outside the
+  default-ignored directories), `supplementary` (Rust seams exist; the ranking
+  stands and the terminal and Markdown are unchanged), or `required` (pilot's
+  Rust scan produced no seams, so an empty `top_actionable_seams` is not a clean
+  result for these languages). Each `routes[]` entry carries `language`,
+  `file_count`, `language_status` (`preview` when this binary includes the
+  adapter, otherwise `unavailable`), `enabled` (listed in the effective
+  `[languages] enabled`; JavaScript follows `typescript`), `route`
+  (`check_diff_first` or `unavailable_in_this_binary`), `command` (the diff-first
+  `ripr check --root <root>`, which resolves the default base itself, or `null`),
+  and `guidance_category`/`guidance`: the existing `typescript_diff_first`
+  repair route for TypeScript and JavaScript, the unavailable-adapter notice for
+  a language this binary cannot analyze, otherwise `null`.
 - `next` — advisory follow-up commands. Complete summaries include the public
-  `ripr outcome` before/after receipt command. Partial summaries include a
-  retry command with a larger explicit timeout.
+  `ripr outcome` before/after receipt command, and `repair_command`: the
+  `ripr agent repair --seam-id <id> --phase before` command for the top seam
+  when its repair-packet eligibility flip holds, otherwise `null` (#3906).
+  Partial summaries include a retry command with a larger explicit timeout.
 
 The Markdown sibling prints the same summary, puts the top recommendation first,
-and includes the inspected seam, why it matters, the focused test to write, the
-top seam's targeted test brief, and the before/after commands for complete
-runs. It remains advisory. On timeout, the Markdown sibling records the partial
+and includes the inspected seam, why it matters, the focused test to write, and
+the top seam's targeted test brief. Its Next Commands block offers one route:
+the repair transaction's `--phase before` command when `repair_command` is
+set, otherwise the before/after snapshot commands. The terminal closes the same
+way, with the repair command as step 1 of three. When `language_routes.state`
+is `required`, the terminal and Markdown replace the plain no-recommendation
+line with one saying pilot found no Rust seams, list each language with its
+route (Markdown adds the reused guidance text), and close with the route
+commands instead of the before/after snapshot pair, or with a line saying no
+follow-up command applies when this binary cannot analyze any listed language.
+It remains advisory. On timeout, the Markdown sibling records the partial
 state and the retry command instead of pretending the packet is complete.
 
 ## LSP Seam Diagnostics
@@ -14485,7 +14820,7 @@ JSON shape:
         "markdown_path": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
         "expected_report": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.json",
         "expected_markdown": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
-        "status": "pass",
+        "status": "warn",
         "missing_expected": 0,
         "warnings": 0,
         "failures": 0,
@@ -14501,7 +14836,7 @@ JSON shape:
           "validation_receipts",
           "sarif_badges"
         ],
-        "expected_status": "pass",
+        "expected_status": "warn",
         "expected_missing_expected": 0,
         "expected_warnings": 0,
         "expected_failures": 0,
@@ -14837,13 +15172,13 @@ The checked report-packet index receipt cases are:
 
 | Case | Expected status | Purpose |
 | --- | --- | --- |
-| `complete_packet` | `pass` | Shows the complete reviewer-first packet, including start-here and gate-authority links. |
+| `complete_packet` | `warn` | Shows the complete reviewer-first packet, including start-here and gate-authority links. |
 | `sparse_advisory` | `warn` | Keeps sparse adoption advisory while showing missing optional surfaces. |
 | `missing_front_panel` | `warn` | Makes a missing first-screen front panel visible instead of forcing artifact archaeology. |
 | `blocked_gate` | `fail` | Preserves a configured blocked gate state while naming gate decision as authority. |
 | `missing_assistant_proof` | `warn` | Routes users to regenerate missing assistant proof instead of hiding the gap. |
 | `missing_receipts` | `warn` | Shows missing validation receipts and their regeneration commands. |
-| `coverage_grip_present` | `pass` | Keeps coverage/grip context findable as calibration context, not runtime confirmation. |
+| `coverage_grip_present` | `warn` | Keeps coverage/grip context findable as calibration context, not runtime confirmation. |
 
 The checked generated-CI cockpit receipt cases are:
 
@@ -14876,7 +15211,12 @@ committed LSP fixture expectations, plus the VS Code e2e smoke test file, and
 summarizes the editor surface without opening VS Code.
 For seam fixtures, `status` downgrades from `pass` when the editor-agent loop
 command actions for packet, brief, after-snapshot, verify, or receipt are
-missing from the pinned action payloads.
+missing from the pinned action payloads. The repair-start action
+(`ripr.copyAgentRepairCommand`, `ripr agent repair --root . --seam-id <id>
+--phase before`) is offered only for a seam that passes the fail-closed
+repair-packet flip (RIPR-SPEC-0087 §8) with a test-surface target, so
+`agent_repair_command_available` is reported separately and does not affect
+`status`.
 
 JSON shape:
 
@@ -14901,6 +15241,7 @@ JSON shape:
         "titles": [
           "Inspect Test Gap - Copy Context",
           "Write targeted test: copy brief",
+          "Start repair: copy repair command",
           "Agent handoff: copy packet command",
           "Agent handoff: copy brief command",
           "Verify after test: copy after-snapshot command",
@@ -14913,6 +15254,7 @@ JSON shape:
         "commands": [
           "ripr.copyContext",
           "ripr.copyTargetedTestBrief",
+          "ripr.copyAgentRepairCommand",
           "ripr.copyAgentPacketCommand",
           "ripr.copyAgentBriefCommand",
           "ripr.copyAfterSnapshotCommand",
@@ -14950,6 +15292,7 @@ JSON shape:
       "context": {
         "seam_packet_available": true,
         "targeted_test_brief_available": true,
+        "agent_repair_command_available": true,
         "agent_packet_command_available": true,
         "agent_brief_command_available": true,
         "after_snapshot_command_available": true,
@@ -14968,6 +15311,7 @@ JSON shape:
       "ripr.copyAgentBriefCommand",
       "ripr.copyAgentPacketCommand",
       "ripr.copyAgentReceiptCommand",
+      "ripr.copyAgentRepairCommand",
       "ripr.copyAgentVerifyCommand",
       "ripr.copyContext",
       "ripr.copySuggestedAssertion",
@@ -14984,6 +15328,7 @@ JSON shape:
       "ripr.copyAgentBriefCommand",
       "ripr.copyAgentPacketCommand",
       "ripr.copyAgentReceiptCommand",
+      "ripr.copyAgentRepairCommand",
       "ripr.copyAgentVerifyCommand",
       "ripr.copyContext",
       "ripr.copySuggestedAssertion",
@@ -14999,6 +15344,7 @@ JSON shape:
       "ripr.copyAgentBriefCommand",
       "ripr.copyAgentPacketCommand",
       "ripr.copyAgentReceiptCommand",
+      "ripr.copyAgentRepairCommand",
       "ripr.copyAgentVerifyCommand",
       "ripr.copyContext",
       "ripr.copySuggestedAssertion",
@@ -15628,8 +15974,15 @@ JSON shape (schema version `0.1`):
 ```
 
 When `top_repair` is absent, `top_repair_state` appears in its place
-and `top_repair` is `null`. When `limitations` is empty, `top_limitation`
-is omitted entirely. When delta fields are computed (baseline supplied),
+and `top_repair` is `null`. `top_repair.repair_command` is present only when
+start-here carried `selected.repair_command` (a review-card selection, #3906);
+it is copied unchanged, never derived, and pr-summary does not read review
+comments itself. When present it is also the first entry in
+`local_reproduction_commands`, and the Markdown panel shows a `start repair`
+line before `verify`. When `limitations` is empty or
+`"not_available"`, `top_limitation` is omitted entirely; the Markdown
+panel distinguishes the two, rendering `- none` for the first and
+`- not_available` for the second. When delta fields are computed (baseline supplied),
 `gap_delta_note` is absent.
 
 Field sources:
@@ -15643,7 +15996,7 @@ Field sources:
 | `gaps.total_actionable` | gap-decision-ledger | `summary.repairable_total` |
 | `gaps.total_static_limitation` | gap-decision-ledger | `summary.static_limitation_total` |
 | `gaps.*` delta fields | computed from `--baseline` | before/after `gaps.total_actionable` |
-| `limitations[]` | repo-exposure | `limitations[]` |
+| `limitations` | repo-exposure | `limitations[]` when the artifact was read; `"not_available"` when it is missing, unreadable, or carries a non-array `limitations` value. An empty array means repo-exposure was read and named none, which is a different finding from not having read it. |
 | `missing_receipts` | gap-decision-ledger | `summary.repairable_total - receipt_improved_total` |
 | `receipt_status.receipts_present` | gap-decision-ledger | `summary.receipt_improved_total + summary.receipt_unchanged_after_attempt_total` |
 | `receipt_status.missing_receipts` | gap-decision-ledger | mirrors top-level `missing_receipts` |
@@ -15654,7 +16007,8 @@ Field sources:
 | `top_repair` | start-here | `selected` (when `state == "top_gap"`) |
 | `top_repair_state` | start-here | `selected.state` (when not `"top_gap"`) |
 | `top_limitation` | first entry in `limitations[]` | derived |
-| `local_reproduction_commands` | diff-report + start-here | base/head + `selected.verify_command` |
+| `top_repair.repair_command` | start-here | `selected.repair_command` (present only when start-here carried it) |
+| `local_reproduction_commands` | diff-report + start-here | `selected.repair_command` first when present, then base/head + `selected.verify_command` |
 
 The `receipt_status` object is additive — existing consumers reading `missing_receipts`
 at the top level continue to work unchanged (`schema_version` stays `"0.1"`; additive

@@ -833,12 +833,21 @@ pub(crate) fn oracle_metadata_evidence_lines(
 /// related test candidates (RIPR-SPEC-0085 §PR5).
 ///
 /// Emits lines for the single strongest assertion (by `oracle_strength` rank)
-/// across all oracle-eligible related tests. Heuristic-only candidates are
-/// excluded — they are not oracle-eligible and cannot produce oracle metadata.
+/// across all oracle-eligible related tests whose oracle kind can observe the
+/// changed probe family (`ts_oracle_kind_matches_seam`, RIPR-SPEC-0104).
+/// Heuristic-only candidates are excluded — they are not oracle-eligible and
+/// cannot produce oracle metadata.
+///
+/// The family filter matters because these lines are what the repair-packet
+/// projection borrows as its oracle target (RIPR-SPEC-0087 G-C). Borrowing a
+/// wrong-family assertion — e.g. `expect(parse('10')).toBe(10)` for a newly
+/// added `throw` — produced a "complete" packet whose repair action restated an
+/// assertion that cannot observe the change.
 ///
 /// Returns an empty `Vec` when there are no oracle-eligible candidates or no
-/// assertions with metadata to surface.
+/// family-matching assertions with metadata to surface.
 pub(crate) fn collect_oracle_metadata_evidence_lines(
+    probe_family: &ProbeFamily,
     candidates: &[TypeScriptRelatedCandidate<'_>],
 ) -> Vec<String> {
     // Only oracle-eligible candidates (direct call, imported call, etc.)
@@ -852,6 +861,7 @@ pub(crate) fn collect_oracle_metadata_evidence_lines(
                 .iter()
                 .map(move |assertion| (assertion, &candidate.test.file))
         })
+        .filter(|(assertion, _)| ts_oracle_kind_matches_seam(&assertion.oracle_kind, probe_family))
         .max_by_key(|(assertion, _)| assertion.oracle_strength.rank());
 
     match strongest_assertion_with_file {
@@ -889,12 +899,23 @@ pub(crate) fn related_mock_payload_oracle(related: &[RelatedTest]) -> Option<Str
 /// Each selected test's `mocks_in_file` list is contributed once. The
 /// classifier uses the resulting list to surface the `mocked_module`
 /// static-limit per RIPR-SPEC-0026.
+///
+/// `workspace_root`, `reexport_index`, and `alias_map` MUST be the same
+/// values the classifier passed to `related_test_candidates` for the credited
+/// relation set: the mock producer set must be identical to that set, so a
+/// cross-package test the relation layer excluded (or an alias the relation
+/// layer resolved differently) cannot re-enter through the mock collector
+/// and force a wrong actionable `mocked_module` signal on the finding.
 pub(crate) fn collect_related_mock_paths(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
+    workspace_root: Option<&Path>,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
 ) -> Vec<String> {
     let mut paths: Vec<String> = Vec::new();
-    for candidate in related_test_candidates(owner, all_tests, None, &ReExportIndex::empty(), None)
+    for candidate in
+        related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map)
     {
         for path in &candidate.test.mocks_in_file {
             if !paths.iter().any(|existing| existing == path) {
