@@ -71,6 +71,10 @@
     "static_gap_fallback": {
       "$ref": "#/$defs/static_gap_fallback"
     },
+    "inputs": {
+      "description": "Supplied-input disclosure. Present only on routes that consume an explicit artifact instead of rerunning diff analysis; `--gap-ledger` mode emits `inputs.gap_ledger`.",
+      "$ref": "#/$defs/inputs"
+    },
     "causal_comparison": {
       "type": "object",
       "additionalProperties": false,
@@ -292,6 +296,16 @@
     }
   ],
   "$defs": {
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gap_ledger": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "static_gap_fallback": {
       "type": "object",
       "additionalProperties": false,
@@ -1278,36 +1292,78 @@
     },
     "suppressed": {
       "type": "object",
-      "additionalProperties": false,
+      "description": "A suppressed recommendation. Diff-scoped renders emit the seam variant; `--gap-ledger` renders emit the gap variant, whose anchor fields are nullable because ledger records may lack an anchor.",
       "required": [
-        "seam_id",
-        "file",
-        "line",
         "reason",
         "message"
       ],
-      "properties": {
-        "seam_id": {
-          "type": "string",
-          "minLength": 1
+      "anyOf": [
+        {
+          "description": "Diff-scoped seam suppression.",
+          "additionalProperties": false,
+          "required": [
+            "seam_id",
+            "file",
+            "line"
+          ],
+          "properties": {
+            "seam_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         },
-        "file": {
-          "type": "string",
-          "minLength": 1
-        },
-        "line": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "reason": {
-          "type": "string",
-          "minLength": 1
-        },
-        "message": {
-          "type": "string",
-          "minLength": 1
+        {
+          "description": "Gap-ledger record suppression.",
+          "additionalProperties": false,
+          "required": [
+            "gap_id"
+          ],
+          "properties": {
+            "gap_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "file": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "line": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
-      }
+      ]
     },
     "non_claims": {
       "type": "object",
