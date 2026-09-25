@@ -80,10 +80,20 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 ///    an owner call, e.g. `expect(applyDiscount(100, 10))`) or contains a
 ///    changed token from the changed sub-expression.
 ///
-/// An assertion on an UNRELATED expression (`expect(formatDate(now))`) does not
-/// witness `return amount - 12;`: the changed value never escapes into the
-/// observed expression, so the guard fails closed and the finding downgrades
-/// to WeaklyExposed. This mirrors the sink-alignment evidence the Python
+/// One-hop local aliasing: a bare-local observed_expression
+/// (`t.is(result, 3)`) also confirms when the test body initializes that
+/// local from an expression referencing the owner or a changed token
+/// (`const result = add(1, 2)`). Without this credit the guard would
+/// falsely downgrade the canonical assert-the-return-value pattern and emit
+/// repair packets for tests that already observe the changed sink — the
+/// exact over-correction the RIPR-SPEC-0108 `must_stay_exposed` corpus
+/// controls (`ts_ava_t_is_exact_value`, `ts_tape_equal_exact_value`) pin.
+///
+/// An assertion on an UNRELATED expression (`expect(formatDate(now))`, or a
+/// local initialized from an unrelated call) does not witness
+/// `return amount - 12;`: the changed value never escapes into the observed
+/// expression, so the guard fails closed and the finding downgrades to
+/// WeaklyExposed. This mirrors the sink-alignment evidence the Python
 /// adapter already surfaces.
 ///
 /// For all other families the guard always returns `true` (pre-guard
@@ -168,6 +178,20 @@ pub(crate) fn ts_changed_value_is_observed(
                 {
                     return true;
                 }
+                // One-hop local aliasing (RIPR-SPEC-0108 must_stay_exposed
+                // controls): `const result = add(1, 2)` asserted via
+                // `t.is(result, 3)` still observes the changed sink — the
+                // local is initialized from the owner call. Without this
+                // credit the guard falsely downgrades the canonical
+                // assert-the-return-value pattern.
+                if ts_observed_local_aliases_owner(
+                    observed,
+                    owner_name,
+                    &changed_tokens,
+                    &candidate.test.body_text,
+                ) {
+                    return true;
+                }
                 // This family-matching strong assertion observes an unrelated
                 // expression: it does NOT witness the changed sink. Keep
                 // scanning for a qualifying assertion.
@@ -215,6 +239,72 @@ pub(crate) fn ts_changed_value_is_observed(
     }
 
     // No strong assertion witnessed the changed sink: fail closed → downgrade.
+    false
+}
+
+/// One-hop local aliasing credit for the value-family observation guard.
+///
+/// Test code conventionally captures the owner call in a local and asserts
+/// that local (`const result = add(1, 2); t.is(result, 3)`). The bare-local
+/// `observed_expression` carries no owner reference, but the changed value
+/// flows into it through the initializer, so treating it as unobserved
+/// would be a false downgrade that also flips `repair_packet_ready` on for
+/// tests that already assert the changed value (the over-correction pinned
+/// by the RIPR-SPEC-0108 `must_stay_exposed` corpus controls).
+///
+/// Conservatism: only a bare identifier qualifies (member or call
+/// expressions were already decided by the direct owner / changed-token
+/// checks), the assignment match requires whole-word identifier boundaries
+/// and a single `=` (not `==` / `=>`), the initializer is read only up to
+/// the next `;` or newline, and only the FIRST matching assignment in the
+/// test body is considered. Any failure to resolve keeps the guard's
+/// fail-closed downgrade.
+fn ts_observed_local_aliases_owner(
+    observed: &str,
+    owner_name: &str,
+    changed_tokens: &[String],
+    test_body: &str,
+) -> bool {
+    fn is_ident_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
+    let ident = observed.trim();
+    let ident_bytes = ident.as_bytes();
+    let ident_is_bare = !ident_bytes.is_empty()
+        && (ident_bytes[0].is_ascii_alphabetic() || ident_bytes[0] == b'_' || ident_bytes[0] == b'$')
+        && ident_bytes.iter().all(|&b| is_ident_byte(b));
+    if !ident_is_bare {
+        return false;
+    }
+    let body = test_body.as_bytes();
+    let mut search_from = 0;
+    while let Some(pos) = test_body.get(search_from..).and_then(|rest| rest.find(ident)) {
+        let abs = search_from + pos;
+        let before_ok = abs == 0 || !is_ident_byte(body[abs - 1]);
+        let after = abs + ident.len();
+        let after_ok = after >= body.len() || !is_ident_byte(body[after]);
+        if before_ok && after_ok {
+            let mut i = after;
+            while i < body.len() && body[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            // A single `=`: reject `==` / `===` / `=>`.
+            if i < body.len() && body[i] == b'=' && body.get(i + 1) != Some(&b'=') {
+                let rhs_start = i + 1;
+                let rhs_end = test_body[rhs_start..]
+                    .find([';', '\n'])
+                    .map(|p| rhs_start + p)
+                    .unwrap_or(test_body.len());
+                let rhs = &test_body[rhs_start..rhs_end];
+                if rhs.contains(owner_name)
+                    || changed_tokens.iter().any(|tok| rhs.contains(tok.as_str()))
+                {
+                    return true;
+                }
+            }
+        }
+        search_from = after.max(abs + 1);
+    }
     false
 }
 
