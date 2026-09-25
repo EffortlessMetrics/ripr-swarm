@@ -13039,7 +13039,7 @@ The queue envelope is:
         "reason": "repo-exposure source input identity no longer matches the current producer configuration; regenerate the source and ledger before assignment"
       },
       "refresh_commands": [
-        "ripr agent check-repo-exposure --root . --repo-exposure target/ripr/reports/repo-exposure.json --mode draft",
+        "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/reports/repo-exposure.json",
         "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --root . --out target/ripr/reports/gap-decision-ledger.json"
       ]
     }
