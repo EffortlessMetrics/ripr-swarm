@@ -2272,3 +2272,15 @@ Durable rules:
   `| tail` reports the pipe's status, and a red gate behind it looks green.
   Running wrappers under `set -o pipefail` (or the repo's `-o pipefail`
   convention) propagates the real status instead.
+
+## 2026-09-25: Retired goal-scheduler commands survive in old playbook entries
+
+The 2026-05-04 "Step 0 Premise Check" and 2026-05-12 "Agent-Readiness" entries
+below still tell an executor to run `cargo xtask check-goals` and
+`cargo xtask goals next` against `.ripr/goals/` campaign state. That machinery
+was retired by #1701: `.ripr/goals/` is gone, and xtask now answers those
+command names with an explicit retired-command error pointing at GitHub
+issues/PRs and `cargo xtask help --all` as the live work-selection surfaces.
+Treat the retired commands in those entries as historical record only — do not
+copy them into new playbooks, and replay the premise check with
+`git fetch origin` / `gh issue list --state open` instead.

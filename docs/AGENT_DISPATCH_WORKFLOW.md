@@ -49,17 +49,18 @@ testing, which is a separate calibration step.
 
 Each step has a concrete `ripr` command or LSP capability behind it.
 
-## Planned working-set brief
+## Working-set brief
 
-RIPR-SPEC-0010 defines a future `ripr agent brief` command for the
-active-edit path. That command is not implemented yet. It is intended to sit
-before the seam packet step and answer:
+RIPR-SPEC-0010 defines the `ripr agent brief` command for the
+active-edit path. It is implemented, and it sits
+before the seam packet step to answer:
 
 ```text
 Given this diff, base ref, file list, or seam ID, which 1-3 seams matter now?
 ```
 
-Planned command forms:
+Command forms (exactly one working-set selector is required, and `--json` is
+required; `--max-seams <n>` overrides the default cap):
 
 ```bash
 ripr agent brief --root . --diff change.diff --json
@@ -68,12 +69,16 @@ ripr agent brief --root . --files src/pricing.rs --json
 ripr agent brief --root . --seam-id f3c9e4d21a0b7c88 --json
 ```
 
-The brief is a router, not a replacement for the full seam packet. It should
-rank a capped set of seams with `why_now`, nearest test-to-imitate, candidate
+The brief is a router, not a replacement for the full seam packet. It ranks a
+capped set of seams with `why_now`, nearest test-to-imitate, candidate
 values, missing discriminators, assertion shape, and verification commands.
 The full packet remains the detailed work order for one seam.
 
-The planned surface is intentionally CLI-first. It does not change cache
+Use it at step 3-4 below: when the report or hover names more gaps than the
+current change needs, `ripr agent brief` ranks the working set first, then
+`ripr agent packet --seam-id` expands the chosen seam.
+
+The surface is intentionally CLI-first. It does not change cache
 semantics, editor refresh behavior, LSP protocol, runtime calibration fixtures,
 or release/install docs.
 
@@ -96,10 +101,10 @@ fixture generation. The CLI implementation keeps the same boundary: `ripr
 agent brief` ranks a small working set, while `ripr agent packet --seam-id`
 expands one visible seam into the existing `agent-seam-packets-json` envelope.
 
-The spec also maps the implementation seams that future PRs should preserve:
+The spec also maps the implementation seams that later PRs should preserve:
 CLI parsing, app orchestration, working-set selection, existing repo
 exposure/agent-packet inputs, policy filtering, JSON rendering, and
-verification command construction. The intended first implementation remains
+verification command construction. The implementation remains
 CLI-first and JSON-only; LSP and MCP wrappers should wait until this contract
 has stable CLI tests.
 
@@ -334,6 +339,50 @@ ripr calibrate cargo-mutants \
 
 Runtime mutation vocabulary stays in the calibration report. The normal
 targeted-test receipt remains a static evidence movement receipt.
+
+## First-hour repair path: `ripr agent repair`
+
+Steps 1-8 above compose the loop from its lower-level commands. For one named
+gap, the bounded repair transaction is the faster path — it runs the
+snapshot, packet, verify, and receipt plumbing for you and owns attempt
+identity:
+
+```bash
+ripr agent repair --root . --seam-id <seam-id> --phase before
+# edit one focused test outside RIPR; keep the printed repair-attempt ID
+ripr agent repair --root . --attempt <repair-attempt-id> --phase after
+```
+
+- **Phase `before`** prepares the attempt: it writes the before snapshot,
+  agent packet, brief, and workflow manifest under
+  `target/ripr/repair-attempts/<repair-attempt-id>/`, then prints the attempt
+  manifest path and the exact `--attempt` continuation command. Preserve that
+  command across sessions; the attempt, not the seam, is the durable
+  transaction.
+- **Phase `after`** consumes that exact attempt's retained inputs, verifies
+  their recorded digests and the edit-cage delta, then writes the static
+  review receipt. `--seam-id <id> --phase after` remains a compatibility
+  route and requires exactly one awaiting attempt for that seam — zero or
+  multiple matches fail closed; RIPR does not guess.
+- **Refusal paths.** An after phase that selected the attempt but then refused
+  (incomparable verify pair, no movement, refused receipt) records a
+  `last_after_refusal` observation on the manifest, and
+  `ripr agent status` reports the refusal reason instead of repeating the
+  command unannotated. Refusals never rewrite the retained before identity.
+- **Governed Python lane.** A trust-bound attempt adds a third, separately
+  authorized phase:
+  `ripr agent repair --root . --attempt <repair-attempt-id> --phase verify --verify-authorized --verify-authority <operator-id>`.
+  Verify executes only the retained packet's producer-owned typed
+  verification route through bounded execution controls and records
+  execution and static movement as independent observations; optional
+  `--verify-rollback` requests restoration of the applied edit. See
+  [Repair attempt identity](REPAIR_ATTEMPT.md).
+
+The lower-level `agent start`, `brief`, `packet`, `verify`,
+`verify-execute`, `receipt`, `status`, and `review-summary` commands remain
+available as the explicit-control fallback behind the steps above — useful
+for compatibility and debugging, not the first-hour path. See
+[Public command hierarchy](COMMAND_HIERARCHY.md) for the task map.
 
 ## Examples by seam kind
 
