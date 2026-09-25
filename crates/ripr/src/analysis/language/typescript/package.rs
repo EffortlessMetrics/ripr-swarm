@@ -174,6 +174,14 @@ pub(crate) enum TsPackageLimitation {
     /// no framework was detected — genuinely no command can be derived.
     /// Wire name: `typescript_runner_hint_unresolved`.
     RunnerHintMissing,
+    /// Two or more distinct framework signals matched (e.g. both `jest` and
+    /// `vitest` in `devDependencies`). The reported runner is the first match
+    /// by fixed priority, which is arbitrary from the evidence — the
+    /// limitation discloses the ambiguity and caps confidence at `medium`.
+    /// Classification-neutral and additive: the priority pick is still
+    /// emitted as `typescript_test_runner: <name>`.
+    /// Wire name: `typescript_test_runner_ambiguous`.
+    FrameworkAmbiguous,
 }
 
 impl TsPackageLimitation {
@@ -183,6 +191,7 @@ impl TsPackageLimitation {
             Self::FrameworkHintMissing => "typescript_framework_hint_unresolved",
             Self::PackageManagerUnresolved => "typescript_package_manager_unresolved",
             Self::RunnerHintMissing => "typescript_runner_hint_unresolved",
+            Self::FrameworkAmbiguous => "typescript_test_runner_ambiguous",
         }
     }
 }
@@ -251,7 +260,8 @@ pub(crate) fn resolve_package_discovery(
         }
     };
 
-    let framework_hint = detect_framework(&pkg_json_text);
+    let signals = detect_framework_signals(&pkg_json_text);
+    let framework_hint = signals.first().copied();
     let runner_hint_from_script = detect_runner_from_scripts(&pkg_json_text);
 
     // Detect monorepo workspace root: walk upward from pkg_root looking for
@@ -267,6 +277,12 @@ pub(crate) fn resolve_package_discovery(
     let mut limitations = Vec::new();
     if framework_hint.is_none() {
         limitations.push(TsPackageLimitation::FrameworkHintMissing);
+    } else if signals.len() >= 2 {
+        // Two or more DISTINCT framework signals matched (e.g. jest + vitest
+        // devDeps). The reported runner is the first by fixed priority, which
+        // is arbitrary from the evidence — disclose the ambiguity (additive,
+        // classification-neutral) and cap confidence at `medium` below.
+        limitations.push(TsPackageLimitation::FrameworkAmbiguous);
     }
     if runner_hint.is_none() {
         if framework_hint.is_some() {
@@ -283,10 +299,12 @@ pub(crate) fn resolve_package_discovery(
         }
     }
 
-    // Determine confidence.
+    // Determine confidence. Ambiguous framework evidence is capped at Medium:
+    // the priority pick is a guess from the manifest's point of view.
+    let ambiguous = signals.len() >= 2;
     let confidence = match (framework_hint.is_some(), runner_hint.is_some()) {
-        (true, true) => TsPackageConfidence::High,
-        (true, false) | (false, true) => TsPackageConfidence::Medium,
+        (true, true) if !ambiguous => TsPackageConfidence::High,
+        (true, _) | (_, true) => TsPackageConfidence::Medium,
         (false, false) => TsPackageConfidence::Low,
     };
 
@@ -399,6 +417,51 @@ pub(crate) fn detect_framework_for_root(root: &Path) -> Option<TsFramework> {
     None
 }
 
+/// Parsed view of the `package.json` fields this module consumes.
+///
+/// Built ONCE from the real manifest via `serde_json` so every downstream
+/// detector reads FIELDS, not substrings. This keeps detection honest:
+///
+/// - a `"test"` key OUTSIDE `scripts` is not the test script;
+/// - the word `"workspaces"` inside a string value does not mark a monorepo;
+/// - a framework name appearing only inside a free-text value
+///   (e.g. `"description": "jest"`) is not dependency evidence.
+///
+/// `None` when the manifest is not a parseable JSON object — every consumer
+/// fails closed in that case (no guessed framework, runner, or workspace).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ManifestFacts {
+    /// Lowercased dependency names from `dependencies` + `devDependencies`.
+    dep_names: Vec<String>,
+    /// Lowercased `scripts.test` command, when present and a string.
+    test_script: Option<String>,
+    /// Whether a top-level `workspaces` field exists.
+    has_workspaces: bool,
+}
+
+fn parse_manifest_facts(pkg_json: &str) -> Option<ManifestFacts> {
+    let value: serde_json::Value = serde_json::from_str(pkg_json).ok()?;
+    let object = value.as_object()?;
+    let mut dep_names = Vec::new();
+    for section in ["dependencies", "devDependencies"] {
+        if let Some(deps) = object.get(section).and_then(serde_json::Value::as_object) {
+            dep_names.extend(deps.keys().map(|key| key.to_lowercase()));
+        }
+    }
+    let test_script = object
+        .get("scripts")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|scripts| scripts.get("test"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_lowercase);
+    let has_workspaces = object.contains_key("workspaces");
+    Some(ManifestFacts {
+        dep_names,
+        test_script,
+        has_workspaces,
+    })
+}
+
 /// Detect the test framework from `package.json` content.
 ///
 /// Priority (first match wins): jest > vitest > bun-types > ava > mocha > @types/node.
@@ -412,56 +475,58 @@ pub(crate) fn detect_framework_for_root(root: &Path) -> Option<TsFramework> {
 /// when no dep match is found.  Fail-closed: `None` when neither signal
 /// matches a known framework.
 fn detect_framework(pkg_json: &str) -> Option<TsFramework> {
-    // Gather dep names from dependencies and devDependencies sections.
-    // We use simple string matching rather than full JSON parsing to keep
-    // dependencies minimal — we only need to know whether certain dep names
-    // appear as keys.
-    let lower = pkg_json.to_lowercase();
-    // Use key-pattern matching: `"<name>"` (quoted key) to avoid false
-    // positives in string values.
-    let has_dep = |name: &str| -> bool {
-        let pattern = format!("\"{name}\"");
-        lower.contains(&pattern)
+    detect_framework_signals(pkg_json).first().copied()
+}
+
+/// Detect every DISTINCT framework signal in `package.json`, in priority order.
+///
+/// Unlike [`detect_framework`] (first match wins), this returns ALL matched
+/// frameworks (deduplicated). When two or more signals match — e.g. both
+/// `jest` and `vitest` in `devDependencies` — the caller can disclose the
+/// ambiguity instead of silently resolving by fixed priority. Fail-closed:
+/// empty when the manifest is unparseable or no signal matches.
+fn detect_framework_signals(pkg_json: &str) -> Vec<TsFramework> {
+    let Some(facts) = parse_manifest_facts(pkg_json) else {
+        return Vec::new();
+    };
+    let has_dep = |name: &str| facts.dep_names.iter().any(|dep| dep == name);
+    let mut signals: Vec<TsFramework> = Vec::new();
+    let mut push_signal = |framework: TsFramework| {
+        if !signals.contains(&framework) {
+            signals.push(framework);
+        }
     };
 
     // ── Dependency-signal priority (most reliable) ──────────────────────────
     if has_dep("jest") || has_dep("@types/jest") || has_dep("ts-jest") || has_dep("babel-jest") {
-        return Some(TsFramework::Jest);
+        push_signal(TsFramework::Jest);
     }
     if has_dep("vitest") {
-        return Some(TsFramework::Vitest);
+        push_signal(TsFramework::Vitest);
     }
     if has_dep("bun-types") {
-        return Some(TsFramework::Bun);
+        push_signal(TsFramework::Bun);
     }
     if has_dep("ava") {
-        return Some(TsFramework::Ava);
+        push_signal(TsFramework::Ava);
     }
     if has_dep("mocha") || has_dep("@types/mocha") {
-        return Some(TsFramework::Mocha);
+        push_signal(TsFramework::Mocha);
     }
     if has_dep("@types/node") {
-        return Some(TsFramework::NodeTest);
+        push_signal(TsFramework::NodeTest);
+    }
+    if !signals.is_empty() {
+        return signals;
     }
 
     // ── Script-name fallback (handles composite scripts like "xo && ava") ───
-    // Only activates when no dep match was found above (fail-closed).
-    detect_framework_from_test_script(pkg_json)
-}
-
-/// Secondary framework detector: scan `scripts.test` for known framework
-/// invocation names.  Called only when dep-key detection yields `None`.
-///
-/// Inspects the raw (case-folded) script command; first confident match wins.
-/// "ava" is the primary new target (Ky: `"xo && npm run build && ava"`),
-/// but all known frameworks are checked so the fallback is symmetric.
-fn detect_framework_from_test_script(pkg_json: &str) -> Option<TsFramework> {
-    let lower = pkg_json.to_lowercase();
-    let test_script = extract_test_script_value(&lower)?;
-
-    // Check for whole-word occurrences using simple word-boundary heuristics
-    // (space/start/end/& before and after).  Avoid matching e.g. "java" for
-    // "jest" or "avante" for "ava".
+    // Only activates when no dep match was found above (fail-closed). All
+    // matched words are collected so a composite script mentioning two
+    // frameworks (e.g. `"jest && vitest run"`) discloses its ambiguity.
+    let Some(test_script) = facts.test_script else {
+        return signals;
+    };
     let script_has_word = |word: &str| -> bool {
         let mut haystack: &str = test_script.as_str();
         while let Some(pos) = haystack.find(word) {
@@ -483,48 +548,33 @@ fn detect_framework_from_test_script(pkg_json: &str) -> Option<TsFramework> {
         }
         false
     };
-
     if script_has_word("jest") {
-        return Some(TsFramework::Jest);
+        push_signal(TsFramework::Jest);
     }
     if script_has_word("vitest") {
-        return Some(TsFramework::Vitest);
+        push_signal(TsFramework::Vitest);
     }
     if script_has_word("ava") {
-        return Some(TsFramework::Ava);
+        push_signal(TsFramework::Ava);
     }
     if script_has_word("mocha") {
-        return Some(TsFramework::Mocha);
+        push_signal(TsFramework::Mocha);
     }
     // "node --test" or "node:test" patterns
     if test_script.contains("node --test") || test_script.contains("node:test") {
-        return Some(TsFramework::NodeTest);
+        push_signal(TsFramework::NodeTest);
     }
     // "bun test" pattern (script-only; dep signal already caught bun-types above)
     if test_script.contains("bun test") || test_script.starts_with("bun ") {
-        return Some(TsFramework::Bun);
+        push_signal(TsFramework::Bun);
     }
-    None
-}
-
-/// Extract the lowercased value of `scripts.test` from a package.json string.
-///
-/// Returns `None` when the key is absent or the value is not a quoted string.
-fn extract_test_script_value(lower_pkg_json: &str) -> Option<String> {
-    let key_idx = lower_pkg_json.find("\"test\":")?;
-    let after_key = &lower_pkg_json[key_idx + "\"test\":".len()..];
-    let trimmed = after_key.trim_start();
-    let inner = trimmed.strip_prefix('"')?;
-    let end = inner.find('"')?;
-    Some(inner[..end].to_string())
+    signals
 }
 
 /// Detect the runner from `scripts.test` in `package.json`.
 fn detect_runner_from_scripts(pkg_json: &str) -> Option<TsRunner> {
-    // Look for the "test" script entry.  We search for `"test":` then extract
-    // the command string that follows.
-    let lower = pkg_json.to_lowercase();
-    let script = extract_test_script_value(&lower)?;
+    let facts = parse_manifest_facts(pkg_json)?;
+    let script = facts.test_script?;
 
     if script.contains("bun ") || script.starts_with("bun") {
         return Some(TsRunner::Bun);
@@ -564,10 +614,12 @@ fn detect_runner_from_lockfile(workspace_root: &Path, pkg_root: &Path) -> Option
     None
 }
 
-/// Very cheap check: does the `package.json` text contain a `"workspaces"`
-/// key?  We do NOT need to parse JSON — just check if the key appears.
+/// Field check: does the parsed `package.json` object carry a top-level
+/// `workspaces` key?  Uses the serde parse (see [`parse_manifest_facts`]) so
+/// the word `"workspaces"` inside an unrelated string value does NOT mark a
+/// monorepo root. Fail-closed: `false` for unparseable manifests.
 fn json_has_workspaces_field(pkg_json: &str) -> bool {
-    pkg_json.to_lowercase().contains("\"workspaces\"")
+    parse_manifest_facts(pkg_json).is_some_and(|facts| facts.has_workspaces)
 }
 
 // ─── Verify-command inference ─────────────────────────────────────────────────
@@ -884,6 +936,74 @@ mod tests {
     }
 
     #[test]
+    fn detect_framework_signals_single_match_has_no_ambiguity() {
+        // One distinct framework signal → no ambiguity evidence.
+        let signals = detect_framework_signals(jest_pkg_json());
+        assert_eq!(signals, vec![TsFramework::Jest]);
+    }
+
+    #[test]
+    fn detect_framework_signals_jest_vitest_collects_both_matches() {
+        // Two distinct framework signals → both collected (priority order),
+        // so the caller can disclose the ambiguity instead of silently
+        // resolving by fixed priority.
+        let pkg = r#"{"devDependencies":{"jest":"^29.0.0","vitest":"^1.0.0"}}"#;
+        let signals = detect_framework_signals(pkg);
+        assert_eq!(signals, vec![TsFramework::Jest, TsFramework::Vitest]);
+        // First-match-wins resolution is unchanged for single consumers.
+        assert_eq!(detect_framework(pkg), Some(TsFramework::Jest));
+    }
+
+    #[test]
+    fn detect_framework_jest_and_types_jest_count_as_one_signal() {
+        // `jest` + `@types/jest` are two dep names for ONE framework — they
+        // must NOT be reported as ambiguous.
+        let signals = detect_framework_signals(jest_pkg_json());
+        assert_eq!(signals, vec![TsFramework::Jest]);
+    }
+
+    #[test]
+    fn detect_framework_string_value_mentioning_jest_is_not_evidence() {
+        // A framework name inside a free-text string value ("description")
+        // must NOT be treated as a dependency. The old quoted-key substring
+        // scan false-detected jest here.
+        let pkg = r#"{"name":"x","description":"jest","private":true}"#;
+        let result = detect_framework(pkg);
+        assert_eq!(
+            result, None,
+            "a framework name inside a string value is not dependency evidence"
+        );
+    }
+
+    #[test]
+    fn test_script_key_outside_scripts_is_not_the_test_script() {
+        // A `"test"` key nested outside `scripts` must not feed framework or
+        // runner script detection; only `scripts.test` is the test script.
+        let pkg = r#"{"config":{"test":"ava"},"scripts":{"test":"echo no-op"}}"#;
+        let result = detect_framework(pkg);
+        assert_eq!(
+            result, None,
+            "\"test\" key outside scripts must not be read as the test script"
+        );
+        let runner = detect_runner_from_scripts(pkg);
+        assert_eq!(runner, None);
+    }
+
+    #[test]
+    fn workspaces_word_inside_string_value_is_not_monorepo_root() {
+        // The word "workspaces" inside a string value must NOT mark a monorepo
+        // root; only a real top-level `workspaces` field counts.
+        let pkg = r#"{"name":"x","description":"uses workspaces for discovery"}"#;
+        assert!(
+            !json_has_workspaces_field(pkg),
+            "workspaces inside a string value must not mark a monorepo root"
+        );
+        // Positive control: a real top-level field is still detected.
+        let real = r#"{"name":"x","workspaces":["packages/*"]}"#;
+        assert!(json_has_workspaces_field(real));
+    }
+
+    #[test]
     fn evidence_lines_emits_typescript_test_runner_when_framework_detected() {
         // When framework_hint is Some, evidence_lines() must include
         // typescript_test_runner: <name> as an additive field.
@@ -1013,6 +1133,58 @@ mod tests {
 
         assert_eq!(result.runner_hint, Some(TsRunner::Bun));
         assert_eq!(result.framework_hint, Some(TsFramework::Vitest));
+    }
+
+    #[test]
+    fn ts_package_discovery_jest_vitest_ambiguity_is_disclosed() {
+        let root = unique_test_dir("jest-vitest-ambiguous");
+        // Both jest and vitest present — two distinct framework signals.
+        let pkg = r#"{
+  "name": "multi-runner",
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "vitest": "^1.0.0"
+  },
+  "scripts": {
+    "test": "vitest run"
+  }
+}"#;
+        setup_single_package(&root, pkg, Some("package-lock.json"));
+        let test_file = PathBuf::from("tests/math.test.ts");
+
+        let result = resolve_package_discovery(&test_file, &root);
+
+        // Fixed priority still picks the first signal for consumers that need
+        // a single runner name...
+        assert_eq!(result.framework_hint, Some(TsFramework::Jest));
+        // ...but the ambiguity is disclosed additively (classification-neutral).
+        assert!(
+            result
+                .limitations
+                .contains(&TsPackageLimitation::FrameworkAmbiguous),
+            "expected typescript_test_runner_ambiguous; got {:?}",
+            result.limitations
+        );
+        // Ambiguous evidence is capped at medium confidence.
+        assert_eq!(
+            result.confidence,
+            TsPackageConfidence::Medium,
+            "ambiguous runner evidence must not claim high confidence"
+        );
+        let lines = result.evidence_lines();
+        assert!(
+            lines.iter().any(
+                |l| l == "typescript_package_limitation: typescript_test_runner_ambiguous"
+            ),
+            "evidence lines missing typescript_test_runner_ambiguous: {:?}",
+            lines
+        );
+        // The resolved runner name is still emitted for consumers.
+        assert!(
+            lines.iter().any(|l| l == "typescript_test_runner: jest"),
+            "evidence lines missing typescript_test_runner: jest: {:?}",
+            lines
+        );
     }
 
     #[test]

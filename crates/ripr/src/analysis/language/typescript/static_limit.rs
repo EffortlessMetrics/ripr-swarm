@@ -209,16 +209,23 @@ pub(crate) fn named_limitations_for_alias_unresolved(
                 continue;
             }
             // Name-matched: the imported symbol must match the owner's name.
+            // A default import records `imported: "default"`, which matches NO
+            // owner by symbol name — it only plausibly targets the owner when
+            // the LOCAL binding name matches (`import applyDiscount from ...`).
+            // Without the local-binding check, any `import React from 'react'`
+            // in an uncredited test would false-fire this limitation.
             let name_matches = match &import.imported {
-                Some(name) => name == &owner.name || name == "default",
+                Some(name) if name == "default" => import.local == owner.name,
+                Some(name) => name == &owner.name,
                 None if import.namespace => {
                     // Namespace import: name match is always possible; accept.
                     true
                 }
                 None => false,
             };
-            // Default-import name check: only if the local binding name matches.
-            // For namespace imports, always consider as plausible.
+            // Default-import name check: only if the local binding name matches
+            // (enforced in `name_matches` above). For namespace imports, always
+            // consider as plausible.
             let plausible_owner_import = if import.namespace {
                 // `import * as X from '@/module'` — plausible if X.ownerName is called
                 false // namespace imports don't pinpoint a single name — skip

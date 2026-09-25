@@ -255,14 +255,18 @@ impl LanguageAdapter for TypeScriptAdapter {
                             }
                         }
                         finding.evidence.retain(|ev| !ev.is_empty());
-                    } else if pkg_discovery.framework_hint.is_none() {
-                        // No command resolved AND no framework detected — emit
-                        // the named limitation so the card surface shows the
-                        // correct gap.  When a framework IS detected (e.g. ava)
-                        // the `typescript_test_runner: <name>` evidence line was
-                        // already injected via `discovery_evidence` above;
-                        // suppress the unresolved limitation so consumers see the
-                        // detected runner name instead of a false negative.
+                    } else {
+                        // Fail-closed: no verify command resolved. Emit the
+                        // named limitation so consumers know why no command is
+                        // available. This must fire whenever the inferred
+                        // command is `None` — not only when no framework was
+                        // detected: mocha has no file-target command mapping,
+                        // so a detected mocha framework with no lockfile/runner
+                        // evidence previously produced NEITHER a command NOR a
+                        // limitation, contradicting the contract documented
+                        // above. (When the command IS resolved the
+                        // `typescript_test_runner: <name>` evidence line
+                        // already identifies the runner, so no limitation.)
                         finding.evidence.push(
                             "typescript_package_limitation: typescript_test_runner_unresolved"
                                 .to_string(),
