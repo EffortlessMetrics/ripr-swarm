@@ -52,7 +52,7 @@ pub(crate) fn badge_artifacts_impl() -> Result<(), String> {
     let limited = reports_dir()
         .join("badge-artifacts-limitation.json")
         .exists();
-    let (phase, outputs) = if !outcome.is_ok() {
+    let (phase, outputs) = if outcome.is_err() {
         // The run failed outright (write or spawn failure): no limitation
         // report or output set represents it, so the receipt must not claim
         // a complete or limited-but-produced run.
