@@ -566,7 +566,7 @@ mod parser_state {
             // one changed program. Emitting their lines as ordinary changes
             // invents behavior that exists in neither parent, so quarantine the
             // region and record it instead (#2828). Coordinates still advance so
-            // that lines after the region keep honest line numbers.
+            // that lines after a quarantined region keep honest line numbers.
             let side = match raw.as_bytes().first() {
                 Some(b'+') => Some(ConflictSide::Added),
                 Some(b'-') => Some(ConflictSide::Removed),
@@ -1044,6 +1044,7 @@ deleted file mode 100644
         let spaced = "diff --git a/src/old file.rs b/src/new file.rs\nsimilarity index 80%\nrename from src/old file.rs\nrename to src/new file.rs\n--- \"a/src/old file.rs\"\n+++ \"b/src/new file.rs\"\n@@ -1 +1 @@\n-old\n+new\n";
         let parsed = parse_unified_diff_with_metadata(spaced);
         assert_eq!(parsed.renamed_file_count, 1);
+        assert_eq!(parsed.pure_rename_file_count, 0);
         assert_eq!(parsed.changed_files.len(), 1);
         assert_eq!(
             parsed.changed_files[0].path,
@@ -1068,6 +1069,7 @@ deleted file mode 100644
 ";
 
         let files = parse_unified_diff(diff);
+
         assert!(files.is_empty());
     }
 
@@ -1088,7 +1090,7 @@ deleted file mode 100644
             "+++ b/src/lib.rs\n",
             "@@ -1,4 +1,6 @@\n",
             " pub fn one(x: i32) -> i32 {\n",
-            "-    x + 1;\n",
+            "-    x + 1\n",
             "+    let y = x + 1;\n",
             "+    let z = y * 2;\n",
             "+    z\n",
@@ -1423,7 +1425,7 @@ deleted file mode 100644
         // git emits `Binary files a/x and b/x differ` in place of a textual
         // hunk when a file's bytes differ. ripr cannot extract line probes
         // from a binary blob, so the file is correctly recorded with zero
-        // changed lines. We must also ensure that the sentinel closes any open hunk
+        // changed lines. We must also ensure the sentinel closes any open hunk
         // so a following textual file is not mis-attributed.
         let diff = "diff --git a/binary.dat b/binary.dat\nBinary files a/binary.dat and b/binary.dat differ\ndiff --git a/src/text.rs b/src/text.rs\n--- a/src/text.rs\n+++ b/src/text.rs\n@@ -3,1 +3,1 @@\n-old\n+new\n";
         let files = parse_unified_diff(diff);
