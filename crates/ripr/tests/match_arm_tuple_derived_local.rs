@@ -682,7 +682,8 @@ fn fixture_paths_remain_inside_the_ephemeral_root() -> Result<(), String> {
 }
 
 #[test]
-fn projection_return_boundary_unreachable_assertions_cannot_certify_the_arm() -> Result<(), String> {
+fn projection_return_boundary_unreachable_assertions_cannot_certify_the_arm() -> Result<(), String>
+{
     for assertion in [
         "    assert_eq!(terminal.len(), 1);",
         "    assert_eq!(terminal[0].0.id, \"receipt-1\");",
@@ -700,7 +701,8 @@ fn projection_return_boundary_unreachable_assertions_cannot_certify_the_arm() ->
 }
 
 #[test]
-fn projection_return_boundary_after_complete_observation_preserves_exposure() -> Result<(), String> {
+fn projection_return_boundary_after_complete_observation_preserves_exposure() -> Result<(), String>
+{
     let assertion = "    assert_eq!(terminal[0].1, \"request_identity_v2\");";
     assert_eq!(REQUEST_ONLY_TEST.matches(assertion).count(), 1);
     let test_source = REQUEST_ONLY_TEST.replace(assertion, &format!("{assertion}\n    return;"));
