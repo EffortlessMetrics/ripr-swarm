@@ -49603,6 +49603,35 @@ fn pr_change_porcelain_bytes_reject_misframed_entries() -> Result<(), String> {
 }
 
 #[test]
+fn pr_change_backslash_name_stays_distinct_from_nested_path() -> Result<(), String> {
+    // Item-5 identity control (#4006): the literal-backslash filename
+    // `a\b.rs` and the nested path `a/b.rs` are distinct tracked paths
+    // (real Linux git fixture). Folding separators before map insertion
+    // collapsed them to one key, omitting an inventory path while
+    // returning success. Both decoders must preserve two entries.
+    // Byte literals carry the exact `-z` grammar (Rust string escapes,
+    // not shell quoting, keep the backslash literal).
+    let mut changes = BTreeMap::new();
+    add_name_status_bytes(&mut changes, b"M\0a\\b.rs\0M\0a/b.rs\0")?;
+    if changes.len() != 2 || !changes.contains_key("a\\b.rs") || !changes.contains_key("a/b.rs") {
+        return Err(format!(
+            "name-status backslash/nested collision: got {changes:?}, want two distinct keys"
+        ));
+    }
+    let mut porcelain = BTreeMap::new();
+    add_porcelain_bytes(&mut porcelain, b"M  a\\b.rs\0M  a/b.rs\0")?;
+    if porcelain.len() != 2
+        || !porcelain.contains_key("a\\b.rs")
+        || !porcelain.contains_key("a/b.rs")
+    {
+        return Err(format!(
+            "porcelain backslash/nested collision: got {porcelain:?}, want two distinct keys"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
     // A real zero-change run decodes to an empty inventory on both routes.
     let mut changes = BTreeMap::new();
