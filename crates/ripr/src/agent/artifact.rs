@@ -1393,7 +1393,24 @@ mod tests {
 
         let execution_pointer = "/$defs/execution_result/properties/currentness/enum";
         let execution_enum = enum_strings(execution_pointer)?;
-        let execution_distinct = ["current", "dirty_worktree", "historical_noncurrent"];
+        // Derive the expectation from the producer type's own serialization,
+        // exactly the three variants a live execution constructs; `Unavailable`
+        // exists only as a value `validate_against` rejects, so it is absent.
+        let mut execution_distinct: Vec<String> = Vec::new();
+        for variant in [
+            crate::domain::VerificationCurrentnessV1::Current,
+            crate::domain::VerificationCurrentnessV1::DirtyWorktree,
+            crate::domain::VerificationCurrentnessV1::HistoricalNoncurrent,
+        ] {
+            let value = serde_json::to_value(variant)
+                .map_err(|error| format!("serialize currentness variant: {error}"))?;
+            execution_distinct.push(
+                value
+                    .as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| "currentness variant must serialize to a string".to_string())?,
+            );
+        }
         assert_eq!(
             execution_enum, execution_distinct,
             "{execution_pointer} drifted from the VerificationExecutionResultV1 vocabulary"
