@@ -138,7 +138,11 @@ fn normalized_file_uri_path(uri: &Uri) -> Option<String> {
     // Split URI components before decoding: encoded filename delimiters are
     // literal path data, not a query, fragment, or a second decoding pass.
     let decoded = percent_codec::decode_uri_path(path)?.replace('\\', "/");
-    if decoded.contains('\0') {
+    if decoded.contains('\0') || decoded.starts_with("//") {
+        // A doubled leading separator is a UNC/network-share spelling on
+        // Windows even when the URI authority is empty or localhost. This
+        // local-only decoder must not turn an authority bypass into network
+        // filesystem access.
         return None;
     }
     if windows_paths::is_windows_drive_uri_path(&decoded) {
@@ -549,6 +553,23 @@ mod tests {
             "file://user@localhost/src/lib.rs",
             "file://localhost:80/src/lib.rs",
             "file://local%68ost/src/lib.rs",
+        ] {
+            let uri = parse_uri(value)?;
+            assert_eq!(path_from_file_uri(&uri), None, "{value}");
+            assert!(!file_uris_match(&uri, &uri), "{value}");
+            assert!(!file_uri_is_within_root(&root, &uri), "{value}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn file_uri_rejects_network_share_paths_with_local_authority() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr-uri-network-share-root");
+        for value in [
+            "file:////remote.example/share/lib.rs",
+            "file://localhost//remote.example/share/lib.rs",
+            "file:///%2Fremote.example/share/lib.rs",
+            "file:/%2F/remote.example/share/lib.rs",
         ] {
             let uri = parse_uri(value)?;
             assert_eq!(path_from_file_uri(&uri), None, "{value}");
