@@ -4712,7 +4712,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             imports_in_file: Vec::new(),
         },
     ];
-    let paths = collect_related_mock_paths(&owner, &tests);
+    let paths = collect_related_mock_paths(&owner, &tests, None, &ReExportIndex::empty(), None);
     assert_eq!(paths, vec!["./api".to_string()]);
 }
 
@@ -4739,7 +4739,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         mocks_in_file: vec!["./api".to_string()],
         imports_in_file: Vec::new(),
     }];
-    let paths = collect_related_mock_paths(&owner, &tests);
+    let paths = collect_related_mock_paths(&owner, &tests, None, &ReExportIndex::empty(), None);
     assert!(paths.is_empty());
 }
 
@@ -4766,7 +4766,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         mocks_in_file: vec!["./api".to_string()],
         imports_in_file: Vec::new(),
     }];
-    let paths = collect_related_mock_paths(&owner, &tests);
+    let paths = collect_related_mock_paths(&owner, &tests, None, &ReExportIndex::empty(), None);
     assert!(paths.is_empty());
 }
 
@@ -4820,6 +4820,113 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
     assert_eq!(
         finding.static_limit_kind,
         Some(StaticLimitKind::MockedModule)
+    );
+    Ok(())
+}
+
+/// Cross-package negative control: a test in `packages/b` that mocks a path
+/// resolving to the owner's module in `packages/a` must NOT surface a
+/// `mocked_module` static limit on the `packages/a` finding. The package-local
+/// filter excludes the test from the credited relation set; the mock
+/// collector must not re-admit it (a `mocked_module` limit forces
+/// `gap_state: static_limitation` with empty missing fields, so this would be
+/// a wrong actionable signal built from a deliberately excluded test).
+#[test]
+fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit()
+-> Result<(), String> {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!("ripr-mock-cross-pkg-{stamp}"));
+    let pkg_a = root.join("packages").join("pkg-a");
+    let pkg_b = root.join("packages").join("pkg-b");
+    let _ = fs::create_dir_all(pkg_a.join("src"));
+    let _ = fs::create_dir_all(pkg_b.join("tests"));
+    let _ = fs::write(pkg_a.join("package.json"), r#"{"name":"pkg-a"}"#);
+    let _ = fs::write(pkg_b.join("package.json"), r#"{"name":"pkg-b"}"#);
+
+    let owner = TypeScriptOwner {
+        name: "doWork".to_string(),
+        file: pkg_a.join("src").join("work.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    // The test body calls the owner (it would be credited without the
+    // package-local filter) and mocks a path resolving to the owner's module.
+    let tests = vec![TypeScriptTest {
+        name: "cross-package doWork test".to_string(),
+        local_name: "cross-package doWork test".to_string(),
+        describe_names: Vec::new(),
+        file: pkg_b.join("tests").join("work.test.ts"),
+        line: 1,
+        body_text: "doWork();".to_string(),
+        assertions: Vec::new(),
+        mocks_in_file: vec!["./work".to_string()],
+        imports_in_file: Vec::new(),
+    }];
+
+    // Live pipeline (workspace_root supplied): the cross-package test is
+    // excluded from the credited relation set, so no `mocked_module` limit.
+    let finding = classify_change(
+        &pkg_a.join("src").join("work.ts"),
+        2,
+        "    return doWorkImpl();",
+        &[owner],
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding for the changed line".to_string())?;
+    assert!(
+        finding.static_limit_kind != Some(StaticLimitKind::MockedModule),
+        "cross-package mock must not surface a `mocked_module` limit, got {:?}",
+        finding.static_limit_kind
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("static_limit mocked_module:")),
+        "cross-package mock must not emit a `mocked_module` evidence line"
+    );
+
+    // Removal/known-wrong control: without the package-local filter (the
+    // single-package path), the same fixtures DO credit the test and surface
+    // the limit — proving the negative control exercises the real producer.
+    let owner = TypeScriptOwner {
+        name: "doWork".to_string(),
+        file: pkg_a.join("src").join("work.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let unfiltered = classify_change(
+        &pkg_a.join("src").join("work.ts"),
+        2,
+        "    return doWorkImpl();",
+        &[owner],
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding for the changed line".to_string())?;
+    assert_eq!(
+        unfiltered.static_limit_kind,
+        Some(StaticLimitKind::MockedModule),
+        "without the package-local filter the cross-package test is credited \
+         and the `mocked_module` limit must fire (non-vacuous control)"
     );
     Ok(())
 }
