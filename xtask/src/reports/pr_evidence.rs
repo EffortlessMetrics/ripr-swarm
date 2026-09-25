@@ -876,9 +876,8 @@ fn validate_targeted_mutation_route(summary: &Map<String, Value>, violations: &m
         Some(other) => violations.push(format!(
             "summary.targeted_mutation_route.status {other:?} is not contract-valid"
         )),
-        None => violations.push(
-            "summary.targeted_mutation_route.status is missing or not a string".to_string(),
-        ),
+        None => violations
+            .push("summary.targeted_mutation_route.status is missing or not a string".to_string()),
     }
     for key in ["candidates", "limitations"] {
         if !route.get(key).is_some_and(Value::is_array) {
@@ -1195,8 +1194,10 @@ mod tests {
         drifted["summary"]["targeted_mutation_route"]["status"] = "candidate";
         let violations = validate_packet_value(&drifted, &options(), 1, true);
         assert!(
-            violations.iter().any(|violation| violation
-                .contains("disagrees with summary.requires_targeted_mutation")),
+            violations
+                .iter()
+                .any(|violation| violation
+                    .contains("disagrees with summary.requires_targeted_mutation")),
             "a not_required route claiming candidates must be rejected: {violations:?}"
         );
 
