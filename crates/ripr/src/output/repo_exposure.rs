@@ -372,7 +372,6 @@ fn write_repo_exposure_json_document<W: io::Write>(
                 json_escape(PythonRepoExposureGuidance::REPAIR_ROUTE)
             )?;
             writeln!(out, "    }}")?;
-            first = false;
         }
         writeln!(out, "  ],")?;
     }
