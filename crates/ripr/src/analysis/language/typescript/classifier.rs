@@ -638,7 +638,8 @@ pub(crate) fn classify_change(
     let related = find_related_tests(owner, all_tests, workspace_root, reexport_index, alias_map);
     let bun_array_buffer_facts = collect_related_bun_array_buffer_facts(&related_candidates);
     let bun_bridge_hints = collect_related_bun_bridge_hints(&bun_array_buffer_facts);
-    let mock_paths = collect_related_mock_paths(owner, all_tests);
+    let mock_paths =
+        collect_related_mock_paths(owner, all_tests, workspace_root, reexport_index, alias_map);
     let static_limit = static_limit_for_change(line_text, owner, &mock_paths);
 
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
