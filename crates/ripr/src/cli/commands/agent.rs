@@ -892,24 +892,12 @@ fn run_agent_repair_phase(
             // The verify document keeps every field, name, and value under
             // `verify`, and the status report rides beside it under
             // `agent_status`.
-            let mut envelope = serde_json::json!({
+            let envelope = serde_json::json!({
                 "schema_version": REPAIR_AFTER_RESULT_SCHEMA_VERSION,
                 "kind": "repair_after_result",
+                "verify": document,
+                "agent_status": status_document,
             });
-            envelope
-                .as_object_mut()
-                .ok_or_else(|| {
-                    "repair after result envelope must be an object for verify nesting"
-                        .to_string()
-                })?
-                .insert("verify".to_string(), document);
-            envelope
-                .as_object_mut()
-                .ok_or_else(|| {
-                    "repair after result envelope must be an object for agent_status nesting"
-                        .to_string()
-                })?
-                .insert("agent_status".to_string(), status_document);
             let combined = serde_json::to_string_pretty(&envelope).map_err(|error| {
                 format!("serialize after-phase result document failed: {error}")
             })?;
