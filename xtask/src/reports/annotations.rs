@@ -499,7 +499,7 @@ mod tests {
         let path = repo.join(relative);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
-                .map_err(|err| format!("create {}: {err}", path.display()))?;
+                .map_err(|err| format!("create {}: {err}", parent.display()))?;
         }
         fs::write(&path, text).map_err(|err| format!("write {}: {err}", path.display()))
     }
