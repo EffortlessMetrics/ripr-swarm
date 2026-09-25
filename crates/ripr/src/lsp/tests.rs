@@ -7994,6 +7994,96 @@ fn initialize_surfaces_poisoned_client_features_store_as_a_session_failure() -> 
 }
 
 #[test]
+fn poisoned_initialize_failure_commit_survives_a_wedged_client_channel() -> Result<(), String> {
+    // #3802: once the session is initialized (client deliveries are no
+    // longer suppressed by the library's pre-initialize gate), a root change
+    // pre-fills the capacity-1 client egress channel while the peer socket
+    // stays undriven. The poisoned-profile branch must commit the owning
+    // session failure and return within its bounded disclosure window
+    // instead of hanging on the wedged client log/status await.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        use tower::Service as _;
+        let root_first = unique_lsp_test_root("poisoned-initialize-wedged-first")?;
+        let root_second = unique_lsp_test_root("poisoned-initialize-wedged-second")?;
+        let (mut service, _socket) = build_service(PathBuf::from("."));
+        // Flip the service state to Initialized by driving one healthy
+        // initialize through the service layers; the direct backend call
+        // below then reaches the real capacity-1 client channel instead of
+        // being suppressed pre-initialize.
+        let healthy = tower::ServiceExt::ready(&mut service)
+            .await
+            .map_err(|err| format!("service never became ready: {err:?}"))?
+            .call(
+                tower_lsp_server::jsonrpc::Request::build("initialize")
+                    .params(
+                        serde_json::to_value(initialize_params(
+                            None,
+                            Some(file_uri_for_path(root_first.path())?),
+                        ))
+                        .map_err(|err| format!("initialize params serialize failed: {err}"))?,
+                    )
+                    .id(1)
+                    .finish(),
+            )
+            .await
+            .map_err(|err| format!("healthy framed initialize failed: {err:?}"))?;
+        if healthy
+            .as_ref()
+            .and_then(|response| response.error())
+            .is_some()
+        {
+            return Err("healthy framed initialize must succeed".to_string());
+        }
+        let backend = service.inner();
+        backend.poison_client_features_for_test();
+        // The changed root exercises the transition path whose analysis
+        // status publication fills the capacity-1 client channel before the
+        // poisoned branch runs.
+        let poisoned = tokio::time::timeout(
+            Duration::from_secs(10),
+            backend.initialize(initialize_params(
+                None,
+                Some(file_uri_for_path(root_second.path())?),
+            )),
+        )
+        .await
+        .map_err(|_elapsed| {
+            // Discriminates the issue's middle state: the failure path was
+            // entered, but the undriven client delivery deadlocked it
+            // before the owning state transition could complete.
+            "poisoned initialize did not return within the inner bound; \
+             the failure commit is blocked behind an undriven client \
+             delivery await (#3802)"
+                .to_string()
+        })?;
+        poisoned.map_err(|err| format!("poisoned initialize failed: {err}"))?;
+        // The owning failure must be committed even though client delivery
+        // never completed.
+        let failure = backend
+            .configuration_failure()
+            .ok_or_else(|| "poisoned profile store must surface a session failure".to_string())?;
+        if failure.kind != AnalysisFailureKind::SessionStateInconsistent {
+            return Err(format!(
+                "poisoned profile store surfaced the wrong failure kind: {}",
+                failure.kind.as_str()
+            ));
+        }
+        if !backend.initialize_failure_disclosure_omitted() {
+            return Err(
+                "wedged client delivery must be recorded as omitted, not silently dropped"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn pull_mode_is_pending_until_the_first_pull_resolves() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
