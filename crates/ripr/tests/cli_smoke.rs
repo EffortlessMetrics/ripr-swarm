@@ -7793,7 +7793,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workflow.contains("### SARIF and badge status"));
     assert!(workflow.contains("### PR guidance annotations"));
     assert!(workflow.contains("### Known limits"));
-    assert!(workflow.contains("cargo xtask operator-cockpit"));
+    assert!(!workflow.contains("cargo xtask"));
     assert!(workflow.contains("continue-on-error: true"));
     assert!(workflow.contains("actions/upload-artifact@v7"));
     assert!(workflow.contains("RIPR_UPLOAD_SARIF"));
