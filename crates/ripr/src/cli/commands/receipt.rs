@@ -362,6 +362,11 @@ Options:
                       {"schema_version": "0.1", "ok": <bool>,
                        "cross_reference": {"kind": <receipt_ok|orphan_receipt|
                        receipt_gap_mismatch|not_available>, "detail": <message>}}
+                    `ok` is true whenever no error verdict was reached; it is
+                    also true when no cross-reference was performed at all
+                    (kind not_available).  Consumers that require a performed
+                    cross-reference must assert kind != "not_available" —
+                    `ok` alone does not prove a check ran.
                     Exit codes are unchanged: non-zero still means a structural
                     error or an orphan_receipt / receipt_gap_mismatch verdict.
 
@@ -730,8 +735,10 @@ mod tests {
         )?;
         let value: serde_json::Value = serde_json::from_str(&rendered)
             .map_err(|err| format!("receipt check JSON must parse: {err}"))?;
-        // Fail-closed sentinel: not_available is not an error verdict, so the
-        // document reports ok=true while still naming the not_available kind.
+        // No cross-reference was performed, so there is no error verdict and
+        // the document reports ok=true — while still naming the
+        // not_available kind. Consumers requiring a performed check must
+        // assert on kind, not ok alone.
         assert_eq!(value["ok"], true);
         assert_eq!(value["cross_reference"]["kind"], "not_available");
         Ok(())
