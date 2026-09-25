@@ -73,6 +73,15 @@ use std::time::{Duration, Instant};
 /// Explicit refresh and config reload bypass the debounce (#1908).
 const INTERACTIVE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
+/// Upper bound on the optional client disclosures that follow an
+/// initialize-time failure commit (#3802). The owning session failure is
+/// recorded synchronously first, so a wedged or undriven peer can delay only
+/// this advisory `window/logMessage` + status delivery window, never the
+/// failure state transition itself. Healthy delivery completes in
+/// microseconds; an expired window is recorded on the backend and the
+/// failure state is re-disclosed by the next status publication.
+const INITIALIZE_FAILURE_DISCLOSURE_BUDGET: Duration = Duration::from_secs(2);
+
 const SAVED_WORKTREE_LIMITS_NOTE: &str = "Static evidence only; staged and unstaged tracked files are analyzed; untracked files remain out of scope until staged or supplied through an explicit diff.";
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tower_lsp_server::jsonrpc::{Error as LspError, Result as LspResult};
@@ -153,6 +162,12 @@ pub(super) struct Backend {
     /// snapshot: a byte-identical repeated degradation warns once, a new
     /// signature warns again, and a cleared signature logs one recovery line.
     last_component_degradation: Mutex<Option<String>>,
+    /// Set when the bounded disclosure window after an initialize-time
+    /// failure commit expired without completing client delivery (#3802).
+    /// The owning session failure stays committed; this records the delivery
+    /// omission locally instead of dropping it silently. Reflects the most
+    /// recent disclosure attempt.
+    initialize_failure_disclosure_omitted: Mutex<bool>,
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
     refresh_idle: Notify,
@@ -226,6 +241,7 @@ impl Backend {
             last_lens_view_identity: Mutex::new(None),
             dynamic_file_watch_registration: Mutex::new(false),
             last_component_degradation: Mutex::new(None),
+            initialize_failure_disclosure_omitted: Mutex::new(false),
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
             refresh_idle: Notify::new(),
@@ -1437,6 +1453,31 @@ impl Backend {
             .await;
     }
 
+    /// Deliver the optional client disclosures that follow an
+    /// initialize-time failure commit — one `window/logMessage` warning plus
+    /// one analysis-status publication — within
+    /// [`INITIALIZE_FAILURE_DISCLOSURE_BUDGET`] (#3802). The owning failure
+    /// is already committed when this runs, so a wedged or undriven peer can
+    /// never delay the state transition through these awaits: an expired
+    /// window is recorded on the backend instead of being dropped silently,
+    /// and the committed failure is re-disclosed by the next status
+    /// publication.
+    async fn deliver_initialize_failure_disclosures(&self, warning: String) {
+        if let Ok(mut omitted) = self.initialize_failure_disclosure_omitted.lock() {
+            *omitted = false;
+        }
+        let delivery = tokio::time::timeout(INITIALIZE_FAILURE_DISCLOSURE_BUDGET, async {
+            self.client.log_message(MessageType::WARNING, warning).await;
+            self.publish_analysis_status().await;
+        })
+        .await;
+        if delivery.is_err()
+            && let Ok(mut omitted) = self.initialize_failure_disclosure_omitted.lock()
+        {
+            *omitted = true;
+        }
+    }
+
     fn analysis_status_payload(&self) -> LSPAny {
         let health = self.analysis_health_snapshot();
         self.analysis_status_payload_for_health(&health)
@@ -1936,6 +1977,20 @@ impl Backend {
             .lock()
             .ok()
             .and_then(|guard| guard.as_ref().cloned())
+    }
+
+    /// Whether the most recent bounded disclosure window after an
+    /// initialize-time failure commit expired without completing client
+    /// delivery (#3802). Unreadable state fails closed: an unknown delivery
+    /// outcome is reported as omitted rather than silently clean. Read
+    /// locally by tests; production surfaces observe the committed failure
+    /// itself, which the next status publication re-discloses.
+    #[cfg(test)]
+    pub(super) fn initialize_failure_disclosure_omitted(&self) -> bool {
+        self.initialize_failure_disclosure_omitted
+            .lock()
+            .map(|omitted| *omitted)
+            .unwrap_or(true)
     }
 
     async fn reload_repository_config(&self) {
@@ -3662,14 +3717,13 @@ impl LanguageServer for Backend {
         ));
         self.apply_workspace_root_resolution(resolution).await;
         if let Some(error) = config_error {
-            self.client
-                .log_message(
-                    MessageType::WARNING,
-                    format!("ripr config load failed; analysis is paused: {error}"),
-                )
-                .await;
+            // Commit the owning config failure before the optional client
+            // disclosures (#3802): the state transition must not depend on a
+            // client await, so a wedged or undriven peer can delay only the
+            // bounded disclosure window, never the failure itself.
+            let warning = format!("ripr config load failed; analysis is paused: {error}");
             self.set_configuration_failure(error);
-            self.publish_analysis_status().await;
+            self.deliver_initialize_failure_disclosures(warning).await;
         }
         // The profile store lands after the root application and config
         // failure handling because applying a workspace-root authority
@@ -3685,17 +3739,19 @@ impl LanguageServer for Backend {
             // through the same blocking-failure channel as a config load
             // failure so the status payload discloses the state and analysis
             // stays paused instead of running on a torn negotiation.
-            self.client
-                .log_message(
-                    MessageType::WARNING,
-                    "ripr client feature profile could not be stored; analysis is paused",
-                )
-                .await;
+            // Commit the owning failure BEFORE any client delivery (#3802):
+            // the state transition must not depend on an optional client
+            // await, so a wedged or undriven peer can delay only the bounded
+            // disclosure window and never leave the session hanging
+            // half-initialized without its failure committed.
             self.record_blocking_failure(
                 AnalysisFailureKind::SessionStateInconsistent,
                 "client feature profile could not be stored after initialize negotiation; analysis is paused",
             );
-            self.publish_analysis_status().await;
+            self.deliver_initialize_failure_disclosures(
+                "ripr client feature profile could not be stored; analysis is paused".to_string(),
+            )
+            .await;
         }
         Ok(initialize_result_for_client(
             supports_pull_diagnostics,
