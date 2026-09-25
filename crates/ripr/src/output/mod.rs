@@ -65,6 +65,7 @@ pub(crate) mod typescript_packet_projection;
 pub(crate) mod typescript_preview_card;
 pub(crate) mod value_path;
 pub(crate) mod waiver_aging;
+pub(crate) mod workflow_escape;
 
 // #2973 owns a source-level compatibility inventory, not a binary discovery
 // surface or a migration of every emitter's version authority. This reference
