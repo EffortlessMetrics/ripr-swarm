@@ -13871,7 +13871,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
         typescript_false_actionable_summary
             .get("cases")
             .and_then(Value::as_u64),
-        Some(14)
+        Some(15)
     );
     assert_eq!(
         typescript_false_actionable_summary
@@ -13885,7 +13885,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
             .get("false_actionable_rate")
             .and_then(|value| value.get("checked"))
             .and_then(Value::as_u64),
-        Some(14)
+        Some(15)
     );
     assert_eq!(
         typescript_false_actionable_summary
@@ -13898,7 +13898,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
         .get("cases")
         .and_then(Value::as_array)
         .ok_or_else(|| "typescript_false_actionable_audit cases missing".to_string())?;
-    assert_eq!(typescript_false_actionable_cases.len(), 14);
+    assert_eq!(typescript_false_actionable_cases.len(), 15);
     assert!(
         typescript_false_actionable_cases
             .iter()
