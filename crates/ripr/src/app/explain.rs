@@ -205,7 +205,11 @@ mod tests {
         )?;
         require_contains(&rendered, "edit surface: tests/discount.test.ts")?;
         require_contains(&rendered, "verify: jest tests/discount.test.ts")?;
-        require_contains(&rendered, "receipt: ripr outcome ")?;
+        require_contains(
+            &rendered,
+            "receipt: ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 ",
+        )?;
+        require_not_contains(&rendered, "ripr outcome")?;
         require_contains(&rendered, "authority: preview_advisory_only")?;
         require_not_contains(&rendered, "status: not actionable")?;
         Ok(())

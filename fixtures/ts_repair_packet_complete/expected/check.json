@@ -127,7 +127,7 @@
           "Do not treat preview-language evidence as gate authority."
         ],
         "owner": "applyDiscount",
-        "receipt_command": "ripr outcome --before <baseline> --after <repair> --verify-cmd 'jest tests/discount.test.ts' --out target/ripr/receipts/gap_typescript_typescript_preview_2396aec1.targeted-test-outcome.json",
+        "receipt_command": "ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 --verify-command 'jest tests/discount.test.ts' --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json",
         "repair_kind": "AddBoundaryAssertion",
         "schema_version": "0.4",
         "source": "typescript_preview_projection",

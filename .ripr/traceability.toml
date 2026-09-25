@@ -5422,12 +5422,17 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::receipt_check_missing_file_exits_nonzero_smoke",
   "crates/ripr/tests/cli_smoke.rs::receipt_help_exits_zero_smoke",
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_legacy_alias_still_dispatches_smoke",
-  "crates/ripr/tests/cli_smoke.rs::receipt_default_long_gap_path_round_trips_smoke"
+  "crates/ripr/tests/cli_smoke.rs::receipt_default_long_gap_path_round_trips_smoke",
+  # canonical_receipt_command field rule: TypeScript preview packet emitter
+  "crates/ripr/src/cli/commands.rs::tests::typescript_preview_receipt_command_parses_as_receipt_write",
+  "crates/ripr/src/cli/commands.rs::tests::typescript_preview_receipt_command_is_not_ripr_outcome",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::projected_receipt_command_is_canonical_receipt_write"
 ]
 fixtures = []
 code = [
   "crates/ripr/src/app/receipt.rs",
-  "crates/ripr/src/cli/commands/receipt.rs"
+  "crates/ripr/src/cli/commands/receipt.rs",
+  "crates/ripr/src/output/receipt_write.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0079-canonical-receipt-command-contract.md"
@@ -5793,7 +5798,7 @@ tests = [
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_cross_language_bridge_returns_none",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::canonical_gap_id_derives_from_finding_id",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::canonical_gap_id_normalizes_backslashes",
-  "crates/ripr/src/output/typescript_packet_projection.rs::tests::receipt_command_is_ripr_outcome_shape",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::projected_receipt_command_is_canonical_receipt_write",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::must_not_change_includes_preview_clause_via_shared_function",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_typescript_repair_packet_becomes_agent_packet_gap_record",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_typescript_fixture_synthesizes_receipt_write_for_packet",
