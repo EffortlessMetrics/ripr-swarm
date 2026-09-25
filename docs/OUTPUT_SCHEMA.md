@@ -946,6 +946,14 @@ The evidence-first fields are additive in schema `0.2`:
       confirms the cross-package exclusion by comparing candidates with vs.
       without the package-local filter. Only emitted when `workspace_root` is
       `Some` (i.e. in production, not in unit tests without a workspace root).
+    - `typescript_path_alias_unresolved` — fired (RIPR-SPEC-0099) when a related
+      test imports a symbol name-matched to the owner from a NON-RELATIVE
+      specifier (`@/...`, `#...`, bare package name) that the adapter could not
+      resolve to a unique workspace file, so no credit was given. The real
+      producer is `static_limit.rs::named_limitations_for_alias_unresolved`;
+      it requires all three conditions (non-relative import, imported name
+      matches the owner name, and the import did not credit the owner) and is
+      classification-neutral (additive disclosure only).
   - `typescript_limitation_sample: <name> at <file>:<line>` — additive; the
     `file:line` of the real AST evidence that triggered the named limitation.
   - `typescript_limitation_why: <name> — <why>` — additive; human-readable
@@ -1614,6 +1622,13 @@ suppression.
 - `unknown`
 
 `static_limit_kind` values:
+
+TypeScript exception: a TypeScript static limit sets `gap_state:
+static_limitation` and blocks the repair packet (`repair_packet_ready:
+false`) but does NOT suppress exposure classification — the finding keeps
+its independently-derived classification (e.g. `exposed` with
+`typescript_dynamic_assertion_unresolved` coexisting, as pinned by
+fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 
 - `dynamic_dispatch`
 - `metaprogramming`
