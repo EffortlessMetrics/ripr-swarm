@@ -3427,8 +3427,10 @@ marker = "libtest_mimic::Trial"
         no_impact_layout(&root)?;
         let config = RiprConfig::default();
         let changed = vec![PathBuf::from("docs/notes.md")];
-        // Cold run through the full path populates the fingerprint
-        // mapping for the next call.
+        // A full-inventory key run populates the fingerprint mapping
+        // for the next call (the scoped route itself never stores;
+        // the fast path stays purely opportunistic).
+        workspace_cache_key_at_with_config(&root, &config)?;
         let full =
             inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
         if !full.classified.is_empty() {
@@ -3490,8 +3492,9 @@ marker = "libtest_mimic::Trial"
         no_impact_layout(&root)?;
         let config = RiprConfig::default();
         let changed = vec![PathBuf::from("docs/notes.md")];
-        // Populate the mapping while the corpus is readable.
-        inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+        // Populate the mapping while the corpus is readable (via the
+        // full-inventory key route, the mapping's writer).
+        workspace_cache_key_at_with_config(&root, &config)?;
         // Revoke all content access to the Rust sources. Manifest and
         // directory reads stay permitted; only file bytes are denied.
         let source = root.join("src/lib.rs");
@@ -3551,7 +3554,9 @@ marker = "libtest_mimic::Trial"
         no_impact_layout(&root)?;
         let config = RiprConfig::default();
         let changed = vec![PathBuf::from("docs/notes.md")];
-        inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+        // Warm the mapping through its writer (the full-inventory key
+        // route); the scoped route never stores.
+        workspace_cache_key_at_with_config(&root, &config)?;
         let entries = no_impact_fingerprint_entries(&root)?;
         if entries.len() != 1 {
             return Err(format!(
@@ -3583,7 +3588,9 @@ marker = "libtest_mimic::Trial"
         no_impact_layout(&root)?;
         let config = RiprConfig::default();
         let changed = vec![PathBuf::from("docs/notes.md")];
-        inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+        // Warm the mapping through its writer (the full-inventory key
+        // route); the scoped route never stores.
+        workspace_cache_key_at_with_config(&root, &config)?;
         let entries = no_impact_fingerprint_entries(&root)?;
         if entries.len() != 1 {
             return Err(format!(
@@ -3627,7 +3634,9 @@ marker = "libtest_mimic::Trial"
         no_impact_layout(&root)?;
         let config = RiprConfig::default();
         let changed = vec![PathBuf::from("docs/notes.md")];
-        inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+        // Warm the mapping through its writer (the full-inventory key
+        // route); the scoped route never stores.
+        workspace_cache_key_at_with_config(&root, &config)?;
         let fast =
             inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], true)?;
         let full =
