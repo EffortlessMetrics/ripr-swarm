@@ -30,6 +30,11 @@ pub(crate) struct ReExportIndex {
 impl ReExportIndex {
     /// Construct an empty index (no re-export tracing).
     /// Used by unit-test callers that do not exercise the re-export path.
+    ///
+    /// Test-only: production callers (the live pipeline and the mock-path
+    /// collector) always thread the real index through, so an empty index is
+    /// never constructed outside `cfg(test)`.
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self::default()
     }
