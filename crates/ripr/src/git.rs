@@ -20,6 +20,8 @@ use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use crate::process_owner::OwnedProcess;
+
 /// Grace period for draining stdout/stderr after a timed process-tree kill.
 ///
 /// A descendant can briefly retain an inherited pipe handle after the parent
@@ -99,14 +101,14 @@ pub(crate) fn run_git_output_with_deadline(
     timeout: Option<Duration>,
 ) -> Result<Output, String> {
     let describe = format!("git -C {} {:?}", root.display(), args);
-    let mut command = git_command(root, args);
+    let command = git_command(root, args);
     // `current_dir(root)`, not `git -C <root>`: for a missing/unusable root
     // the spawn itself fails, preserving the established
     // `failed to run git …` error family the context/explain invalid-root
     // contract pins (a `-C` flag would let git report the bad root as a
     // non-zero exit instead, changing the error text). For valid roots the
     // two forms are equivalent.
-    collect_output_with_deadline(&mut command, timeout, &describe)
+    collect_output_with_deadline(command, timeout, &describe)
 }
 
 fn git_command(root: &Path, args: &[&str]) -> Command {
@@ -132,8 +134,12 @@ pub(crate) fn run_git_output_with_deadline_and_limit(
         return Err("git output limit must be greater than zero".to_string());
     }
     let describe = format!("git -C {} {:?}", root.display(), args);
-    let mut command = git_command(root, args);
-    collect_output_with_deadline_and_limit(&mut command, timeout, max_output_bytes, &describe)
+    collect_output_with_deadline_and_limit(
+        git_command(root, args),
+        timeout,
+        max_output_bytes,
+        &describe,
+    )
 }
 
 #[cfg(test)]
@@ -155,15 +161,18 @@ pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE");
-    collect_output_with_deadline_and_limit(&mut command, timeout, max_output_bytes, &describe)
+    collect_output_with_deadline_and_limit(command, timeout, max_output_bytes, &describe)
 }
 
 /// Spawn an arbitrary prepared `command` under the shared deadline,
 /// cancellation and bounded-capture contract. Git callers reach it through
 /// the wrappers above; the doctor's Perl exporter capability probe uses it
 /// directly so an unknown PATH binary can neither hang nor flood the doctor.
+///
+/// The command is consumed by value: the owned subprocess authority
+/// (#3803) takes it over for the Job Object-backed spawn on Windows.
 pub(crate) fn collect_output_with_deadline_and_limit(
-    command: &mut Command,
+    mut command: Command,
     timeout: Duration,
     max_output_bytes: usize,
     describe: &str,
@@ -173,18 +182,18 @@ pub(crate) fn collect_output_with_deadline_and_limit(
             "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} was given a zero deadline (not spawned)"
         ));
     }
-    let mut child = command
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("failed to run {describe}: {err}"))?;
+        .stderr(Stdio::piped());
+    let mut child =
+        OwnedProcess::spawn(command).map_err(|err| format!("failed to run {describe}: {err}"))?;
     let stdout_reader = child
-        .stdout
+        .stdout_pipe()
         .take()
         .map(|pipe| spawn_bounded_pipe_reader(pipe, max_output_bytes));
     let stderr_reader = child
-        .stderr
+        .stderr_pipe()
         .take()
         .map(|pipe| spawn_bounded_pipe_reader(pipe, max_output_bytes));
 
@@ -316,7 +325,7 @@ fn drain_bounded_pipe_reader(
 /// pre-#2303 Perl precedent avoided this with `Stdio::null`; git output is
 /// needed, so the pipes are drained instead).
 fn collect_output_with_deadline(
-    command: &mut Command,
+    mut command: Command,
     timeout: Option<Duration>,
     describe: &str,
 ) -> Result<Output, String> {
@@ -327,14 +336,14 @@ fn collect_output_with_deadline(
             "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} was given a zero deadline (not spawned)"
         ));
     }
-    let mut child = command
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("failed to run {describe}: {err}"))?;
-    let stdout_reader = child.stdout.take().map(spawn_pipe_reader);
-    let stderr_reader = child.stderr.take().map(spawn_pipe_reader);
+        .stderr(Stdio::piped());
+    let mut child =
+        OwnedProcess::spawn(command).map_err(|err| format!("failed to run {describe}: {err}"))?;
+    let stdout_reader = child.stdout_pipe().take().map(spawn_pipe_reader);
+    let stderr_reader = child.stderr_pipe().take().map(spawn_pipe_reader);
 
     let wait = poll_child(&mut child, timeout, describe);
     let timed_out = !matches!(&wait, ChildWait::Exited(_));
@@ -373,8 +382,13 @@ pub(crate) enum ChildWait {
 /// child honors an LSP refresh supersede (#2303). Lifted from the Perl
 /// facts exporter wait in `app::check` (pre-#2303 `ChildWaitTimeoutExt`)
 /// and shared by both call families.
+///
+/// `child` is the shared owned-subprocess authority (#3803): on Windows a
+/// non-`Exited` arm terminates the whole Job Object tree and reaps the
+/// direct child before returning; on other platforms the direct-child
+/// kill/reap behavior is unchanged.
 pub(crate) fn poll_child(
-    child: &mut std::process::Child,
+    child: &mut OwnedProcess,
     timeout: Option<Duration>,
     describe: &str,
 ) -> ChildWait {
@@ -384,11 +398,11 @@ pub(crate) fn poll_child(
             Ok(Some(status)) => return ChildWait::Exited(status),
             Ok(None) => {
                 if let Err(cancelled) = crate::analysis::cancellation::checkpoint() {
-                    terminate_child_tree(child);
+                    let _ = child.terminate_tree();
                     return ChildWait::Cancelled(cancelled);
                 }
                 if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                    terminate_child_tree(child);
+                    let _ = child.terminate_tree();
                     let timeout_ms = timeout.map_or(0, |limit| limit.as_millis());
                     return ChildWait::TimedOut(format!(
                         "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the {timeout_ms}ms deadline (process terminated)"
@@ -397,7 +411,7 @@ pub(crate) fn poll_child(
                 std::thread::sleep(POLL_INTERVAL);
             }
             Err(err) => {
-                terminate_child_tree(child);
+                let _ = child.terminate_tree();
                 return ChildWait::WaitFailed(err.to_string());
             }
         }
@@ -454,20 +468,6 @@ fn drain_pipe_reader(
             "{stream_name} pipe reader failed while collecting {describe}"
         )),
     }
-}
-
-fn terminate_child_tree(child: &mut std::process::Child) {
-    #[cfg(windows)]
-    {
-        let pid = child.id().to_string();
-        let _ = Command::new("taskkill")
-            .args(["/PID", pid.as_str(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 #[cfg(test)]
@@ -529,33 +529,27 @@ mod tests {
 
     /// Spawn the deterministic hung fixture child (the re-executed test
     /// binary sleeps 2 minutes and never exits on its own).
-    fn spawn_hung_child() -> Result<std::process::Child, String> {
-        hang_command()?
+    fn spawn_hung_child() -> Result<OwnedProcess, String> {
+        let mut command = hang_command()?;
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|err| format!("spawn hung fixture child: {err}"))
+            .stderr(Stdio::null());
+        OwnedProcess::spawn(command).map_err(|err| format!("spawn hung fixture child: {err}"))
     }
 
     /// Guard that terminates and reaps the hung fixture child on every
     /// exit path, so a broken kill path reports a test failure instead of
-    /// orphaning a 2-minute sleeper. Disarm after the reap proof observes
-    /// the exit.
-    struct HungChildGuard(Option<std::process::Child>);
+    /// orphaning a 2-minute sleeper. The owned subprocess authority
+    /// (#3803) performs the terminate-and-reap on drop, so an armed guard
+    /// can never leak the sleeper; `disarm` after the reap proof is a
+    /// no-op termination of the already-exited child.
+    struct HungChildGuard(Option<OwnedProcess>);
 
     impl HungChildGuard {
         fn disarm(&mut self) {
             if let Some(child) = self.0.take() {
                 drop(child);
-            }
-        }
-    }
-
-    impl Drop for HungChildGuard {
-        fn drop(&mut self) {
-            if let Some(child) = self.0.as_mut() {
-                terminate_child_tree(child);
             }
         }
     }
@@ -573,8 +567,7 @@ mod tests {
             return Err("fresh token should accept cancellation".to_string());
         }
         let mut guard = HungChildGuard(Some(spawn_hung_child()?));
-        let child: &mut std::process::Child =
-            guard.0.as_mut().ok_or("hung child guard is empty")?;
+        let child: &mut OwnedProcess = guard.0.as_mut().ok_or("hung child guard is empty")?;
         let wait = if cancelled {
             with_token(&token, || {
                 poll_child(child, Some(Duration::from_mins(2)), "hang-reap-proof")
@@ -664,12 +657,9 @@ mod tests {
         if reexec_harness() {
             return Ok(());
         }
-        let mut command = hang_command()?;
-        let result = collect_output_with_deadline(
-            &mut command,
-            Some(Duration::from_millis(50)),
-            "hang-test",
-        );
+        let command = hang_command()?;
+        let result =
+            collect_output_with_deadline(command, Some(Duration::from_millis(50)), "hang-test");
         let err = match result {
             Err(err) => err,
             Ok(_) => return Err("a hung invocation must fail, not collect output".to_string()),
@@ -789,7 +779,7 @@ mod tests {
             ),
         ]);
         let result = collect_output_with_deadline(
-            &mut command,
+            command,
             Some(Duration::from_secs(5)),
             "pipe-inheriting-descendant",
         );
@@ -876,9 +866,9 @@ mod tests {
         if !token.cancel(AnalysisAbortKind::Superseded) {
             return Err("fresh token should accept cancellation".to_string());
         }
-        let mut command = hang_command()?;
+        let command = hang_command()?;
         let result = with_token(&token, || {
-            collect_output_with_deadline(&mut command, Some(Duration::from_mins(2)), "hang-test")
+            collect_output_with_deadline(command, Some(Duration::from_mins(2)), "hang-test")
         });
         let err = match result {
             Err(err) => err,
@@ -905,12 +895,9 @@ mod tests {
         if reexec_harness() {
             return Ok(());
         }
-        let mut command = self_reexec_command(FLOOD_ENV)?;
-        let output = collect_output_with_deadline(
-            &mut command,
-            Some(Duration::from_secs(30)),
-            "flood-test",
-        )?;
+        let command = self_reexec_command(FLOOD_ENV)?;
+        let output =
+            collect_output_with_deadline(command, Some(Duration::from_secs(30)), "flood-test")?;
         if !output.status.success() {
             return Err(format!("flood child failed: {}", output.status));
         }

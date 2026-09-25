@@ -927,7 +927,7 @@ fn run_exporter_probe(
     let mut command = std::process::Command::new(candidate);
     command.args(args);
     crate::git::collect_output_with_deadline_and_limit(
-        &mut command,
+        command,
         timeout,
         PERL_EXPORTER_PROBE_OUTPUT_LIMIT,
         &format!("Perl fact exporter probe `{candidate}`"),
