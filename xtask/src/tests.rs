@@ -7916,7 +7916,9 @@ fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Res
     // up, so a prerelease or build-metadata version would embed a descriptor
     // row no request can match and silently leave the packaged RC extension
     // without a fallback.
-    for version in ["1.2.3-rc.1", "1.2.3+meta"] {
+    // A four-component version can never match the downloader's
+    // three-component generation lookup either.
+    for version in ["1.2.3-rc.1", "1.2.3+meta", "1.2.3.4"] {
         with_temp_cwd("release-server-descriptor-prerelease", |root| {
             let dist = root.join("dist");
             let asset_name = format!("ripr-server-v{version}-x86_64-unknown-linux-gnu.tar.gz");

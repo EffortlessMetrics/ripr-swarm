@@ -406,6 +406,25 @@ function fetchManifestBytesOverHttps(url: string): Promise<ManifestFetchOutcome>
           const chunks: Buffer[] = [];
           response.on('data', (chunk: Buffer) => chunks.push(chunk));
           response.on('end', () => resolve({ kind: 'ok', bytes: Buffer.concat(chunks) }));
+          // A connection that dies mid-body closes the response without
+          // `end`; without this guard the promise would pend forever. The
+          // resolve is idempotent, so a complete response keeps its `ok`.
+          response.on('close', () => {
+            if (!response.complete) {
+              resolve({
+                kind: 'transport_failure',
+                url: target,
+                message: `Manifest response from ${target} closed before completion.`
+              });
+            }
+          });
+          response.on('error', (error) => {
+            resolve({
+              kind: 'transport_failure',
+              url: target,
+              message: error instanceof Error ? error.message : String(error)
+            });
+          });
         });
         request.on('error', (error) => {
           resolve({ kind: 'transport_failure', url: target, message: error.message });

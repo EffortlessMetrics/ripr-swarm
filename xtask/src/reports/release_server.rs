@@ -149,7 +149,14 @@ pub(crate) fn release_server_manifest(args: &[String]) -> Result<(), String> {
     // would embed a generation no request can match, silently leaving the
     // packaged RC extension without its admitted fallback row (#3798), so
     // refuse the write before the descriptor can be committed.
-    if version.contains('-') || version.contains('+') {
+    let generation_components = version.split('.').count();
+    if version.contains('-')
+        || version.contains('+')
+        || generation_components != 3
+        || version
+            .split('.')
+            .any(|part| part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()))
+    {
         return Err(format!(
             "release-server-manifest must use the distribution generation (MAJOR.MINOR.PATCH) to write the editor descriptor; got `{version}`"
         ));
