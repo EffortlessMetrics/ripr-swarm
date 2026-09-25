@@ -91,8 +91,8 @@ Optional. Writes a repo-local `ripr.toml` at the selected workspace root that
 materializes the built-in defaults as repo policy so a team can review, commit,
 and tune them. `ripr.toml` is not required — missing config uses the same
 defaults. With `--ci github`, `ripr init` also writes a non-blocking GitHub
-Actions workflow for pilot/report/agent artifacts, optional repo-local cockpit
-rendering, and optional SARIF rendering/upload. It does not run mutation
+Actions workflow for pilot/report/agent artifacts and optional SARIF
+rendering/upload. It does not run mutation
 testing, enable CI blocking policy, or unlock basic CLI usefulness.
 
 ```text

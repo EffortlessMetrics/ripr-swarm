@@ -6,6 +6,8 @@
 //! - `extends` and `references` are NOT followed.
 //! - Resolution succeeds ONLY when a specifier matches a SINGLE existing
 //!   workspace file (.ts/.tsx/.js/.jsx).  Zero or >1 matches → `None`.
+//! - Exact keys win; otherwise the longest matching prefix before `*` wins.
+//! - Tied longest prefixes and unsupported winning templates → `None`.
 //! - Multi-entry value arrays (more than one candidate template) → `None`.
 //! - Multi-`*` glob patterns → `None`.
 //! - Any parse error or missing field → `None`.
@@ -43,18 +45,18 @@ struct RawCompilerOptions {
 
 /// Compiled alias map derived from `tsconfig.json` / `jsconfig.json`.
 ///
-/// Contains only the resolvable entries: literal keys or single-`*` glob keys
-/// whose value array has length exactly 1.  All other entries are silently
-/// excluded during construction (fail-closed per RIPR-SPEC-0099).
+/// Retains literal and single-`*` keys even when their templates are unsupported.
+/// Selection precedes file lookup: an unsupported winning key must block a
+/// broader match rather than lend its import to a different source file.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct TsAliasMap {
     /// Workspace root so that `resolve` can check file existence.
     root: PathBuf,
     /// `baseUrl`, relative to `root` (often `.`).
     base_url: String,
-    /// Literal entries: key → single template string.
-    literal_entries: HashMap<String, String>,
-    /// Glob entries: (prefix, suffix) → single template string.
+    /// Literal entries: key → supported template, or `None` to block resolution.
+    literal_entries: HashMap<String, Option<String>>,
+    /// Glob entries: (prefix, suffix) → supported template or blocker.
     ///
     /// The template may itself contain a `*`; the captured group from the
     /// specifier replaces that `*` in the template.
@@ -67,8 +69,8 @@ struct GlobEntry {
     prefix: String,
     /// Part of the pattern key after the `*` (may be empty).
     suffix: String,
-    /// The single value template (exactly one `*` or none).
-    template: String,
+    /// The single supported template; `None` retains an unsupported key.
+    template: Option<String>,
 }
 
 impl TsAliasMap {
@@ -81,7 +83,7 @@ impl TsAliasMap {
     ///
     /// Returns `None` (fail-closed) unless ALL of the following hold:
     /// 1. `specifier` is non-relative (does not start with `./` or `../`).
-    /// 2. A literal or single-`*` paths key matches.
+    /// 2. An exact key or a unique longest-prefix single-`*` key matches.
     /// 3. The matched value array has exactly one entry.
     /// 4. The value template has at most one `*`.
     /// 5. After substituting the captured `*`, the candidate path resolves to
@@ -96,21 +98,36 @@ impl TsAliasMap {
 
         // 1. Try literal match first.
         if let Some(template) = self.literal_entries.get(specifier) {
-            let candidate_str = strip_ts_ext(template);
+            let candidate_str = strip_ts_ext(template.as_deref()?);
             return self.unique_file_for(&candidate_str);
         }
 
-        // 2. Try glob entries (prefix*, prefix*suffix).
+        // 2. Select by TypeScript's longest-prefix rule, not HashMap order or
+        // whichever target exists. Equal-prefix ties depend on declaration
+        // order, which this map does not retain, so those stay unresolved.
+        let mut best: Option<(&GlobEntry, String)> = None;
+        let mut ambiguous = false;
         for entry in &self.glob_entries {
             let Some(captured) = match_glob(specifier, &entry.prefix, &entry.suffix) else {
                 continue;
             };
-            let expanded = entry.template.replace('*', &captured);
-            let candidate_str = strip_ts_ext(&expanded);
-            return self.unique_file_for(&candidate_str);
+            match best.as_ref() {
+                Some((current, _)) if current.prefix.len() > entry.prefix.len() => {}
+                Some((current, _)) if current.prefix.len() == entry.prefix.len() => {
+                    ambiguous = true;
+                }
+                _ => {
+                    best = Some((entry, captured));
+                    ambiguous = false;
+                }
+            }
         }
-
-        None
+        if ambiguous {
+            return None;
+        }
+        let (entry, captured) = best?;
+        let expanded = entry.template.as_deref()?.replace('*', &captured);
+        self.unique_file_for(&strip_ts_ext(&expanded))
     }
 
     /// Given a base candidate string (extension-stripped, slash-separated),
@@ -173,20 +190,18 @@ fn parse_alias_map(root: &Path, text: &str) -> Option<TsAliasMap> {
     let base_url = compiler_opts.base_url?;
     let paths = compiler_opts.paths.unwrap_or_default();
 
-    let mut literal_entries: HashMap<String, String> = HashMap::new();
+    let mut literal_entries: HashMap<String, Option<String>> = HashMap::new();
     let mut glob_entries: Vec<GlobEntry> = Vec::new();
 
     for (key, values) in &paths {
-        // Condition (4): value array must have length exactly 1.
-        if values.len() != 1 {
-            continue;
-        }
-        let template = &values[0];
-
-        // Condition (5): template may have at most one `*`.
-        if template.chars().filter(|&c| c == '*').count() > 1 {
-            continue;
-        }
+        // Retain unsupported keys as blockers. Dropping a more-specific key
+        // would let a broader alias claim an import that it does not own.
+        let template = match values.as_slice() {
+            [template] if template.chars().filter(|&c| c == '*').count() <= 1 => {
+                Some(template.clone())
+            }
+            _ => None,
+        };
 
         // Determine if key is literal or single-`*` glob.
         let star_count = key.chars().filter(|&c| c == '*').count();
@@ -238,6 +253,9 @@ fn match_glob(specifier: &str, prefix: &str, suffix: &str) -> Option<String> {
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod precedence_tests;
 
 #[cfg(test)]
 mod tests {
@@ -332,7 +350,7 @@ mod tests {
         write(&root, "src/owner.ts", "export function owner() {}");
         // Even if one path would resolve, multi-entry value → None
         let map = load_alias_map(&root).ok_or("should parse")?;
-        // The entry is excluded from the map entirely, so resolution returns None
+        // The key is retained as a blocker, so resolution returns None
         assert!(map.resolve("@/owner").is_none());
         Ok(())
     }

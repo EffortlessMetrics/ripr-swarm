@@ -3837,8 +3837,6 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         receipt["repair_attempt"]["edit_cage_verdict"]["status"],
         "compliant"
     );
-    // F15-11: the receipt names the test file the cage saw change, instead
-    // of `test_changed: null` beside a verdict that recorded the edit.
     assert_eq!(receipt["test_changed"], "tests/pricing.rs");
     let attempts = std::fs::read_dir(root.join("target/ripr/repair-attempts"))?
         .filter_map(Result::ok)
@@ -7796,7 +7794,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workflow.contains("### SARIF and badge status"));
     assert!(workflow.contains("### PR guidance annotations"));
     assert!(workflow.contains("### Known limits"));
-    assert!(workflow.contains("cargo xtask operator-cockpit"));
+    assert!(!workflow.contains("cargo xtask"));
     assert!(workflow.contains("continue-on-error: true"));
     assert!(workflow.contains("actions/upload-artifact@v7"));
     assert!(workflow.contains("RIPR_UPLOAD_SARIF"));

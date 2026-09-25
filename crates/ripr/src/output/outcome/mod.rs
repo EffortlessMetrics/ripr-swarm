@@ -1087,7 +1087,7 @@ fn no_movement_reason(
 
 /// One human line for a stage whose evidence changed. A stage can change
 /// without its state moving (its confidence or summary did), and "moved from
-/// yes to yes" read as a claim of movement that did not happen (F15-11).
+/// yes to yes" would claim movement that did not happen.
 fn stage_delta_line(stage: &str, delta: &TargetedTestOutcomeStageDelta) -> String {
     let before = optional_delta_value(delta.before_state.as_deref());
     let after = optional_delta_value(delta.after_state.as_deref());
@@ -2369,30 +2369,6 @@ mod tests {
         Ok(())
     }
 
-    fn targeted_static_seam(id: &str, grip_class: &str) -> StaticSeamRecord {
-        StaticSeamRecord {
-            seam_id: id.to_string(),
-            seam_kind: "predicate_boundary".to_string(),
-            file: "src/pricing.rs".to_string(),
-            line: 42,
-            seam_grip_class: grip_class.to_string(),
-            oracle_kind: "exact_value".to_string(),
-            oracle_strength: "unknown".to_string(),
-            observed_values: Vec::new(),
-            missing_discriminators: Vec::new(),
-            evidence_source: "legacy_fields".to_string(),
-            evidence_path: BTreeMap::new(),
-            related_tests_total: 0,
-        }
-    }
-
-    fn test_agent_verify_binding() -> AgentVerifyArtifactBinding {
-        AgentVerifyArtifactBinding {
-            before_content_sha256: format!("sha256:{}", "b".repeat(64)),
-            after_content_sha256: format!("sha256:{}", "c".repeat(64)),
-        }
-    }
-
     #[test]
     fn stage_delta_line_never_reports_movement_between_equal_states() {
         let delta = |before: &str, after: &str, before_conf: &str, after_conf: &str| {
@@ -2417,5 +2393,29 @@ mod tests {
             stage_delta_line("reach", &delta("yes", "yes", "high", "high")),
             "reach evidence stayed yes; only its summary changed"
         );
+    }
+
+    fn targeted_static_seam(id: &str, grip_class: &str) -> StaticSeamRecord {
+        StaticSeamRecord {
+            seam_id: id.to_string(),
+            seam_kind: "predicate_boundary".to_string(),
+            file: "src/pricing.rs".to_string(),
+            line: 42,
+            seam_grip_class: grip_class.to_string(),
+            oracle_kind: "exact_value".to_string(),
+            oracle_strength: "unknown".to_string(),
+            observed_values: Vec::new(),
+            missing_discriminators: Vec::new(),
+            evidence_source: "legacy_fields".to_string(),
+            evidence_path: BTreeMap::new(),
+            related_tests_total: 0,
+        }
+    }
+
+    fn test_agent_verify_binding() -> AgentVerifyArtifactBinding {
+        AgentVerifyArtifactBinding {
+            before_content_sha256: format!("sha256:{}", "b".repeat(64)),
+            after_content_sha256: format!("sha256:{}", "c".repeat(64)),
+        }
     }
 }
