@@ -1763,6 +1763,11 @@ fn validate_trusted_head_surface(
 }
 
 fn git_paths(root: &Path, args: &[&str]) -> Result<Vec<String>, String> {
+    // Callers pass `-z` output, which is never C-quoted; decoding rules
+    // come from the shared NUL path-record authority (#4006). Strict:
+    // non-UTF-8 or empty records fail loudly instead of collapsing through
+    // lossy conversion, which refuses admission in the trusted-surface
+    // validator rather than admitting a rewritten path.
     let output = Command::new("git")
         .current_dir(root)
         .args(args)
@@ -1775,11 +1780,27 @@ fn git_paths(root: &Path, args: &[&str]) -> Result<Vec<String>, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .split('\0')
-        .filter(|path| !path.is_empty())
-        .map(str::to_owned)
-        .collect())
+    decode_git_paths(&output.stdout, &args.join(" "))
+}
+
+/// Decode raw `-z` path-inventory bytes through the shared NUL path-record
+/// authority (#4006). Strict: non-UTF-8 or empty records fail loudly.
+fn decode_git_paths(output: &[u8], argv: &str) -> Result<Vec<String>, String> {
+    crate::analysis::parse_git_path_records(output)
+        .map_err(|err| format!("git {argv} path inventory: {err}"))
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| {
+                    path.to_str().map(str::to_string).ok_or_else(|| {
+                        format!(
+                            "git {argv} path inventory: decoded path {} is not valid UTF-8",
+                            path.display()
+                        )
+                    })
+                })
+                .collect()
+        })
 }
 
 /// Schema 0.1 artifact digest shape: `sha256:` plus 64 lowercase hex digits.
@@ -2671,6 +2692,55 @@ mod tests {
                     "a committed production change must block the receipt: {other:?}"
                 )),
             }
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn strict_git_paths_inventory_rejects_non_utf8() -> Result<(), String> {
+        // The strict-failure side of the NUL authority at the repair-attempt
+        // decode boundary: non-UTF-8 records fail loudly instead of
+        // collapsing through lossy conversion (which would admit a rewritten
+        // path in the trusted-surface validator).
+        let err = match decode_git_paths(b"ok.txt\0\xffbad\0", "diff --name-only -z") {
+            Err(err) => err,
+            Ok(paths) => {
+                return Err(format!("non-UTF-8 inventory must fail, decoded {paths:?}"));
+            }
+        };
+        if !err.contains("not valid UTF-8") {
+            return Err(format!("unexpected strict-decode error: {err}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn git_paths_decode_exotic_names_exact() -> Result<(), String> {
+        // No-regression pin for the #4006 strict-decode migration: this
+        // route already passed `-z`, so space and non-ASCII names decoded
+        // before and must decode after. The migration's behavior delta is
+        // strictness (non-UTF-8/empty records fail instead of collapsing),
+        // pinned by `strict_git_paths_inventory_rejects_non_utf8`; live
+        // non-UTF-8 names are impractical on Windows runners. Asserts
+        // through the real `git_paths` production path.
+        let root = test_repo_root("nul-paths")?;
+        let result = (|| -> Result<(), String> {
+            std::fs::write(root.join("sp ace.txt"), "spaces\n")
+                .map_err(|error| format!("write fixture failed: {error}"))?;
+            std::fs::write(root.join("uni-\u{e9}.txt"), "unicode\n")
+                .map_err(|error| format!("write fixture failed: {error}"))?;
+            run_git(&root, &["add", "-A"])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-qm", "exotic"])?;
+            let mut paths = git_paths(&root, &["diff", "--name-only", "-z", "HEAD~1", "HEAD"])?;
+            paths.sort();
+            let expected = vec!["sp ace.txt".to_string(), "uni-\u{e9}.txt".to_string()];
+            if paths != expected {
+                return Err(format!(
+                    "exotic path inventory mismatch: got {paths:?}, want {expected:?}"
+                ));
+            }
+            Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
         result
