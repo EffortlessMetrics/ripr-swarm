@@ -108,18 +108,29 @@ fn agent_start_prose_lines(written: &AgentStartWritten) -> Vec<String> {
 /// `commands_markdown`, `agent_brief`) and the agent status `next_command`
 /// name; `next_command` is `null` when every workflow input is present.
 fn render_agent_start_json(written: &AgentStartWritten) -> Result<String, String> {
+    use crate::agent::loop_commands::{
+        WORKFLOW_AGENT_BRIEF_ARTIFACT, WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT,
+        WORKFLOW_MANIFEST_ARTIFACT,
+    };
     let paths = &written.paths;
-    // `write_agent_start` always writes workflow.json, commands.md, then
-    // agent-brief.json; index defensively so a future reorder degrades to
-    // `null` instead of a panic.
+    // Match each path by artifact identity, not write order: a future
+    // reorder (or an added artifact) in `write_agent_start` must not
+    // silently remap fields.
+    let path_for = |artifact: &str| -> Option<String> {
+        let file_name = std::path::Path::new(artifact).file_name()?;
+        paths
+            .iter()
+            .find(|path| path.file_name() == Some(file_name))
+            .map(|path| path.display().to_string())
+    };
     let value = serde_json::json!({
         "schema_version": app::agent_workflow::AGENT_WORKFLOW_SCHEMA_VERSION,
         "tool": "ripr",
         "kind": "agent_start",
         "workflow": {
-            "workflow_manifest": paths.first().map(|path| path.display().to_string()),
-            "commands_markdown": paths.get(1).map(|path| path.display().to_string()),
-            "agent_brief": paths.get(2).map(|path| path.display().to_string()),
+            "workflow_manifest": path_for(WORKFLOW_MANIFEST_ARTIFACT),
+            "commands_markdown": path_for(WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT),
+            "agent_brief": path_for(WORKFLOW_AGENT_BRIEF_ARTIFACT),
         },
         "next_command": written.next_command,
     });
