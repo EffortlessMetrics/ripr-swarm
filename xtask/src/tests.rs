@@ -18489,8 +18489,8 @@ fn dogfood_typescript_false_actionable_audit_summary_flags_packet_ready_rows() -
         let cases = super::typescript_preview_false_actionable_audit_cases();
         let summary = super::dogfood_typescript_false_actionable_audit_summary(&cases);
         assert_eq!(summary.gate_status, "pass");
-        assert_eq!(summary.cases, 14);
-        assert_eq!(summary.must_remain_non_actionable, 14);
+        assert_eq!(summary.cases, 15);
+        assert_eq!(summary.must_remain_non_actionable, 15);
         assert_eq!(summary.false_actionable, 0);
         assert_eq!(summary.repair_packet_ready_true, 0);
 
