@@ -238,6 +238,7 @@ fn read_source_capped(
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct TempDir(PathBuf);
