@@ -6282,6 +6282,150 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
     Ok(())
 }
 
+/// Repro control (RIPR-SPEC-0098 value-sink extension): a ReturnValue seam
+/// whose confirming strong assertion observes an UNRELATED expression.
+/// The test calls the changed owner (`applyDiscount(100, 10);` →
+/// DirectOwnerCall relation) but its only strong assertion is
+/// `expect(formatDate(now)).toBe('2024-01-01')` — neither the owner name nor
+/// a changed token (`amount`) appears in the observed_expression. Before the
+/// value-sink extension this classified `exposed`; now the observation guard
+/// MUST fail closed and downgrade to `weakly_exposed` with a
+/// `propagation_unknown` limitation.
+#[test]
+fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/discount.ts"),
+        start_line: 1,
+        end_line: 8,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "discount side checks".to_string(),
+        local_name: "discount side checks".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/discount.test.ts"),
+        line: 1,
+        body_text: "applyDiscount(100, 10);\nexpect(formatDate(now)).toBe('2024-01-01');"
+            .to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            // Unrelated expression: no owner name, no changed token (`amount`).
+            observed_expression: Some("formatDate(now)".to_string()),
+            expected_value_or_variant: Some("'2024-01-01'".to_string()),
+            has_dynamic_matcher_arg: false,
+            oracle_confidence: OracleConfidence::High,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    };
+    let finding = classify_change(
+        Path::new("src/discount.ts"),
+        3,
+        "  return amount - 12;",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // MUST downgrade: the strong assertion observes an unrelated expression.
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "expected WeaklyExposed (unrelated strong assertion on ReturnValue), got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes after value-sink observation guard, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    let all_text: String = finding.missing.join("\n");
+    assert!(
+        all_text.contains("propagation_unknown"),
+        "expected propagation_unknown in missing, got: {all_text:?}"
+    );
+    Ok(())
+}
+
+/// Over-correction control (RIPR-SPEC-0098 value-sink extension): the exact
+/// audit repro — changed line `return amount - 12;` — but this time the test
+/// asserts the OWNER CALL (`expect(applyDiscount(100, 10)).toBe(88)`), so the
+/// observed_expression references the owner and the guard MUST confirm. The
+/// finding stays `class:exposed, discriminate:yes`.
+#[test]
+fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/discount.ts"),
+        start_line: 1,
+        end_line: 8,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "applies discount".to_string(),
+        local_name: "applies discount".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/discount.test.ts"),
+        line: 1,
+        body_text: "expect(applyDiscount(100, 10)).toBe(88);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            // Owner name is IN the observed_expression — confirms ReturnValue.
+            observed_expression: Some("applyDiscount(100, 10)".to_string()),
+            expected_value_or_variant: Some("88".to_string()),
+            has_dynamic_matcher_arg: false,
+            oracle_confidence: OracleConfidence::High,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    };
+    let finding = classify_change(
+        Path::new("src/discount.ts"),
+        3,
+        "  return amount - 12;",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // MUST stay exposed — the owner-call observation confirms the return value.
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "expected Exposed (owner-call observation on ReturnValue), got {:?}",
+        finding.class
+    );
+    assert!(
+        matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "expected discriminate==Yes, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    Ok(())
+}
+
 /// Conservative no-downgrade (RIPR-SPEC-0098 §fixture-3): a SideEffect where
 /// the test body has TWO strong assertions — one asserting the owner return
 /// value (`observed_expression = "trackAction(...)"`) AND one asserting a

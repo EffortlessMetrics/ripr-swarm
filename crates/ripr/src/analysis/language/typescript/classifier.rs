@@ -70,7 +70,24 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 /// observed-expression metadata is available to prove a side-channel), the guard
 /// **fails closed** and returns `false`, downgrading to WeaklyExposed.
 ///
-/// For all other families the guard always returns `true` (pre-guard behaviour).
+/// ### Value families (ReturnValue / FieldConstruction)
+///
+/// A strong assertion confirms (returns `true`, stays Exposed) only when it
+/// actually observes the changed sink:
+/// 1. Its `oracle_kind` matches the seam family (the same filter
+///    `strongest_family_matching_oracle` applies); AND
+/// 2. Its `observed_expression` either references the owner (the owner name or
+///    an owner call, e.g. `expect(applyDiscount(100, 10))`) or contains a
+///    changed token from the changed sub-expression.
+///
+/// An assertion on an UNRELATED expression (`expect(formatDate(now))`) does not
+/// witness `return amount - 12;`: the changed value never escapes into the
+/// observed expression, so the guard fails closed and the finding downgrades
+/// to WeaklyExposed. This mirrors the sink-alignment evidence the Python
+/// adapter already surfaces.
+///
+/// For all other families the guard always returns `true` (pre-guard
+/// behaviour). SideEffect / CallDeletion behaviour is pinned and unchanged.
 ///
 /// ### Fail-closed default (RIPR-SPEC-0098 hardening, #1235)
 ///
@@ -87,12 +104,19 @@ pub(crate) fn ts_changed_value_is_observed(
     owner_name: &str,
     candidates: &[TypeScriptRelatedCandidate<'_>],
 ) -> bool {
-    // Only apply the guard to SideEffect / CallDeletion families.
-    // All other families keep the pre-guard (always-confirmed) behaviour.
-    if !matches!(
+    // Apply the guard to effect families (SideEffect / CallDeletion) and value
+    // families (ReturnValue / FieldConstruction). All other families keep the
+    // pre-guard (always-confirmed) behaviour.
+    let value_family = matches!(
         probe_shape.family,
-        ProbeFamily::SideEffect | ProbeFamily::CallDeletion
-    ) {
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+    );
+    if !value_family
+        && !matches!(
+            probe_shape.family,
+            ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+        )
+    {
         return true;
     }
 
@@ -106,10 +130,10 @@ pub(crate) fn ts_changed_value_is_observed(
     };
 
     // Fail-CLOSED: confirmation must be affirmatively established by at least one
-    // strong assertion that actually witnesses a call effect. We scan every
+    // strong assertion that actually witnesses the changed sink. We scan every
     // strong assertion in the oracle-eligible candidates and return `true` the
-    // moment one of them qualifies. If none qualify, we downgrade — including the
-    // case where no `observed_expression` metadata is available at all (the
+    // moment one of them qualifies. If none qualify, we downgrade — including
+    // the case where no `observed_expression` metadata is available at all (the
     // former fail-OPEN `return true` fallback is deliberately gone: absence of
     // proof is not proof of observation).
     for candidate in candidates {
@@ -118,6 +142,35 @@ pub(crate) fn ts_changed_value_is_observed(
         }
         for assertion in &candidate.test.assertions {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
+                continue;
+            }
+            if value_family {
+                // Value families (ReturnValue / FieldConstruction): the strong
+                // assertion must MATCH the seam family (the same filter applied
+                // to `strongest_strength`) and its observed_expression must
+                // reference the owner (owner name or its call) or contain a
+                // changed token from the changed sub-expression. An assertion
+                // on an unrelated expression does not observe the changed
+                // sink; absence of observed_expression fails closed too.
+                if !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &probe_shape.family) {
+                    continue;
+                }
+                let Some(ref observed) = assertion.observed_expression else {
+                    continue;
+                };
+                if observed.contains(owner_name) {
+                    return true;
+                }
+                if !changed_tokens.is_empty()
+                    && changed_tokens
+                        .iter()
+                        .any(|tok| observed.contains(tok.as_str()))
+                {
+                    return true;
+                }
+                // This family-matching strong assertion observes an unrelated
+                // expression: it does NOT witness the changed sink. Keep
+                // scanning for a qualifying assertion.
                 continue;
             }
             // (1) Effect-shape oracle kinds confirm unconditionally: these ARE
@@ -161,25 +214,37 @@ pub(crate) fn ts_changed_value_is_observed(
         }
     }
 
-    // No strong assertion witnessed the call effect: fail closed → downgrade.
+    // No strong assertion witnessed the changed sink: fail closed → downgrade.
     false
 }
 
 /// Build the named limitation message for the RIPR-SPEC-0098 downgrade arm.
 ///
-/// Only fires for SideEffect / CallDeletion families (the guard is scoped to
-/// effect families only). Emits a `propagation_unknown` limitation.
+/// Fires for SideEffect / CallDeletion families (effect sink swallowed by
+/// value-shaped oracles) and for ReturnValue / FieldConstruction families
+/// (strong assertions that observe an unrelated expression, not the changed
+/// sink). Emits a `propagation_unknown` limitation.
 pub(crate) fn ts_observation_guard_limitation(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
 ) -> String {
-    // Describe the non-escaping sink where possible.
     let sink_hint = typescript_missing_discriminator_value(&probe_shape.family, line_text)
         .map(|disc| {
             let raw = strip_synthesized_prefix(&disc);
             format!(" (`{raw}`)")
         })
         .unwrap_or_default();
+    if matches!(
+        probe_shape.family,
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+    ) {
+        return format!(
+            "propagation_unknown: changed value sinks to the owner return value or constructed object{sink_hint}; \
+             all strong assertions observe an unrelated expression, not the changed sink; \
+             propagation unknown"
+        );
+    }
+    // Describe the non-escaping sink where possible.
     format!(
         "propagation_unknown: changed value sinks to a non-escaping call effect{sink_hint}; \
          all strong assertions observe the owner return value, not this call effect; \
