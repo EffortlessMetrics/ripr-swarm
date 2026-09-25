@@ -106,7 +106,11 @@ fn unsupported_winning_keys_block_broader_aliases() -> Result<(), String> {
         Some(PathBuf::from("fallback/feature/cart.ts"))
     );
     for key in ["@/feature/cart", "@/feature/*"] {
-        for values in [json!([]), json!(["src/cart", "other/cart"]), json!(["src/*/*"])] {
+        for values in [
+            json!([]),
+            json!(["src/cart", "other/cart"]),
+            json!(["src/*/*"]),
+        ] {
             let mut paths = serde_json::Map::new();
             paths.insert("@/*".to_string(), json!(["fallback/*"]));
             paths.insert(key.to_string(), values);
@@ -186,7 +190,10 @@ fn direct_and_barrel_relations_do_not_borrow_a_same_named_fallback_owner() -> Re
     let decoy_file = Path::new("fallback/feature/cart.ts");
     workspace.write("src/cart.ts", source)?;
     workspace.write("fallback/feature/cart.ts", source)?;
-    workspace.write("src/barrel.ts", "export { shippingFee } from '@/feature/cart';\n")?;
+    workspace.write(
+        "src/barrel.ts",
+        "export { shippingFee } from '@/feature/cart';\n",
+    )?;
     let owners = extract_owners(owner_file, source);
     let decoys = extract_owners(decoy_file, source);
     assert_eq!(owners.len(), 1, "nonempty real-owner control");
@@ -232,7 +239,10 @@ fn direct_and_barrel_relations_do_not_borrow_a_same_named_fallback_owner() -> Re
                 "{import_source} credited the decoy: {unrelated:?}"
             );
             if blocked {
-                assert!(related.is_empty(), "unsupported winning mapping was credited");
+                assert!(
+                    related.is_empty(),
+                    "unsupported winning mapping was credited"
+                );
             } else {
                 assert_eq!(related.len(), 1, "{import_source} lost its real owner");
                 let relation = related.first().ok_or("related test disappeared")?;
