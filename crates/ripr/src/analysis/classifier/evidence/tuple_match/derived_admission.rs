@@ -620,7 +620,10 @@ mod tests {
             let (receipts, other) = (vec![Receipt { id: "input-receipt".to_string() }], 1);
             let terminal = terminalize_proof(&receipts);
             assert_eq!(terminal.len(), 1);
-            assert_eq!(terminal[0].0.id, "input-receipt");
+            // The assertion must carry the earlier initializer's identity: a
+            // lookup that ignores the destructuring shadow would derive
+            // "receipt-1" and admit, so only the shadow count can reject.
+            assert_eq!(terminal[0].0.id, "receipt-1");
             assert_eq!(terminal[0].1, "request_identity_v2");"#
         ));
     }
@@ -633,7 +636,7 @@ mod tests {
         assert!(projection_is_admitted(
             r#"let receipts = vec![Receipt { id: "receipt-1".to_string() }];
             let terminal = terminalize_proof(&receipts);
-            let mut receipts = vec![Receipt { id: "input-receipt".to_string() }];
+            let receipts = vec![Receipt { id: "input-receipt".to_string() }];
             assert_eq!(terminal.len(), 1);
             assert_eq!(terminal[0].0.id, "receipt-1");
             assert_eq!(terminal[0].1, "request_identity_v2");"#
