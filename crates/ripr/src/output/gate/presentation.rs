@@ -627,7 +627,12 @@ mod tests {
     fn repair_route_leads_with_the_repair_start_when_carried() -> Result<(), String> {
         let command = "ripr agent repair --root . --seam-id seam-a --phase before";
         let mut with = String::new();
-        push_repair_route(&mut with, &route_with_repair(Some(command)));
+        // Inherited base repair (#4105 lane): #3968 added the
+        // `changed_line_anchored` parameter but missed these two test call
+        // sites, breaking every `--tests` compile on main. This test does not
+        // assert the owner/behavior labels, so the neutral unanchored value
+        // preserves the original assertions.
+        push_repair_route(&mut with, &route_with_repair(Some(command)), false);
         let start = with
             .find(&format!("  - Start repair: `{command}`\n"))
             .ok_or_else(|| format!("missing start line:\n{with}"))?;
@@ -639,7 +644,7 @@ mod tests {
         }
 
         let mut without = String::new();
-        push_repair_route(&mut without, &route_with_repair(None));
+        push_repair_route(&mut without, &route_with_repair(None), false);
         if without.contains("Start repair") {
             return Err(format!("no repair start without the field:\n{without}"));
         }
