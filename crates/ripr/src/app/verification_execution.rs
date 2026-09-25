@@ -354,8 +354,9 @@ fn run(
 
     let spec = &validated.command_spec;
     let root_identity = display_path(&root);
-    let head_before = current_git_head(&root)
-        .map_err(|error| operationally_rejected(format!("read HEAD before execution failed: {error}")))?;
+    let head_before = current_git_head(&root).map_err(|error| {
+        operationally_rejected(format!("read HEAD before execution failed: {error}"))
+    })?;
     let dirty_before = git_worktree_dirty(&root)?;
 
     // Disclosure is derived from the validated spec, never asserted as fixed
@@ -383,11 +384,13 @@ fn run(
         eprintln!("verification preflight: {disclosure}");
     }
 
-    let executable = std::env::current_exe()
-        .map_err(|error| operationally_rejected(format!("resolve ripr executable failed: {error}")))?;
+    let executable = std::env::current_exe().map_err(|error| {
+        operationally_rejected(format!("resolve ripr executable failed: {error}"))
+    })?;
     let observation = run_process(&executable, spec, &root, cancel_after_ms)?;
-    let head_after = current_git_head(&root)
-        .map_err(|error| operationally_rejected(format!("read HEAD after execution failed: {error}")))?;
+    let head_after = current_git_head(&root).map_err(|error| {
+        operationally_rejected(format!("read HEAD after execution failed: {error}"))
+    })?;
     let dirty_after = git_worktree_dirty(&root)?;
     let currentness = if head_before != head_after {
         VerificationCurrentnessV1::HistoricalNoncurrent
@@ -401,8 +404,9 @@ fn run(
         root_identity,
         head_before: head_before.clone(),
         head_after: head_after.clone(),
-        command_spec_sha256: crate::domain::command_spec_sha256(spec)
-            .map_err(|error| operationally_rejected(format!("command spec digest failed: {error}")))?,
+        command_spec_sha256: crate::domain::command_spec_sha256(spec).map_err(|error| {
+            operationally_rejected(format!("command spec digest failed: {error}"))
+        })?,
         process_disposition: observation.disposition,
         exit_status: observation.exit_status,
         stdout_sha256: digest(&observation.stdout.bytes),
