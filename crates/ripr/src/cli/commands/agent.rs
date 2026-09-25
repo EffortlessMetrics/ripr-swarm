@@ -878,7 +878,13 @@ fn run_agent_repair_phase(
             // The verify outcome already owns the top-level `status` name
             // (`advisory`), so the status report rides under `agent_status`;
             // every existing verify field keeps its name and value.
-            document["agent_status"] = status_document;
+            document
+                .as_object_mut()
+                .ok_or_else(|| {
+                    "rendered agent verify JSON must be an object for agent_status nesting"
+                        .to_string()
+                })?
+                .insert("agent_status".to_string(), status_document);
             let combined = serde_json::to_string_pretty(&document).map_err(|error| {
                 format!("serialize after-phase result document failed: {error}")
             })?;
