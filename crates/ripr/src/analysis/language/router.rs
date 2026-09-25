@@ -22,9 +22,7 @@ pub(crate) fn route(path: &Path) -> Option<LanguageId> {
         // Modern ESM/CJS extensions (.mts/.cts/.mjs/.cjs) ride the same
         // TypeScript/JavaScript adapter; `.d.ts` keeps routing here
         // incidentally because `Path::extension` reports "ts" for it.
-        "ts" | "tsx" | "js" | "jsx" | "mts" | "cts" | "mjs" | "cjs" => {
-            Some(LanguageId::TypeScript)
-        }
+        "ts" | "tsx" | "js" | "jsx" | "mts" | "cts" | "mjs" | "cjs" => Some(LanguageId::TypeScript),
         "py" => Some(LanguageId::Python),
         "pm" | "pl" | "t" | "psgi" => Some(LanguageId::Perl),
         _ => None,

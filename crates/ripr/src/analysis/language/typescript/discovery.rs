@@ -6,8 +6,7 @@ const TEST_FILE_STEM_SUFFIXES: &[&str] = &[".test", "-test", "_test", ".spec"];
 const TEST_DIRECTORY_NAMES: &[&str] = &["test", "tests", "__tests__"];
 // Every source extension routed to this adapter (router.rs), so Cypress
 // `*.cy.<ext>` classification stays bounded to real adapter source surface.
-const CYPRESS_SOURCE_EXTENSIONS: &[&str] =
-    &["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"];
+const CYPRESS_SOURCE_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"];
 const JASMINE_SPEC_DIRECTORY_NAMES: &[&str] = &["spec"];
 
 /// Whether a path is a test file by convention.

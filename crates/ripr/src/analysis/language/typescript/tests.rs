@@ -1379,8 +1379,11 @@ fn esm_cjs_extensions_parse_with_module_correct_source_type() {
         ".mts source with type annotations must parse"
     );
     assert!(
-        parse_error_reason(Path::new("src/tool.cts"), "const path = require('node:path');\n")
-            .is_none(),
+        parse_error_reason(
+            Path::new("src/tool.cts"),
+            "const path = require('node:path');\n"
+        )
+        .is_none(),
         ".cts source with require must parse"
     );
     assert!(
@@ -1394,8 +1397,11 @@ fn esm_cjs_extensions_parse_with_module_correct_source_type() {
     // And each routed extension still surfaces parser errors instead of
     // silently dropping the file.
     assert!(
-        parse_error_reason(Path::new("src/cart.mts"), "this is not :: valid +++ typescript")
-            .is_some(),
+        parse_error_reason(
+            Path::new("src/cart.mts"),
+            "this is not :: valid +++ typescript"
+        )
+        .is_some(),
         ".mts parse errors must be reported, not swallowed"
     );
 }
