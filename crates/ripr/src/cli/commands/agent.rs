@@ -864,12 +864,13 @@ fn run_agent_repair_phase(
                 // receipt-ready). The refusal must not swallow the typed apply
                 // evidence, so the outcome is carried to the end and the apply
                 // record is published either way.
+                let test_changed = authored_test_changed(&cage_policy, &cage_after.verdict);
                 let receipt_result = run_agent_receipt_for_attempt(
                     AgentReceiptOptions {
                         root: root.clone(),
                         verify_json: verify_json.clone(),
                         seam_id: attempt.seam_id.clone(),
-                        test_changed: None,
+                        test_changed,
                         commands_run: Vec::new(),
                         json: true,
                         out: Some(root.join("target/ripr/reports/agent-receipt.json")),
@@ -1110,6 +1111,23 @@ fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
 /// Upper bound on cage violations the after-phase narration lists; the attempt
 /// manifest retains all of them.
 const CAGE_RECOVERY_MAX_VIOLATIONS: usize = 10;
+
+/// The receipt's `test_changed` for an after phase: the attempt's selected
+/// test file, named only when the edit cage measured it changing and found
+/// nothing else wrong. The value is the cage's own normalized path; no test
+/// name is inferred.
+fn authored_test_changed(
+    policy: &crate::edit_cage::EditCagePolicy,
+    verdict: &crate::edit_cage::EditCageVerdict,
+) -> Option<String> {
+    if verdict.status == crate::edit_cage::EditCageVerdictStatus::Compliant {
+        let target = policy.selected_target.path();
+        if verdict.changed_paths.iter().any(|path| path == target) {
+            return Some(target.to_string());
+        }
+    }
+    None
+}
 
 /// Recovery narration for an after phase whose attempt did not finish
 /// compliant and current. Such an attempt is terminal: re-running it, or the
