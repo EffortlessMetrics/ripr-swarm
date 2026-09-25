@@ -220,7 +220,7 @@ fn read_source_capped(
     let file = std::fs::File::open(path)
         .map_err(|err| CappedReadError::Io(format!("open {}: {err}", path.display())))?;
     let mut bytes = Vec::new();
-    file.take(file_limit + 1)
+    file.take(file_limit.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|err| CappedReadError::Io(format!("read {}: {err}", path.display())))?;
     if bytes.len() as u64 > file_limit {

@@ -170,18 +170,39 @@ impl TsAliasMap {
 /// - `compilerOptions` absent.
 /// - `baseUrl` absent.
 /// - `extends` or `references` present (single-hop only — do NOT follow).
+///
+/// Test-only convenience over [`load_alias_map_with_read_error`] for the
+/// existing fixture callers; production surfaces read outcomes through the
+/// `_with_read_error` variant.
+#[cfg(test)]
 pub(crate) fn load_alias_map(root: &Path) -> Option<TsAliasMap> {
+    load_alias_map_with_read_error(root).0
+}
+
+/// Like [`load_alias_map`], but also reports the config path and read error
+/// when reading the first existing config file fails.
+///
+/// The error is preserved so `analyze_diff` can surface size-limit outcomes
+/// (`OverFileLimit` / `OverWorkspaceBudget`) as named limitations instead of
+/// failing silently closed. Plain IO failures stay in the second slot too;
+/// disclosure for those is owned by the read-error lane, which filters on
+/// `CappedReadError::is_size_limit`.
+pub(crate) fn load_alias_map_with_read_error(
+    root: &Path,
+) -> (Option<TsAliasMap>, Option<(PathBuf, super::bounded_read::CappedReadError)>) {
     for filename in &["tsconfig.json", "jsconfig.json"] {
         let path = root.join(filename);
         if !path.is_file() {
             continue;
         }
-        // Capped read: an over-limit tsconfig is treated like any other
-        // unreadable/invalid config — fail-closed to `None`.
-        let text = read_config_capped(&path).ok()?;
-        return parse_alias_map(root, &text);
+        // Capped read: a read failure fail-closes the alias map; size-limit
+        // outcomes are disclosed by the caller through the second slot.
+        return match read_config_capped(&path) {
+            Ok(text) => (parse_alias_map(root, &text), None),
+            Err(err) => (None, Some((path, err))),
+        };
     }
-    None
+    (None, None)
 }
 
 fn parse_alias_map(root: &Path, text: &str) -> Option<TsAliasMap> {

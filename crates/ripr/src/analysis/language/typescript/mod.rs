@@ -77,7 +77,9 @@ pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
 pub(crate) use static_limit::*;
 pub(crate) use tests_extract::*;
-pub(crate) use tsconfig::{TsAliasMap, load_alias_map};
+pub(crate) use tsconfig::{TsAliasMap, load_alias_map_with_read_error};
+#[cfg(test)]
+pub(crate) use tsconfig::load_alias_map;
 pub(crate) use types::*;
 
 /// TypeScript / JavaScript preview adapter.
@@ -197,11 +199,14 @@ impl LanguageAdapter for TypeScriptAdapter {
         // Build tsconfig.json alias map when opt-in flag is enabled (RIPR-SPEC-0099).
         // fail-closed: None when flag is off, when tsconfig is absent, when extends/
         // references are present, or when any other parse/resolution failure occurs.
-        let alias_map: Option<TsAliasMap> = if options.resolve_tsconfig_paths {
-            load_alias_map(&options.root)
-        } else {
-            None
-        };
+        // A capped-read size limit on the config itself is surfaced below as a
+        // named limitation rather than failing silently closed.
+        let (alias_map, alias_read_limit): (Option<TsAliasMap>, _) =
+            if options.resolve_tsconfig_paths {
+                load_alias_map_with_read_error(&options.root)
+            } else {
+                (None, None)
+            };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
         // Build the single-hop re-export index from all non-test workspace files
@@ -422,6 +427,23 @@ impl LanguageAdapter for TypeScriptAdapter {
             .with_affected_items(1)?
             .with_detail(limit.reason.clone())
         }).collect::<Result<Vec<_>, String>>()?);
+        // An over-limit tsconfig/jsconfig fail-closes the alias map; disclose
+        // the size limit so the missing alias resolution is not silent.
+        if let Some((file, err)) = alias_read_limit.filter(|(_, err)| err.is_size_limit()) {
+            limitations.push(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisStage::LanguageAdapter,
+                    AnalysisRecovery::new(
+                        AnalysisRecoveryKind::IncreaseConfiguredLimit,
+                        "Raise RIPR_TS_MAX_FILE_READ_BYTES, then re-run the analysis.",
+                    )?,
+                )
+                .with_path(file.to_string_lossy())?
+                .with_affected_items(1)?
+                .with_detail(err.reason())?,
+            );
+        }
         if workspace_scan.truncated {
             // Workspace discovery hit the max-visited-files cap; the file list
             // is partial, so disclose the bound instead of silently analyzing
