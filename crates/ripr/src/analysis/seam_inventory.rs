@@ -870,7 +870,7 @@ fn no_impact_fast_path_disabled() -> bool {
         .is_some_and(|value| value == "0")
 }
 
-/// Warm no-impact fast path (issue #3859). For a diff proven not to
+/// Warm no-impact fast path (issue #3859). For a diff established not to
 /// affect Rust seam/evidence semantics, rebuild the exact workspace
 /// cache key from the admitted corpus fingerprint mapping and return
 /// an empty scoped inventory without reading Rust source contents or
