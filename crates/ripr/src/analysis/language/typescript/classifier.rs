@@ -205,7 +205,10 @@ pub(crate) fn ts_changed_value_is_observed(
                 // identifier.
                 if !changed_tokens.is_empty() {
                     let observed_tokens = identifier_tokens(observed);
-                    if changed_tokens.iter().any(|tok| observed_tokens.contains(tok)) {
+                    if changed_tokens
+                        .iter()
+                        .any(|tok| observed_tokens.contains(tok))
+                    {
                         return true;
                     }
                 }
