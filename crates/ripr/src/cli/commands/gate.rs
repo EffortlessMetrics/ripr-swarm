@@ -438,7 +438,9 @@ mod tests {
         // blocking decision: it maps to the decision exit code 3, not the
         // could-not-complete code 2.
         let Err(decision) = result else {
-            return Err("expected a blocked gate decision error, got Ok".to_string());
+            return Err(CommandError::Failure(
+                "expected a blocked gate decision error, got Ok".to_string(),
+            ));
         };
         assert!(
             matches!(&decision, CommandError::Decision(message) if message.contains("blocked")),
