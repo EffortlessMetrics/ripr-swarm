@@ -7770,9 +7770,10 @@ fn mocha_no_lockfile_emits_runner_unresolved_limitation() -> Result<(), String> 
     }
 
     // The unresolved limitation MUST fire even though a framework was detected.
-    let has_limitation = finding.evidence.iter().any(|ev| {
-        ev == "typescript_package_limitation: typescript_test_runner_unresolved"
-    });
+    let has_limitation = finding
+        .evidence
+        .iter()
+        .any(|ev| ev == "typescript_package_limitation: typescript_test_runner_unresolved");
     if !has_limitation {
         return Err(format!(
             "expected typescript_test_runner_unresolved limitation when the inferred command is None; evidence={:?}",

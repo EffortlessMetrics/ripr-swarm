@@ -1173,9 +1173,9 @@ mod tests {
         );
         let lines = result.evidence_lines();
         assert!(
-            lines.iter().any(
-                |l| l == "typescript_package_limitation: typescript_test_runner_ambiguous"
-            ),
+            lines
+                .iter()
+                .any(|l| l == "typescript_package_limitation: typescript_test_runner_ambiguous"),
             "evidence lines missing typescript_test_runner_ambiguous: {:?}",
             lines
         );
