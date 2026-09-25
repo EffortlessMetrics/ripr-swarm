@@ -1191,7 +1191,7 @@ mod tests {
             }),
         );
         let mut drifted = packet.clone();
-        drifted["summary"]["targeted_mutation_route"]["status"] = "candidate";
+        drifted["summary"]["targeted_mutation_route"]["status"] = "candidate".into();
         let violations = validate_packet_value(&drifted, &options(), 1, true);
         assert!(
             violations
@@ -1202,10 +1202,13 @@ mod tests {
         );
 
         let mut missing = packet;
-        let Some(summary) = missing.get_mut("summary").and_then(Value::as_object_mut) else {
-            return Err("summary must be an object for the removal test".to_string());
-        };
-        summary.remove("targeted_mutation_route");
+        assert!(
+            matches!(missing.get_mut("summary"), Some(Value::Object(_))),
+            "summary must be an object for the removal test"
+        );
+        if let Some(summary) = missing.get_mut("summary").and_then(Value::as_object_mut) {
+            summary.remove("targeted_mutation_route");
+        }
         let violations = validate_packet_value(&missing, &options(), 1, true);
         assert!(
             violations.iter().any(|violation| {
