@@ -348,13 +348,14 @@ function fetchManifestBytesOverHttps(url: string): Promise<ManifestFetchOutcome>
   return new Promise((resolve) => {
     const attempt = (target: string, redirects: number): void => {
       // Request creation can throw synchronously: a redirect `Location` may
-      // resolve to a non-`https:` URL, and `https.get` rejects such a
+      // resolve to a non-`https:` URL, and the https request call rejects
+      // such a
       // protocol (`ERR_INVALID_PROTOCOL`) before any callback exists. On a
       // redirect hop that throw escapes the promise context as an uncaught
       // exception while this promise never settles, so the refusal and the
       // whole request setup must resolve the typed transport failure instead
       // (#3798: fail closed, never crash, never hang).
-      let request: ReturnType<typeof https.get>;
+      let request: import('http').ClientRequest;
       try {
         if (new URL(target).protocol !== 'https:') {
           resolve({

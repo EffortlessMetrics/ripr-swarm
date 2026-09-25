@@ -465,7 +465,8 @@ suite('Downloader Manifest Placement', () => {
     const server = new ManifestFixtureServer();
     await server.start();
     try {
-      // The initial placement itself is already a non-HTTPS URL: `https.get`
+      // The initial placement itself is already a non-HTTPS URL: the
+      // https request call
       // would refuse the protocol, and an unguarded throw must not escape the
       // fetch promise.
       await assert.rejects(
