@@ -639,6 +639,7 @@ mod tests {
             r#"let receipts = vec![Receipt { id: "receipt-1".to_string() }];
             let (receipts, other) = (vec![Receipt { id: "input-receipt".to_string() }], 1);
             let terminal = terminalize_proof(&receipts);
+            assert_eq!(terminal.len(), 1);
             // The assertion must carry the earlier initializer's identity: a
             // lookup that ignores the destructuring shadow would derive
             // "receipt-1" and admit, so only the shadow count can reject.
