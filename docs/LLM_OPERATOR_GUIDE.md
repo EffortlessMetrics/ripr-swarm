@@ -179,7 +179,7 @@ analysis, the same packet envelope can be rendered straight from a ledger
 record:
 
 ```bash
-ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id <gap-id> --json
+ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id <gap-id> --json > target/ripr/workflow/agent-packet.json
 ```
 
 This route does not rerun analysis: the record is read from the ledger named
