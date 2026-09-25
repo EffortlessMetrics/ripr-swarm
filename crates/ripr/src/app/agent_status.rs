@@ -1448,7 +1448,10 @@ mod tests {
         // No repair attempt is present, so the legacy artifact loop is the
         // active mode and every workflow artifact is required
         // (docs/LEARNINGS.md, 2026-07-25 false-confidence gates).
-        for artifact in value["artifacts"].as_array().expect("artifacts array") {
+        let artifacts = value["artifacts"]
+            .as_array()
+            .ok_or_else(|| "status JSON must carry an artifacts array".to_string())?;
+        for artifact in artifacts {
             assert_eq!(
                 artifact["required"], true,
                 "legacy loop must require `{}`",
@@ -1498,7 +1501,10 @@ mod tests {
         let rendered = render_agent_status_json(&report)?;
         let value: Value =
             serde_json::from_str(&rendered).map_err(|err| format!("parse status JSON: {err}"))?;
-        for artifact in value["artifacts"].as_array().expect("artifacts array") {
+        let artifacts = value["artifacts"]
+            .as_array()
+            .ok_or_else(|| "status JSON must carry an artifacts array".to_string())?;
+        for artifact in artifacts {
             assert_eq!(
                 artifact["required"], false,
                 "repair loop must not require the superseded projection `{}`",
