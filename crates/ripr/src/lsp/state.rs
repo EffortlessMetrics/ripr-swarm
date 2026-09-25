@@ -1122,32 +1122,54 @@ fn encoded_units_to_byte_offset(
     (units == target_units).then_some(line.len())
 }
 
+fn apply_document_content_change(
+    text: &mut String,
+    change: TextDocumentContentChangeEvent,
+    encoding: &PositionEncodingKind,
+) -> Result<(), ()> {
+    let Some(range) = change.range else {
+        *text = change.text;
+        return Ok(());
+    };
+    let Some(start) = document_position_byte_offset(text, range.start, encoding) else {
+        return Err(());
+    };
+    let Some(end) = document_position_byte_offset(text, range.end, encoding) else {
+        return Err(());
+    };
+    if start > end {
+        return Err(());
+    }
+    text.replace_range(start..end, &change.text);
+    Ok(())
+}
+
 /// Apply an LSP change list in wire order. A range-less change is a full
 /// replacement; later range changes are evaluated against that replacement,
 /// as required by the incremental synchronization contract.
+///
+/// The common zero/one-change path edits the retained buffer without copying
+/// the whole document. Multi-change notifications use a candidate buffer so a
+/// malformed later range cannot partially commit earlier changes from the
+/// same notification.
 fn apply_document_content_changes(
     text: &mut String,
     changes: Vec<TextDocumentContentChangeEvent>,
     encoding: &PositionEncodingKind,
 ) -> Result<(), ()> {
-    // Apply against a candidate buffer so one malformed later range cannot
-    // leave an earlier change from the same notification partially committed.
+    let mut changes = changes.into_iter();
+    let Some(first) = changes.next() else {
+        return Ok(());
+    };
+    let Some(second) = changes.next() else {
+        return apply_document_content_change(text, first, encoding);
+    };
+
     let mut candidate = text.clone();
+    apply_document_content_change(&mut candidate, first, encoding)?;
+    apply_document_content_change(&mut candidate, second, encoding)?;
     for change in changes {
-        let Some(range) = change.range else {
-            candidate = change.text;
-            continue;
-        };
-        let Some(start) = document_position_byte_offset(&candidate, range.start, encoding) else {
-            return Err(());
-        };
-        let Some(end) = document_position_byte_offset(&candidate, range.end, encoding) else {
-            return Err(());
-        };
-        if start > end {
-            return Err(());
-        }
-        candidate.replace_range(start..end, &change.text);
+        apply_document_content_change(&mut candidate, change, encoding)?;
     }
     *text = candidate;
     Ok(())
