@@ -282,11 +282,19 @@ pub(crate) fn ts_observation_guard_limitation(
 /// Observation keys on `observed_expression` (the `expect(<expr>)` argument).
 /// When it is absent, or names a local such as `result`, the witness fails
 /// closed; the finding then takes the existing weak path.
+///
+/// Receiver resolution: a member match (`pricing.applyDiscount(...)`) only
+/// counts when the receiver is bound to the owner's own module in this test
+/// (a namespace import such as `import * as pricing from "../src/pricing"`).
+/// A same-named method on an unrelated receiver (`other.total(50)`) never
+/// witnesses, even when its arguments carry the boundary literal.
 pub(crate) fn ts_predicate_boundary_is_witnessed(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
-    owner_name: &str,
+    owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
 ) -> bool {
     // An ambiguous fallback shape (`}`, an unrecognised statement) never names
     // a behavior an assertion could be shown to observe.
@@ -311,6 +319,8 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
         if !candidate.relation.uses_oracle() {
             continue;
         }
+        let owner_receivers =
+            owner_namespace_receivers(&candidate.test, owner, alias_map, workspace_root);
         for assertion in &candidate.test.assertions {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
                 || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate)
@@ -320,7 +330,7 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
             let Some(observed) = assertion.observed_expression.as_deref() else {
                 continue;
             };
-            for arguments in owner_call_arguments(observed, owner_name) {
+            for arguments in owner_call_arguments(observed, &owner.name, &owner_receivers) {
                 let witnessed = if literals.is_empty() {
                     call_has_identical_arguments(&arguments)
                         || object_argument_pins_operands_equal(&arguments, left, right)
@@ -395,26 +405,82 @@ fn numeric_literal_value(token: &str) -> Option<String> {
 
 /// Return the argument lists (one per call) of every `<owner_name>(...)` call
 /// inside `observed`, split at top-level commas.
-fn owner_call_arguments(observed: &str, owner_name: &str) -> Vec<Vec<String>> {
+/// Receiver names in `test` that bind to the owner's own module through a
+/// namespace import (`import * as pricing from "../src/pricing"`). A member
+/// call on such a receiver (`pricing.applyDiscount(...)`) IS an owner call,
+/// while a same-named method on any other receiver (`other.total(...)`) is
+/// not — this is the receiver resolution that keeps genuine namespace-import
+/// witnesses credited without crediting unrelated receivers.
+fn owner_namespace_receivers(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
+    test.imports_in_file
+        .iter()
+        .filter(|import| {
+            import.namespace
+                && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+        })
+        .map(|import| import.local.clone())
+        .collect()
+}
+
+/// The trailing identifier segment immediately before the final `.` of
+/// `before_match` — the receiver of a member call (`expect(pricing.` →
+/// `pricing`).
+fn receiver_before_dot(before_match: &str) -> String {
+    let trimmed = before_match.trim_end();
+    let without_dot = trimmed.strip_suffix('.').unwrap_or(trimmed);
+    without_dot
+        .chars()
+        .rev()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
+/// Return the argument lists (one per call) of every `<owner_name>(...)` call
+/// inside `observed`, split at top-level commas.
+///
+/// A member match (`pricing.applyDiscount(...)`) is kept only when the
+/// receiver is bound to the owner's own module via a namespace import
+/// (`owner_receivers`); otherwise the match is a same-named method on an
+/// unrelated receiver and is skipped.
+fn owner_call_arguments(
+    observed: &str,
+    owner_name: &str,
+    owner_receivers: &[String],
+) -> Vec<Vec<String>> {
     let mut calls = Vec::new();
     if owner_name.is_empty() {
         return calls;
     }
     for (idx, _) in observed.match_indices(owner_name) {
-        // Skip matches embedded in a longer identifier (`otherShippingFee`)
-        // and member accesses on a DIFFERENT receiver (`other.total(50)`):
-        // the match must start at a real owner call, so the preceding
-        // non-whitespace character must not be an identifier char, `_`, `$`,
-        // or `.`.
-        let preceded_by_identifier = observed
-            .get(..idx)
-            .and_then(|before| before.chars().next_back())
+        // Skip matches embedded in a longer identifier (`otherShippingFee`):
+        // the match must start at a real owner call.
+        let Some(before) = observed.get(..idx) else {
+            continue;
+        };
+        let preceded_by_identifier = before
+            .chars()
+            .next_back()
             .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$');
-        let preceded_by_member_access = observed
-            .get(..idx)
-            .and_then(|before| before.trim_end().chars().next_back())
-            == Some('.');
-        if preceded_by_identifier || preceded_by_member_access {
+        if preceded_by_identifier {
+            continue;
+        }
+        // Member access (`receiver.owner(...)`): keep only when the receiver
+        // resolves to the owner's own module (namespace import); a same-named
+        // method on an unrelated receiver (`other.total(50)`) must not
+        // witness the owner's boundary.
+        if before.trim_end().chars().next_back() == Some('.')
+            && !owner_receivers
+                .iter()
+                .any(|receiver| receiver == &receiver_before_dot(before))
+        {
             continue;
         }
         let Some(inner) = observed
@@ -802,8 +868,10 @@ pub(crate) fn classify_change(
         || ts_predicate_boundary_is_witnessed(
             &probe_shape,
             line_text,
-            &owner.name,
+            owner,
             &related_candidates,
+            alias_map,
+            workspace_root,
         );
     let observation_confirmed = strong_oracle_present
         && boundary_witnessed

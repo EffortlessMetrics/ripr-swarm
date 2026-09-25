@@ -7963,12 +7963,19 @@ fn spec_0027_boundary_witness_fails_closed_without_strong_owner_call_at_boundary
 #[test]
 fn spec_0027_same_named_method_on_other_receiver_does_not_witness() -> Result<(), String> {
     // The first test anchors the owner relation with a real owner call that
-    // is NOT at the boundary literal (`60` vs boundary `50`); the second
-    // asserts on a same-named method of a DIFFERENT receiver at the literal.
-    let tests = [
-        exact_value_test("total", "total(60)", "120"),
-        exact_value_test("total", "other.total(50)", "120"),
-    ];
+    // is NOT at the boundary literal (`60` vs boundary `50`). The second
+    // asserts on a same-named method of a DIFFERENT receiver at the literal;
+    // its namespace import binds `other` to `src/other-lib`, NOT to the
+    // owner's module, so it is a related, oracle-eligible test whose only
+    // boundary-shaped assertion must still be rejected.
+    let mut foreign = exact_value_test("total", "other.total(50)", "120");
+    foreign.imports_in_file = vec![TypeScriptImport {
+        source: "../src/other-lib".to_string(),
+        imported: None,
+        local: "other".to_string(),
+        namespace: true,
+    }];
+    let tests = [exact_value_test("total", "total(60)", "120"), foreign];
     let finding = classify_boundary_line("total", "  if (total >= 50) {", &tests)?;
     assert_eq!(
         finding.class,
@@ -7982,6 +7989,53 @@ fn spec_0027_same_named_method_on_other_receiver_does_not_witness() -> Result<()
             .any(|line| line.contains("changed predicate boundary `total == 50`")),
         "boundary limitation must be named: {:?}",
         finding.missing
+    );
+    Ok(())
+}
+
+/// Over-correction control (RIPR-SPEC-0027 receiver resolution): a member
+/// call whose receiver is a NAMESPACE IMPORT of the owner's own module
+/// (`import * as pricing from "../src/pricing"` observing
+/// `pricing.applyDiscount(100, 100)`) IS a genuine owner call. With the
+/// boundary `amount == threshold` (no literal operands), the two identical
+/// arguments `(100, 100)` witness the boundary and the finding MUST stay
+/// `exposed`. This pins the namespace-import witness that a blanket dot-skip
+/// would have falsely downgraded.
+#[test]
+fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/pricing.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let mut test = exact_value_test("applyDiscount", "pricing.applyDiscount(100, 100)", "90");
+    test.file = PathBuf::from("tests/pricing.test.ts");
+    test.imports_in_file = vec![TypeScriptImport {
+        source: "../src/pricing".to_string(),
+        imported: None,
+        local: "pricing".to_string(),
+        namespace: true,
+    }];
+    let finding = classify_change(
+        Path::new("src/pricing.ts"),
+        2,
+        "  if (amount >= threshold) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a namespace-import member call on the owner's module must witness the boundary"
     );
     Ok(())
 }
