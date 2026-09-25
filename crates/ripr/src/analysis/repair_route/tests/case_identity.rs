@@ -13,7 +13,11 @@ fn boundary_matching_preserves_operand_case() {
         description: "amount >= LIMIT".to_string(),
     };
 
-    for fact in ["amount >= LIMIT", "amount == LIMIT", "LIMIT (equality boundary)"] {
+    for fact in [
+        "amount >= LIMIT",
+        "amount == LIMIT",
+        "LIMIT (equality boundary)",
+    ] {
         assert!(discriminator_fact_matches(&required, fact), "{fact}");
     }
     for fact in [
@@ -61,8 +65,14 @@ fn exact_discriminator_matching_preserves_case_and_literal_contents() {
     ];
     for (required, exact, different) in cases {
         assert!(discriminator_fact_matches(&required, exact), "{exact}");
-        assert!(discriminator_fact_matches(&required, &format!("  {exact}  ")));
-        assert!(!discriminator_fact_matches(&required, different), "{different}");
+        assert!(discriminator_fact_matches(
+            &required,
+            &format!("  {exact}  ")
+        ));
+        assert!(
+            !discriminator_fact_matches(&required, different),
+            "{different}"
+        );
     }
 
     let required = RequiredDiscriminator::ReturnValue {
