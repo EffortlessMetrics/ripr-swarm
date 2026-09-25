@@ -355,7 +355,7 @@ mod tests {
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
         LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily,
         ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
-        StageState,
+        StageState, SymbolId,
     };
     use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
     use std::path::PathBuf;
@@ -548,6 +548,75 @@ mod tests {
                 .any(|line| line.starts_with("TypeScript preview actionability `")),
             "{missing:?}"
         );
+    }
+
+    /// #4105 wrongfam end-to-end: the observed `login('alice')` input provably
+    /// cannot reach the `user.length == 3` boundary, so the packet must fail
+    /// closed (stay `incomplete_repair_packet`) and the reason must name both
+    /// the boundary and the non-reaching observed input.
+    #[test]
+    fn boundary_unreachable_observed_input_fails_packet_closed_with_boundary_reason()
+    -> Result<(), String> {
+        let mut finding = sample_typescript_finding();
+        finding.probe.owner = Some(SymbolId("typescript:src/auth.ts::login".to_string()));
+        for line in [
+            "typescript_package_root: .",
+            "typescript_workspace_root: .",
+            "typescript_framework_hint: jest",
+            "typescript_runner_hint: npm",
+            "typescript_package_confidence: high",
+            "typescript_verify_command: jest tests/auth.test.ts",
+            "typescript_oracle_observed: login('alice')",
+            "typescript_oracle_expected: 'session-for-alice'",
+            "typescript_oracle_confidence: high",
+            "typescript_oracle_evidence_ref: tests/auth.test.ts:4",
+        ] {
+            finding.evidence.push(line.to_string());
+        }
+        finding.activation.missing_discriminators.push(
+            MissingDiscriminatorFact {
+                value: "user.length == 3".to_string(),
+                reason: "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator".to_string(),
+                flow_sink: None,
+            },
+        );
+        finding.related_tests.push(RelatedTest {
+            name: "login returns session".to_string(),
+            file: PathBuf::from("tests/auth.test.ts"),
+            line: 4,
+            oracle_strength: OracleStrength::Weak,
+            oracle_kind: OracleKind::ExactValue,
+            oracle: Some("expect(login('alice')).toBeGreaterThan(4)".to_string()),
+            relation_reason: None,
+            relation_confidence: None,
+        });
+
+        let Some(actionability) = preview_actionability_for(&finding) else {
+            return Err(
+                "expected structured TypeScript actionability for the wrongfam finding".to_string(),
+            );
+        };
+        assert!(
+            !actionability.repair_packet_ready,
+            "the packet must fail closed when the observed input cannot reach the boundary"
+        );
+        assert_eq!(
+            actionability.actionability_category, "incomplete_repair_packet",
+            "a downgraded packet must stay incomplete"
+        );
+        assert!(
+            actionability
+                .why_not_actionable
+                .contains("user.length == 3"),
+            "why_not_actionable must name the unreachable boundary: {}",
+            actionability.why_not_actionable
+        );
+        assert!(
+            actionability.why_not_actionable.contains("login('alice')"),
+            "why_not_actionable must name the non-reaching observed input: {}",
+            actionability.why_not_actionable
+        );
+        Ok(())
     }
 
     fn sample_typescript_finding() -> Finding {

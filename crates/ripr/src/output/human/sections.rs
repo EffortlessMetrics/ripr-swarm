@@ -5,6 +5,7 @@ use crate::domain::{
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
+    validate_agent_gap_record_packet,
 };
 use crate::output::next_step::reconcile_next_step;
 use crate::output::path::display_path;
@@ -703,8 +704,17 @@ pub(crate) fn push_typescript_repair_packet_field_note(out: &mut String, finding
 
     let maybe_record = typescript_gap_record_for(finding);
 
+    // The packet field-note is actionable only when the projected record
+    // passes the SHARED validator — the same flip authority as the JSON
+    // packet and `preview_actionability` (#4105). A projected-but-ineligible
+    // record (e.g. the observed oracle input cannot reach the named
+    // discriminator boundary) must not render as a delegatable packet.
+    let record_is_actionable = maybe_record
+        .as_ref()
+        .is_some_and(|record| validate_agent_gap_record_packet(record).is_ok());
+
     match maybe_record {
-        Some(record) => {
+        Some(record) if record_is_actionable => {
             // Actionable — render the full work-packet field-note.
             out.push_str("\nTypeScript repair packet (advisory)\n");
             out.push_str(&format!("  canonical gap: {}\n", record.canonical_gap_id));
@@ -750,7 +760,7 @@ pub(crate) fn push_typescript_repair_packet_field_note(out: &mut String, finding
             out.push_str("  why actionable: complete-contract TypeScript finding — package root, runner, owner, oracle all resolved; no blocking limitation\n");
             out.push_str("  authority: preview_advisory_only\n");
         }
-        None => {
+        maybe_record => {
             // Blocked — name the limitation, never emit a partial packet.
             // Only render this subsection if we have at least some preview
             // actionability data to surface (otherwise stay silent).
@@ -762,6 +772,17 @@ pub(crate) fn push_typescript_repair_packet_field_note(out: &mut String, finding
             out.push_str("\nTypeScript repair packet (advisory)\n");
             out.push_str("  status: not actionable\n");
             out.push_str(&format!("  limitation: {why}\n"));
+            // #4105: when a record WAS projected but the shared validator kept
+            // it ineligible, disclose the non-delegatable target shape so the
+            // boundary stays visible without presenting a delegatable packet.
+            if let Some(shape) = maybe_record
+                .as_ref()
+                .and_then(|record| record.repair_route.as_ref())
+                .and_then(|route| route.assertion_shape.as_deref())
+                .filter(|shape| !shape.trim().is_empty())
+            {
+                out.push_str(&format!("  target shape (not delegatable): {shape}\n"));
+            }
             out.push_str(&format!("  next capability needed: {next_capability}\n"));
         }
     }

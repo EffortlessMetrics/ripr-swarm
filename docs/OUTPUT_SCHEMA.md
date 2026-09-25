@@ -1199,6 +1199,21 @@ JSON fields:
   When absent, the human output contains a named `status: not actionable` limitation
   section instead. This field is RIPR-SPEC-0088 §2.2. It is not a gate, badge, or
   public repair authority; authority boundary remains `preview_advisory_only`.
+  `assertion_shape` derivation (issue #4105): the shape reuses the observed
+  oracle expression (`typescript_oracle_observed`) only when the observed call
+  input reaches the named missing discriminator, or when that reachability is
+  not statically decidable (non-literal boundaries such as `amount >= threshold`,
+  multi-argument calls without signature evidence, escaped string literals, or
+  callees that do not resolve to the owner). When the observed call input
+  provably does NOT reach the boundary — for example the discriminator is
+  `user.length == 3` while the observed call is `login('alice')` (length 5) —
+  the shape becomes an explicit boundary placeholder,
+  `login(/* boundary input for user.length == 3 */)`, and the packet fails
+  closed: `repair_packet_ready` stays `false`, `typescript_repair_packet` is
+  not emitted, and the human limitation section shows the shape as
+  `target shape (not delegatable)` together with a stop condition forbidding
+  reuse of the observed call input. A complete packet must not instruct a
+  duplicate of a non-discriminating assertion.
 - `perl_preview_card` is an additive optional object for Perl preview findings
   that already have strict fact-packet evidence, canonical gap identity,
   related-test evidence, missing discriminator evidence, verify-command
