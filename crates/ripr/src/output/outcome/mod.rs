@@ -694,12 +694,7 @@ fn targeted_outcome_evidence_delta(
 
     for (stage, stage_delta) in EVIDENCE_STAGES.iter().zip(delta.stage_deltas.iter()) {
         if let Some(stage_delta) = stage_delta {
-            deltas.push(format!(
-                "{} evidence moved from {} to {}",
-                stage,
-                optional_delta_value(stage_delta.before_state.as_deref()),
-                optional_delta_value(stage_delta.after_state.as_deref())
-            ));
+            deltas.push(stage_delta_line(stage, stage_delta));
         }
     }
 
@@ -1088,6 +1083,25 @@ fn no_movement_reason(
 ) -> Option<String> {
     (direction == "unchanged" && evidence_delta.is_empty())
         .then(|| format!("grip class and {evidence_source} evidence were unchanged"))
+}
+
+/// One human line for a stage whose evidence changed. A stage can change
+/// without its state moving (its confidence or summary did), and "moved from
+/// yes to yes" read as a claim of movement that did not happen (F15-11).
+fn stage_delta_line(stage: &str, delta: &TargetedTestOutcomeStageDelta) -> String {
+    let before = optional_delta_value(delta.before_state.as_deref());
+    let after = optional_delta_value(delta.after_state.as_deref());
+    if before != after {
+        return format!("{stage} evidence moved from {before} to {after}");
+    }
+    let before_confidence = optional_delta_value(delta.before_confidence.as_deref());
+    let after_confidence = optional_delta_value(delta.after_confidence.as_deref());
+    if before_confidence != after_confidence {
+        return format!(
+            "{stage} evidence stayed {after}; its confidence moved from {before_confidence} to {after_confidence}"
+        );
+    }
+    format!("{stage} evidence stayed {after}; only its summary changed")
 }
 
 fn optional_delta_value(value: Option<&str>) -> &str {
@@ -2377,5 +2391,31 @@ mod tests {
             before_content_sha256: format!("sha256:{}", "b".repeat(64)),
             after_content_sha256: format!("sha256:{}", "c".repeat(64)),
         }
+    }
+
+    #[test]
+    fn stage_delta_line_never_reports_movement_between_equal_states() {
+        let delta = |before: &str, after: &str, before_conf: &str, after_conf: &str| {
+            TargetedTestOutcomeStageDelta {
+                before_state: Some(before.to_string()),
+                after_state: Some(after.to_string()),
+                before_confidence: Some(before_conf.to_string()),
+                after_confidence: Some(after_conf.to_string()),
+                before_summary: Some("before".to_string()),
+                after_summary: Some("after".to_string()),
+            }
+        };
+        assert_eq!(
+            stage_delta_line("reach", &delta("weak", "yes", "low", "low")),
+            "reach evidence moved from weak to yes"
+        );
+        assert_eq!(
+            stage_delta_line("reach", &delta("yes", "yes", "low", "high")),
+            "reach evidence stayed yes; its confidence moved from low to high"
+        );
+        assert_eq!(
+            stage_delta_line("reach", &delta("yes", "yes", "high", "high")),
+            "reach evidence stayed yes; only its summary changed"
+        );
     }
 }

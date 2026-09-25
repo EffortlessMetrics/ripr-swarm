@@ -809,12 +809,13 @@ fn run_agent_repair_phase(
                 // receipt-ready). The refusal must not swallow the typed apply
                 // evidence, so the outcome is carried to the end and the apply
                 // record is published either way.
+                let test_changed = authored_test_changed(&cage_policy, &cage_after.verdict);
                 let receipt_result = run_agent_receipt_for_attempt(
                     AgentReceiptOptions {
                         root: root.clone(),
                         verify_json: verify_json.clone(),
                         seam_id: attempt.seam_id.clone(),
-                        test_changed: None,
+                        test_changed,
                         commands_run: Vec::new(),
                         json: true,
                         out: Some(root.join("target/ripr/reports/agent-receipt.json")),
@@ -1055,6 +1056,22 @@ fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
 /// Upper bound on cage violations the after-phase narration lists; the attempt
 /// manifest retains all of them.
 const CAGE_RECOVERY_MAX_VIOLATIONS: usize = 10;
+
+/// The receipt's `test_changed` for an after phase: the attempt's selected
+/// test file, named only when the edit cage measured it changing and found
+/// nothing else wrong. The after phase used to pass nothing, so every
+/// transaction receipt said `test_changed: null` beside a cage that had just
+/// recorded the test edit (F15-11). The value is the cage's own path; no test
+/// name is inferred.
+fn authored_test_changed(
+    policy: &crate::edit_cage::EditCagePolicy,
+    verdict: &crate::edit_cage::EditCageVerdict,
+) -> Option<String> {
+    let target = policy.selected_target.path();
+    (verdict.status == crate::edit_cage::EditCageVerdictStatus::Compliant
+        && verdict.changed_paths.iter().any(|path| path == target))
+    .then(|| target.to_string())
+}
 
 /// Recovery narration for an after phase whose attempt did not finish
 /// compliant and current. Such an attempt is terminal: re-running it, or the
@@ -1878,5 +1895,72 @@ mod before_phase_stdout_tests {
     fn unreadable_packet_falls_back_to_the_json_on_a_terminal() {
         let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
         assert_eq!(before_phase_stdout(packet, "p", true), packet);
+    }
+}
+
+#[cfg(test)]
+mod authored_test_changed_tests {
+    use super::authored_test_changed;
+    use crate::edit_cage::{CagePathRule, EditCagePolicy, EditCageVerdict, EditCageVerdictStatus};
+
+    fn policy() -> Result<EditCagePolicy, String> {
+        Ok(EditCagePolicy {
+            selected_target: CagePathRule::exact("tests/pricing.rs")?,
+            allowed_edit_surface: vec![CagePathRule::exact("tests/pricing.rs")?],
+            forbidden_paths: vec![CagePathRule::subtree("src")?],
+            expected_operational_writes: vec![CagePathRule::subtree("target/ripr")?],
+            ignored_build_output: None,
+            untracked_build_lockfile: None,
+        })
+    }
+
+    fn verdict(status: EditCageVerdictStatus, changed: &[&str]) -> EditCageVerdict {
+        EditCageVerdict {
+            status,
+            changed_paths: changed.iter().map(|path| (*path).to_string()).collect(),
+            violations: Vec::new(),
+        }
+    }
+
+    /// The receipt names the selected test file only when the cage is
+    /// compliant and recorded that file changing; any other verdict leaves
+    /// `test_changed` null rather than naming a file the cage did not admit.
+    #[test]
+    fn names_the_selected_file_only_for_a_compliant_cage_that_recorded_it() -> Result<(), String> {
+        let policy = policy()?;
+        assert_eq!(
+            authored_test_changed(
+                &policy,
+                &verdict(EditCageVerdictStatus::Compliant, &["tests/pricing.rs"])
+            ),
+            Some("tests/pricing.rs".to_string())
+        );
+        for status in [
+            EditCageVerdictStatus::Violated,
+            EditCageVerdictStatus::Incomparable,
+        ] {
+            assert_eq!(
+                authored_test_changed(&policy, &verdict(status, &["tests/pricing.rs"])),
+                None,
+                "{status:?}"
+            );
+        }
+        assert_eq!(
+            authored_test_changed(
+                &policy,
+                &verdict(
+                    EditCageVerdictStatus::Compliant,
+                    &["target/ripr/report.json"]
+                )
+            ),
+            None,
+            "a compliant cage that did not record the selected file"
+        );
+        assert_eq!(
+            authored_test_changed(&policy, &verdict(EditCageVerdictStatus::Compliant, &[])),
+            None,
+            "an empty delta"
+        );
+        Ok(())
     }
 }
