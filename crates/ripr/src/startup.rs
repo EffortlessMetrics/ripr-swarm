@@ -1,12 +1,14 @@
 #![forbid(unsafe_code)]
 
-pub(crate) fn run() -> Result<(), String> {
+use ripr::cli::CommandError;
+
+pub(crate) fn run() -> Result<(), CommandError> {
     dispatch(collect_args())
 }
 
-fn dispatch(args: Vec<String>) -> Result<(), String> {
+fn dispatch(args: Vec<String>) -> Result<(), CommandError> {
     if let Some(mcp_args) = routed_mcp_args(&args) {
-        return ripr::mcp::run(&mcp_args);
+        return ripr::mcp::run(&mcp_args).map_err(CommandError::from);
     }
     ripr::cli::run(args)
 }

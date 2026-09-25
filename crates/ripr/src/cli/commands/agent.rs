@@ -11,6 +11,7 @@ use crate::app::agent_brief::{
     AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
 };
 use crate::app::{self, OutputFormat};
+use crate::cli::CommandError;
 use crate::cli::agent::{
     AgentBriefOptions, AgentCommand, AgentPacketOptions, AgentReceiptOptions, AgentRepairOptions,
     AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions, AgentStatusOptions,
@@ -42,21 +43,25 @@ use super::write_text_file;
 /// paths keep printing the bare agent verify 0.3 document instead.
 const REPAIR_AFTER_RESULT_SCHEMA_VERSION: &str = "0.1";
 
-pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
+pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     let command = parse_agent_args(args)?;
     if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
-        return result;
+        return result.map_err(CommandError::from);
     }
 
     match command {
-        AgentCommand::Start(options) => run_agent_start(options),
-        AgentCommand::Brief(options) => run_agent_brief(options),
-        AgentCommand::Packet(options) => run_agent_packet(options),
-        AgentCommand::Verify(options) => run_agent_verify(options),
+        AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
+        AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
+        AgentCommand::Packet(options) => run_agent_packet(options).map_err(CommandError::from),
+        AgentCommand::Verify(options) => run_agent_verify(options).map_err(CommandError::from),
+        // Typed refusals carry the Decision variant (exit code 3).
         AgentCommand::VerifyExecute(options) => run_agent_verify_execute(options),
-        AgentCommand::Receipt(options) => run_agent_receipt(options),
-        AgentCommand::Status(options) => run_agent_status(options),
-        AgentCommand::ReviewSummary(options) => run_agent_review_summary(options),
+        AgentCommand::Receipt(options) => run_agent_receipt(options).map_err(CommandError::from),
+        AgentCommand::Status(options) => run_agent_status(options).map_err(CommandError::from),
+        AgentCommand::ReviewSummary(options) => {
+            run_agent_review_summary(options).map_err(CommandError::from)
+        }
+        // After-phase refusals carry the Decision variant (exit code 3).
         AgentCommand::Repair(options) => run_agent_repair(options),
         help_command @ (AgentCommand::Help
         | AgentCommand::StartHelp
@@ -68,7 +73,8 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
         | AgentCommand::StatusHelp
         | AgentCommand::ReviewSummaryHelp
         | AgentCommand::RepairHelp) => agent_dispatch::run_agent_help_command(&help_command)
-            .unwrap_or_else(|| Err("agent help command was not dispatched".to_string())),
+            .unwrap_or_else(|| Err("agent help command was not dispatched".to_string()))
+            .map_err(CommandError::from),
     }
 }
 
@@ -311,7 +317,15 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     )
 }
 
-fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), String> {
+/// True when a `render_agent_verify` error is a deliberate named refusal
+/// (input-identity drift or a no-movement verify refusal) rather than an
+/// operational failure.
+fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
+    error.contains("analysis input identities differ")
+        || error.contains("no repository movement between before and after artifacts")
+}
+
+fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
     ensure_command_root(&options.root, "agent verify-execute")?;
     let outcome = app::verification_execution::execute_verify_packet(
         &options.root,
@@ -321,11 +335,17 @@ fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), St
         options.cancel_after_ms,
     );
     // The typed disposition is the contract, so it reaches stdout on every
-    // terminal state — including refusals. The exit status only distinguishes
-    // "RIPR committed a bounded observation" from "it could not".
+    // terminal state — including refusals. A typed refusal is a successfully
+    // rendered blocking answer: it maps to the decision exit code 3 so an
+    // orchestrator can branch on `0` executed, `3` refused (read the stdout
+    // JSON), `2` could not complete. Only an uncommitted observation
+    // (`verification_result_write_failed`) remains a Failure.
     print!("{}", outcome.rendered);
+    if outcome.refused {
+        return Err(CommandError::Decision(outcome.disposition.to_string()));
+    }
     if outcome.failed {
-        return Err(outcome.disposition.to_string());
+        return Err(CommandError::from(outcome.disposition.to_string()));
     }
     Ok(())
 }
@@ -542,7 +562,7 @@ fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), St
 /// When an after phase refuses after it selected its attempt, the refusal is
 /// recorded on that attempt through the attempt authority, so `ripr agent
 /// status` reports it instead of repeating the refused command unannotated.
-fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
+fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
     let mut refusal = AfterPhaseRefusalContext::default();
     let result = run_agent_repair_phase(options, &mut refusal);
     if let (Err(error), Some((root, attempt_id))) = (&result, &refusal.selected_attempt)
@@ -557,17 +577,33 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             attempt_id.as_str()
         );
     }
-    result
+    // A deliberate named refusal once the after phase selected its attempt
+    // (typed) is recorded above and maps to the decision exit code 3.
+    // Operational errors after selection stay ordinary failures: exit 2.
+    if refusal.selected_attempt.is_some() && refusal.typed {
+        result.map_err(CommandError::Decision)
+    } else {
+        result.map_err(CommandError::Failure)
+    }
 }
 
 /// What an after phase that refuses leaves for the attempt record: the
-/// attempt it selected, and the narration it printed before the final error
+/// attempt it selected, the narration it printed before the final error
 /// (the named cause and the recovery), so `ripr agent status` can repeat the
-/// same explanation instead of only the terse final error.
+/// same explanation instead of only the terse final error, and whether the
+/// refusal was a deliberate named refusal rather than an operational error.
 #[derive(Default)]
 struct AfterPhaseRefusalContext {
     selected_attempt: Option<(PathBuf, crate::app::repair_attempt::RepairAttemptId)>,
     narration: Vec<String>,
+    /// Set only at a deliberate named refusal (diverged HEAD, drifted
+    /// analysis inputs, a no-movement verify refusal, or a replaced
+    /// trust-binding manifest): a refusal the command narrates with its
+    /// cause and recovery before returning. Only this maps to the decision
+    /// exit code 3; operational errors after attempt selection (an
+    /// unreadable retained packet or manifest, a failed snapshot write,
+    /// failed receipt or apply-record publication) stay exit code 2.
+    typed: bool,
 }
 
 impl AfterPhaseRefusalContext {
@@ -778,6 +814,9 @@ fn run_agent_repair_phase(
                     {
                         refusal.narrate(line);
                     }
+                    // A deliberate named refusal: narrated cause and recovery
+                    // above, so it maps to the decision exit code 3.
+                    refusal.typed = true;
                     return Err(format!(
                         "repair attempt `{}` cannot finish: HEAD {current_head} does not descend from its before-phase head {}",
                         attempt.attempt_id.as_str(),
@@ -803,12 +842,18 @@ fn run_agent_repair_phase(
             let rendered_verify = match render_agent_verify(&verify_options) {
                 Ok(rendered) => rendered,
                 Err(error) => {
-                    // The attempt is not finished yet, so it stays awaiting
-                    // the edit; name what moved and how to rerun.
-                    if error.contains("analysis input identities differ") {
-                        for line in repair_after_input_drift_lines(&root, &attempt) {
-                            refusal.narrate(line);
+                    // Only deliberate named refusals are typed (exit 3):
+                    // drifted analysis inputs and a no-movement verify
+                    // refusal. Snapshot canonicalization, reads, artifact
+                    // validation, and rendering failures are operational
+                    // (exit 2) even though the attempt was already selected.
+                    if agent_verify_error_is_typed_refusal(&error) {
+                        if error.contains("analysis input identities differ") {
+                            for line in repair_after_input_drift_lines(&root, &attempt) {
+                                refusal.narrate(line);
+                            }
                         }
+                        refusal.typed = true;
                     }
                     return Err(error);
                 }
@@ -823,9 +868,9 @@ fn run_agent_repair_phase(
             // tail refuses, the verify document alone is printed — the
             // refusal bytes this phase always produced, and still one document
             // an orchestrator can parse with one JSON.parse call.
-            let after_tail = || -> Result<String, String> {
+            let after_tail = |refusal: &mut AfterPhaseRefusalContext| -> Result<String, String> {
                 use crate::app::python_repair_binding::{
-                    confirm_manifest_unchanged, write_apply_record,
+                    ManifestConfirmationError, confirm_manifest_unchanged, write_apply_record,
                 };
                 use crate::app::repair_attempt::{
                     finish_repair_attempt, restore_repair_attempt_to_awaiting_edit,
@@ -836,8 +881,18 @@ fn run_agent_repair_phase(
                 // verification ran before several expensive operations, and a
                 // manifest replaced inside that window must refuse instead of
                 // silently advancing the attempt against replaced trust data.
-                if let Some(binding) = &retained_binding {
-                    confirm_manifest_unchanged(binding)?;
+                // This is a deliberate named refusal: it maps to exit code 3.
+                if let Some(binding) = &retained_binding
+                    && let Err(error) = confirm_manifest_unchanged(binding)
+                {
+                    // Only a manifest replaced inside the late window is a
+                    // deliberate named refusal (exit 3); a manifest or
+                    // retained binding that cannot be read or validated is
+                    // operational (exit 2).
+                    if matches!(error, ManifestConfirmationError::Replaced(_)) {
+                        refusal.typed = true;
+                    }
+                    return Err(error.into());
                 }
 
                 // Finish only after all command-owned after artifacts exist.
@@ -900,43 +955,53 @@ fn run_agent_repair_phase(
                 let mut apply_record_result: Result<(), String> = Ok(());
                 let apply_inputs = (&retained_binding, &verified_binding);
                 if let (Some(binding), Some(verified)) = apply_inputs {
-                    let record_outcome = confirm_manifest_unchanged(binding).and_then(|()| {
-                        write_apply_record(
+                    // A manifest replaced inside the finalize window is a
+                    // deliberate named refusal (exit code 3); a manifest or
+                    // retained binding that cannot be read or validated, and
+                    // a record write failure after a successful confirmation,
+                    // are operational (exit code 2).
+                    if let Err(error) = confirm_manifest_unchanged(binding) {
+                        apply_record_result = Err(error.message().to_string());
+                        if matches!(error, ManifestConfirmationError::Replaced(_)) {
+                            refusal.typed = true;
+                        }
+                    } else {
+                        let record_outcome = write_apply_record(
                             &root,
                             &attempt.attempt_id,
                             &binding.artifact_sha256,
                             verified,
                             edit_authorization.authority.as_deref().unwrap_or_default(),
                             &cage_after,
-                        )
-                    });
-                    match record_outcome {
-                        Ok(apply_record_path) => {
-                            eprintln!(
-                                "ripr: python repair-trust apply record: {}",
-                                apply_record_path.display()
-                            );
-                        }
-                        Err(error) => {
-                            // Finish already advanced the durable state, so a
-                            // failed record publication must restore the
-                            // attempt to awaiting_edit: the identical retry is
-                            // otherwise rejected and the record could never be
-                            // recreated.
-                            match restore_repair_attempt_to_awaiting_edit(
-                                &root,
-                                &attempt.attempt_id,
-                            ) {
-                                Ok(()) => {
-                                    eprintln!(
-                                        "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
-                                    );
-                                    apply_record_result = Err(error);
-                                }
-                                Err(restore_error) => {
-                                    apply_record_result = Err(format!(
-                                        "{error}; rolling the attempt back for a retry also failed: {restore_error}"
-                                    ));
+                        );
+                        match record_outcome {
+                            Ok(apply_record_path) => {
+                                eprintln!(
+                                    "ripr: python repair-trust apply record: {}",
+                                    apply_record_path.display()
+                                );
+                            }
+                            Err(error) => {
+                                // Finish already advanced the durable state, so a
+                                // failed record publication must restore the
+                                // attempt to awaiting_edit: the identical retry is
+                                // otherwise rejected and the record could never be
+                                // recreated.
+                                match restore_repair_attempt_to_awaiting_edit(
+                                    &root,
+                                    &attempt.attempt_id,
+                                ) {
+                                    Ok(()) => {
+                                        eprintln!(
+                                            "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
+                                        );
+                                        apply_record_result = Err(error);
+                                    }
+                                    Err(restore_error) => {
+                                        apply_record_result = Err(format!(
+                                            "{error}; rolling the attempt back for a retry also failed: {restore_error}"
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -947,7 +1012,7 @@ fn run_agent_repair_phase(
 
                 Ok(status_rendered)
             };
-            let status_rendered = match after_tail() {
+            let status_rendered = match after_tail(&mut *refusal) {
                 Ok(status_rendered) => status_rendered,
                 Err(error) => {
                     print!("{rendered_verify}");
@@ -1433,11 +1498,63 @@ mod tests {
     fn agent_rejects_unknown_subcommands() {
         assert_eq!(
             agent(&args(&["unknown"])),
-            Err(
+            Err(CommandError::Failure(
                 "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
                     .to_string()
-            )
+            ))
         );
+    }
+
+    #[test]
+    fn agent_verify_execute_refusal_maps_to_decision_exit_code() -> Result<(), String> {
+        let dir = unique_command_test_dir("agent-verify-execute-refusal");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        // A missing packet is a typed refusal (`verification_rejected_policy`),
+        // printed as the stdout JSON document: the command ran successfully
+        // and declined, so it maps to the decision exit code 3.
+        let result = agent(&args(&[
+            "verify-execute",
+            "--root",
+            &dir.display().to_string(),
+            "--packet",
+            &dir.join("missing-packet.json").display().to_string(),
+            "--result-json",
+            &dir.join("result.json").display().to_string(),
+            "--json",
+        ]));
+        let Err(error) = result else {
+            return Err("expected a typed refusal, got Ok".to_string());
+        };
+        assert!(
+            matches!(
+                &error,
+                CommandError::Decision(message)
+                    if message.contains("verification_rejected_policy")
+            ),
+            "typed refusal must carry the Decision variant: {error:?}"
+        );
+        assert_eq!(error.exit_code(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn agent_repair_failure_before_attempt_selection_stays_a_failure() {
+        // A missing root refuses before the after phase selects its attempt,
+        // so it is an ordinary Failure (exit code 2), not a Decision: only
+        // errors after attempt selection are recorded refusals.
+        assert!(matches!(
+            agent(&args(&[
+                "repair",
+                "--root",
+                "target/ripr/missing-agent-repair-root",
+                "--seam-id",
+                "seam-a",
+                "--phase",
+                "after",
+            ])),
+            Err(CommandError::Failure(message)) if message.contains("is not a directory")
+        ));
     }
 
     #[test]
@@ -1450,10 +1567,10 @@ mod tests {
                 "--seam-id",
                 "f3c9e4d21a0b7c88",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent start root target/ripr/missing-agent-start-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -1466,10 +1583,10 @@ mod tests {
                 "target/ripr/missing-agent-status-root",
                 "--json",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent status root target/ripr/missing-agent-status-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -1482,10 +1599,10 @@ mod tests {
                 "target/ripr/missing-agent-review-summary-root",
                 "--json",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent review-summary root target/ripr/missing-agent-review-summary-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -1500,10 +1617,10 @@ mod tests {
                 "f3c9e4d21a0b7c88",
                 "--json",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent packet root target/ripr/missing-agent-packet-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -1525,9 +1642,11 @@ mod tests {
             &dir.join("missing-after.json").display().to_string(),
             "--json",
         ]));
-        assert!(
-            matches!(missing_before, Err(message) if message.contains("canonicalize agent verify --before"))
-        );
+        assert!(matches!(
+            missing_before,
+            Err(CommandError::Failure(message))
+                if message.contains("canonicalize agent verify --before")
+        ));
 
         let missing_after = agent(&args(&[
             "verify",
@@ -1539,9 +1658,11 @@ mod tests {
             &dir.join("missing-after.json").display().to_string(),
             "--json",
         ]));
-        assert!(
-            matches!(missing_after, Err(message) if message.contains("canonicalize agent verify --after"))
-        );
+        assert!(matches!(
+            missing_after,
+            Err(CommandError::Failure(message))
+                if message.contains("canonicalize agent verify --after")
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
@@ -1570,7 +1691,10 @@ mod tests {
             "--json",
         ]));
 
-        assert!(matches!(result, Err(message) if message.contains("must stay under root")));
+        assert!(matches!(
+            result,
+            Err(CommandError::Failure(message)) if message.contains("must stay under root")
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
         Ok(())
@@ -1591,9 +1715,11 @@ mod tests {
             "seam-a",
             "--json",
         ]));
-        assert!(
-            matches!(missing, Err(message) if message.contains("canonicalize agent receipt --verify-json"))
-        );
+        assert!(matches!(
+            missing,
+            Err(CommandError::Failure(message))
+                if message.contains("canonicalize agent receipt --verify-json")
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
@@ -1618,7 +1744,10 @@ mod tests {
             "--json",
         ]));
 
-        assert!(matches!(result, Err(message) if message.contains("must stay under root")));
+        assert!(matches!(
+            result,
+            Err(CommandError::Failure(message)) if message.contains("must stay under root")
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
         Ok(())
@@ -1635,10 +1764,10 @@ mod tests {
                 "change.diff",
                 "--json",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent brief root target/ripr/missing-agent-brief-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
