@@ -3486,7 +3486,7 @@ marker = "libtest_mimic::Trial"
 
     #[cfg(unix)]
     #[test]
-    fn no_impact_fast_path_reads_no_rust_contents() -> Result<(), String> {
+    fn no_impact_permission_only_change_declines_missing_mapping() -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         let root = make_tempdir("no-impact-unreadable")?;
         no_impact_layout(&root)?;
@@ -3497,6 +3497,10 @@ marker = "libtest_mimic::Trial"
         workspace_cache_key_at_with_config(&root, &config)?;
         // Revoke all content access to the Rust sources. Manifest and
         // directory reads stay permitted; only file bytes are denied.
+        // chmod bumps ctime, so the stat witness no longer matches the
+        // stored mapping even though the bytes are identical: the fast
+        // path must decline rather than pair the key with a corpus no
+        // stored fingerprint witnesses (issue #3848).
         let source = root.join("src/lib.rs");
         std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o000))
             .map_err(|err| format!("revoke source permissions: {err}"))?;
@@ -3505,12 +3509,19 @@ marker = "libtest_mimic::Trial"
         std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o644))
             .map_err(|err| format!("restore source permissions: {err}"))?;
         match outcome {
-            Ok(NoImpactOutcome::Fast(_)) => Ok(()),
+            Ok(NoImpactOutcome::Declined(NoImpactFallbackReason::MissingFingerprintMapping)) => {
+                Ok(())
+            }
             Ok(NoImpactOutcome::Declined(reason)) => Err(format!(
-                "fast path must not read Rust contents, got fallback {}",
+                "permission-only change must decline as missing_fingerprint_mapping, got {}",
                 reason.as_str()
             )),
-            Err(error) => Err(format!("fast path must not read Rust contents: {error}")),
+            Ok(NoImpactOutcome::Fast(_)) => {
+                Err("permission-only change must not take the fast path: ctime moved".to_owned())
+            }
+            Err(error) => Err(format!(
+                "permission-only change must decline, not error: {error}"
+            )),
         }?;
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
