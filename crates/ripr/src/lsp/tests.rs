@@ -7967,6 +7967,11 @@ fn initialize_surfaces_poisoned_client_features_store_as_a_session_failure() -> 
             ))
             .await
             .map_err(|err| format!("initialize failed: {err}"))?;
+        if backend.selected_position_encoding_for_test().is_some() {
+            return Err(
+                "poisoned immutable client profile must not guess a position encoding".to_string(),
+            );
+        }
 
         // The store failure must surface through the blocking-failure
         // channel instead of leaving the pre-initialize profile beside
