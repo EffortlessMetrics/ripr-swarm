@@ -4179,7 +4179,10 @@ fn invalid_utf8_source_produces_no_finding_or_is_disclosed() -> Result<(), Strin
     let root = std::env::temp_dir().join(format!("ripr-ts-utf8-{stamp}"));
     let _ = fs::create_dir_all(root.join("src"));
     // 0xFE 0xFF is never valid UTF-8.
-    let _ = fs::write(root.join("src").join("broken.ts"), [0xFE_u8, 0xFF, 0x20, 0x3B]);
+    let _ = fs::write(
+        root.join("src").join("broken.ts"),
+        [0xFE_u8, 0xFF, 0x20, 0x3B],
+    );
 
     let adapter = TypeScriptAdapter;
     let options = AnalysisOptions {
