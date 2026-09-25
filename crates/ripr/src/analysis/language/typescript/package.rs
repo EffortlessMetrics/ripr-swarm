@@ -477,25 +477,6 @@ fn parse_manifest_facts(pkg_json: &str) -> Option<ManifestFacts> {
 fn detect_framework(pkg_json: &str) -> Option<TsFramework> {
     detect_framework_signals(pkg_json).first().copied()
 }
-
-/// Push `framework` into `signals` unless an equal signal is already present.
-fn push_framework_signal(signals: &mut Vec<TsFramework>, framework: TsFramework) {
-    if !signals.contains(&framework) {
-        signals.push(framework);
-    }
-}
-
-/// Detect every DISTINCT framework signal in `package.json`, in priority order.
-///
-/// Unlike [`detect_framework`] (first match wins), this returns ALL matched
-/// frameworks (deduplicated). When two or more signals match — e.g. both
-/// `jest` and `vitest` in `devDependencies` — the caller can disclose the
-/// ambiguity instead of silently resolving by fixed priority. Fail-closed:
-/// empty when the manifest is unparseable or no signal matches.
-fn detect_framework_signals(pkg_json: &str) -> Vec<TsFramework> {
-    let Some(facts) = parse_manifest_facts(pkg_json) else {
-        return Vec::new();
-    };
     let has_dep = |name: &str| facts.dep_names.iter().any(|dep| dep == name);
     let mut signals: Vec<TsFramework> = Vec::new();
 
@@ -890,6 +871,18 @@ mod tests {
     fn detect_framework_none_for_empty_pkg_json() {
         let result = detect_framework(r#"{"name":"empty","devDependencies":{}}"#);
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn string_value_equal_to_framework_name_not_credited() {
+        // `"jest"` here is a string VALUE, not a dependency key; it must not
+        // be credited as framework evidence.
+        let pkg = r#"{"name":"demo","description":"jest"}"#;
+        let result = detect_framework(pkg);
+        assert_eq!(
+            result, None,
+            "a framework name appearing as a string value must not be credited"
+        );
     }
 
     #[test]

@@ -302,6 +302,25 @@ mod tests {
     }
 
     #[test]
+    fn malformed_tsconfig_returns_none_and_blocks_jsconfig_fallback() {
+        // A malformed tsconfig.json fails closed: `load_alias_map` returns
+        // None and must NOT fall through to a well-formed jsconfig.json —
+        // silently honoring a different config than the one the project
+        // declares would manufacture alias evidence.
+        let root = temp_dir("malformed-tsconfig");
+        write(&root, "tsconfig.json", "{ not valid json");
+        write(
+            &root,
+            "jsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        assert!(
+            load_alias_map(&root).is_none(),
+            "malformed tsconfig.json must fail closed and block the jsconfig.json fallback"
+        );
+    }
+
+    #[test]
     fn returns_none_when_references_present() {
         let root = temp_dir("refs");
         write(

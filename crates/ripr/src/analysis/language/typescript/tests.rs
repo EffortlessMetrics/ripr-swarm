@@ -4163,6 +4163,53 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
 }
 
 #[test]
+fn invalid_utf8_source_produces_no_finding_or_is_disclosed() -> Result<(), String> {
+    // PINS CURRENT BEHAVIOR (agentic-trust failure-mode audit): a changed
+    // TypeScript file whose bytes are not valid UTF-8 hits the
+    // `read_to_string` guard in `analyze_diff` and is skipped silently — no
+    // finding is emitted and no static limit is disclosed. Lane
+    // ts-d-silent-gaps owns adding that disclosure; this test must be
+    // updated when the disclosure lands.
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!("ripr-ts-utf8-{stamp}"));
+    let _ = fs::create_dir_all(root.join("src"));
+    // 0xFE 0xFF is never valid UTF-8.
+    let _ = fs::write(root.join("src").join("broken.ts"), [0xFE_u8, 0xFF, 0x20, 0x3B]);
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![changed("src/broken.ts")];
+    let result = adapter.analyze_diff(&options, &policy, &changed_files)?;
+    assert!(
+        result
+            .findings
+            .iter()
+            .all(|finding| finding.probe.location.file != PathBuf::from("src/broken.ts")),
+        "invalid UTF-8 source must not produce a finding for src/broken.ts (silently skipped today; disclosure owned by lane ts-d-silent-gaps)"
+    );
+    Ok(())
+}
+
+#[test]
 fn analyze_diff_splits_changed_files_into_typescript_and_javascript() -> Result<(), String> {
     // #2103 review: this adapter covers .js/.jsx/.mjs/.cjs as javascript;
     // the summary must not attribute JS files to typescript.
