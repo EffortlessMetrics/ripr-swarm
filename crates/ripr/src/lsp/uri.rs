@@ -145,11 +145,13 @@ pub(super) fn absolute_join(root: &Path, path: &Path) -> PathBuf {
     }
 }
 
-/// Byte cap for report artifacts read by the long-running LSP server, checked
-/// from file metadata before reading. Real repo-exposure artifacts for large
-/// repositories can reach tens of megabytes; 256 MiB is far above any
-/// legitimate artifact while still failing closed on an unbounded input.
-/// Mirrors the CLI's `MAX_AGENT_VERIFY_SNAPSHOT_BYTES` (#2921).
+/// Byte cap for report artifacts read by the long-running LSP server.
+/// Real repo-exposure artifacts for large repositories can reach tens of
+/// megabytes; 256 MiB is far above any legitimate artifact while still
+/// failing closed on an unbounded input. The cap is enforced while reading
+/// (`take(limit + 1)`), not just from metadata, so a file that grows between
+/// check and read cannot bypass it. Mirrors the CLI's
+/// `MAX_AGENT_VERIFY_SNAPSHOT_BYTES` (#2921).
 pub(super) const MAX_LSP_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Outcome of a capped artifact read. Callers must distinguish an absent
@@ -171,23 +173,30 @@ pub(super) fn read_artifact_capped(path: &Path) -> CappedArtifactRead {
 }
 
 /// `limit` is a parameter so tests can exercise the cap without materializing
-/// 256 MiB; production callers use [`read_artifact_capped`].
+/// 256 MiB; production callers use [`read_artifact_capped`]. Reads at most
+/// `limit + 1` bytes, so a file that grows concurrently is rejected rather
+/// than read in full.
 pub(super) fn read_artifact_capped_with_limit(path: &Path, limit: u64) -> CappedArtifactRead {
-    let metadata = match std::fs::metadata(path) {
-        Ok(metadata) => metadata,
+    use std::io::Read as _;
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return CappedArtifactRead::Missing;
         }
         Err(_) => return CappedArtifactRead::Unusable,
     };
-    if metadata.len() > limit {
+    let mut contents = String::new();
+    match file.take(limit.saturating_add(1)).read_to_string(&mut contents) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return CappedArtifactRead::Missing;
+        }
+        Err(_) => return CappedArtifactRead::Unusable,
+    }
+    if contents.len() as u64 > limit {
         return CappedArtifactRead::Unusable;
     }
-    match std::fs::read_to_string(path) {
-        Ok(contents) => CappedArtifactRead::Contents(contents),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => CappedArtifactRead::Missing,
-        Err(_) => CappedArtifactRead::Unusable,
-    }
+    CappedArtifactRead::Contents(contents)
 }
 
 fn canonical_or_normalized(path: &Path) -> PathBuf {
