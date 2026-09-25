@@ -5,8 +5,8 @@
 //! and calling into the app layer.
 
 use crate::app::receipt::{
-    ReceiptCheckOptions, ReceiptCrossRefResult, ReceiptWriteOptions, check_receipt,
-    receipt_out_path, validate_current_head, write_receipt, RECEIPT_SCHEMA_VERSION,
+    RECEIPT_SCHEMA_VERSION, ReceiptCheckOptions, ReceiptCrossRefResult, ReceiptWriteOptions,
+    check_receipt, receipt_out_path, validate_current_head, write_receipt,
 };
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
@@ -748,7 +748,10 @@ mod tests {
     fn receipt_check_json_error_shapes() -> Result<(), String> {
         for (cross_ref, kind) in [
             (ReceiptCrossRefResult::OrphanReceipt, "orphan_receipt"),
-            (ReceiptCrossRefResult::ReceiptGapMismatch, "receipt_gap_mismatch"),
+            (
+                ReceiptCrossRefResult::ReceiptGapMismatch,
+                "receipt_gap_mismatch",
+            ),
         ] {
             let rendered = render_receipt_check_json(
                 "receipt at r.json is structurally valid; cross_reference: {kind}",
