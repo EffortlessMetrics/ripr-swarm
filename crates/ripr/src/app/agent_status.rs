@@ -1515,7 +1515,10 @@ mod tests {
     /// silently inherit an all-`true` or all-`false` claim.
     #[test]
     fn agent_status_every_artifact_has_a_loop_mode_classification() {
-        let reported = ARTIFACTS.iter().map(|artifact| artifact.name).collect::<Vec<_>>();
+        let reported = ARTIFACTS
+            .iter()
+            .map(|artifact| artifact.name)
+            .collect::<Vec<_>>();
         assert_eq!(
             REPAIR_ATTEMPT_SUPERSEDED_ARTIFACTS, reported,
             "each reported artifact needs an explicit active-loop classification"

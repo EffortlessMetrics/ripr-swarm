@@ -1342,9 +1342,8 @@ mod tests {
     fn published_assurance_schema_currentness_enums_match_the_producers() -> Result<(), String> {
         let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../schemas/ripr/repair-assurance.schema.json");
-        let schema_text = std::fs::read_to_string(&schema_path).map_err(|error| {
-            format!("read {}: {error}", schema_path.display())
-        })?;
+        let schema_text = std::fs::read_to_string(&schema_path)
+            .map_err(|error| format!("read {}: {error}", schema_path.display()))?;
         let schema: serde_json::Value = serde_json::from_str(&schema_text)
             .map_err(|error| format!("parse repair-assurance schema: {error}"))?;
 
@@ -1402,7 +1401,9 @@ mod tests {
 
         for pointer in [pair_pointer, execution_pointer] {
             assert!(
-                !enum_strings(pointer)?.iter().any(|token| token == "unavailable"),
+                !enum_strings(pointer)?
+                    .iter()
+                    .any(|token| token == "unavailable"),
                 "{pointer} claims `unavailable`, which no production path emits"
             );
         }
