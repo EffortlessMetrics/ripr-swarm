@@ -920,10 +920,9 @@ mod tests {
     /// projections the attempt authority supersedes must not be called
     /// "required".
     #[test]
-    fn agent_review_summary_status_surface_counts_only_required_artifacts() -> Result<(), String>
-    {
+    fn agent_review_summary_status_surface_counts_only_required_artifacts() -> Result<(), String> {
         use crate::app::agent_status::{
-            AgentStatusArtifact, AgentStatusReport, AgentStatusRepairAttempt,
+            AgentStatusArtifact, AgentStatusRepairAttempt, AgentStatusReport,
         };
         let artifacts = [
             ("before_snapshot", WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT),
@@ -969,14 +968,18 @@ mod tests {
 
         let legacy = super::artifacts::agent_status_surface(&report(Vec::new()), ".");
         assert!(
-            legacy.summary.starts_with("7 of 7 required artifacts present, 0 missing"),
+            legacy
+                .summary
+                .starts_with("7 of 7 required artifacts present, 0 missing"),
             "legacy loop requires every artifact: {}",
             legacy.summary
         );
 
         let repair = super::artifacts::agent_status_surface(&report(vec![attempt("a")]), ".");
         assert!(
-            repair.summary.starts_with("0 of 0 required artifacts present, 0 missing"),
+            repair
+                .summary
+                .starts_with("0 of 0 required artifacts present, 0 missing"),
             "a repair attempt supersedes the projections, so none is required: {}",
             repair.summary
         );

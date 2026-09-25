@@ -265,8 +265,7 @@ pub(crate) fn build_agent_status_report(root: &Path, root_argument: &Path) -> Ag
     warnings.extend(stale_warnings(&artifacts));
     let missing_commands = missing_commands(root_argument, seam.as_ref(), &artifacts);
     let receipt = read_workflow_receipt(root);
-    let repair_attempts =
-        inspect_repair_attempts(root, &root_display, &receipt, &mut warnings);
+    let repair_attempts = inspect_repair_attempts(root, &root_display, &receipt, &mut warnings);
     let next_command = select_next_command(
         root,
         &root_display,
