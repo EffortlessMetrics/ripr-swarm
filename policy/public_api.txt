@@ -100,6 +100,13 @@ pub mod ripr::domain::context_packet
 pub mod ripr::lsp
 pub mod ripr::lsp::diagnostic_budget
 pub mod ripr::mcp
+# PR #3803 lane: owner process-ownership-3803; reason: intentional shared
+# owned-subprocess authority consumed by the `xtask` bounded runners so there
+# is exactly one Job Object process-owner implementation; covered_by:
+# cargo test -p ripr --lib process_owner, cargo xtask check-public-api.
+
+pub mod ripr::process_owner
+pub struct ripr::process_owner::OwnedProcess
 pub mod ripr::output
 pub mod ripr::output::github
 pub mod ripr::output::human
