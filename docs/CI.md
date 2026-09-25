@@ -960,8 +960,8 @@ configuration cannot change the bytes RIPR analyzes (#4005).
           mkdir -p target/ripr/reports
           # Pinned diff contract (#4005): the same presentation pins as the
           # production loaders. Ambient external-diff, textconv, color,
-          # context, and path-quoting configuration must not change the
-          # bytes RIPR analyzes.
+          # context, path-quoting, and side-prefix configuration must not
+          # change the bytes RIPR analyzes.
           base_ref="origin/${{ github.base_ref }}"
           base_sha="$(git rev-parse --verify "${base_ref}^{commit}")" || { echo "ripr: cannot resolve base ref $base_ref" >&2; exit 1; }
           head_sha="$(git rev-parse --verify "HEAD^{commit}")" || { echo "ripr: cannot resolve HEAD" >&2; exit 1; }
