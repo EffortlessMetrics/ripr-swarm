@@ -1399,6 +1399,12 @@ impl From<ManifestConfirmationError> for String {
     }
 }
 
+impl std::fmt::Display for ManifestConfirmationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message())
+    }
+}
+
 /// Re-reads the selection manifest at its recorded telemetry path and
 /// requires the pinned digest. This closes the late publication window: the
 /// apply verification runs before several expensive after-phase operations,
