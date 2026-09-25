@@ -11,7 +11,10 @@
 //! sites (`dispatch.rs`, `main.rs` precommit/check-pr wiring, and `tests.rs`)
 //! compile unchanged.
 
-use crate::run::{TimedOutput, capture_output_with_timeout, run_output_optional, run_output_owned};
+use crate::python_judged_panel_replay::sha256_hex;
+use crate::run::{
+    TimedOutput, capture_output_in_dir, capture_output_with_timeout, run_output_owned,
+};
 use crate::{
     FixKind, PolicyReportSpec, audit_bool, audit_get, audit_markdown_cell,
     badge_diff_policy_violations, badge_refresh_context, collect_pr_changes, finish_policy_report,
@@ -26,11 +29,52 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub(crate) fn badge_artifacts_impl() -> Result<(), String> {
-    badge_artifacts_impl_with_runners(
-        read_badge_artifact_diff,
+    // #4003: the badge subject is resolved in the process working directory
+    // (the repository `cargo xtask badge-artifacts` was invoked on) through
+    // the shared RIPR-SPEC-0084 default-base authority and the shared pinned
+    // Git-diff assembly, instead of an unpinned
+    // `git diff origin/main...HEAD` that fabricated its base and absorbed
+    // ambient Git presentation configuration.
+    let root = std::env::current_dir()
+        .map_err(|err| format!("failed to resolve the badge input repository: {err}"))?;
+    let input = read_badge_artifact_diff_governed(&root)?;
+    write_badge_input_identity(&input, BADGE_IDENTITY_INPUT_PHASE, &[])?;
+    let diff = input.diff.clone();
+    let outcome = badge_artifacts_impl_with_runners(
+        || Ok(diff.clone()),
         build_badge_artifact_binary,
         run_badge_artifact_command,
-    )
+    );
+    // Retain the run's output identities next to the input identity. A
+    // limited run (build/analysis limitation) keeps its limitation reports
+    // and records the limited phase without output digests; it never
+    // presents a limitation as a complete badge run.
+    let limited = reports_dir()
+        .join("badge-artifacts-limitation.json")
+        .exists();
+    let (phase, outputs) = if outcome.is_err() {
+        // The run failed outright (write or spawn failure): no limitation
+        // report or output set represents it, so the receipt must not claim
+        // a complete or limited-but-produced run.
+        (BADGE_IDENTITY_FAILED_PHASE, Vec::new())
+    } else if limited {
+        (BADGE_IDENTITY_LIMITED_PHASE, Vec::new())
+    } else {
+        // A missing or unreadable output file must not silently shrink the
+        // digest set: an incomplete attestation is a failed receipt, named
+        // on stderr, never a complete one.
+        match badge_output_identities() {
+            Ok(outputs) => (BADGE_IDENTITY_COMPLETE_PHASE, outputs),
+            Err(error) => {
+                eprintln!(
+                    "xtask: badge output identity incomplete; recording the receipt as failed, not complete: {error}"
+                );
+                (BADGE_IDENTITY_FAILED_PHASE, Vec::new())
+            }
+        }
+    };
+    let receipt = write_badge_input_identity(&input, phase, &outputs);
+    outcome.and(receipt)
 }
 
 pub(crate) fn badge_artifacts_impl_with_runners<DiffRunner, BuildRunner, Runner>(
@@ -66,8 +110,153 @@ where
     write_badge_artifacts_after_build(&diff_output, &binary, timeout, build_ripr, run_artifact)
 }
 
-fn read_badge_artifact_diff() -> Result<String, String> {
-    run_output_optional("git", &["diff", "origin/main...HEAD"])
+/// Exact presentation the shared analysis assembly applies to the badge
+/// input range: the #3601/#3930 pinned Git-diff contract in the zero-context
+/// analysis shape (`ripr check --diff` consumes source-coordinate patches).
+/// Recorded in the badge input identity receipt; the argv is assembled by
+/// `ripr::analysis::load_diff_range`, never inline here.
+pub(crate) const BADGE_DIFF_PRESENTATION_ARGV: &str = "git -c core.quotePath=true diff --no-ext-diff --no-textconv --no-color --unified=0 --inter-hunk-context=0 --submodule=short <resolved-base>...HEAD";
+
+pub(crate) const BADGE_IDENTITY_INPUT_PHASE: &str = "input";
+pub(crate) const BADGE_IDENTITY_COMPLETE_PHASE: &str = "complete";
+pub(crate) const BADGE_IDENTITY_LIMITED_PHASE: &str = "limited";
+pub(crate) const BADGE_IDENTITY_FAILED_PHASE: &str = "failed";
+
+/// The resolved badge input subject (#4003): what was analyzed, from where
+/// to where, and the exact bytes fed to the badge artifact runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BadgeDiffInput {
+    pub(crate) base_ref: String,
+    pub(crate) base_commit: String,
+    pub(crate) head_commit: String,
+    pub(crate) head_tree: String,
+    pub(crate) diff: String,
+}
+
+/// Resolve the badge input through the shared authorities (#4003).
+///
+/// The base comes from the same RIPR-SPEC-0084 default-base authority the
+/// analysis loaders use (no `origin/main` hardcode), the range diff comes
+/// from the same pinned Git assembly (#3601/#3930), and every resolution
+/// failure is a named error — never an empty patch that renders as a clean
+/// zero-change badge.
+pub(crate) fn read_badge_artifact_diff_governed(root: &Path) -> Result<BadgeDiffInput, String> {
+    let (base_ref, base_commit) = ripr::analysis::resolve_default_base_commit(root, None)
+        .map_err(|err| format!("badge input could not resolve a base: {err}"))?;
+    let head_commit = badge_git_rev_parse_required(root, "HEAD")?;
+    let head_tree = badge_git_rev_parse_required(root, "HEAD^{tree}")?;
+    let diff = ripr::analysis::load_diff_range(root, &base_ref, "HEAD")
+        .map_err(|err| format!("badge input diff failed: {err}"))?;
+    Ok(BadgeDiffInput {
+        base_ref,
+        base_commit,
+        head_commit,
+        head_tree,
+        diff,
+    })
+}
+
+fn badge_git_rev_parse_required(root: &Path, rev: &str) -> Result<String, String> {
+    let args = vec!["rev-parse".to_string(), rev.to_string()];
+    let output = capture_output_in_dir("git", &args, root, &format!("badge input {rev} identity"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "badge input could not resolve {rev}: {}",
+            output.stderr.trim()
+        ));
+    }
+    let value = output.stdout.trim().to_string();
+    if value.is_empty() {
+        return Err(format!(
+            "badge input could not resolve {rev}: git returned no value"
+        ));
+    }
+    Ok(value)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BadgeOutputIdentity {
+    pub(crate) format: &'static str,
+    pub(crate) file: &'static str,
+    pub(crate) sha256: String,
+}
+
+/// Retain the badge input identity (#4003): resolved base ref/commit, head
+/// commit/tree, diff byte count and sha256, and the exact presentation
+/// policy, bound to the generator and — once available — the badge outputs.
+pub(crate) fn write_badge_input_identity(
+    input: &BadgeDiffInput,
+    phase: &str,
+    outputs: &[BadgeOutputIdentity],
+) -> Result<(), String> {
+    let binary = ripr_debug_binary();
+    // At the input phase this run has not produced the generator binary yet,
+    // so any on-disk binary would be a stale artifact — record it as absent
+    // instead of presenting a previous build as this run's generator.
+    let binary_sha256 = if phase == BADGE_IDENTITY_INPUT_PHASE {
+        None
+    } else {
+        fs::read(&binary).map(|bytes| sha256_hex(&bytes)).ok()
+    };
+    let outputs_json: Vec<Value> = outputs
+        .iter()
+        .map(|output| {
+            serde_json::json!({
+                "format": output.format,
+                "file": output.file,
+                "sha256": output.sha256,
+            })
+        })
+        .collect();
+    let value = serde_json::json!({
+        "schema_version": "0.1",
+        "phase": phase,
+        "command": "cargo xtask badge-artifacts",
+        "input": {
+            "base_ref": &input.base_ref,
+            "base_commit": &input.base_commit,
+            "head_commit": &input.head_commit,
+            "head_tree": &input.head_tree,
+            "diff_path": "target/ripr/badge-input.diff",
+            "diff_bytes": input.diff.len(),
+            "diff_sha256": sha256_hex(input.diff.as_bytes()),
+            "base_resolution": "ripr::analysis::resolve_default_base_commit (shared RIPR-SPEC-0084 default-base authority; no origin/main hardcode)",
+            "presentation": {
+                "argv": BADGE_DIFF_PRESENTATION_ARGV,
+                "authority": "ripr::analysis::load_diff_range (shared pinned Git-diff assembly, #3601/#3930)",
+            },
+        },
+        "generator": {
+            "binary_path": normalize_report_path(&binary.display().to_string()),
+            "binary_sha256": binary_sha256,
+        },
+        "outputs": outputs_json,
+        "non_claims": [
+            "input identity describes what the badges were computed from, not that the badge counts are correct",
+            "not runtime mutation confirmation",
+            "not merge approval"
+        ],
+    });
+    let json = serde_json::to_string_pretty(&value)
+        .map_err(|err| format!("failed to render badge input identity receipt: {err}"))?;
+    write_report("badge-artifacts-identity.json", &format!("{json}\n"))
+}
+
+fn badge_output_identities() -> Result<Vec<BadgeOutputIdentity>, String> {
+    let reports = reports_dir();
+    badge_artifact_jobs()
+        .into_iter()
+        .map(|job| {
+            let bytes = fs::read(reports.join(job.output_file)).map_err(|error| {
+                format!("badge output {} is unreadable: {error}", job.output_file)
+            })?;
+            Ok(BadgeOutputIdentity {
+                format: job.format,
+                file: job.output_file,
+                sha256: sha256_hex(&bytes),
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn write_badge_artifacts_after_build<BuildRunner, Runner>(
