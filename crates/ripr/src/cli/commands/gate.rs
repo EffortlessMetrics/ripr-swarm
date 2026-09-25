@@ -57,14 +57,20 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
     println!("Wrote {}", options.out_md.display());
     if output::gate::gate_decision_should_fail(&report) {
         let detail = output::gate::gate_decision_inline_detail(&report);
-        // The evaluation itself succeeded and the gate reached its blocking
-        // decision, so this is a Decision (exit code 3), not a failure.
-        return Err(CommandError::Decision(format!(
+        let message = format!(
             "ripr gate decision is {}{}; see {} for the full report",
             output::gate::gate_decision_status(&report),
             detail,
             options.out.display()
-        )));
+        );
+        // A config_error means the evaluation could not complete (exit 2);
+        // only a completed evaluation reaching its blocking decision is a
+        // Decision (exit 3).
+        return Err(if output::gate::gate_decision_status(&report) == "config_error" {
+            CommandError::Failure(message)
+        } else {
+            CommandError::Decision(message)
+        });
     }
     Ok(())
 }
