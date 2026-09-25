@@ -187,6 +187,9 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
         );
     }
     eprintln!(
+        "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below."
+    );
+    eprintln!(
         "ripr: repair attempt {} is awaiting the focused test edit",
         result.manifest.repair_attempt_id.as_str()
     );
