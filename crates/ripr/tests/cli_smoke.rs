@@ -3979,18 +3979,28 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     assert!(!coordinated_rejected.status.success());
     std::fs::write(&baseline_path, baseline_bytes)?;
     std::fs::write(&manifest_path, &manifest_bytes)?;
-    // The status the after phase prints is `complete` only when the receipt
-    // it issued is `advisory` (improved grip at the current HEAD); an
+    // The after phase's stdout is exactly one JSON document — the verify
+    // outcome with the status report embedded under `agent_status` — so one
+    // JSON.parse consumes it. The embedded status is `complete` only when the
+    // receipt it issued is `advisory` (improved grip at the current HEAD); an
     // `invalid` or `incomplete` receipt keeps it at `warning` (F15-4).
     let expected_status = if receipt["status"] == "advisory" {
-        "\"status\": \"complete\""
+        "complete"
     } else {
-        "\"status\": \"warning\""
+        "warning"
     };
-    assert!(
-        String::from_utf8_lossy(&after.stdout).contains(expected_status),
+    let after_document: serde_json::Value = serde_json::from_slice(&after.stdout)?;
+    assert_eq!(
+        after_document["agent_status"]["status"].as_str(),
+        Some(expected_status),
         "after phase status must follow the receipt ({}):\n{}",
         receipt["status"],
+        String::from_utf8_lossy(&after.stdout)
+    );
+    assert_eq!(
+        after_document["status"].as_str(),
+        Some("advisory"),
+        "the verify outcome keeps its own top-level status:\n{}",
         String::from_utf8_lossy(&after.stdout)
     );
     assert!(String::from_utf8_lossy(&after.stderr).contains("after phase complete"));
@@ -13590,6 +13600,60 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
         serde_json::Value::Null,
         "{report:#}"
     );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// The after phase's stdout is exactly one JSON document end-to-end: an
+/// orchestrator can run a single JSON.parse on it. The document keeps every
+/// verify field at the top level (including the verify outcome's own
+/// `status`) and embeds what `ripr agent status --json` prints under
+/// `agent_status`. The old shape concatenated the verify JSON and the status
+/// JSON with no seam marker, which broke one-parse consumers.
+#[test]
+fn agent_repair_after_phase_stdout_is_one_json_document()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("after stdout single document")?;
+    let printed = repair_route_before(&root)?;
+    let attempt_id = repair_route_attempt_id(&printed)?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_BOUNDARY_TEST}"),
+    )?;
+    let after = repair_route_after(&root, &attempt_id);
+    assert_success(&after);
+
+    let stdout = String::from_utf8_lossy(&after.stdout);
+    // A second concatenated document would surface as trailing characters.
+    let document: serde_json::Value = serde_json::from_str(&stdout).map_err(|error| {
+        format!("after-phase stdout must parse as one JSON document: {error}\n{stdout}")
+    })?;
+    assert!(
+        !stdout.contains("ripr: "),
+        "narration belongs on stderr, not in the JSON document:\n{stdout}"
+    );
+    // Every existing verify field keeps its name and value.
+    assert_eq!(document["tool"], "ripr");
+    assert_eq!(document["status"], "advisory");
+    assert!(document["inputs"]["before_content_sha256"].is_string());
+    assert!(document["inputs"]["after_content_sha256"].is_string());
+    assert!(document["changed_seams"].is_array());
+    // The status report rides under `agent_status` (the top-level `status`
+    // name is already the verify outcome's).
+    let agent_status = &document["agent_status"];
+    assert!(
+        matches!(
+            agent_status["status"].as_str(),
+            Some("complete" | "warning" | "incomplete")
+        ),
+        "{agent_status}"
+    );
+    let attempt = agent_status["repair_attempts"]
+        .as_array()
+        .and_then(|attempts| attempts.first())
+        .ok_or("agent_status lists no repair attempt")?;
+    assert_eq!(attempt["attempt_id"], attempt_id.as_str());
 
     let _ = std::fs::remove_dir_all(&root);
     Ok(())

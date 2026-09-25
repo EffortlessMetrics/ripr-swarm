@@ -733,121 +733,161 @@ fn run_agent_repair_phase(
                 }
             };
             write_text_file(&verify_json, &rendered_verify)?;
-            print!("{rendered_verify}");
 
-            // The retained binding's manifest bytes are confirmed again
-            // immediately before the durable finish: the apply verification
-            // ran before several expensive operations, and a manifest
-            // replaced inside that window must refuse instead of silently
-            // advancing the attempt against replaced trust data.
-            if let Some(binding) = &retained_binding {
-                crate::app::python_repair_binding::confirm_manifest_unchanged(binding)?;
-            }
+            // Stdout carries exactly one JSON document on every path, like
+            // every other agent command. The verify outcome is held until the
+            // tail below settles: on success the single document is the verify
+            // result with the status report embedded; when the tail refuses,
+            // the verify document alone is printed — the refusal bytes this
+            // phase always produced, and still one document an orchestrator
+            // can parse with one JSON.parse call.
+            let after_tail = || -> Result<String, String> {
+                use crate::app::python_repair_binding::{
+                    confirm_manifest_unchanged, write_apply_record,
+                };
+                use crate::app::repair_attempt::{
+                    finish_repair_attempt, restore_repair_attempt_to_awaiting_edit,
+                };
 
-            // Finish only after all command-owned after artifacts exist. This
-            // makes the durable delta the exact delta the receipt binds, while
-            // the receipt itself remains outside the measured edit window.
-            let cage_after = crate::app::repair_attempt::finish_repair_attempt(
-                &root,
-                &attempt.attempt_id,
-                &packet_path,
-                head_movement,
-            )?;
-            eprintln!(
-                "ripr: edit-cage verdict for attempt `{}`: {:?}",
-                cage_after.attempt_id.as_str(),
-                cage_after.verdict.status
-            );
-            for line in repair_after_cage_recovery_lines(
-                &root,
-                &attempt.seam_id,
-                &attempt.repository_head,
-                &cage_after,
-            ) {
-                eprintln!("ripr: {line}");
-            }
+                // The retained binding's manifest bytes are confirmed again
+                // immediately before the durable finish: the apply
+                // verification ran before several expensive operations, and a
+                // manifest replaced inside that window must refuse instead of
+                // silently advancing the attempt against replaced trust data.
+                if let Some(binding) = &retained_binding {
+                    confirm_manifest_unchanged(binding)?;
+                }
 
-            // The receipt can refuse (for example an escape verdict is not
-            // receipt-ready). The refusal must not swallow the typed apply
-            // evidence, so the outcome is carried to the end and the apply
-            // record is published either way.
-            let receipt_result = run_agent_receipt_for_attempt(
-                AgentReceiptOptions {
-                    root: root.clone(),
-                    verify_json: verify_json.clone(),
-                    seam_id: attempt.seam_id,
-                    test_changed: None,
-                    commands_run: Vec::new(),
-                    json: true,
-                    out: Some(root.join("target/ripr/reports/agent-receipt.json")),
-                },
-                Some(cage_after.attempt_id.as_str()),
-                Some(&packet_path),
-            );
+                // Finish only after all command-owned after artifacts exist.
+                // This makes the durable delta the exact delta the receipt
+                // binds, while the receipt itself remains outside the measured
+                // edit window.
+                let cage_after = finish_repair_attempt(
+                    &root,
+                    &attempt.attempt_id,
+                    &packet_path,
+                    head_movement,
+                )?;
+                eprintln!(
+                    "ripr: edit-cage verdict for attempt `{}`: {:?}",
+                    cage_after.attempt_id.as_str(),
+                    cage_after.verdict.status
+                );
+                for line in repair_after_cage_recovery_lines(
+                    &root,
+                    &attempt.seam_id,
+                    &attempt.repository_head,
+                    &cage_after,
+                ) {
+                    eprintln!("ripr: {line}");
+                }
 
-            run_agent_status(AgentStatusOptions {
-                root: root.clone(),
-                json: true,
-                out_dir: Some(std::path::PathBuf::from("target/ripr/workflow")),
-            })?;
+                // The receipt can refuse (for example an escape verdict is not
+                // receipt-ready). The refusal must not swallow the typed apply
+                // evidence, so the outcome is carried to the end and the apply
+                // record is published either way.
+                let receipt_result = run_agent_receipt_for_attempt(
+                    AgentReceiptOptions {
+                        root: root.clone(),
+                        verify_json: verify_json.clone(),
+                        seam_id: attempt.seam_id.clone(),
+                        test_changed: None,
+                        commands_run: Vec::new(),
+                        json: true,
+                        out: Some(root.join("target/ripr/reports/agent-receipt.json")),
+                    },
+                    Some(cage_after.attempt_id.as_str()),
+                    Some(&packet_path),
+                );
 
-            // The apply record is published last: the receipt re-evaluates the
-            // edit cage over the exact delta finish measured, so no artifact
-            // write may land between finish and the receipt binding.
-            // The retained binding's manifest bytes are confirmed once more
-            // immediately before the record write: the earlier confirmation
-            // ran before the durable finish, so a manifest replaced inside
-            // that finalize window must refuse here instead of publishing an
-            // apply record against replaced trust data. The refusal restores
-            // the attempt to awaiting_edit, so the identical retry
-            // re-verifies everything.
-            let mut apply_record_result = Ok(());
-            if let (Some(binding), Some(verified)) = (&retained_binding, &verified_binding) {
-                let record_outcome =
-                    crate::app::python_repair_binding::confirm_manifest_unchanged(binding)
-                        .and_then(|()| {
-                            crate::app::python_repair_binding::write_apply_record(
-                                &root,
-                                &attempt.attempt_id,
-                                &binding.artifact_sha256,
-                                verified,
-                                edit_authorization.authority.as_deref().unwrap_or_default(),
-                                &cage_after,
-                            )
-                        });
-                match record_outcome {
-                    Ok(apply_record_path) => {
-                        eprintln!(
-                            "ripr: python repair-trust apply record: {}",
-                            apply_record_path.display()
-                        );
-                    }
-                    Err(error) => {
-                        // Finish already advanced the durable state, so a
-                        // failed record publication must restore the attempt
-                        // to awaiting_edit: the identical retry is otherwise
-                        // rejected and the record could never be recreated.
-                        match crate::app::repair_attempt::restore_repair_attempt_to_awaiting_edit(
+                // The status report the finished after phase embeds in its
+                // single stdout document. Built here it reads exactly what
+                // `ripr agent status --json` would print at this point: after
+                // the finish and the receipt write, before the apply record.
+                let status_report = app::agent_status::build_agent_status_report(&root, &root);
+                let status_rendered =
+                    app::agent_status::render_agent_status_json(&status_report)?;
+
+                // The apply record is published last: the receipt re-evaluates
+                // the edit cage over the exact delta finish measured, so no
+                // artifact write may land between finish and the receipt
+                // binding.
+                // The retained binding's manifest bytes are confirmed once
+                // more immediately before the record write: the earlier
+                // confirmation ran before the durable finish, so a manifest
+                // replaced inside that finalize window must refuse here
+                // instead of publishing an apply record against replaced trust
+                // data. The refusal restores the attempt to awaiting_edit, so
+                // the identical retry re-verifies everything.
+                let mut apply_record_result: Result<(), String> = Ok(());
+                let apply_inputs = (&retained_binding, &verified_binding);
+                if let (Some(binding), Some(verified)) = apply_inputs {
+                    let record_outcome = confirm_manifest_unchanged(binding).and_then(|()| {
+                        write_apply_record(
                             &root,
                             &attempt.attempt_id,
-                        ) {
-                            Ok(()) => {
-                                eprintln!(
-                                    "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
-                                );
-                                apply_record_result = Err(error);
-                            }
-                            Err(restore_error) => {
-                                apply_record_result = Err(format!(
-                                    "{error}; rolling the attempt back for a retry also failed: {restore_error}"
-                                ));
+                            &binding.artifact_sha256,
+                            verified,
+                            edit_authorization.authority.as_deref().unwrap_or_default(),
+                            &cage_after,
+                        )
+                    });
+                    match record_outcome {
+                        Ok(apply_record_path) => {
+                            eprintln!(
+                                "ripr: python repair-trust apply record: {}",
+                                apply_record_path.display()
+                            );
+                        }
+                        Err(error) => {
+                            // Finish already advanced the durable state, so a
+                            // failed record publication must restore the
+                            // attempt to awaiting_edit: the identical retry is
+                            // otherwise rejected and the record could never be
+                            // recreated.
+                            match restore_repair_attempt_to_awaiting_edit(
+                                &root,
+                                &attempt.attempt_id,
+                            ) {
+                                Ok(()) => {
+                                    eprintln!(
+                                        "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
+                                    );
+                                    apply_record_result = Err(error);
+                                }
+                                Err(restore_error) => {
+                                    apply_record_result = Err(format!(
+                                        "{error}; rolling the attempt back for a retry also failed: {restore_error}"
+                                    ));
+                                }
                             }
                         }
                     }
                 }
-            }
-            receipt_result?;
-            apply_record_result?;
+                receipt_result?;
+                apply_record_result?;
+
+                Ok(status_rendered)
+            };
+            let status_rendered = match after_tail() {
+                Ok(status_rendered) => status_rendered,
+                Err(error) => {
+                    print!("{rendered_verify}");
+                    return Err(error);
+                }
+            };
+            let mut document: serde_json::Value = serde_json::from_str(&rendered_verify)
+                .map_err(|error| format!("parse rendered agent verify JSON failed: {error}"))?;
+            let status_document: serde_json::Value = serde_json::from_str(&status_rendered)
+                .map_err(|error| format!("parse rendered agent status JSON failed: {error}"))?;
+            // The verify outcome already owns the top-level `status` name
+            // (`advisory`), so the status report rides under `agent_status`;
+            // every existing verify field keeps its name and value.
+            document["agent_status"] = status_document;
+            let combined = serde_json::to_string_pretty(&document).map_err(|error| {
+                format!("serialize after-phase result document failed: {error}")
+            })?;
+            println!("{combined}");
 
             let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
             for line in repair_after_summary_lines(&receipt_path) {
