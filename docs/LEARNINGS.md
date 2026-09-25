@@ -2215,6 +2215,31 @@ Durable rules:
   simulating job death: in containers without a reaping init, `kill -0` keeps
   succeeding on a zombie long after its descriptors, and its lock, are gone.
 
+## 2026-09-24: Stale-PR sweep — two recurring repair classes
+
+Two failure classes recurred across 5+ PRs in one stale-branch sweep
+(golden-envelope class: #3986, #3984, #4023, #3956; stacked-branch handling:
+#3978, #3982).
+
+**Pre-envelope-change goldens ride along on rebased branches.** After
+squash-rebasing an old branch onto main, `cargo xtask goldens check` fails
+with `formatting_only` drift on `check.json` fixtures, first difference at
+the top-level `"base": "origin/main"` line. Cause: the branch carries goldens
+blessed before RIPR-SPEC-0084 (#4002, the no-default-base change) while main
+carries re-blessed copies. Repair: restore main's copies
+(`git checkout origin/main -- <fixture paths>`) rather than re-blessing; for
+fixtures *new* in the branch, re-bless to the new envelope (drop top-level
+`"base"`, set `base_revision` null). Rule: diff the PR's golden fixture files
+against main before pushing a rebase — re-blessing a pre-envelope file
+re-imports the drift main already repaired.
+
+**`git merge --squash` cannot be undone with `git merge --abort`.** No
+`MERGE_HEAD` is recorded, so a conflicted squash merge leaves the index
+conflicted and `checkout -B` carries the mess forward. Repair:
+`git reset --hard <base>` before re-trying. Related: piping
+`git apply --3way` through `head` kills it with SIGPIPE mid-apply — capture
+full output to a file instead.
+
 ## 2026-09-24: A shared sccache server inherits the TMP of whichever lane started it
 
 2026-09-24, multiple concurrent agent lanes on one Windows host
