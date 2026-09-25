@@ -221,8 +221,9 @@ pub(super) fn top_level_projection_observes(
         result_binding = Some((immutable_binding_name(binding)?, position));
         // The retained receipt identity is read from the owner-call input, so
         // the projection oracle must observe that exact receipt, not merely a
-        // relation literal plus cardinality.
-        fed_identity = Some(fed_receipt_identity(&call, &statements)?);
+        // relation literal plus cardinality. Bindings after this call cannot
+        // feed it.
+        fed_identity = Some(fed_receipt_identity(&call, &statements, position)?);
     }
     let (result_binding, owner_position) = result_binding?;
     let fed_identity = fed_identity?;
@@ -292,24 +293,35 @@ pub(super) fn top_level_projection_observes(
 /// Read the receipt identity the owner call is actually fed. The first
 /// argument is either the input collection itself or one immutable local
 /// binding borrowed with `&`; the collection initializer must carry exactly
-/// one struct-literal `id` string. Anything else fails closed.
-fn fed_receipt_identity(call: &ast::CallExpr, statements: &[ast::Stmt]) -> Option<String> {
+/// one struct-literal `id` string. Every binding of the borrowed name in the
+/// statements before the owner call competes regardless of mut-ness: the
+/// call receives the innermost one, so shadowing makes the fed input
+/// ambiguous and only an immutable binding can carry the identity its
+/// initializer claims. Ambiguity fails closed.
+fn fed_receipt_identity(
+    call: &ast::CallExpr,
+    statements: &[ast::Stmt],
+    owner_position: usize,
+) -> Option<String> {
     let first_argument = call.arg_list()?.args().next()?;
     let argument_text = compact(&first_argument.syntax().text().to_string());
     let initializer = if let Some(name) = argument_text.strip_prefix('&') {
         if !valid_identifier(name) {
             return None;
         }
-        let mut bindings = statements.iter().filter_map(|statement| {
+        let mut bindings = statements[..owner_position].iter().filter_map(|statement| {
             let ast::Stmt::LetStmt(binding) = statement else {
                 return None;
             };
-            (immutable_binding_name(binding)?.as_str() == name).then_some(binding)
+            (binding_name(binding)?.as_str() == name).then_some(binding)
         });
         let binding = bindings.next()?;
         if bindings.next().is_some() {
             return None;
         }
+        // The one binding of this name must be immutable: a `mut` binding
+        // could have changed after its identity-bearing initializer.
+        immutable_binding_name(binding)?;
         binding.initializer()?
     } else {
         first_argument.clone()
@@ -319,6 +331,14 @@ fn fed_receipt_identity(call: &ast::CallExpr, statements: &[ast::Stmt]) -> Optio
         return None;
     };
     Some(identity.clone())
+}
+
+/// Name of a `let` binding's identifier pattern with no immutability
+/// requirement, so shadow counting sees `mut` re-bindings too.
+fn binding_name(statement: &ast::LetStmt) -> Option<String> {
+    ast::IdentPat::cast(statement.pat()?.syntax().clone())?
+        .name()
+        .map(|name| name.text().to_string())
 }
 
 /// Macro token trees are not parsed as AST, so a `vec![Receipt { id: "..." }]`
@@ -556,6 +576,36 @@ mod tests {
         assert!(!projection_is_admitted(
             r#"let mut receipts = vec![Receipt { id: "receipt-1".to_string() }];
             let terminal = terminalize_proof(&receipts);
+            assert_eq!(terminal.len(), 1);
+            assert_eq!(terminal[0].0.id, "receipt-1");
+            assert_eq!(terminal[0].1, "request_identity_v2");"#
+        ));
+    }
+
+    #[test]
+    fn mutable_shadow_over_the_fed_receipt_binding_remains_unverified() {
+        // The owner call receives the mutable shadow, not the earlier
+        // immutable initializer, so counting every binding of the name makes
+        // the fed input ambiguous and the whole lookup fails closed.
+        assert!(!projection_is_admitted(
+            r#"let receipts = vec![Receipt { id: "receipt-1".to_string() }];
+            let mut receipts = vec![Receipt { id: "receipt-1".to_string() }];
+            let terminal = terminalize_proof(&receipts);
+            assert_eq!(terminal.len(), 1);
+            assert_eq!(terminal[0].0.id, "receipt-1");
+            assert_eq!(terminal[0].1, "request_identity_v2");"#
+        ));
+    }
+
+    #[test]
+    fn shadow_after_the_owner_call_leaves_the_fed_identity_intact() {
+        // Bindings declared after the owner call cannot feed it, so the
+        // earlier immutable initializer stays the exact fed input; counting
+        // the whole body instead would over-reject this honest shape.
+        assert!(projection_is_admitted(
+            r#"let receipts = vec![Receipt { id: "receipt-1".to_string() }];
+            let terminal = terminalize_proof(&receipts);
+            let mut receipts = vec![Receipt { id: "input-receipt".to_string() }];
             assert_eq!(terminal.len(), 1);
             assert_eq!(terminal[0].0.id, "receipt-1");
             assert_eq!(terminal[0].1, "request_identity_v2");"#
