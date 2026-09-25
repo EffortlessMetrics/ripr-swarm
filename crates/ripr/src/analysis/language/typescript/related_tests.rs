@@ -74,7 +74,7 @@ impl ReExportIndex {
                 continue;
             };
             let allocator = Allocator::default();
-            let ret = Parser::new(&allocator, &source, source_type_for(relative)).parse();
+            let ret = Parser::new(&allocator, source, source_type_for(relative)).parse();
             if !ret.errors.is_empty() {
                 continue;
             }

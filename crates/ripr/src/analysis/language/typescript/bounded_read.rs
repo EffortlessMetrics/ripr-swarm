@@ -196,7 +196,7 @@ pub(crate) fn read_config_capped(path: &Path) -> Result<String, CappedReadError>
 fn read_source_capped(
     path: &Path,
     file_limit: u64,
-    mut budget: Option<&mut u64>,
+    budget: Option<&mut u64>,
 ) -> Result<String, CappedReadError> {
     let metadata = std::fs::symlink_metadata(path)
         .map_err(|err| CappedReadError::Io(format!("inspect {}: {err}", path.display())))?;
@@ -210,12 +210,12 @@ fn read_source_capped(
     if metadata.len() > file_limit {
         return Err(CappedReadError::OverFileLimit { limit: file_limit });
     }
-    if let Some(remaining) = budget.as_deref() {
-        if metadata.len() > *remaining {
-            return Err(CappedReadError::OverWorkspaceBudget {
-                remaining: *remaining,
-            });
-        }
+    let over_budget = budget
+        .as_ref()
+        .is_some_and(|remaining| metadata.len() > **remaining);
+    if over_budget {
+        let remaining = budget.as_ref().map(|remaining| **remaining).unwrap_or(0);
+        return Err(CappedReadError::OverWorkspaceBudget { remaining });
     }
     let file = std::fs::File::open(path)
         .map_err(|err| CappedReadError::Io(format!("open {}: {err}", path.display())))?;
@@ -228,7 +228,7 @@ fn read_source_capped(
     }
     let text = String::from_utf8(bytes)
         .map_err(|err| CappedReadError::Io(format!("decode {}: {err}", path.display())))?;
-    if let Some(remaining) = budget.as_deref_mut() {
+    if let Some(remaining) = budget {
         *remaining = remaining.saturating_sub(text.len() as u64);
     }
     Ok(text)
