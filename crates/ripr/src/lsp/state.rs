@@ -1214,7 +1214,8 @@ impl DocumentStore {
                 return state.refresh_quarantine();
             }
 
-            if apply_document_content_changes(&mut state.text, changes, position_encoding).is_err() {
+            if apply_document_content_changes(&mut state.text, changes, position_encoding).is_err()
+            {
                 let was_quarantined = state.quarantine.is_some();
                 let was_disclosed = state
                     .quarantine
@@ -1243,7 +1244,10 @@ impl DocumentStore {
         let mut text = changes[last_full_replacement].text.clone();
         if apply_document_content_changes(
             &mut text,
-            changes.into_iter().skip(last_full_replacement + 1).collect(),
+            changes
+                .into_iter()
+                .skip(last_full_replacement + 1)
+                .collect(),
             position_encoding,
         )
         .is_err()
@@ -1963,19 +1967,26 @@ mod tests {
             return Err("missing recovered document state".to_string());
         };
         if state.text != "Wxyz" {
-            return Err(format!("full replacement did not recover buffer: {:?}", state.text));
+            return Err(format!(
+                "full replacement did not recover buffer: {:?}",
+                state.text
+            ));
         }
         if state.quarantine.as_ref().map(|q| q.reason)
             != Some(DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)
         {
-            return Err("full replacement must restore ordinary dirty-buffer quarantine".to_string());
+            return Err(
+                "full replacement must restore ordinary dirty-buffer quarantine".to_string(),
+            );
         }
         if !state
             .quarantine
             .as_ref()
             .is_some_and(|quarantine| quarantine.withdrawal_disclosed)
         {
-            return Err("recovery inside one quarantine episode must retain disclosure state".into());
+            return Err(
+                "recovery inside one quarantine episode must retain disclosure state".into(),
+            );
         }
         Ok(())
     }
