@@ -27,9 +27,9 @@ use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
 #[cfg(test)]
 use super::seam_cache::RepoSeamCountCache;
 use super::seam_cache::{
-    CacheLoad, CachedSeamLimitInfo, FileFactCacheStats, RepoCorpusFingerprintCache,
-    RepoSeamCacheKey, RepoSeamFactCache, WorkspaceKeyContext, WorkspaceState,
-    classified_seam_cache_store_limit, compact_classified_seam_cache_store_limit,
+    CacheLoad, CachedSeamLimitInfo, CorpusFingerprintLookup, FileFactCacheStats,
+    RepoCorpusFingerprintCache, RepoSeamCacheKey, RepoSeamFactCache, WorkspaceKeyContext,
+    WorkspaceState, classified_seam_cache_store_limit, compact_classified_seam_cache_store_limit,
     corpus_fingerprint,
 };
 #[cfg(test)]
@@ -818,12 +818,323 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
     })
 }
 
+/// Kill-switch for the warm no-impact fast path (issue #3859, removal
+/// control 12): `RIPR_NO_IMPACT_FAST_PATH=0` restores the
+/// read-everything scoped path unconditionally. Any other value (or
+/// unset) leaves the fast path eligible.
+const NO_IMPACT_FAST_PATH_ENV: &str = "RIPR_NO_IMPACT_FAST_PATH";
+
+/// Typed reason the warm no-impact fast path declined a diff (issue
+/// #3859). Every reason runs the full conservative scoped path; the
+/// reason is traced, never silent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NoImpactFallbackReason {
+    ChangedRustSource,
+    ChangedTestOrHarness,
+    ChangedManifestOrConfig,
+    ChangedSourceRoleAuthority,
+    UnsupportedOrUnprovenChangeIdentity,
+    MissingFingerprintMapping,
+    IncompatibleWorkspaceIdentity,
+    CorruptMetadata,
+    CorpusChangedDuringResolution,
+}
+
+impl NoImpactFallbackReason {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::ChangedRustSource => "changed_rust_source",
+            Self::ChangedTestOrHarness => "changed_test_or_harness",
+            Self::ChangedManifestOrConfig => "changed_manifest_or_config",
+            Self::ChangedSourceRoleAuthority => "changed_source_role_authority",
+            Self::UnsupportedOrUnprovenChangeIdentity => "unsupported_or_unproven_change_identity",
+            Self::MissingFingerprintMapping => "missing_fingerprint_mapping",
+            Self::IncompatibleWorkspaceIdentity => "incompatible_workspace_identity",
+            Self::CorruptMetadata => "corrupt_metadata",
+            Self::CorpusChangedDuringResolution => "corpus_changed_during_resolution",
+        }
+    }
+}
+
+/// Outcome of the warm no-impact probe (issue #3859). The
+/// inventory is boxed: it outweighs the reason by two orders of
+/// magnitude and the enum crosses the call boundary by value.
+enum NoImpactOutcome {
+    Fast(Box<ScopedClassifiedSeamInventory>),
+    Declined(NoImpactFallbackReason),
+}
+
+fn no_impact_fast_path_disabled() -> bool {
+    std::env::var(NO_IMPACT_FAST_PATH_ENV)
+        .ok()
+        .is_some_and(|value| value == "0")
+}
+
+/// Warm no-impact fast path (issue #3859). For a diff proven not to
+/// affect Rust seam/evidence semantics, rebuild the exact workspace
+/// cache key from the admitted corpus fingerprint mapping and return
+/// an empty scoped inventory without reading Rust source contents or
+/// building the Rust index. Manifest reads still occur (source-role
+/// context needs declared targets); Rust content reads, file-fact
+/// recomputes, index construction, and semantic work are all zero.
+///
+/// Returns `Declined` with a typed reason for every ineligible input;
+/// the caller traces the reason and runs the full conservative path.
+/// Returns `Err` only when corpus discovery itself fails, matching the
+/// full path's failure exactly.
+fn try_no_impact_fast_path(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    changed_owner_names: &[String],
+) -> Result<NoImpactOutcome, String> {
+    let fast_started = Instant::now();
+    if changed_owner_names
+        .iter()
+        .any(|name| !name.trim().is_empty())
+    {
+        return Ok(NoImpactOutcome::Declined(
+            NoImpactFallbackReason::ChangedRustSource,
+        ));
+    }
+    // Discovery walks directories and stats files; it reads no file
+    // contents. A discovery failure matches the full path's failure,
+    // so propagate it rather than declining into an identical error.
+    let (rust_files, fingerprint) = scan_corpus_fingerprint(root)?;
+    let Some(fingerprint) = fingerprint else {
+        // No stat field on this platform witnesses every content write
+        // (issue #3848), so no signature is reusable evidence here.
+        return Ok(NoImpactOutcome::Declined(
+            NoImpactFallbackReason::UnsupportedOrUnprovenChangeIdentity,
+        ));
+    };
+    let context = production_role_context(root, config, rust_files.iter().map(PathBuf::as_path));
+    if let Some(reason) =
+        no_impact_changed_path_fallback(changed_files, &rust_files, config, &context)
+    {
+        return Ok(NoImpactOutcome::Declined(reason));
+    }
+    let files_content_hash =
+        match RepoCorpusFingerprintCache::at(root).lookup_detailed(root, &fingerprint) {
+            CorpusFingerprintLookup::Hit(files_content_hash) => files_content_hash,
+            CorpusFingerprintLookup::Missing => {
+                return Ok(NoImpactOutcome::Declined(
+                    NoImpactFallbackReason::MissingFingerprintMapping,
+                ));
+            }
+            CorpusFingerprintLookup::Corrupt(_) => {
+                return Ok(NoImpactOutcome::Declined(
+                    NoImpactFallbackReason::CorruptMetadata,
+                ));
+            }
+            CorpusFingerprintLookup::Incompatible(_) => {
+                return Ok(NoImpactOutcome::Declined(
+                    NoImpactFallbackReason::IncompatibleWorkspaceIdentity,
+                ));
+            }
+        };
+    let workspace_cache_key =
+        workspace_key_inputs(root, config).cache_key(root, files_content_hash);
+    let total_rust_files = rust_files.len();
+    let total_production_files = rust_files
+        .iter()
+        .filter(|path| workspace::classify_with(path, &context).seeds_production_findings())
+        .count();
+    // The corpus may have moved between the scan and this point. A
+    // re-stat is cheap (no content reads); any drift declines into the
+    // full path rather than pairing the key with a changed corpus.
+    if corpus_fingerprint(root, &rust_files).as_deref() != Some(fingerprint.as_str()) {
+        return Ok(NoImpactOutcome::Declined(
+            NoImpactFallbackReason::CorpusChangedDuringResolution,
+        ));
+    }
+    trace_latency_phase(
+        "diff_scoped_inventory",
+        "no_impact_fast_path",
+        fast_started.elapsed(),
+    );
+    Ok(NoImpactOutcome::Fast(Box::new(
+        ScopedClassifiedSeamInventory {
+            classified: Vec::new(),
+            file_fact_cache: FileFactCacheStats::zero_work(),
+            workspace_cache_key,
+            total_rust_files,
+            total_production_files,
+            scoped_production_files: Vec::new(),
+            changed_production_files: Vec::new(),
+            immediate_caller_files: Vec::new(),
+        },
+    )))
+}
+
+/// Path-only eligibility for the warm no-impact fast path (issue
+/// #3859). Returns the typed fallback reason for the first changed
+/// path that is a represented analysis input; `None` means no changed
+/// path can affect Rust seam/evidence semantics.
+///
+/// This is deliberately not a `.rs`-only extension shortcut: changed
+/// tests invalidate evidence, and manifest/config/source-role movement
+/// widens conservatively, each with its own reason.
+fn no_impact_changed_path_fallback(
+    changed_files: &[PathBuf],
+    rust_files: &[PathBuf],
+    config: &RiprConfig,
+    context: &workspace::SourceRoleContext,
+) -> Option<NoImpactFallbackReason> {
+    let corpus: BTreeSet<String> = rust_files
+        .iter()
+        .map(|path| normalized_inventory_path(path))
+        .collect();
+    let as_set = |paths: &BTreeSet<PathBuf>| {
+        paths
+            .iter()
+            .map(|path| normalized_inventory_path(path))
+            .collect::<BTreeSet<_>>()
+    };
+    let production_like = as_set(config.analysis().production_like_targets());
+    let declared_tests = as_set(&context.declared_test_targets);
+    let declared_benches = as_set(&context.declared_bench_targets);
+    let harness_targets: BTreeSet<String> = config
+        .analysis()
+        .test_harnesses()
+        .iter()
+        .map(|registration| normalized_inventory_path(registration.target.as_path()))
+        .collect();
+    let suppressions = normalized_inventory_path(config.suppressions().path());
+    for changed in changed_files {
+        let normalized = normalized_inventory_path(changed);
+        if corpus.contains(&normalized) {
+            // Indexed corpus member: any change reaches the index or
+            // its test-grip evidence, whatever the role.
+            return Some(rust_change_reason(workspace::classify_with(
+                Path::new(&normalized),
+                context,
+            )));
+        }
+        if production_like.contains(&normalized) {
+            return Some(NoImpactFallbackReason::ChangedRustSource);
+        }
+        if harness_targets.contains(&normalized) {
+            return Some(NoImpactFallbackReason::ChangedTestOrHarness);
+        }
+        // Declared target membership precedes the extension check: a
+        // deleted declared test target is no longer in the corpus, yet
+        // its role authority moved, which the extension branch alone
+        // would report as an ordinary test change.
+        if declared_tests.contains(&normalized) || declared_benches.contains(&normalized) {
+            return Some(NoImpactFallbackReason::ChangedSourceRoleAuthority);
+        }
+        if is_rust_source_file_name(&normalized) {
+            // Rust source outside the discovered corpus (deleted file,
+            // ignored directory): the full path would still resolve
+            // owners or roles against it, so never shortcut.
+            return Some(rust_change_reason(workspace::classify_with(
+                Path::new(&normalized),
+                context,
+            )));
+        }
+        if is_manifest_or_config_path(&normalized, &suppressions) {
+            return Some(NoImpactFallbackReason::ChangedManifestOrConfig);
+        }
+    }
+    None
+}
+
+/// Fallback reason for a changed Rust source path from its
+/// source role. Only an explicit evidence role earns the test
+/// reason; a fixture role the model will not vouch for fails closed
+/// as source.
+fn rust_change_reason(role: workspace::SourceRole) -> NoImpactFallbackReason {
+    if role.seeds_production_findings() {
+        NoImpactFallbackReason::ChangedRustSource
+    } else {
+        match role {
+            workspace::SourceRole::TestEvidence
+            | workspace::SourceRole::BenchEvidence
+            | workspace::SourceRole::ExampleEvidence => {
+                NoImpactFallbackReason::ChangedTestOrHarness
+            }
+            _ => NoImpactFallbackReason::ChangedRustSource,
+        }
+    }
+}
+
+/// Rust source by file name, case-insensitive: an uppercase `.RS`
+/// must never slip past as a documentation edit.
+fn is_rust_source_file_name(normalized: &str) -> bool {
+    normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .rsplit('.')
+        .next()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
+}
+
+/// Cargo manifest/lock/toolchain inputs plus the repository inputs the
+/// workspace cache key derives from: `ripr.toml`, the test-intent
+/// file, and the configured suppressions file.
+fn is_manifest_or_config_path(normalized: &str, suppressions: &str) -> bool {
+    if normalized == suppressions
+        || normalized == crate::config::CONFIG_FILE_NAME
+        || normalized == ".ripr/test_intent.toml"
+    {
+        return true;
+    }
+    if normalized.starts_with(".cargo/") {
+        return true;
+    }
+    matches!(
+        normalized.rsplit('/').next().unwrap_or_default(),
+        "Cargo.toml" | "Cargo.lock" | "rust-toolchain" | "rust-toolchain.toml"
+    )
+}
+
 pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     root: &Path,
     config: &RiprConfig,
     changed_files: &[PathBuf],
     changed_owner_names: &[String],
 ) -> Result<ScopedClassifiedSeamInventory, String> {
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        changed_files,
+        changed_owner_names,
+        !no_impact_fast_path_disabled(),
+    )
+}
+
+/// Shared body behind [`inventory_diff_scoped_classified_seams_at_with_config`].
+/// The explicit `fast_path_enabled` flag is the removal control (issue
+/// #3859, control 12): tests drive the disabled route directly instead
+/// of mutating the process environment.
+fn inventory_diff_scoped_classified_seams_inner(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    changed_owner_names: &[String],
+    fast_path_enabled: bool,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    if fast_path_enabled {
+        match try_no_impact_fast_path(root, config, changed_files, changed_owner_names) {
+            Ok(NoImpactOutcome::Fast(inventory)) => return Ok(*inventory),
+            Ok(NoImpactOutcome::Declined(reason)) => {
+                trace_latency_phase(
+                    "diff_scoped_inventory",
+                    &format!("no_impact_fallback_{}", reason.as_str()),
+                    Duration::ZERO,
+                );
+            }
+            Err(error) => return Err(error),
+        }
+    } else {
+        trace_latency_phase(
+            "diff_scoped_inventory",
+            "no_impact_fast_path_disabled",
+            Duration::ZERO,
+        );
+    }
     let state = collect_workspace_state(root, config)?;
     let workspace_cache_key = state.cache_key();
     let total_rust_files = state.files.len();
@@ -1129,14 +1440,11 @@ fn production_files_from_state_with_role(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
 ) -> Vec<PathBuf> {
-    // Producer-owned source role (#3283): layout plus declared Cargo
-    // targets plus the repository production-like opt-in.
-    let mut context = workspace::context_for_files(
+    let context = production_role_context(
         &state.workspace_root,
+        config,
         state.files.iter().map(|(path, _)| path.as_path()),
     );
-    context.production_like_targets = config.analysis().production_like_targets().clone();
-    context.harness_targets = harness_targets_from_config(&state.workspace_root, config);
     state
         .files
         .iter()
@@ -1144,6 +1452,26 @@ fn production_files_from_state_with_role(
         .filter(|path| workspace::classify_with(path, &context).seeds_production_findings())
         .cloned()
         .collect()
+}
+
+/// Producer-owned source role (#3283): layout plus declared Cargo
+/// targets plus the repository production-like opt-in. Shared by the
+/// full inventory path and the warm no-impact fast path (issue #3859)
+/// so both derive the identical production set; the fast path feeds it
+/// discovered paths instead of read file contents, which is exact
+/// because role classification never consults file bytes.
+fn production_role_context<'a, I>(
+    workspace_root: &Path,
+    config: &RiprConfig,
+    files: I,
+) -> workspace::SourceRoleContext
+where
+    I: IntoIterator<Item = &'a Path>,
+{
+    let mut context = workspace::context_for_files(workspace_root, files);
+    context.production_like_targets = config.analysis().production_like_targets().clone();
+    context.harness_targets = harness_targets_from_config(workspace_root, config);
+    context
 }
 
 /// Collect the per-file content + intent + suppressions inputs the
@@ -2805,6 +3133,542 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             .then_some(())
             .ok_or("absent fingerprint must fail closed to the content-read path")?;
 
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_fallback_reason_vocabulary_is_stable() {
+        // The traced `no_impact_fallback_<reason>` statuses are
+        // observability contract: pin the exact vocabulary.
+        let reasons = [
+            (
+                NoImpactFallbackReason::ChangedRustSource,
+                "changed_rust_source",
+            ),
+            (
+                NoImpactFallbackReason::ChangedTestOrHarness,
+                "changed_test_or_harness",
+            ),
+            (
+                NoImpactFallbackReason::ChangedManifestOrConfig,
+                "changed_manifest_or_config",
+            ),
+            (
+                NoImpactFallbackReason::ChangedSourceRoleAuthority,
+                "changed_source_role_authority",
+            ),
+            (
+                NoImpactFallbackReason::UnsupportedOrUnprovenChangeIdentity,
+                "unsupported_or_unproven_change_identity",
+            ),
+            (
+                NoImpactFallbackReason::MissingFingerprintMapping,
+                "missing_fingerprint_mapping",
+            ),
+            (
+                NoImpactFallbackReason::IncompatibleWorkspaceIdentity,
+                "incompatible_workspace_identity",
+            ),
+            (NoImpactFallbackReason::CorruptMetadata, "corrupt_metadata"),
+            (
+                NoImpactFallbackReason::CorpusChangedDuringResolution,
+                "corpus_changed_during_resolution",
+            ),
+        ];
+        for (reason, expected) in reasons {
+            assert_eq!(reason.as_str(), expected, "fallback reason {reason:?}");
+        }
+    }
+
+    fn no_impact_layout(root: &Path) -> Result<(), String> {
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = 'no-impact-fixture'\nversion = '0.1.0'\n\n[workspace]\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+        )?;
+        write_file(&root.join("docs/notes.md"), "# notes\n")?;
+        Ok(())
+    }
+
+    fn no_impact_eligibility(
+        root: &Path,
+        config: &RiprConfig,
+        changed: &[&str],
+    ) -> Result<Option<NoImpactFallbackReason>, String> {
+        let (rust_files, _) = scan_corpus_fingerprint(root)?;
+        let context =
+            production_role_context(root, config, rust_files.iter().map(PathBuf::as_path));
+        let changed_files: Vec<PathBuf> = changed.iter().map(PathBuf::from).collect();
+        Ok(no_impact_changed_path_fallback(
+            &changed_files,
+            &rust_files,
+            config,
+            &context,
+        ))
+    }
+
+    #[test]
+    fn no_impact_docs_only_change_is_eligible() -> Result<(), String> {
+        let root = make_tempdir("no-impact-docs")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let eligible = no_impact_eligibility(
+            &root,
+            &config,
+            &[
+                "docs/notes.md",
+                "README.md",
+                ".github/workflows/ci.yml",
+                "editors/vscode/package.json",
+                "scripts/check.py",
+            ],
+        )?;
+        if eligible.is_some() {
+            return Err(format!(
+                "documentation and non-Rust changes must be no-impact eligible, got {eligible:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_production_source_change_falls_back() -> Result<(), String> {
+        let root = make_tempdir("no-impact-prod")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let reason = no_impact_eligibility(&root, &config, &["src/lib.rs"])?;
+        if reason != Some(NoImpactFallbackReason::ChangedRustSource) {
+            return Err(format!(
+                "production source change must fall back as changed_rust_source, got {reason:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_test_source_change_falls_back() -> Result<(), String> {
+        let root = make_tempdir("no-impact-test")?;
+        no_impact_layout(&root)?;
+        write_file(
+            &root.join("tests/contract.rs"),
+            "#[test]\nfn reserves() {}\n",
+        )?;
+        let config = RiprConfig::default();
+        let reason = no_impact_eligibility(&root, &config, &["tests/contract.rs"])?;
+        if reason != Some(NoImpactFallbackReason::ChangedTestOrHarness) {
+            return Err(format!(
+                "test source change must fall back as changed_test_or_harness, got {reason:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_manifest_and_config_changes_fall_back() -> Result<(), String> {
+        let root = make_tempdir("no-impact-manifest")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        for changed in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "ripr.toml",
+            ".ripr/test_intent.toml",
+            ".ripr/suppressions.toml",
+            ".cargo/config.toml",
+        ] {
+            let reason = no_impact_eligibility(&root, &config, &[changed])?;
+            if reason != Some(NoImpactFallbackReason::ChangedManifestOrConfig) {
+                return Err(format!(
+                    "{changed} must fall back as changed_manifest_or_config, got {reason:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_uppercase_rs_never_slips_past_as_docs() -> Result<(), String> {
+        let root = make_tempdir("no-impact-rs-case")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let reason = no_impact_eligibility(&root, &config, &["docs/NOTES.RS"])?;
+        if reason != Some(NoImpactFallbackReason::ChangedRustSource) {
+            return Err(format!(
+                "uppercase .RS must fall back as changed_rust_source, got {reason:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_deleted_declared_test_target_falls_back_with_authority_reason()
+    -> Result<(), String> {
+        let root = make_tempdir("no-impact-declared")?;
+        // The manifest declares the target but the file is absent
+        // (deleted): no longer in the corpus, yet its role authority
+        // moved.
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = 'no-impact-fixture'\nversion = '0.1.0'\n\n[workspace]\n\n[[test]]\nname = 'mimic'\npath = 'tests/mimic.rs'\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+        )?;
+        let config = RiprConfig::default();
+        let reason = no_impact_eligibility(&root, &config, &["tests/mimic.rs"])?;
+        if reason != Some(NoImpactFallbackReason::ChangedSourceRoleAuthority) {
+            return Err(format!(
+                "deleted declared test target must fall back as changed_source_role_authority, got {reason:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_registered_harness_change_falls_back() -> Result<(), String> {
+        let root = make_tempdir("no-impact-harness")?;
+        no_impact_layout(&root)?;
+        // The registered harness target is deleted: absent from the
+        // corpus, but the raw registration still names it a harness.
+        let config = crate::config::tests_only_parse(
+            r#"[analysis]
+[[analysis.test_harnesses]]
+registration_id = "mimic"
+target = "tests/mimic.rs"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic::Trial"
+"#,
+        )
+        .map_err(|error| format!("fixture config parses: {error}"))?;
+        let reason = no_impact_eligibility(&root, &config, &["tests/mimic.rs"])?;
+        if reason != Some(NoImpactFallbackReason::ChangedTestOrHarness) {
+            return Err(format!(
+                "registered harness change must fall back as changed_test_or_harness, got {reason:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_named_owner_falls_back_before_any_filesystem_probe() -> Result<(), String> {
+        // Owners are checked before corpus discovery: even an
+        // absent root must report the owner reason, never a scan
+        // error.
+        let root = PathBuf::from("ripr-no-impact-absent-root");
+        let config = RiprConfig::default();
+        let outcome = try_no_impact_fast_path(&root, &config, &[], &["crate::discount".to_owned()]);
+        match outcome {
+            Ok(NoImpactOutcome::Declined(NoImpactFallbackReason::ChangedRustSource)) => Ok(()),
+            other => Err(format!(
+                "named owner must decline as changed_rust_source, got {}",
+                match other {
+                    Ok(NoImpactOutcome::Fast(_)) => "fast path".to_owned(),
+                    Ok(NoImpactOutcome::Declined(reason)) => reason.as_str().to_owned(),
+                    Err(error) => format!("error {error}"),
+                }
+            )),
+        }
+    }
+
+    #[test]
+    fn no_impact_missing_tree_reports_discovery_error() -> Result<(), String> {
+        let root = PathBuf::from("ripr-no-impact-absent-root");
+        let config = RiprConfig::default();
+        match try_no_impact_fast_path(&root, &config, &[], &[]) {
+            Err(_) => Ok(()),
+            Ok(_) => Err("absent root must propagate the discovery error".to_owned()),
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn no_impact_fast_path_without_change_witness_falls_back() -> Result<(), String> {
+        // Issue #3848: no stat field on this platform witnesses every
+        // content write, so the fast path can never engage here.
+        let root = make_tempdir("no-impact-no-witness")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let outcome =
+            try_no_impact_fast_path(&root, &config, &[PathBuf::from("docs/notes.md")], &[]);
+        match outcome {
+            Ok(NoImpactOutcome::Declined(
+                NoImpactFallbackReason::UnsupportedOrUnprovenChangeIdentity,
+            )) => Ok(()),
+            other => Err(format!(
+                "platform without a change witness must decline as unsupported_or_unproven_change_identity, got {}",
+                match other {
+                    Ok(NoImpactOutcome::Fast(_)) => "fast path".to_owned(),
+                    Ok(NoImpactOutcome::Declined(reason)) => reason.as_str().to_owned(),
+                    Err(error) => format!("error {error}"),
+                }
+            )),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_impact_warm_docs_diff_returns_empty_inventory_with_exact_identity() -> Result<(), String>
+    {
+        let root = make_tempdir("no-impact-warm")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        // Cold run through the full path populates the fingerprint
+        // mapping for the next call.
+        let full =
+            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+        if !full.classified.is_empty() {
+            return Err("docs-only diff must classify no seams on the full path".to_owned());
+        }
+        let outcome = try_no_impact_fast_path(&root, &config, &changed, &[])?;
+        let fast = match outcome {
+            NoImpactOutcome::Fast(inventory) => inventory,
+            NoImpactOutcome::Declined(reason) => {
+                return Err(format!(
+                    "warm docs-only diff must take the fast path, got fallback {}",
+                    reason.as_str()
+                ));
+            }
+        };
+        if !fast.classified.is_empty()
+            || !fast.scoped_production_files.is_empty()
+            || !fast.changed_production_files.is_empty()
+            || !fast.immediate_caller_files.is_empty()
+        {
+            return Err("fast path must return empty seam and file sets".to_owned());
+        }
+        if fast.workspace_cache_key != full.workspace_cache_key {
+            return Err(
+                "fast path workspace key must be byte-identical to the full path".to_owned(),
+            );
+        }
+        if fast.total_rust_files != full.total_rust_files
+            || fast.total_production_files != full.total_production_files
+        {
+            return Err(format!(
+                "fast path totals ({}/{}) must match the full path ({}/{})",
+                fast.total_rust_files,
+                fast.total_production_files,
+                full.total_rust_files,
+                full.total_production_files
+            ));
+        }
+        if fast.file_fact_cache.hits != 0
+            || fast.file_fact_cache.misses != 0
+            || fast.file_fact_cache.corrupt_ignored != 0
+            || fast.file_fact_cache.stores != 0
+            || fast.file_fact_cache.store_errors != 0
+            || !fast.file_fact_cache.invalidated_files.is_empty()
+            || !fast.file_fact_cache.store_failures.is_empty()
+            || fast.file_fact_cache.store_failures_dropped != 0
+        {
+            return Err("fast path must report explicit zero work counters".to_owned());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_impact_fast_path_reads_no_rust_contents() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let root = make_tempdir("no-impact-unreadable")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        // Populate the mapping while the corpus is readable.
+        inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+        // Revoke all content access to the Rust sources. Manifest and
+        // directory reads stay permitted; only file bytes are denied.
+        let source = root.join("src/lib.rs");
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o000))
+            .map_err(|err| format!("revoke source permissions: {err}"))?;
+        let outcome = try_no_impact_fast_path(&root, &config, &changed, &[]);
+        // Restore before asserting so the temp dir cleans up.
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o644))
+            .map_err(|err| format!("restore source permissions: {err}"))?;
+        match outcome {
+            NoImpactOutcome::Fast(_) => Ok(()),
+            NoImpactOutcome::Declined(reason) => Err(format!(
+                "fast path must not read Rust contents, got fallback {}",
+                reason.as_str()
+            )),
+            Err(error) => Err(format!("fast path must not read Rust contents: {error}")),
+        }?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_impact_cold_cache_falls_back_with_mapping_reason() -> Result<(), String> {
+        let root = make_tempdir("no-impact-cold")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let outcome =
+            try_no_impact_fast_path(&root, &config, &[PathBuf::from("docs/notes.md")], &[])?;
+        match outcome {
+            NoImpactOutcome::Declined(NoImpactFallbackReason::MissingFingerprintMapping) => Ok(()),
+            NoImpactOutcome::Declined(reason) => Err(format!(
+                "cold cache must decline as missing_fingerprint_mapping, got {}",
+                reason.as_str()
+            )),
+            NoImpactOutcome::Fast(_) => Err("cold cache must not take the fast path".to_owned()),
+            Err(error) => Err(error),
+        }?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn no_impact_fingerprint_entries(root: &Path) -> Result<Vec<PathBuf>, String> {
+        let dir = root
+            .join("target")
+            .join("ripr")
+            .join("cache")
+            .join("repo-corpus-fingerprint")
+            .join(crate::analysis::seam_cache::CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION);
+        list_entries(&dir)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_impact_corrupt_mapping_falls_back() -> Result<(), String> {
+        let root = make_tempdir("no-impact-corrupt")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+        let entries = no_impact_fingerprint_entries(&root)?;
+        if entries.len() != 1 {
+            return Err(format!(
+                "expected exactly 1 fingerprint mapping, got {}",
+                entries.len()
+            ));
+        }
+        std::fs::write(&entries[0], b"{not valid json")
+            .map_err(|err| format!("corrupt mapping: {err}"))?;
+        let outcome = try_no_impact_fast_path(&root, &config, &changed, &[])?;
+        match outcome {
+            NoImpactOutcome::Declined(NoImpactFallbackReason::CorruptMetadata) => Ok(()),
+            NoImpactOutcome::Declined(reason) => Err(format!(
+                "corrupt mapping must decline as corrupt_metadata, got {}",
+                reason.as_str()
+            )),
+            NoImpactOutcome::Fast(_) => {
+                Err("corrupt mapping must not take the fast path".to_owned())
+            }
+            Err(error) => Err(error),
+        }?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_impact_foreign_root_mapping_falls_back_incompatible() -> Result<(), String> {
+        let root = make_tempdir("no-impact-foreign")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+        let entries = no_impact_fingerprint_entries(&root)?;
+        if entries.len() != 1 {
+            return Err(format!(
+                "expected exactly 1 fingerprint mapping, got {}",
+                entries.len()
+            ));
+        }
+        // Retarget the entry at another workspace root: the entry
+        // decodes but its root identity no longer matches.
+        let bytes = std::fs::read(&entries[0]).map_err(|err| format!("read mapping: {err}"))?;
+        let mut envelope: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|err| format!("parse mapping: {err}"))?;
+        envelope["workspace_root_hash"] = serde_json::Value::String("foreign-root".to_owned());
+        let rewritten =
+            serde_json::to_vec(&envelope).map_err(|err| format!("encode mapping: {err}"))?;
+        std::fs::write(&entries[0], rewritten).map_err(|err| format!("rewrite mapping: {err}"))?;
+        let outcome = try_no_impact_fast_path(&root, &config, &changed, &[])?;
+        match outcome {
+            NoImpactOutcome::Declined(NoImpactFallbackReason::IncompatibleWorkspaceIdentity) => {
+                Ok(())
+            }
+            NoImpactOutcome::Declined(reason) => Err(format!(
+                "foreign mapping must decline as incompatible_workspace_identity, got {}",
+                reason.as_str()
+            )),
+            NoImpactOutcome::Fast(_) => {
+                Err("foreign mapping must not take the fast path".to_owned())
+            }
+            Err(error) => Err(error),
+        }?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_impact_disabled_route_matches_fast_route_modulo_work_counters() -> Result<(), String> {
+        // Removal control (issue #3859, control 12): disabling the
+        // shortcut preserves output identity; only the measured work
+        // counters may grow.
+        let root = make_tempdir("no-impact-disabled")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+        let fast =
+            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], true)?;
+        let full =
+            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+        if fast.classified != full.classified
+            || fast.workspace_cache_key != full.workspace_cache_key
+            || fast.total_rust_files != full.total_rust_files
+            || fast.total_production_files != full.total_production_files
+            || fast.scoped_production_files != full.scoped_production_files
+            || fast.changed_production_files != full.changed_production_files
+            || fast.immediate_caller_files != full.immediate_caller_files
+        {
+            return Err(
+                "disabled route must preserve output identity modulo work counters".to_owned(),
+            );
+        }
+        if fast.file_fact_cache.hits != 0 || fast.file_fact_cache.misses != 0 {
+            return Err("fast route must report zero file-fact work".to_owned());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_production_edit_keeps_full_computation_active() -> Result<(), String> {
+        // Issue #3859, control 4: a production edit never shortcuts.
+        let root = make_tempdir("no-impact-production")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &config,
+            &[PathBuf::from("src/lib.rs")],
+            &[],
+        )?;
+        if inventory.classified.is_empty() {
+            return Err("production edit must keep full seam computation active".to_owned());
+        }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
