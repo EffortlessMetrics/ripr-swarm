@@ -6,15 +6,71 @@ use super::*;
 
 /// Tokenize an expression string into identifier tokens longer than 3 chars.
 ///
-/// Only ASCII alphanumeric / underscore segments are kept; dot-qualifier and
-/// `::` segments are excluded so that shared qualifiers (e.g. `"amount"` from
-/// both `amount * 9` and an unrelated `amount * 2`) do not spuriously confirm.
+/// Only ASCII alphanumeric / underscore segments are kept. Segments adjacent
+/// to a dot (`.`) or path separator (`:`) are excluded — both the qualifier
+/// and the qualified member — so that shared names (e.g. `"amount"` from both
+/// `props.amount * 9` and an unrelated bare `amount * 2`) do not spuriously
+/// confirm: a dot-qualified name may belong to a different receiver.
 fn identifier_tokens(expr: &str) -> Vec<String> {
-    expr.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .filter(|tok| tok.len() > 3)
-        .map(|tok| tok.to_string())
-        .collect()
+    let mut tokens = Vec::new();
+    let mut start: Option<usize> = None;
+    for (idx, ch) in expr.char_indices() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            if start.is_none() {
+                start = Some(idx);
+            }
+        } else if let Some(segment_start) = start.take() {
+            push_identifier_token(expr, segment_start, idx, &mut tokens);
+        }
+    }
+    if let Some(segment_start) = start {
+        push_identifier_token(expr, segment_start, expr.len(), &mut tokens);
+    }
+    tokens
 }
+
+/// Push `expr[segment_start..segment_end]` as a confirmation token unless it
+/// is dot/path-adjacent (see [`identifier_tokens`]) or too short.
+fn push_identifier_token(
+    expr: &str,
+    segment_start: usize,
+    segment_end: usize,
+    tokens: &mut Vec<String>,
+) {
+    let preceded_by_qualifier = expr[..segment_start]
+        .chars()
+        .next_back()
+        .is_some_and(|ch| ch == '.' || ch == ':');
+    let followed_by_qualifier = expr[segment_end..]
+        .chars()
+        .next()
+        .is_some_and(|ch| ch == '.' || ch == ':');
+    if preceded_by_qualifier || followed_by_qualifier {
+        return;
+    }
+    let token = &expr[segment_start..segment_end];
+    if token.len() > 3 {
+        tokens.push(token.to_string());
+    }
+}
+
+/// Synthesized template words that `typescript_call_effect_discriminator`
+/// interpolates into its English-sentence discriminator (`call … includes …`,
+/// `call … occurs`, `mock interaction … is called`, `log contains …`). They
+/// are generator vocabulary, not changed code, so they must never serve as
+/// confirmation tokens for the RIPR-SPEC-0098 observation guard.
+const CALL_EFFECT_TEMPLATE_WORDS: &[&str] = &[
+    "includes",
+    "occurs",
+    "matching",
+    "called",
+    "interaction",
+    "contains",
+    "mock",
+    "with",
+    "call",
+    "log",
+];
 
 /// Strip the synthesized prefix that `typescript_missing_discriminator_value`
 /// adds so we recover the raw changed sub-expression.
@@ -60,9 +116,11 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 ///    (`MockExpectation` | `Snapshot` | `WholeObjectEquality`) — these capture
 ///    mock-call expectations, serialized snapshots, or persisted whole-object
 ///    state, all of which observe side effects directly; OR
-/// 2. It carries an `observed_expression` that either contains a changed token
-///    (> 3 chars) or names a side-channel (an expression that does NOT name the
-///    owner — e.g. a closure-local side-effect variable or a captured mock).
+/// 2. It carries an `observed_expression` that either shares an exact changed
+///    identifier token (> 3 chars, dot/path-adjacent segments excluded, same
+///    `identifier_tokens` rules on both sides) or names a side-channel (an
+///    expression that does NOT name the owner — e.g. a closure-local
+///    side-effect variable or a captured mock).
 ///
 /// Value-shaped strong oracles (`ExactValue` / `ExactErrorVariant`) that observe
 /// the owner's RETURN VALUE do NOT witness a `console.log`/side-effect change, so
@@ -101,6 +159,9 @@ pub(crate) fn ts_changed_value_is_observed(
     let changed_tokens: Vec<String> = if let Some(ref disc) = raw_discriminator {
         let raw_expr = strip_synthesized_prefix(disc);
         identifier_tokens(raw_expr)
+            .into_iter()
+            .filter(|tok| !CALL_EFFECT_TEMPLATE_WORDS.contains(&tok.as_str()))
+            .collect()
     } else {
         Vec::new()
     };
@@ -136,14 +197,20 @@ pub(crate) fn ts_changed_value_is_observed(
             // extractor retained the `expect(<expr>)` argument text. These can
             // only ADD confirmations; their absence never re-promotes.
             if let Some(ref observed) = assertion.observed_expression {
-                // Token match: a changed token appears in the observed
-                // expression → this assertion observes the changed value.
-                if !changed_tokens.is_empty()
-                    && changed_tokens
+                // Token match: tokenize the observed expression with the SAME
+                // `identifier_tokens` rules and require EXACT token equality.
+                // A raw substring `observed.contains(tok)` false-confirms on
+                // synthesized template words (e.g. a `.includes(...)` call in
+                // the test) and on tokens merely embedded in a larger
+                // identifier.
+                if !changed_tokens.is_empty() {
+                    let observed_tokens = identifier_tokens(observed);
+                    if changed_tokens
                         .iter()
-                        .any(|tok| observed.contains(tok.as_str()))
-                {
-                    return true;
+                        .any(|tok| observed_tokens.contains(tok))
+                    {
+                        return true;
+                    }
                 }
                 // Side-channel: the observed expression does NOT name the owner,
                 // so it is asserting something other than the owner return value
@@ -215,11 +282,19 @@ pub(crate) fn ts_observation_guard_limitation(
 /// Observation keys on `observed_expression` (the `expect(<expr>)` argument).
 /// When it is absent, or names a local such as `result`, the witness fails
 /// closed; the finding then takes the existing weak path.
+///
+/// Receiver resolution: a member match (`pricing.applyDiscount(...)`) only
+/// counts when the receiver is bound to the owner's own module in this test
+/// (a namespace import such as `import * as pricing from "../src/pricing"`).
+/// A same-named method on an unrelated receiver (`other.total(50)`) never
+/// witnesses, even when its arguments carry the boundary literal.
 pub(crate) fn ts_predicate_boundary_is_witnessed(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
-    owner_name: &str,
+    owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
 ) -> bool {
     // An ambiguous fallback shape (`}`, an unrecognised statement) never names
     // a behavior an assertion could be shown to observe.
@@ -244,6 +319,8 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
         if !candidate.relation.uses_oracle() {
             continue;
         }
+        let owner_receivers =
+            owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         for assertion in &candidate.test.assertions {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
                 || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate)
@@ -253,7 +330,7 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
             let Some(observed) = assertion.observed_expression.as_deref() else {
                 continue;
             };
-            for arguments in owner_call_arguments(observed, owner_name) {
+            for arguments in owner_call_arguments(observed, &owner.name, &owner_receivers) {
                 let witnessed = if literals.is_empty() {
                     call_has_identical_arguments(&arguments)
                         || object_argument_pins_operands_equal(&arguments, left, right)
@@ -328,17 +405,82 @@ fn numeric_literal_value(token: &str) -> Option<String> {
 
 /// Return the argument lists (one per call) of every `<owner_name>(...)` call
 /// inside `observed`, split at top-level commas.
-fn owner_call_arguments(observed: &str, owner_name: &str) -> Vec<Vec<String>> {
+/// Receiver names in `test` that bind to the owner's own module through a
+/// namespace import (`import * as pricing from "../src/pricing"`). A member
+/// call on such a receiver (`pricing.applyDiscount(...)`) IS an owner call,
+/// while a same-named method on any other receiver (`other.total(...)`) is
+/// not — this is the receiver resolution that keeps genuine namespace-import
+/// witnesses credited without crediting unrelated receivers.
+fn owner_namespace_receivers(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
+    test.imports_in_file
+        .iter()
+        .filter(|import| {
+            import.namespace
+                && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+        })
+        .map(|import| import.local.clone())
+        .collect()
+}
+
+/// The trailing identifier segment immediately before the final `.` of
+/// `before_match` — the receiver of a member call (`expect(pricing.` →
+/// `pricing`).
+fn receiver_before_dot(before_match: &str) -> String {
+    let trimmed = before_match.trim_end();
+    let without_dot = trimmed.strip_suffix('.').unwrap_or(trimmed);
+    without_dot
+        .chars()
+        .rev()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
+/// Return the argument lists (one per call) of every `<owner_name>(...)` call
+/// inside `observed`, split at top-level commas.
+///
+/// A member match (`pricing.applyDiscount(...)`) is kept only when the
+/// receiver is bound to the owner's own module via a namespace import
+/// (`owner_receivers`); otherwise the match is a same-named method on an
+/// unrelated receiver and is skipped.
+fn owner_call_arguments(
+    observed: &str,
+    owner_name: &str,
+    owner_receivers: &[String],
+) -> Vec<Vec<String>> {
     let mut calls = Vec::new();
     if owner_name.is_empty() {
         return calls;
     }
     for (idx, _) in observed.match_indices(owner_name) {
-        let preceded_by_identifier = observed
-            .get(..idx)
-            .and_then(|before| before.chars().next_back())
+        // Skip matches embedded in a longer identifier (`otherShippingFee`):
+        // the match must start at a real owner call.
+        let Some(before) = observed.get(..idx) else {
+            continue;
+        };
+        let preceded_by_identifier = before
+            .chars()
+            .next_back()
             .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$');
         if preceded_by_identifier {
+            continue;
+        }
+        // Member access (`receiver.owner(...)`): keep only when the receiver
+        // resolves to the owner's own module (namespace import); a same-named
+        // method on an unrelated receiver (`other.total(50)`) must not
+        // witness the owner's boundary.
+        if before.trim_end().ends_with('.')
+            && !owner_receivers
+                .iter()
+                .any(|receiver| receiver == &receiver_before_dot(before))
+        {
             continue;
         }
         let Some(inner) = observed
@@ -727,8 +869,10 @@ pub(crate) fn classify_change(
         || ts_predicate_boundary_is_witnessed(
             &probe_shape,
             line_text,
-            &owner.name,
+            owner,
             &related_candidates,
+            alias_map,
+            workspace_root,
         );
     let observation_confirmed = strong_oracle_present
         && boundary_witnessed

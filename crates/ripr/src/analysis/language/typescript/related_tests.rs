@@ -865,7 +865,7 @@ fn import_references_owner_call(
         && contains_call_name(body_text, &import.local)
 }
 
-fn import_source_matches_owner(
+pub(crate) fn import_source_matches_owner(
     import: &TypeScriptImport,
     test_file: &Path,
     owner: &TypeScriptOwner,
