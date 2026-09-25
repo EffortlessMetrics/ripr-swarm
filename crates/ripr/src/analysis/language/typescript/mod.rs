@@ -430,6 +430,12 @@ impl LanguageAdapter for TypeScriptAdapter {
         // An over-limit tsconfig/jsconfig fail-closes the alias map; disclose
         // the size limit so the missing alias resolution is not silent.
         if let Some((file, err)) = alias_read_limit.filter(|(_, err)| err.is_size_limit()) {
+            // Limitation paths must be repository-relative: the config always
+            // lives at the workspace root, so strip the root prefix.
+            let relative = file
+                .strip_prefix(&options.root)
+                .unwrap_or(file.as_path())
+                .to_string_lossy();
             limitations.push(
                 AnalysisLimitation::new(
                     AnalysisLimitationKind::LanguageScopeUnsupported,
@@ -439,7 +445,7 @@ impl LanguageAdapter for TypeScriptAdapter {
                         "Raise RIPR_TS_MAX_FILE_READ_BYTES, then re-run the analysis.",
                     )?,
                 )
-                .with_path(file.to_string_lossy())?
+                .with_path(relative)?
                 .with_affected_items(1)?
                 .with_detail(err.reason())?,
             );
