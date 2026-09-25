@@ -347,54 +347,78 @@ function placementFetchError(outcome: ManifestFetchNonSuccess): Error {
 function fetchManifestBytesOverHttps(url: string): Promise<ManifestFetchOutcome> {
   return new Promise((resolve) => {
     const attempt = (target: string, redirects: number): void => {
-      const request = https.get(target, (response) => {
-        const statusCode = response.statusCode ?? 0;
-        const location = response.headers.location;
-        if (statusCode >= 300 && statusCode < 400 && location) {
-          response.resume();
-          if (redirects >= 5) {
-            resolve({
-              kind: 'transport_failure',
-              url: target,
-              message: `Too many redirects while fetching ${target}.`
-            });
+      // Request creation can throw synchronously: a redirect `Location` may
+      // resolve to a non-`https:` URL, and `https.get` rejects such a
+      // protocol (`ERR_INVALID_PROTOCOL`) before any callback exists. On a
+      // redirect hop that throw escapes the promise context as an uncaught
+      // exception while this promise never settles, so the refusal and the
+      // whole request setup must resolve the typed transport failure instead
+      // (#3798: fail closed, never crash, never hang).
+      let request: ReturnType<typeof https.get>;
+      try {
+        if (new URL(target).protocol !== 'https:') {
+          resolve({
+            kind: 'transport_failure',
+            url: target,
+            message: `Refusing non-HTTPS manifest URL ${target}.`
+          });
+          return;
+        }
+        request = https.get(target, (response) => {
+          const statusCode = response.statusCode ?? 0;
+          const location = response.headers.location;
+          if (statusCode >= 300 && statusCode < 400 && location) {
+            response.resume();
+            if (redirects >= 5) {
+              resolve({
+                kind: 'transport_failure',
+                url: target,
+                message: `Too many redirects while fetching ${target}.`
+              });
+              return;
+            }
+            let redirectedUrl: string;
+            try {
+              redirectedUrl = new URL(location, target).toString();
+            } catch (error) {
+              resolve({
+                kind: 'transport_failure',
+                url: target,
+                message: `Invalid redirect from ${target}: ${error instanceof Error ? error.message : String(error)}`
+              });
+              return;
+            }
+            attempt(redirectedUrl, redirects + 1);
             return;
           }
-          let redirectedUrl: string;
-          try {
-            redirectedUrl = new URL(location, target).toString();
-          } catch (error) {
-            resolve({
-              kind: 'transport_failure',
-              url: target,
-              message: `Invalid redirect from ${target}: ${error instanceof Error ? error.message : String(error)}`
-            });
+          if (statusCode === 404 && redirects === 0) {
+            response.resume();
+            resolve({ kind: 'authoritative_absence', url: target });
             return;
           }
-          attempt(redirectedUrl, redirects + 1);
-          return;
-        }
-        if (statusCode === 404 && redirects === 0) {
-          response.resume();
-          resolve({ kind: 'authoritative_absence', url: target });
-          return;
-        }
-        if (statusCode < 200 || statusCode >= 300) {
-          response.resume();
-          resolve({ kind: 'http_failure', url: target, statusCode, redirected: redirects > 0 });
-          return;
-        }
+          if (statusCode < 200 || statusCode >= 300) {
+            response.resume();
+            resolve({ kind: 'http_failure', url: target, statusCode, redirected: redirects > 0 });
+            return;
+          }
 
-        const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer) => chunks.push(chunk));
-        response.on('end', () => resolve({ kind: 'ok', bytes: Buffer.concat(chunks) }));
-      });
-      request.on('error', (error) => {
-        resolve({ kind: 'transport_failure', url: target, message: error.message });
-      });
-      request.setTimeout(30_000, () => {
-        request.destroy(new Error(`Timed out while fetching ${target}.`));
-      });
+          const chunks: Buffer[] = [];
+          response.on('data', (chunk: Buffer) => chunks.push(chunk));
+          response.on('end', () => resolve({ kind: 'ok', bytes: Buffer.concat(chunks) }));
+        });
+        request.on('error', (error) => {
+          resolve({ kind: 'transport_failure', url: target, message: error.message });
+        });
+        request.setTimeout(30_000, () => {
+          request.destroy(new Error(`Timed out while fetching ${target}.`));
+        });
+      } catch (error) {
+        resolve({
+          kind: 'transport_failure',
+          url: target,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
     };
     attempt(url, 0);
   });

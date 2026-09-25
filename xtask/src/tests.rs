@@ -7909,6 +7909,59 @@ fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result
     })
 }
 
+#[test]
+fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Result<(), String> {
+    // The editor descriptor admits a distribution generation
+    // (MAJOR.MINOR.PATCH) and the downloader only ever looks the generation
+    // up, so a prerelease or build-metadata version would embed a descriptor
+    // row no request can match and silently leave the packaged RC extension
+    // without a fallback.
+    for version in ["1.2.3-rc.1", "1.2.3+meta"] {
+        with_temp_cwd("release-server-descriptor-prerelease", |root| {
+            let dist = root.join("dist");
+            let asset_name = format!("ripr-server-v{version}-x86_64-unknown-linux-gnu.tar.gz");
+            write(&dist.join(&asset_name), "linux");
+            write(&dist.join(format!("{asset_name}.sha256")), "linux-sha\n");
+
+            let args = vec![
+                "--version".to_string(),
+                format!("v{version}"),
+                "--repository".to_string(),
+                "EffortlessMetrics/ripr".to_string(),
+            ];
+
+            let Err(err) = super::release_server_manifest(&args) else {
+                return Err(format!(
+                    "prerelease/build-metadata version `{version}` must not write the descriptor"
+                ));
+            };
+            assert!(
+                err.contains("MAJOR.MINOR.PATCH"),
+                "the error must name the required distribution generation form; got: {err}"
+            );
+
+            // The guard sits exactly at the descriptor boundary: the
+            // generation-keyed run artifacts exist, the descriptor does not.
+            assert!(
+                dist.join(format!("ripr-server-manifest-v{version}.json"))
+                    .exists(),
+                "the manifest write precedes the refused descriptor write"
+            );
+            let descriptor_path = root
+                .join("editors")
+                .join("vscode")
+                .join("src")
+                .join("serverDescriptor.ts");
+            assert!(
+                !descriptor_path.exists(),
+                "a prerelease/build-metadata version must never write the editor descriptor"
+            );
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
 pub(crate) fn with_temp_cwd<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
     let lock = acquire_test_cwd_write_guard();
     let old = std::env::current_dir().unwrap();

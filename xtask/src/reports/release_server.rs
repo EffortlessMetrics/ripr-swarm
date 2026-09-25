@@ -142,6 +142,18 @@ pub(crate) fn release_server_manifest(args: &[String]) -> Result<(), String> {
     eprintln!("wrote {}", sha256sums_path.display());
 
     let manifest_sha256 = sha256_file(&manifest_path)?;
+    // The editor descriptor is keyed by the distribution generation
+    // (MAJOR.MINOR.PATCH): the downloader looks up
+    // `distributionGeneration(requestedVersion)`, which never carries a
+    // prerelease or build-metadata suffix. A `--version 0.11.0-rc.1` run
+    // would embed a generation no request can match, silently leaving the
+    // packaged RC extension without its admitted fallback row (#3798), so
+    // refuse the write before the descriptor can be committed.
+    if version.contains('-') || version.contains('+') {
+        return Err(format!(
+            "release-server-manifest must use the distribution generation (MAJOR.MINOR.PATCH) to write the editor descriptor; got `{version}`"
+        ));
+    }
     let descriptor_path = editor_distribution_descriptor_path();
     let descriptor_dir = descriptor_path
         .parent()

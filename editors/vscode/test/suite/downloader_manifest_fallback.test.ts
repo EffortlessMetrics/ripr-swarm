@@ -460,6 +460,49 @@ suite('Downloader Manifest Placement', () => {
     }
   });
 
+  test('a redirect hop to a non-HTTPS URL resolves the typed transport failure instead of crashing', async function () {
+    this.timeout(20_000);
+    const server = new ManifestFixtureServer();
+    await server.start();
+    try {
+      // The initial placement itself is already a non-HTTPS URL: `https.get`
+      // would refuse the protocol, and an unguarded throw must not escape the
+      // fetch promise.
+      await assert.rejects(
+        resolveServerManifestPlacement(placementRequest(server, {
+          stableManifestUrl: 'http://127.0.0.1:9/ripr-server-manifest-v2.0.0.json',
+          admittedManifestSha256: 'a'.repeat(64)
+        })),
+        /Refusing non-HTTPS manifest URL http:\/\/127\.0\.0\.1:9\//
+      );
+
+      // The redirect hop: the https placement answers 302 with an `http:`
+      // Location. Before the guarded attempt this threw ERR_INVALID_PROTOCOL
+      // synchronously inside the response callback — an uncaught exception on
+      // a hop the promise executor does not own — and the fetch promise never
+      // settled, hanging the install while the lock heartbeat kept running.
+      server.route('/releases/download/v2.0.0/redirect', {
+        status: 302,
+        location: 'http://127.0.0.1:9/ripr-server-manifest-v2.0.0.json'
+      });
+      await assert.rejects(
+        resolveServerManifestPlacement(placementRequest(server, {
+          stableManifestUrl: `${server.base}/releases/download/v2.0.0/redirect`,
+          admittedManifestSha256: 'a'.repeat(64)
+        })),
+        /Refusing non-HTTPS manifest URL http:\/\//
+      );
+
+      const paths = server.requests.map((requestPath) => requestPath.path);
+      assert.ok(
+        !paths.includes('/releases/download/v2.0.0-rc.1/ripr-server-manifest-v2.0.0.json'),
+        'a non-HTTPS transport refusal must not authorize the RC placement'
+      );
+    } finally {
+      await server.stop();
+    }
+  });
+
   test('server errors and forbidden responses are not absence and never fall back', async function () {
     this.timeout(20_000);
     const server = new ManifestFixtureServer();
