@@ -148,7 +148,7 @@ explicitly corrected, rejected, superseded, or deprecated.
 | [RIPR-SPEC-0128](RIPR-SPEC-0128-retired-active-goal-authority-audit.md) | deprecated | Reserved historical identifier for the removed active-goal-authority-audit framework (#1701) |
 | [RIPR-SPEC-0129](RIPR-SPEC-0129-editor-integration-contract.md) | accepted | Three-layer editor integration contract, support matrix, and bounded VS Code pre-activation compatibility admission |
 | [RIPR-SPEC-0130](RIPR-SPEC-0130-ripr-authority-map.md) | proposed | RIPR source-of-truth authority map: canonical paths for every artifact category, plus a legacy-dialect conformance fixture |
-| [RIPR-SPEC-0131](RIPR-SPEC-0131-ripr-agent-protocol-contract.md) | proposed | Versioned, capability-only riprAgent protocol, DTO envelopes, closed vocabularies, schemas, and recovery rules |
+| [RIPR-SPEC-0131](RIPR-SPEC-0131-ripr-agent-protocol-contract.md) | proposed | Versioned riprAgent protocol with one implemented request (`ripr/listActionableItems`), DTO envelopes, closed vocabularies, schemas, and recovery rules |
 | [RIPR-SPEC-0132](RIPR-SPEC-0132-spec-v2-runtime-promotion.md) | proposed | First RIPR-SPEC v2 requirement and spec/governance runtime-promotion boundary |
 | [RIPR-SPEC-0133](RIPR-SPEC-0133-assertion-shaped-owner-guidance.md) | accepted | Assertion-shaped owner guidance: when the changed owner is an assert*/expect-dominated helper with no non-test callers, reframe `recommended_next_step` for oracles (class unchanged) plus an `owner_shape` evidence disclosure line (#2131) |
 | [RIPR-SPEC-0134](RIPR-SPEC-0134-repair-artifact-provenance.md) | accepted | Producer-owned repo-exposure artifact identity, repository revision/currentness, and bounded raw-JSON content commitment for `agent verify` (#1977) |
