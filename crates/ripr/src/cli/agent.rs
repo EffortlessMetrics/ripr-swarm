@@ -31,6 +31,10 @@ pub(super) struct AgentStartOptions {
     pub(super) root: PathBuf,
     pub(super) seam_id: String,
     pub(super) out_dir: PathBuf,
+    /// Emit one machine-readable JSON document (schema_version "0.1") instead
+    /// of the `Wrote <path>` / `Next: <cmd>` prose lines. Opt-in only; the
+    /// prose output remains the default.
+    pub(super) json: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -500,6 +504,7 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
     let mut root = PathBuf::from(".");
     let mut seam_id: Option<String> = None;
     let mut out_dir = PathBuf::from("target/ripr/workflow");
+    let mut json = false;
 
     let mut i = 0usize;
     while i < args.len() {
@@ -524,6 +529,7 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
                 }
                 out_dir = PathBuf::from(value);
             }
+            "--json" => json = true,
             other => return Err(unknown_argument("agent start", other)),
         }
         i += 1;
@@ -533,6 +539,7 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
         root,
         seam_id: seam_id.ok_or_else(|| "agent start requires --seam-id".to_string())?,
         out_dir,
+        json,
     })
 }
 
@@ -1390,6 +1397,36 @@ mod tests {
                 root: PathBuf::from("repo"),
                 seam_id: "f3c9e4d21a0b7c88".to_string(),
                 out_dir: PathBuf::from("target/ripr/workflow"),
+                json: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn agent_start_parses_optional_json_flag() {
+        assert_eq!(
+            parse_agent_start_options(&args(&["--seam-id", "f3c9e4d21a0b7c88"])),
+            Ok(AgentStartOptions {
+                root: PathBuf::from("."),
+                seam_id: "f3c9e4d21a0b7c88".to_string(),
+                out_dir: PathBuf::from("target/ripr/workflow"),
+                json: false,
+            })
+        );
+        assert_eq!(
+            parse_agent_args(&args(&[
+                "start",
+                "--root",
+                "repo",
+                "--seam-id",
+                "f3c9e4d21a0b7c88",
+                "--json",
+            ])),
+            Ok(AgentCommand::Start(AgentStartOptions {
+                root: PathBuf::from("repo"),
+                seam_id: "f3c9e4d21a0b7c88".to_string(),
+                out_dir: PathBuf::from("target/ripr/workflow"),
+                json: true,
             }))
         );
     }
@@ -1402,6 +1439,7 @@ mod tests {
                 root: PathBuf::from("."),
                 seam_id: "f3c9e4d21a0b7c88".to_string(),
                 out_dir: PathBuf::from("target/ripr/workflow"),
+                json: false,
             })
         );
         assert_eq!(

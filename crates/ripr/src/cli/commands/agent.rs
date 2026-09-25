@@ -73,14 +73,68 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
 }
 
 fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
+    let json = options.json;
     let written = write_agent_start(options)?;
-    for path in &written.paths {
-        println!("Wrote {}", path.display());
+    if json {
+        // Machine-readable mode: one JSON document with the same information
+        // the prose lines carry. The prose output remains the default.
+        let rendered = render_agent_start_json(&written)?;
+        print!("{rendered}");
+        return Ok(());
     }
-    if let Some(next) = &written.next_command {
-        println!("Next: {next}");
+    for line in agent_start_prose_lines(&written) {
+        println!("{line}");
     }
     Ok(())
+}
+
+/// The default human output of `agent start`: one `Wrote <path>` line per
+/// written workflow artifact, then the first missing-input command when one
+/// exists.
+fn agent_start_prose_lines(written: &AgentStartWritten) -> Vec<String> {
+    let mut lines = written
+        .paths
+        .iter()
+        .map(|path| format!("Wrote {}", path.display()))
+        .collect::<Vec<_>>();
+    if let Some(next) = &written.next_command {
+        lines.push(format!("Next: {next}"));
+    }
+    lines
+}
+
+/// Render the `ripr agent start --json` document. Field names match the
+/// workflow manifest's `outputs` block (`workflow_manifest`,
+/// `commands_markdown`, `agent_brief`) and the agent status `next_command`
+/// name; `next_command` is `null` when every workflow input is present.
+fn render_agent_start_json(written: &AgentStartWritten) -> Result<String, String> {
+    use crate::agent::loop_commands::{
+        WORKFLOW_AGENT_BRIEF_ARTIFACT, WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT,
+        WORKFLOW_MANIFEST_ARTIFACT,
+    };
+    let paths = &written.paths;
+    // Match each path by artifact identity, not write order: a future
+    // reorder (or an added artifact) in `write_agent_start` must not
+    // silently remap fields.
+    let path_for = |artifact: &str| -> Option<String> {
+        let file_name = std::path::Path::new(artifact).file_name()?;
+        paths
+            .iter()
+            .find(|path| path.file_name() == Some(file_name))
+            .map(|path| path.display().to_string())
+    };
+    let value = serde_json::json!({
+        "schema_version": app::agent_workflow::AGENT_WORKFLOW_SCHEMA_VERSION,
+        "tool": "ripr",
+        "kind": "agent_start",
+        "workflow": {
+            "workflow_manifest": path_for(WORKFLOW_MANIFEST_ARTIFACT),
+            "commands_markdown": path_for(WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT),
+            "agent_brief": path_for(WORKFLOW_AGENT_BRIEF_ARTIFACT),
+        },
+        "next_command": written.next_command,
+    });
+    output::json::render_pretty_with_newline(&value, "agent start")
 }
 
 /// Files written by `agent start` and the first missing-input command.
@@ -597,6 +651,7 @@ fn run_agent_repair_phase(
                 root: root.clone(),
                 seam_id: seam_id.clone(),
                 out_dir: std::path::PathBuf::from("target/ripr/workflow"),
+                json: false,
             })?;
             for path in &started.paths {
                 eprintln!("ripr: wrote {}", path.display());
@@ -1878,5 +1933,78 @@ mod before_phase_stdout_tests {
     fn unreadable_packet_falls_back_to_the_json_on_a_terminal() {
         let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
         assert_eq!(before_phase_stdout(packet, "p", true), packet);
+    }
+}
+
+#[cfg(test)]
+mod start_output_tests {
+    use super::{AgentStartWritten, agent_start_prose_lines, render_agent_start_json};
+    use std::path::PathBuf;
+
+    fn written(next_command: Option<String>) -> AgentStartWritten {
+        AgentStartWritten {
+            paths: vec![
+                PathBuf::from("target/ripr/workflow/workflow.json"),
+                PathBuf::from("target/ripr/workflow/commands.md"),
+                PathBuf::from("target/ripr/workflow/agent-brief.json"),
+            ],
+            next_command,
+        }
+    }
+
+    #[test]
+    fn agent_start_json_carries_workflow_paths_and_next_command() -> Result<(), String> {
+        let rendered = render_agent_start_json(&written(Some(
+            "ripr check --root . --format json > target/ripr/workflow/before.repo-exposure.json"
+                .to_string(),
+        )))?;
+        let value: serde_json::Value = serde_json::from_str(&rendered)
+            .map_err(|err| format!("agent start JSON must parse: {err}"))?;
+        assert_eq!(value["schema_version"], "0.1");
+        assert_eq!(value["kind"], "agent_start");
+        assert_eq!(
+            value["workflow"]["workflow_manifest"],
+            "target/ripr/workflow/workflow.json"
+        );
+        assert_eq!(
+            value["workflow"]["commands_markdown"],
+            "target/ripr/workflow/commands.md"
+        );
+        assert_eq!(
+            value["workflow"]["agent_brief"],
+            "target/ripr/workflow/agent-brief.json"
+        );
+        assert_eq!(
+            value["next_command"],
+            "ripr check --root . --format json > target/ripr/workflow/before.repo-exposure.json"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_start_json_next_command_is_null_when_every_input_is_present() -> Result<(), String> {
+        let rendered = render_agent_start_json(&written(None))?;
+        let value: serde_json::Value = serde_json::from_str(&rendered)
+            .map_err(|err| format!("agent start JSON must parse: {err}"))?;
+        assert_eq!(value["next_command"], serde_json::Value::Null);
+        assert!(value["workflow"]["agent_brief"].is_string());
+        Ok(())
+    }
+
+    #[test]
+    fn agent_start_prose_default_names_every_written_path() {
+        let lines = agent_start_prose_lines(&written(Some("ripr pilot --root .".to_string())));
+        assert_eq!(
+            lines,
+            vec![
+                "Wrote target/ripr/workflow/workflow.json".to_string(),
+                "Wrote target/ripr/workflow/commands.md".to_string(),
+                "Wrote target/ripr/workflow/agent-brief.json".to_string(),
+                "Next: ripr pilot --root .".to_string(),
+            ]
+        );
+        let without_next = agent_start_prose_lines(&written(None));
+        assert_eq!(without_next.len(), 3);
+        assert!(!without_next.iter().any(|line| line.starts_with("Next:")));
     }
 }

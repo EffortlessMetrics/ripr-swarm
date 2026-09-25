@@ -12051,6 +12051,15 @@ Field contract:
 - `artifacts[]` - one entry for each required fixed artifact. `bytes` and
   `modified_unix_ms` are `null` when the artifact is missing or the filesystem
   does not expose the timestamp.
+- Volatile fields: `artifacts[].modified_unix_ms` is wall-clock state read
+  from the filesystem at report time, not analysis output. Two consecutive
+  `agent status --json` runs over an unchanged artifact tree can produce
+  different bytes for this field alone. Snapshot-based consumers must exclude
+  `artifacts[].modified_unix_ms` from snapshot assertions (and from any
+  byte-equality diff of the document). `artifacts[].bytes` is content-derived
+  and is stable while the artifact bytes are unchanged. The same rule applies
+  to the `agent_status` document embedded by `ripr agent repair --phase after`
+  (#4052), which is the same schema.
 - `missing_commands[]` - one command for each missing artifact in workflow
   order: before snapshot, packet, brief, after snapshot, verify, receipt. If no
   seam can be recovered, packet, brief, and receipt commands use `<seam-id>`.
