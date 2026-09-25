@@ -89,6 +89,13 @@ pub(crate) fn source_type_for(path: &Path) -> SourceType {
         Some("tsx") => SourceType::tsx(),
         Some("ts") => SourceType::ts(),
         Some("jsx") => SourceType::jsx(),
+        // oxc 0.130 exposes no `mts()`/`cts()` constructors, so build the
+        // TypeScript ESM/CJS flavors from `ts()` plus the module-kind
+        // markers, mirroring how `js` maps onto `mjs()` below.
+        Some("mts") => SourceType::ts().with_module(true),
+        Some("cts") => SourceType::ts().with_commonjs(true),
+        Some("mjs") => SourceType::mjs(),
+        Some("cjs") => SourceType::cjs(),
         Some("js") => SourceType::mjs(),
         _ => SourceType::mjs(),
     }
@@ -189,9 +196,9 @@ impl LanguageAdapter for TypeScriptAdapter {
         // line that falls inside an owner.
         let mut findings: Vec<Finding> = Vec::new();
         let mut changed_count: usize = 0;
-        // Per-output-language tally (#2103 review): this adapter covers both
-        // typescript (.ts/.tsx) and javascript (.js/.jsx), so the summary
-        // must not attribute JS files to typescript.
+        // Per-output-language tally (#2103 review): this adapter covers
+        // typescript (.ts/.tsx/.mts/.cts) and javascript (.js/.jsx/.mjs/.cjs),
+        // so the summary must not attribute JS files to typescript.
         let mut changed_typescript: usize = 0;
         let mut changed_javascript: usize = 0;
         for changed in changed_files {

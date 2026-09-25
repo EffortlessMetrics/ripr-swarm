@@ -926,7 +926,7 @@ fn normalized_module_path(path: &Path) -> String {
 }
 
 fn strip_typescript_module_extension(path: &str) -> String {
-    for suffix in [".tsx", ".ts", ".jsx", ".js"] {
+    for suffix in [".tsx", ".mts", ".cts", ".ts", ".jsx", ".mjs", ".cjs", ".js"] {
         if let Some(stripped) = path.strip_suffix(suffix) {
             return stripped.to_string();
         }

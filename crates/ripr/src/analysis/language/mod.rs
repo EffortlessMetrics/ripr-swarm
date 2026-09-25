@@ -90,6 +90,23 @@ mod tests {
             route(Path::new("src/index.jsx")),
             Some(LanguageId::TypeScript)
         );
+        // Modern ESM/CJS extensions route to the TypeScript adapter.
+        assert_eq!(
+            route(Path::new("src/index.mts")),
+            Some(LanguageId::TypeScript)
+        );
+        assert_eq!(
+            route(Path::new("src/index.cts")),
+            Some(LanguageId::TypeScript)
+        );
+        assert_eq!(
+            route(Path::new("src/index.mjs")),
+            Some(LanguageId::TypeScript)
+        );
+        assert_eq!(
+            route(Path::new("src/index.cjs")),
+            Some(LanguageId::TypeScript)
+        );
         assert_eq!(route(Path::new("scripts/run.py")), Some(LanguageId::Python));
     }
 
