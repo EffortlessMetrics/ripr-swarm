@@ -347,7 +347,8 @@ pub(crate) use ripr_swarm::{
 use run::{
     TimedFileOutput, TimedOutput, capture_output, capture_output_with_timeout,
     capture_stdout_to_file_with_timeout, command_success_owned, run, run_in_dir,
-    run_in_dir_with_envs, run_output, run_output_optional, run_output_owned, run_output_owned_in,
+    run_in_dir_with_envs, run_output, run_output_bytes, run_output_optional,
+    run_output_optional_bytes, run_output_owned, run_output_owned_in,
     run_output_owned_with_timeout, run_owned, run_with_envs, tool_build_timeout,
 };
 
@@ -18363,21 +18364,32 @@ fn report_index_next_commands(
 }
 
 fn collect_pr_changes() -> Result<Vec<ChangedPath>, String> {
+    // Raw NUL-delimited inventories (#4006): every git call below passes
+    // `-z`, so records are never C-quoted and never line-split; parsing
+    // rules come from the shared authority, not from tab/line splitting
+    // here. The advisory-packet contract is unchanged (path plus status
+    // set); only identity handling is exact now.
     let mut changes = BTreeMap::<String, BTreeSet<String>>::new();
 
-    add_name_status_output(
+    add_name_status_bytes(
         &mut changes,
-        &run_output_optional("git", &["diff", "--name-status", "origin/main...HEAD"])?,
-    );
-    add_name_status_output(
+        &run_output_optional_bytes(
+            "git",
+            &["diff", "--name-status", "-z", "origin/main...HEAD"],
+        )?,
+    )?;
+    add_name_status_bytes(
         &mut changes,
-        &run_output("git", &["diff", "--name-status"])?,
-    );
-    add_name_status_output(
+        &run_output_bytes("git", &["diff", "--name-status", "-z"])?,
+    )?;
+    add_name_status_bytes(
         &mut changes,
-        &run_output("git", &["diff", "--cached", "--name-status"])?,
-    );
-    add_short_status_output(&mut changes, &run_output("git", &["status", "--short"])?);
+        &run_output_bytes("git", &["diff", "--cached", "--name-status", "-z"])?,
+    )?;
+    add_porcelain_bytes(
+        &mut changes,
+        &run_output_bytes("git", &["status", "--porcelain=v1", "-z"])?,
+    )?;
 
     Ok(changes
         .into_iter()
@@ -18387,46 +18399,106 @@ fn collect_pr_changes() -> Result<Vec<ChangedPath>, String> {
 
 fn collect_worktree_status_changes() -> Result<Vec<ChangedPath>, String> {
     let mut changes = BTreeMap::<String, BTreeSet<String>>::new();
-    add_short_status_output(&mut changes, &run_output("git", &["status", "--short"])?);
+    add_porcelain_bytes(
+        &mut changes,
+        &run_output_bytes("git", &["status", "--porcelain=v1", "-z"])?,
+    )?;
     Ok(changes
         .into_iter()
         .map(|(path, statuses)| ChangedPath { path, statuses })
         .collect())
 }
 
-fn add_name_status_output(changes: &mut BTreeMap<String, BTreeSet<String>>, output: &str) {
-    for line in output.lines() {
-        let parts = line.split('\t').collect::<Vec<_>>();
-        if parts.len() < 2 {
-            continue;
-        }
-        let status = parts[0].trim();
-        let Some(path) = parts.last() else {
-            continue;
-        };
-        add_changed_path(changes, path, status);
+/// Decode raw `--name-status -z` bytes through the shared NUL status-record
+/// authority (#4006). Strict: truncated records and non-UTF-8 fields fail
+/// loudly instead of attributing a change to half a record or collapsing
+/// through lossy conversion (the old tab-split route did both: it kept
+/// C-quoted octal names verbatim and silently dropped rename sources).
+/// Rename/copy records attribute the target path — the path present at the
+/// head — matching the old `parts.last()` projection with exact bytes.
+fn add_name_status_bytes(
+    changes: &mut BTreeMap<String, BTreeSet<String>>,
+    output: &[u8],
+) -> Result<(), String> {
+    let records = ripr::analysis::parse_git_status_records(output)
+        .map_err(|err| format!("pr-change name-status inventory: {err}"))?;
+    for record in &records {
+        let path = record.path.to_str().ok_or_else(|| {
+            format!(
+                "pr-change name-status inventory: decoded path {} is not valid UTF-8",
+                record.path.display()
+            )
+        })?;
+        add_changed_path(changes, path, &record.status);
     }
+    Ok(())
 }
 
-fn add_short_status_output(changes: &mut BTreeMap<String, BTreeSet<String>>, output: &str) {
-    for line in output.lines() {
-        if line.len() < 4 {
-            continue;
-        }
-        let status = line[..2].trim();
-        let mut path = line[3..].trim();
-        if let Some((_, new_path)) = path.split_once(" -> ") {
-            path = new_path.trim();
-        }
-        if status.is_empty() {
-            continue;
-        }
-        add_changed_path(changes, path, status);
+/// Decode raw `git status --porcelain=v1 -z` bytes (#4006). Entries are
+/// `XY␣path\0`; rename/copy entries append the source as a bare second
+/// field (`XY␣new\0old\0`, verified against real git output for both the
+/// staged `R ` and the worktree ` R` columns — the latter occurs for
+/// intent-to-add renames). Output is never C-quoted and never line-split,
+/// so exotic names survive byte-exact — including names containing ` -> `,
+/// which the old `split_once(" -> ")` projection mis-split. Rename entries
+/// attribute the target path, matching the old projection with exact bytes.
+/// A non-empty input missing its trailing NUL fails loudly: real git always
+/// terminates every record, so a missing terminator is truncation, not a
+/// final field.
+fn add_porcelain_bytes(
+    changes: &mut BTreeMap<String, BTreeSet<String>>,
+    output: &[u8],
+) -> Result<(), String> {
+    if output.is_empty() {
+        return Ok(());
     }
+    if output.last() != Some(&0) {
+        return Err(
+            "pr-change porcelain inventory: output is truncated or misframed (missing trailing NUL)"
+                .to_string(),
+        );
+    }
+    let mut fields: Vec<&[u8]> = output.split(|byte| *byte == 0).collect();
+    fields.pop();
+    let mut fields = fields.into_iter();
+    while let Some(field) = fields.next() {
+        let (status, path) = porcelain_entry(field)?;
+        if status.iter().any(|byte| matches!(byte, b'R' | b'C')) {
+            let _source = fields.next().ok_or_else(|| {
+                format!("pr-change porcelain inventory: rename entry for `{path}` is missing its paired path")
+            })?;
+        }
+        let status_text = std::str::from_utf8(status)
+            .map_err(|err| format!("pr-change porcelain inventory: status is not ASCII: {err}"))?;
+        add_changed_path(changes, path, status_text.trim());
+    }
+    Ok(())
+}
+
+/// Split one `XY␣path` porcelain field into its status prefix and path.
+/// Fails loudly on misframed input instead of inventing an entry.
+fn porcelain_entry(field: &[u8]) -> Result<(&[u8], &str), String> {
+    if field.len() < 4 || field[2] != b' ' {
+        return Err(format!(
+            "pr-change porcelain inventory: misframed entry of {} bytes",
+            field.len()
+        ));
+    }
+    let path = std::str::from_utf8(&field[3..]).map_err(|err| {
+        format!("pr-change porcelain inventory: entry path is not valid UTF-8: {err}")
+    })?;
+    if path.is_empty() {
+        return Err("pr-change porcelain inventory: entry path is empty".to_string());
+    }
+    Ok((&field[..2], path))
 }
 
 fn add_changed_path(changes: &mut BTreeMap<String, BTreeSet<String>>, path: &str, status: &str) {
-    let normalized = normalize_slashes(path.trim().trim_matches('"'));
+    // Identity-exact (#4006): `-z` records are never quoted, so there is no
+    // quote-stripping and no trimming — legitimate leading/trailing spaces
+    // are path bytes. `normalize_slashes` stays: it only folds Windows
+    // separators for display, it never drops bytes.
+    let normalized = normalize_slashes(path);
     if normalized.is_empty() {
         return;
     }
