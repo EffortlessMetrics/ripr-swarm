@@ -4207,7 +4207,7 @@ fn invalid_utf8_source_produces_no_finding_or_is_disclosed() -> Result<(), Strin
         result
             .findings
             .iter()
-            .all(|finding| finding.probe.location.file != PathBuf::from("src/broken.ts")),
+            .all(|finding| finding.probe.location.file.as_path() != Path::new("src/broken.ts")),
         "invalid UTF-8 source must not produce a finding for src/broken.ts (silently skipped today; disclosure owned by lane ts-d-silent-gaps)"
     );
     Ok(())
