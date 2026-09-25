@@ -8775,10 +8775,7 @@ mod list_actionable_items_tests {
             "message".to_string(),
             "recovery_route".to_string(),
         ];
-        let cases = [
-            (false, "no_snapshot"),
-            (true, "analysis_in_flight"),
-        ];
+        let cases = [(false, "no_snapshot"), (true, "analysis_in_flight")];
         for (install_empty_selection, expected_kind) in cases {
             let empty_harness = handler_harness()?;
             if install_empty_selection {
@@ -8804,8 +8801,8 @@ mod list_actionable_items_tests {
     /// early-return fast path: an over-budget params blob is rejected with a
     /// bounded `-32602` even when a fully usable snapshot is installed.
     #[test]
-    fn list_actionable_items_oversized_params_are_rejected_before_handler_work(
-    ) -> Result<(), String> {
+    fn list_actionable_items_oversized_params_are_rejected_before_handler_work()
+    -> Result<(), String> {
         let harness = handler_harness()?;
         install_snapshot(
             &harness,
@@ -8813,13 +8810,19 @@ mod list_actionable_items_tests {
         )?;
         let limit = super::super::payload_bounds::MAX_LIST_ACTIONABLE_ITEMS_PARAMS_BYTES;
         let oversized = serde_json::Value::String("x".repeat(limit + 1));
-        let result = harness
-            .runtime
-            .block_on(harness.service.inner().ripr_list_actionable_items(oversized));
+        let result = harness.runtime.block_on(
+            harness
+                .service
+                .inner()
+                .ripr_list_actionable_items(oversized),
+        );
         let error = result
             .err()
             .ok_or("over-budget params must be rejected with an LSP error")?;
-        assert_eq!(error.code, tower_lsp_server::jsonrpc::ErrorCode::InvalidParams);
+        assert_eq!(
+            error.code,
+            tower_lsp_server::jsonrpc::ErrorCode::InvalidParams
+        );
         assert!(
             error
                 .message
