@@ -12,14 +12,18 @@
 //! early-return fast paths so a missing analysis snapshot cannot bypass the
 //! bound.
 //!
-//! Surfaces intentionally not bounded here:
+//! Bounded RIPR-owned custom surfaces in this slice:
 //!
-//! - `riprAgent/*`: capability negotiation only in this slice
-//!   (`lsp/agent_protocol.rs`, "no riprAgent requests are implemented"), so
-//!   there is no live request family to bound. When handlers land they must
-//!   register bounds here first.
+//! - `ripr/listActionableItems`: the one live `riprAgent/*` request (#1603).
+//!   Its handler reads no client-supplied fields, so the bound caps the
+//!   serialized `params` value as one opaque blob; any larger payload is
+//!   rejected before handler work begins. Additional riprAgent handlers must
+//!   register their own typed bounds here before they land.
 //! - `textDocument/didOpen` / `didSave` document text: bounded by the
 //!   transport message cap, which was sized for exactly this class.
+//!
+//! Surfaces intentionally not bounded here: none — every live RIPR-owned
+//! typed surface is listed above.
 
 use serde_json::Value;
 use tower_lsp_server::jsonrpc::Error as LspError;
@@ -51,6 +55,13 @@ pub(super) const MAX_EXECUTE_COMMAND_ARGUMENTS: usize = 8;
 /// Bounds every downstream identifier (gap ids, seam ids, snapshot handles)
 /// transitively.
 pub(super) const MAX_EXECUTE_COMMAND_ARGUMENT_BYTES: usize = 64 * 1024;
+
+/// Maximum serialized size estimate for `ripr/listActionableItems` params.
+/// The handler reads no client-supplied fields (#1603: the response is a pure
+/// transform of the committed analysis snapshot), so the bound treats params
+/// as one opaque blob; this still stops an attacker-controlled payload from
+/// being held, walked, or echoed through the handler.
+pub(super) const MAX_LIST_ACTIONABLE_ITEMS_PARAMS_BYTES: usize = 16 * 1024;
 
 /// Depth guard for the size estimator. Parsed values are already capped at
 /// serde_json's default recursion limit (128); anything deeper cannot have
@@ -100,6 +111,20 @@ pub(super) fn check_execute_command_arguments(arguments: &[LSPAny]) -> Result<()
     if !budget.admits_values(arguments, 0) {
         return Err(LspError::invalid_params(format!(
             "ripr lsp payload bound: executeCommand arguments exceed {MAX_EXECUTE_COMMAND_ARGUMENT_BYTES} bytes"
+        )));
+    }
+    Ok(())
+}
+
+/// Bound `ripr/listActionableItems` params at handler entry, before any
+/// snapshot access or early-return fast path (#2034). The handler reads no
+/// client-supplied fields, so the check caps the params blob as a whole
+/// rather than per-field; the rejection names only the bound and its value.
+pub(super) fn check_list_actionable_items_params(params: &LSPAny) -> Result<(), LspError> {
+    let mut budget = JsonSizeBudget::new(MAX_LIST_ACTIONABLE_ITEMS_PARAMS_BYTES);
+    if !budget.admits(params, 0) {
+        return Err(LspError::invalid_params(format!(
+            "ripr lsp payload bound: ripr/listActionableItems params exceed {MAX_LIST_ACTIONABLE_ITEMS_PARAMS_BYTES} bytes"
         )));
     }
     Ok(())
@@ -234,6 +259,32 @@ mod tests {
         let too_big =
             vec![serde_json::json!({"pad": "x".repeat(MAX_EXECUTE_COMMAND_ARGUMENT_BYTES)})];
         assert_invalid_params(check_execute_command_arguments(&too_big))
+    }
+
+    #[test]
+    fn list_actionable_items_params_bounds() -> Result<(), String> {
+        // The handler reads no client-supplied fields, so null and any
+        // small payload pass; only the serialized size budget is enforced.
+        check_list_actionable_items_params(&serde_json::Value::Null)
+            .map_err(|err| format!("null params must pass: {err}"))?;
+        check_list_actionable_items_params(&serde_json::json!({}))
+            .map_err(|err| format!("empty object params must pass: {err}"))?;
+
+        let exact = serde_json::Value::String("x".repeat(MAX_LIST_ACTIONABLE_ITEMS_PARAMS_BYTES));
+        check_list_actionable_items_params(&exact)
+            .map_err(|err| format!("exact params bound must pass: {err}"))?;
+
+        let oversized =
+            serde_json::Value::String("x".repeat(MAX_LIST_ACTIONABLE_ITEMS_PARAMS_BYTES + 1));
+        let error = check_list_actionable_items_params(&oversized)
+            .err()
+            .ok_or("over-budget params must fail")?;
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert_eq!(
+            error.message,
+            "ripr lsp payload bound: ripr/listActionableItems params exceed 16384 bytes"
+        );
+        Ok(())
     }
 
     #[test]

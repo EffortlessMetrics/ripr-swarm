@@ -17,7 +17,8 @@ use super::hover::{
 };
 use super::lens::{LensViewIdentity, code_lens_response, lens_view_identity};
 use super::payload_bounds::{
-    check_execute_command_arguments, check_initialization_options, check_previous_result_ids,
+    check_execute_command_arguments, check_initialization_options,
+    check_list_actionable_items_params, check_previous_result_ids,
 };
 use super::progress::{AnalysisProgressEnd, AnalysisProgressPhase, AnalysisProgressTracker};
 use super::refresh_scheduler::{
@@ -3426,8 +3427,12 @@ impl Backend {
     /// needs — this is a pure transform, no new analysis.
     pub(super) async fn ripr_list_actionable_items(
         &self,
-        _params: LSPAny,
+        params: LSPAny,
     ) -> LspResult<Option<LSPAny>> {
+        // Ingress payload bound (#2034) before any snapshot access or
+        // early-return fast path; the handler reads no client-supplied
+        // fields, so only the params blob size is enforced.
+        check_list_actionable_items_params(&params)?;
         // A poisoned lock and an empty slot both fail closed to `no_snapshot`;
         // `and_then` flattens the stored `Option<Arc<AnalysisSnapshot>>`.
         let snapshot = self
@@ -8718,6 +8723,113 @@ mod list_actionable_items_tests {
             serde_json::json!(["source_edits", "workspace_edit", "autonomous_repair"])
         );
         assert!(response.get("error").is_none());
+        Ok(())
+    }
+
+    /// Sort a JSON object's keys for a closed-shape comparison.
+    fn sorted_keys(value: &serde_json::Value) -> Vec<String> {
+        let mut keys: Vec<String> = value
+            .as_object()
+            .map(|object| object.keys().cloned().collect())
+            .unwrap_or_default();
+        keys.sort();
+        keys
+    }
+
+    /// Pin the CURRENT interim response shape of `ripr/listActionableItems`
+    /// as a closed key set — the same shape recorded in
+    /// `docs/OUTPUT_SCHEMA.md`. This is the #1603 interim transform, NOT the
+    /// full `ripr-agent-success.schema.json` envelope reserved for #3009;
+    /// any field addition or removal is a deliberate wire change that must
+    /// update the doc and this test together.
+    #[test]
+    fn list_actionable_items_interim_response_shape_is_closed() -> Result<(), String> {
+        let harness = handler_harness()?;
+        install_snapshot(
+            &harness,
+            snapshot_with_selection(Some(applied_selection()?)),
+        )?;
+        let response = call_handler(&harness)?;
+
+        assert_eq!(
+            sorted_keys(&response),
+            vec![
+                "allowed_edit_surface",
+                "budget_identity",
+                "complete_evidence_identity",
+                "continuation_or_inspect_route",
+                "kind",
+                "must_not_change",
+                "omitted_count",
+                "selected_count",
+                "snapshot_id",
+                "status",
+                "total_count",
+            ]
+        );
+
+        // Error fast paths carry only the closed `error` object; every
+        // variant shares the same three-field error shape.
+        let expected_error_keys = vec![
+            "kind".to_string(),
+            "message".to_string(),
+            "recovery_route".to_string(),
+        ];
+        let cases = [(false, "no_snapshot"), (true, "analysis_in_flight")];
+        for (install_empty_selection, expected_kind) in cases {
+            let empty_harness = handler_harness()?;
+            if install_empty_selection {
+                install_snapshot(&empty_harness, snapshot_with_selection(None))?;
+            }
+            let response = call_handler(&empty_harness)?;
+            assert_eq!(
+                sorted_keys(&response),
+                vec!["error".to_string()],
+                "top-level shape for {expected_kind}"
+            );
+            assert_eq!(response["error"]["kind"], expected_kind);
+            assert_eq!(
+                sorted_keys(&response["error"]),
+                expected_error_keys,
+                "error shape for {expected_kind}"
+            );
+        }
+        Ok(())
+    }
+
+    /// The #2034 ingress bound runs before any snapshot access or
+    /// early-return fast path: an over-budget params blob is rejected with a
+    /// bounded `-32602` even when a fully usable snapshot is installed.
+    #[test]
+    fn list_actionable_items_oversized_params_are_rejected_before_handler_work()
+    -> Result<(), String> {
+        let harness = handler_harness()?;
+        install_snapshot(
+            &harness,
+            snapshot_with_selection(Some(applied_selection()?)),
+        )?;
+        let limit = super::super::payload_bounds::MAX_LIST_ACTIONABLE_ITEMS_PARAMS_BYTES;
+        let oversized = serde_json::Value::String("x".repeat(limit + 1));
+        let result = harness.runtime.block_on(
+            harness
+                .service
+                .inner()
+                .ripr_list_actionable_items(oversized),
+        );
+        let error = result
+            .err()
+            .ok_or("over-budget params must be rejected with an LSP error")?;
+        assert_eq!(
+            error.code,
+            tower_lsp_server::jsonrpc::ErrorCode::InvalidParams
+        );
+        assert!(
+            error
+                .message
+                .contains("ripr/listActionableItems params exceed 16384 bytes"),
+            "rejection must name the bound, got: {}",
+            error.message
+        );
         Ok(())
     }
 }

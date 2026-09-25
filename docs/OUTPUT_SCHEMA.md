@@ -6966,6 +6966,63 @@ slice must bind the typed command, working root, repository revision, process
 disposition, bounded output commitments, and currentness before emitting an
 executed state. A static-only receipt must remain visibly lower assurance.
 
+## LSP riprAgent: ripr/listActionableItems (interim response shape)
+
+> **Interim record.** This section documents the response bytes the live
+> `ripr/listActionableItems` LSP custom request actually emits today
+> (#1603, producer: `ripr_list_actionable_items` in
+> `crates/ripr/src/lsp/backend.rs`). It does **not** conform to
+> `schemas/ripr/ripr-agent-success.schema.json` or
+> `schemas/ripr/ripr-agent-error.schema.json`; those envelopes stay
+> `reserved` for #3009, which owns redesigning the wire to the full schema.
+> Redesigning the envelope is out of scope here; this section exists so the
+> interim shape is documented somewhere and cannot silently drift. The
+> closed shape is pinned by
+> `list_actionable_items_interim_response_shape_is_closed` in
+> `crates/ripr/src/lsp/backend.rs`.
+
+Ingress: params are accepted but no client-supplied field is read; the
+serialized params blob is bounded to 16 KiB at handler entry
+(`crates/ripr/src/lsp/payload_bounds.rs`) and larger payloads are rejected
+with a bounded `-32602` before any handler work.
+
+Success payload (200-level result object, no `protocol_version`,
+`schema_version`, or `request` envelope fields):
+
+- `kind` — always `"actionable_items"`.
+- `status` — always `"ok"` on this path.
+- `snapshot_id` — echoes `RefreshMetadata::snapshot_id` of the committed
+  analysis snapshot. This is the interim refresh **generation identity**,
+  NOT the immutable snapshot-handle contract reserved for #1602; the
+  `riprAgent` capability advertises `snapshot_handles: false` until that
+  contract lands. `null` when the snapshot carries no generation identity.
+- `selected_count` / `omitted_count` / `total_count` — diagnostic-budget
+  counts from the committed delivery selection.
+- `budget_identity` — the snapshot profile budget identity string.
+- `complete_evidence_identity` — the complete-evidence identity string.
+- `continuation_or_inspect_route` — the route string for continuing or
+  inspecting the selection.
+- `allowed_edit_surface` — always `"read_only"`.
+- `must_not_change` — always
+  `["source_edits", "workspace_edit", "autonomous_repair"]`.
+
+Fail-closed payloads (still HTTP-success LSP results, distinguished by the
+`error` object). All variants carry exactly the same closed three-field
+error object:
+
+- `error.kind` — `no_snapshot` (no committed analysis snapshot),
+  `analysis_in_flight` (delivery selection missing, or the diagnostic
+  budget is unavailable for this snapshot).
+- `error.message` — bounded human-readable explanation.
+- `error.recovery_route` — always `"refresh"`.
+
+Error payloads never carry `snapshot_id`, `kind` (response kind), or any
+other success field.
+
+Non-claims: this response is a pure transform of the committed analysis
+snapshot; it performs no new analysis, proves no runtime adequacy, and its
+`snapshot_id` must not be read as an immutable handle.
+
 ## PR Test Guidance
 
 RIPR-SPEC-0012 defines the pinned contract for the
