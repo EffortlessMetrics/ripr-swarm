@@ -218,6 +218,7 @@ pub(crate) fn collect_output_with_deadline_and_limit(
         }),
         ChildWait::TimedOut(message) | ChildWait::Cancelled(message) => Err(message),
         ChildWait::WaitFailed(err) => Err(format!("failed while waiting on {describe}: {err}")),
+        ChildWait::CleanupFailed(message) => Err(message),
     }
 }
 
@@ -363,18 +364,40 @@ fn collect_output_with_deadline(
         }),
         ChildWait::TimedOut(message) | ChildWait::Cancelled(message) => Err(message),
         ChildWait::WaitFailed(err) => Err(format!("failed while waiting on {describe}: {err}")),
+        ChildWait::CleanupFailed(message) => Err(message),
     }
 }
 
 /// Outcome of the shared deadline-aware child wait (#2303). In every
-/// non-`Exited` arm the child has already been terminated and reaped, so no
-/// orphan process holds a handle. `WaitFailed` carries the raw wait error so
-/// each caller wraps it in its own established message text.
+/// non-`Exited` arm other than `CleanupFailed` the child has already been
+/// terminated and reaped, so no orphan process holds a handle. `WaitFailed`
+/// carries the raw wait error so each caller wraps it in its own
+/// established message text. `CleanupFailed` is the contract-keeping
+/// exception: the wait ended abnormally AND the terminate-and-reap could
+/// not be completed or confirmed, so the child or its tree may still be
+/// alive; the payload names the incomplete cleanup and the suppressed wait
+/// outcome instead of implying that termination completed.
 pub(crate) enum ChildWait {
     Exited(std::process::ExitStatus),
     TimedOut(String),
     Cancelled(String),
     WaitFailed(String),
+    CleanupFailed(String),
+}
+
+impl ChildWait {
+    /// Short summary of this outcome for cleanup-failure context: a
+    /// suppressed arm is reported inside `CleanupFailed` so a caller can
+    /// still see which wait outcome the failed cleanup replaced.
+    fn summary(&self) -> String {
+        match self {
+            Self::Exited(status) => format!("child exited with {status}"),
+            Self::TimedOut(message)
+            | Self::Cancelled(message)
+            | Self::WaitFailed(message)
+            | Self::CleanupFailed(message) => message.clone(),
+        }
+    }
 }
 
 /// Poll `child` with `try_wait` on a short interval up to the optional
@@ -386,7 +409,10 @@ pub(crate) enum ChildWait {
 /// `child` is the shared owned-subprocess authority (#3803): on Windows a
 /// non-`Exited` arm terminates the whole Job Object tree and reaps the
 /// direct child before returning; on other platforms the direct-child
-/// kill/reap behavior is unchanged.
+/// kill/reap behavior is unchanged. A failed termination is never folded
+/// into a `Cancelled`/`TimedOut`/`WaitFailed` arm — the contract that every
+/// such arm already terminated and reaped stays true because the caller
+/// instead receives [`ChildWait::CleanupFailed`].
 pub(crate) fn poll_child(
     child: &mut OwnedProcess,
     timeout: Option<Duration>,
@@ -398,23 +424,57 @@ pub(crate) fn poll_child(
             Ok(Some(status)) => return ChildWait::Exited(status),
             Ok(None) => {
                 if let Err(cancelled) = crate::analysis::cancellation::checkpoint() {
-                    let _ = child.terminate_tree();
-                    return ChildWait::Cancelled(cancelled);
+                    return terminate_then_classify(
+                        describe,
+                        "cancellation",
+                        ChildWait::Cancelled(cancelled),
+                        || child.terminate_tree(),
+                    );
                 }
                 if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                    let _ = child.terminate_tree();
                     let timeout_ms = timeout.map_or(0, |limit| limit.as_millis());
-                    return ChildWait::TimedOut(format!(
-                        "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the {timeout_ms}ms deadline (process terminated)"
-                    ));
+                    return terminate_then_classify(
+                        describe,
+                        "timeout",
+                        ChildWait::TimedOut(format!(
+                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the {timeout_ms}ms deadline (process terminated)"
+                        )),
+                        || child.terminate_tree(),
+                    );
                 }
                 std::thread::sleep(POLL_INTERVAL);
             }
             Err(err) => {
-                let _ = child.terminate_tree();
-                return ChildWait::WaitFailed(err.to_string());
+                return terminate_then_classify(
+                    describe,
+                    "wait failure",
+                    ChildWait::WaitFailed(err.to_string()),
+                    || child.terminate_tree(),
+                );
             }
         }
+    }
+}
+
+/// Terminate the owned tree and return the pending non-`Exited` arm only
+/// when the terminate-and-reap completed. A failed termination keeps the
+/// [`ChildWait`] contract true by surfacing
+/// [`ChildWait::CleanupFailed`] — which records the suppressed outcome —
+/// instead of an arm that would imply cleanup succeeded. `terminate` is
+/// injected so the classification is provable without a live process.
+fn terminate_then_classify(
+    describe: &str,
+    trigger: &str,
+    pending: ChildWait,
+    terminate: impl FnOnce() -> Result<(), String>,
+) -> ChildWait {
+    match terminate() {
+        Ok(()) => pending,
+        Err(cleanup) => ChildWait::CleanupFailed(format!(
+            "{trigger} of {describe} did not complete tree cleanup; the child may still be \
+             running: {cleanup} (suppressed wait outcome: {})",
+            pending.summary()
+        )),
     }
 }
 
@@ -600,7 +660,7 @@ mod tests {
                 match wait {
                     ChildWait::Exited(status) => format!("exited: {status}"),
                     ChildWait::TimedOut(message) | ChildWait::Cancelled(message) => message,
-                    ChildWait::WaitFailed(error) => error,
+                    ChildWait::WaitFailed(error) | ChildWait::CleanupFailed(error) => error,
                 }
             ));
         }
@@ -612,6 +672,50 @@ mod tests {
         }
         guard.disarm();
         Ok(())
+    }
+
+    /// A failed terminate-and-reap must replace the pending wait arm with
+    /// `CleanupFailed`: returning `TimedOut`/`Cancelled`/`WaitFailed` there
+    /// would break the contract that every such arm already terminated and
+    /// reaped the child (stubbed termination — no live process needed).
+    #[test]
+    fn cleanup_failure_replaces_the_pending_wait_arm() -> Result<(), String> {
+        let wait = terminate_then_classify(
+            "stub child",
+            "timeout",
+            ChildWait::TimedOut("stub: exceeded the deadline".to_string()),
+            || Err("incomplete tree cleanup: refused termination request".to_string()),
+        );
+        let ChildWait::CleanupFailed(message) = &wait else {
+            return Err(format!(
+                "cleanup failure should surface as CleanupFailed, got: {}",
+                wait.summary()
+            ));
+        };
+        if !message.contains("incomplete tree cleanup") {
+            return Err(format!(
+                "CleanupFailed should carry the incomplete-cleanup evidence: {message}"
+            ));
+        }
+        if !message.contains("stub: exceeded the deadline") {
+            return Err(format!(
+                "CleanupFailed should record the suppressed wait outcome: {message}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A completed terminate-and-reap returns the pending arm unchanged —
+    /// the classification only intervenes when cleanup fails.
+    #[test]
+    fn completed_termination_returns_the_pending_wait_arm() {
+        let wait = terminate_then_classify(
+            "stub child",
+            "cancellation",
+            ChildWait::Cancelled("stub cancelled".to_string()),
+            || Ok(()),
+        );
+        assert!(matches!(wait, ChildWait::Cancelled(ref message) if message == "stub cancelled"));
     }
 
     #[test]

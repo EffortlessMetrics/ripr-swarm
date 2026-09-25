@@ -478,6 +478,14 @@ fn invoke_perl_lsp_producer(
             // The shared wait already terminated + reaped the child.
             Err(format!("Perl facts exporter failed while waiting: {err}"))
         }
+        crate::git::ChildWait::CleanupFailed(cleanup) => {
+            // The wait ended abnormally and the terminate-and-reap could
+            // not be confirmed: the exporter or its tree may still be
+            // running, so the partial packet is discarded and never
+            // renamed.
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(cleanup)
+        }
     }
 }
 

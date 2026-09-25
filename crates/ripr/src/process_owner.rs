@@ -33,7 +33,7 @@
 //! Unix process-group authority unchanged in its callers.
 
 use std::process::{ChildStderr, ChildStdout, Command, ExitStatus};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use process_wrap::std::{ChildWrapper, CommandWrap, JobObject};
@@ -42,6 +42,12 @@ use process_wrap::std::{ChildWrapper, CommandWrap, JobObject};
 /// deadline poll in [`crate::git`] so a terminating tree is reaped on the
 /// same cadence the callers already budget for.
 const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Budget for the best-effort primary reap after a failed tree-termination
+/// request. Long enough to observe a dying primary on a loaded host, short
+/// enough that the returned cleanup-failure error is never delayed by a
+/// process that refuses to die.
+const FALLBACK_REAP_BUDGET: Duration = Duration::from_secs(5);
 
 /// One owned child process for a bounded command path.
 ///
@@ -159,12 +165,16 @@ impl OwnedProcess {
     /// returning. Windows: one termination request kills every process in
     /// the job. Other platforms: the direct child kill and reap.
     ///
-    /// An already-exited child reaps immediately without a termination
-    /// request. A FAILED termination request is returned before any reap:
-    /// waiting on a process that refused to die would hang the caller on
-    /// the unbounded poll, so the leak is surfaced instead. The reap error
-    /// is reported only when termination succeeded (a successful kill
-    /// makes a failed reap a real zombie).
+    /// An already-exited child is reaped and — on Windows — its job is
+    /// still terminated, because `KILL_ON_JOB_CLOSE` is deliberately off
+    /// and descendants the child spawned may outlive it in the job. A
+    /// FAILED termination request falls back to a bounded best-effort
+    /// direct-child kill and reap and is returned as an error that reports
+    /// the incomplete tree cleanup: waiting on a process that refused to
+    /// die would hang the caller on the unbounded poll, and the fallback
+    /// can reap the direct child without certifying that every descendant
+    /// stopped. The reap error is reported only when termination
+    /// succeeded (a successful kill makes a failed reap a real zombie).
     pub fn terminate_tree(&mut self) -> Result<(), String> {
         if let Some(status) = self
             .child
@@ -172,11 +182,27 @@ impl OwnedProcess {
             .map_err(|err| format!("failed to probe owned process: {err}"))?
         {
             let _ = status;
+            // The primary exited on its own, but the job it was assigned
+            // does not kill on close: any descendant still in the job would
+            // survive ownership unless it is terminated here. The request
+            // is a no-op for the exited primary and kills the remaining
+            // tree; its wait returns immediately on the reaped primary.
+            #[cfg(windows)]
+            {
+                self.request_kill().map_err(|err| {
+                    format!(
+                        "incomplete tree cleanup: failed to terminate the owned job after the \
+                         primary exited: {err}"
+                    )
+                })?;
+                self.wait()
+                    .map_err(|err| format!("failed to reap owned process: {err}"))?;
+            }
             return Ok(());
         }
         let termination = self.request_kill().map_err(|err| err.to_string());
-        if let Err(err) = termination {
-            return Err(format!("failed to terminate owned process: {err}"));
+        if let Err(termination_err) = termination {
+            return Err(self.failed_termination_fallback(termination_err));
         }
         let reap = self
             .wait()
@@ -184,10 +210,59 @@ impl OwnedProcess {
         reap.map(|_| ())
     }
 
+    /// Best-effort cleanup after the tree-termination request was refused:
+    /// re-issue the kill through the direct-child fallback path and reap
+    /// the primary within a fixed budget. The fallback reaps the direct
+    /// child but cannot certify that every descendant stopped, so the
+    /// caller always receives the `incomplete tree cleanup` error carrying
+    /// the fallback evidence — never a plain termination failure and never
+    /// an `Ok` that would imply confirmed containment.
+    fn failed_termination_fallback(&mut self, termination_err: String) -> String {
+        let fallback_kill = self.kill().map_err(|err| err.to_string());
+        let reaped = match &fallback_kill {
+            // The fallback kill reaps the direct child itself; the bounded
+            // poll only confirms it. Without a successful kill request only
+            // a natural exit counts, so a single probe avoids stalling the
+            // caller on a process nothing has asked to die.
+            Ok(()) => self.reap_within(FALLBACK_REAP_BUDGET),
+            Err(_) => matches!(self.try_wait(), Ok(Some(_))),
+        };
+        let fallback = match fallback_kill {
+            Ok(()) => "succeeded".to_string(),
+            Err(err) => format!("failed: {err}"),
+        };
+        format!(
+            "incomplete tree cleanup: failed to terminate owned process: {termination_err}; \
+             direct-child fallback kill {fallback}; primary reaped within budget: {reaped}"
+        )
+    }
+
+    /// Bounded reap: poll the direct child until it exits or the budget
+    /// expires. Never blocks past the budget, so a process that ignores
+    /// the termination cannot hang the cleanup reporter.
+    fn reap_within(&mut self, budget: Duration) -> bool {
+        let deadline = Instant::now() + budget;
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return true,
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        return false;
+                    }
+                    std::thread::sleep(WAIT_POLL_INTERVAL);
+                }
+                Err(_) => return false,
+            }
+        }
+    }
+
     /// Direct-child kill request without tree scope or reaping.
     ///
     /// This is only the narrow fallback for a failed tree-termination
     /// request; ownership paths must prefer [`OwnedProcess::terminate_tree`].
+    /// On Windows the wrapper stack re-issues the Job Object termination
+    /// request and then waits the tree out; on other platforms this kills
+    /// and reaps the direct child.
     pub fn kill(&mut self) -> std::io::Result<()> {
         self.child.kill()
     }
@@ -200,10 +275,21 @@ impl Drop for OwnedProcess {
         // wait failure, or panic unwinding — terminates the owned tree and
         // reaps the direct child first. Both steps are best-effort here;
         // typed evidence belongs to `terminate_tree`, which every explicit
-        // termination path uses. An already-reaped child is left alone, and
-        // a failed kill is not followed by an unbounded wait on a process
-        // that refused to die.
+        // termination path uses. An already-reaped child is left alone on
+        // non-Windows targets, and a failed kill is not followed by an
+        // unbounded wait on a process that refused to die.
         if self.child.try_wait().is_ok_and(|status| status.is_some()) {
+            // Even though the primary exited, the job does not kill on
+            // close: descendants it spawned may still hold the job, so
+            // ownership release still issues the termination request and
+            // reaps the (already exited) primary before dropping the job
+            // handle.
+            #[cfg(windows)]
+            {
+                if self.request_kill().is_ok() {
+                    let _ = self.wait();
+                }
+            }
             return;
         }
         if self.request_kill().is_ok() {
@@ -429,5 +515,107 @@ mod tests {
             return Err("terminate_tree terminated an unrelated same-name process".to_string());
         }
         Ok(())
+    }
+
+    #[cfg(windows)]
+    fn wait_for_descendant_marker(marker_path: &std::path::Path) -> Result<u32, String> {
+        let mut parsed = Err("marker not written".to_string());
+        for _ in 0..100 {
+            if let Ok(text) = std::fs::read_to_string(marker_path) {
+                parsed = text.trim().parse::<u32>().map_err(|err| err.to_string());
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        parsed.map_err(|err| format!("descendant PID marker: {err}"))
+    }
+
+    /// Spawn an owned primary that starts a long-lived descendant, records
+    /// the descendant PID, and exits immediately on its own. The returned
+    /// descendant is demonstrably alive while the owned primary has already
+    /// exited — the early-exit containment setup under review.
+    #[cfg(windows)]
+    fn spawn_exited_primary_with_descendant(
+        marker_path: &std::path::Path,
+    ) -> Result<(OwnedProcess, u32), String> {
+        let marker_path_text = marker_path.display().to_string().replace('\'', "''");
+        let mut command = Command::new("powershell");
+        command.args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 60') -NoNewWindow -PassThru; \
+                 Set-Content -LiteralPath '{marker_path_text}' -Value $p.Id; exit 0"
+            ),
+        ]);
+        command.stdin(Stdio::null()).stdout(Stdio::null());
+        let mut owned = OwnedProcess::spawn(command).map_err(|err| format!("spawn: {err}"))?;
+        let descendant_pid = wait_for_descendant_marker(marker_path)?;
+        // Observe the primary's own exit before the containment claim: the
+        // descendant must outlive a primary that already exited.
+        let mut primary_exited = false;
+        for _ in 0..100 {
+            if matches!(owned.try_wait(), Ok(Some(_))) {
+                primary_exited = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if !primary_exited {
+            return Err("primary did not exit after writing the descendant marker".to_string());
+        }
+        if !alive_on_windows(descendant_pid) {
+            return Err(format!(
+                "setup failure: descendant {descendant_pid} was not alive after the primary exited"
+            ));
+        }
+        Ok((owned, descendant_pid))
+    }
+
+    /// Bounded liveness confirmation: the descendant must disappear within
+    /// the window after ownership release; a survivor past it is the
+    /// containment failure under review, not an observation lag.
+    #[cfg(windows)]
+    fn assert_descendant_terminated(descendant_pid: u32, boundary: &str) -> Result<(), String> {
+        for _ in 0..30 {
+            if !alive_on_windows(descendant_pid) {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Err(format!(
+            "descendant {descendant_pid} persisted past {boundary}; early-exit tree containment not established"
+        ))
+    }
+
+    /// The primary exits successfully on its own while a descendant keeps
+    /// running: ending ownership must still terminate the descendant even
+    /// though no explicit termination was requested — the early-exit
+    /// `Drop` arm (KILL_ON_JOB_CLOSE is deliberately off).
+    #[cfg(windows)]
+    #[test]
+    fn owner_drop_kills_descendants_after_the_primary_exits() -> Result<(), String> {
+        let marker_path =
+            std::env::temp_dir().join(format!("ripr-owner-exited-drop-{}.pid", std::process::id()));
+        let _ = std::fs::remove_file(&marker_path);
+        let (owned, descendant_pid) = spawn_exited_primary_with_descendant(&marker_path)?;
+        let _ = std::fs::remove_file(&marker_path);
+        drop(owned);
+        assert_descendant_terminated(descendant_pid, "owner drop after the primary exited")
+    }
+
+    /// `terminate_tree` on a tree whose primary already exited still
+    /// terminates the surviving descendant and reports success — the
+    /// early-exit `terminate_tree` arm.
+    #[cfg(windows)]
+    #[test]
+    fn terminate_tree_after_primary_exit_kills_descendants() -> Result<(), String> {
+        let marker_path =
+            std::env::temp_dir().join(format!("ripr-owner-exited-term-{}.pid", std::process::id()));
+        let _ = std::fs::remove_file(&marker_path);
+        let (mut owned, descendant_pid) = spawn_exited_primary_with_descendant(&marker_path)?;
+        let _ = std::fs::remove_file(&marker_path);
+        owned.terminate_tree()?;
+        assert_descendant_terminated(descendant_pid, "terminate_tree after the primary exited")
     }
 }

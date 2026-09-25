@@ -485,6 +485,11 @@ fn run_workspace_cargo_metadata(
                         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
                         .map(|value| workspace_test_target_owners(&value))
                 }
+                // Tree cleanup could not be confirmed after the probe
+                // ended abnormally: the wait contract only guarantees a
+                // terminated tree for the other non-Exited arms, so the
+                // probe result is unusable either way.
+                crate::git::ChildWait::CleanupFailed(_) => None,
                 _ => None,
             }
         });
