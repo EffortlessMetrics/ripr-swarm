@@ -754,7 +754,7 @@ mod tests {
             ),
         ] {
             let rendered = render_receipt_check_json(
-                "receipt at r.json is structurally valid; cross_reference: {kind}",
+                &format!("receipt at r.json is structurally valid; cross_reference: {kind}"),
                 &cross_ref,
             )?;
             let value: serde_json::Value = serde_json::from_str(&rendered)
