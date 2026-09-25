@@ -1202,10 +1202,10 @@ mod tests {
         );
 
         let mut missing = packet;
-        missing["summary"]
-            .as_object_mut()
-            .unwrap()
-            .remove("targeted_mutation_route");
+        let Some(summary) = missing.get_mut("summary").and_then(Value::as_object_mut) else {
+            return Err("summary must be an object for the removal test".to_string());
+        };
+        summary.remove("targeted_mutation_route");
         let violations = validate_packet_value(&missing, &options(), 1, true);
         assert!(
             violations.iter().any(|violation| {
