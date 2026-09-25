@@ -762,12 +762,8 @@ fn run_agent_repair_phase(
                 // This makes the durable delta the exact delta the receipt
                 // binds, while the receipt itself remains outside the measured
                 // edit window.
-                let cage_after = finish_repair_attempt(
-                    &root,
-                    &attempt.attempt_id,
-                    &packet_path,
-                    head_movement,
-                )?;
+                let cage_after =
+                    finish_repair_attempt(&root, &attempt.attempt_id, &packet_path, head_movement)?;
                 eprintln!(
                     "ripr: edit-cage verdict for attempt `{}`: {:?}",
                     cage_after.attempt_id.as_str(),
@@ -805,8 +801,7 @@ fn run_agent_repair_phase(
                 // `ripr agent status --json` would print at this point: after
                 // the finish and the receipt write, before the apply record.
                 let status_report = app::agent_status::build_agent_status_report(&root, &root);
-                let status_rendered =
-                    app::agent_status::render_agent_status_json(&status_report)?;
+                let status_rendered = app::agent_status::render_agent_status_json(&status_report)?;
 
                 // The apply record is published last: the receipt re-evaluates
                 // the edit cage over the exact delta finish measured, so no

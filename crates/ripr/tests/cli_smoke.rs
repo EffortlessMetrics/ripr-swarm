@@ -13612,8 +13612,8 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
 /// `agent_status`. The old shape concatenated the verify JSON and the status
 /// JSON with no seam marker, which broke one-parse consumers.
 #[test]
-fn agent_repair_after_phase_stdout_is_one_json_document()
--> Result<(), Box<dyn std::error::Error>> {
+fn agent_repair_after_phase_stdout_is_one_json_document() -> Result<(), Box<dyn std::error::Error>>
+{
     let root = repair_route_workspace("after stdout single document")?;
     let printed = repair_route_before(&root)?;
     let attempt_id = repair_route_attempt_id(&printed)?;
