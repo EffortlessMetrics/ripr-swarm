@@ -19,7 +19,12 @@ pub(crate) fn route(path: &Path) -> Option<LanguageId> {
     let ext = path.extension()?.to_str()?;
     match ext {
         "rs" => Some(LanguageId::Rust),
-        "ts" | "tsx" | "js" | "jsx" => Some(LanguageId::TypeScript),
+        // Modern ESM/CJS extensions (.mts/.cts/.mjs/.cjs) ride the same
+        // TypeScript/JavaScript adapter; `.d.ts` keeps routing here
+        // incidentally because `Path::extension` reports "ts" for it.
+        "ts" | "tsx" | "js" | "jsx" | "mts" | "cts" | "mjs" | "cjs" => {
+            Some(LanguageId::TypeScript)
+        }
         "py" => Some(LanguageId::Python),
         "pm" | "pl" | "t" | "psgi" => Some(LanguageId::Perl),
         _ => None,
@@ -38,6 +43,13 @@ mod tests {
             ("web/app.tsx", LanguageId::TypeScript),
             ("web/app.js", LanguageId::TypeScript),
             ("web/app.jsx", LanguageId::TypeScript),
+            ("web/app.mts", LanguageId::TypeScript),
+            ("web/app.cts", LanguageId::TypeScript),
+            ("web/app.mjs", LanguageId::TypeScript),
+            ("web/app.cjs", LanguageId::TypeScript),
+            // `.d.ts` declarations keep routing via "ts" (`Path::extension`
+            // of `foo.d.ts` is "ts") and must remain accepted.
+            ("web/app.d.ts", LanguageId::TypeScript),
             ("tests/test_retry.py", LanguageId::Python),
         ];
 

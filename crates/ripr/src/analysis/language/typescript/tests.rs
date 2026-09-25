@@ -1354,9 +1354,50 @@ fn accepts_ts_jsx_paths() {
     assert!(adapter.accepts_path(Path::new("src/component.tsx")));
     assert!(adapter.accepts_path(Path::new("src/index.js")));
     assert!(adapter.accepts_path(Path::new("src/component.jsx")));
+    // Modern ESM/CJS extensions route to this adapter as well.
+    assert!(adapter.accepts_path(Path::new("src/module.mts")));
+    assert!(adapter.accepts_path(Path::new("src/module.cts")));
+    assert!(adapter.accepts_path(Path::new("src/module.mjs")));
+    assert!(adapter.accepts_path(Path::new("src/module.cjs")));
+    // `.d.ts` declaration files keep routing here via "ts" and stay accepted.
+    assert!(adapter.accepts_path(Path::new("src/types.d.ts")));
     assert!(!adapter.accepts_path(Path::new("src/lib.rs")));
     assert!(!adapter.accepts_path(Path::new("scripts/run.py")));
     assert!(!adapter.accepts_path(Path::new("README.md")));
+}
+
+#[test]
+fn esm_cjs_extensions_parse_with_module_correct_source_type() {
+    // `.mts` is TypeScript ESM: type annotations must parse, `import` must
+    // be legal module syntax. `.cts` is TypeScript CJS: `require` must parse.
+    assert!(
+        parse_error_reason(
+            Path::new("src/cart.mts"),
+            "export function f(x: number): number { return x; }\n"
+        )
+        .is_none(),
+        ".mts source with type annotations must parse"
+    );
+    assert!(
+        parse_error_reason(Path::new("src/tool.cts"), "const path = require('node:path');\n")
+            .is_none(),
+        ".cts source with require must parse"
+    );
+    assert!(
+        parse_error_reason(Path::new("src/tool.mjs"), "export const value = 1;\n").is_none(),
+        ".mjs source must parse"
+    );
+    assert!(
+        parse_error_reason(Path::new("src/tool.cjs"), "module.exports = 1;\n").is_none(),
+        ".cjs source with module.exports must parse"
+    );
+    // And each routed extension still surfaces parser errors instead of
+    // silently dropping the file.
+    assert!(
+        parse_error_reason(Path::new("src/cart.mts"), "this is not :: valid +++ typescript")
+            .is_some(),
+        ".mts parse errors must be reported, not swallowed"
+    );
 }
 
 #[test]
@@ -1407,7 +1448,12 @@ fn is_test_file_matches_test_and_spec_suffixes() {
     assert!(is_test_file(Path::new("tests/lib.test.ts")));
     assert!(is_test_file(Path::new("src/Header.spec.tsx")));
     assert!(is_test_file(Path::new("legacy.test.js")));
+    // Modern ESM/CJS extensions follow the same suffix conventions.
+    assert!(is_test_file(Path::new("tests/lib.test.mts")));
+    assert!(is_test_file(Path::new("tests/lib.spec.mjs")));
+    assert!(is_test_file(Path::new("tests/lib.test.cjs")));
     assert!(!is_test_file(Path::new("src/lib.ts")));
+    assert!(!is_test_file(Path::new("src/lib.mts")));
     assert!(!is_test_file(Path::new("README.md")));
 }
 
@@ -4100,8 +4146,8 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
 
 #[test]
 fn analyze_diff_splits_changed_files_into_typescript_and_javascript() -> Result<(), String> {
-    // #2103 review: this adapter covers .js/.jsx as javascript; the summary
-    // must not attribute JS files to typescript.
+    // #2103 review: this adapter covers .js/.jsx/.mjs/.cjs as javascript;
+    // the summary must not attribute JS files to typescript.
     let adapter = TypeScriptAdapter;
     let options = AnalysisOptions {
         root: PathBuf::from("/nonexistent_workspace"),
@@ -4122,16 +4168,89 @@ fn analyze_diff_splits_changed_files_into_typescript_and_javascript() -> Result<
         changed("src/index.ts"),
         changed("src/app.js"),
         changed("src/Header.jsx"),
+        changed("src/module.mts"),
+        changed("src/module.cts"),
+        changed("src/app.mjs"),
+        changed("src/app.cjs"),
         changed("src/lib.rs"),
     ];
     let result = adapter.analyze_diff(&options, &policy, &changed_files)?;
-    assert_eq!(result.changed_files, 3);
+    assert_eq!(result.changed_files, 7);
     assert_eq!(
         result.changed_files_by_language,
         vec![
-            (crate::analysis::language::LanguageId::TypeScript, 1),
-            (crate::analysis::language::LanguageId::JavaScript, 2),
+            (crate::analysis::language::LanguageId::TypeScript, 3),
+            (crate::analysis::language::LanguageId::JavaScript, 4),
         ]
+    );
+    Ok(())
+}
+
+/// A `.mts` source file must be discovered, parsed, and analyzed — before
+/// this lane the router dropped `.mts`/`.cts`/`.mjs`/`.cjs` entirely, so
+/// half of a modern ESM/CJS tree was silently unread with no limitation.
+#[test]
+fn analyze_diff_discovers_and_analyzes_mts_sources() -> Result<(), String> {
+    let root = ts_unique_tempdir("mts-analysis")?;
+
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"pkg","scripts":{"test":"vitest"},"devDependencies":{"vitest":"^1.0.0"}}"#,
+    )?;
+    ts_write_file(
+        &root.join("src/cart.mts"),
+        "export function cartTotal(items: number[]): number {\n  return items.reduce((a, b) => a + b, 0);\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/cart.test.mts"),
+        "import { cartTotal } from '../src/cart.mjs';\ntest('totals items', () => {\n  const result = cartTotal([1, 2]);\n  expect(result).toBe(3);\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/cart.mts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 1,
+            new_side_line: 1,
+            text: "export function cartTotal(items: number[]): number {".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    assert_eq!(
+        result.changed_files, 1,
+        "the .mts change must be counted as analyzed"
+    );
+    assert!(
+        !result.findings.is_empty(),
+        "expected at least one finding for the .mts owner; got none"
+    );
+    assert!(
+        result
+            .findings
+            .iter()
+            .any(|f| f.language == Some(DomainLanguageId::TypeScript)),
+        "the .mts finding must be attributed to typescript; findings={:?}",
+        result.findings.len()
     );
     Ok(())
 }

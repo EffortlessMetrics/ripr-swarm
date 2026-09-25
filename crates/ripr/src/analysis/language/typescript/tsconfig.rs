@@ -5,7 +5,8 @@
 //! - Only `compilerOptions.baseUrl` and `compilerOptions.paths` are read.
 //! - `extends` and `references` are NOT followed.
 //! - Resolution succeeds ONLY when a specifier matches a SINGLE existing
-//!   workspace file (.ts/.tsx/.js/.jsx).  Zero or >1 matches → `None`.
+//!   workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/.mjs/.cjs).
+//!   Zero or >1 matches → `None`.
 //! - Exact keys win; otherwise the longest matching prefix before `*` wins.
 //! - Tied longest prefixes and unsupported winning templates → `None`.
 //! - Multi-entry value arrays (more than one candidate template) → `None`.
@@ -87,7 +88,8 @@ impl TsAliasMap {
     /// 3. The matched value array has exactly one entry.
     /// 4. The value template has at most one `*`.
     /// 5. After substituting the captured `*`, the candidate path resolves to
-    ///    EXACTLY ONE existing workspace file (.ts/.tsx/.js/.jsx).
+    ///    EXACTLY ONE existing workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/
+    ///    .mjs/.cjs).
     pub(crate) fn resolve(&self, specifier: &str) -> Option<PathBuf> {
         if specifier.starts_with("./") || specifier.starts_with("../") {
             return None; // relative paths are handled by the normal resolver
@@ -136,7 +138,7 @@ impl TsAliasMap {
     /// Returns `None` if zero files or more than one file match.
     fn unique_file_for(&self, candidate_base: &str) -> Option<PathBuf> {
         let base_dir = self.root.join(self.base_url.trim_matches('/'));
-        let extensions = [".ts", ".tsx", ".js", ".jsx"];
+        let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
         let mut found: Vec<PathBuf> = Vec::new();
         for ext in &extensions {
             let candidate = base_dir.join(format!("{candidate_base}{ext}"));
@@ -233,7 +235,7 @@ fn parse_alias_map(root: &Path, text: &str) -> Option<TsAliasMap> {
 
 /// Strip the file extension from a path string, preserving the rest.
 fn strip_ts_ext(s: &str) -> String {
-    for ext in &[".tsx", ".ts", ".jsx", ".js"] {
+    for ext in &[".tsx", ".mts", ".cts", ".ts", ".jsx", ".mjs", ".cjs", ".js"] {
         if let Some(stripped) = s.strip_suffix(ext) {
             return stripped.to_string();
         }

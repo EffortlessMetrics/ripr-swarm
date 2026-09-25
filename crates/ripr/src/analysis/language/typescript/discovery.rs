@@ -4,7 +4,10 @@ use super::*;
 
 const TEST_FILE_STEM_SUFFIXES: &[&str] = &[".test", "-test", "_test", ".spec"];
 const TEST_DIRECTORY_NAMES: &[&str] = &["test", "tests", "__tests__"];
-const CYPRESS_SOURCE_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx"];
+// Every source extension routed to this adapter (router.rs), so Cypress
+// `*.cy.<ext>` classification stays bounded to real adapter source surface.
+const CYPRESS_SOURCE_EXTENSIONS: &[&str] =
+    &["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"];
 const JASMINE_SPEC_DIRECTORY_NAMES: &[&str] = &["spec"];
 
 /// Whether a path is a test file by convention.
@@ -12,9 +15,10 @@ const JASMINE_SPEC_DIRECTORY_NAMES: &[&str] = &["spec"];
 /// The adapter recognizes four bounded convention families:
 ///
 /// 1. Jest/Vitest-style `*.test.*` and `*.spec.*` files across every
-///    TypeScript/JavaScript source extension routed to this adapter.
+///    TypeScript/JavaScript source extension routed to this adapter
+///    (.ts/.tsx/.js/.jsx/.mts/.cts/.mjs/.cjs).
 /// 2. Node-style names: `test.*`, `test-*`, `*-test.*`, and `*_test.*`.
-/// 3. Cypress `*.cy.{js,jsx,ts,tsx}` files.
+/// 3. Cypress `*.cy.{ts,tsx,js,jsx,mts,cts,mjs,cjs}` files.
 /// 4. Source files under exact `test`, `tests`, or `__tests__` directory
 ///    components, plus Jasmine-style `spec/**/[sS]pec.*` paths.
 ///
@@ -135,6 +139,13 @@ mod tests {
             "src/test.tsx",
             "cypress/e2e/checkout.cy.ts",
             "src/Button.cy.tsx",
+            // Modern ESM/CJS extensions ride the same conventions now that
+            // the router accepts them.
+            "src/cart.test.mts",
+            "src/cart.spec.cts",
+            "src/cart-test.mjs",
+            "src/cart_test.cjs",
+            "src/Button.cy.mts",
         ] {
             assert!(is_test_file(Path::new(path)), "expected test path: {path}");
         }
@@ -161,15 +172,49 @@ mod tests {
             "test-utils/helper.ts",
             "src/contest.ts",
             "src/cart_test.txt",
-            "src/cart.test.mts",
-            "test/cart.mjs",
+            // Routed extensions stay NON-test when no test marker is present;
+            // the ESM/CJS variants below were previously unrouted entirely
+            // and pinned here as "not test files" — they are still not test
+            // files by name, they are simply analyzed as production sources.
+            "src/cart.mts",
+            "src/cart.cts",
+            "src/cart.mjs",
+            "src/cart.cjs",
             "spec/request_contract.md",
             "spec/request_contract.js",
             "spec/helpers/setup.js",
             "src/requestContractSpec.js",
-            "src/cart.cy.mjs",
             "src/cypress.ts",
             "src/specification.ts",
+        ] {
+            assert!(
+                !is_test_file(Path::new(path)),
+                "unexpected test path: {path}"
+            );
+        }
+    }
+
+    /// Regression pins for the previously unrouted ESM/CJS extension family:
+    /// with `.mts`/`.cts`/`.mjs`/`.cjs` now routed to this adapter, the
+    /// ordinary test conventions apply to them (these paths used to be pinned
+    /// as NOT-test files when the router dropped the extensions).
+    #[test]
+    fn esm_cjs_extensions_follow_test_conventions() {
+        for path in [
+            "src/cart.test.mts",
+            "src/cart.spec.mjs",
+            "test/cart.mjs",
+            "tests/cart.cts",
+            "src/__tests__/cart.cjs",
+            "src/cart.cy.mjs",
+        ] {
+            assert!(is_test_file(Path::new(path)), "expected test path: {path}");
+        }
+        for path in [
+            "src/cart.mts",
+            "src/cart.cts",
+            "src/cart.mjs",
+            "src/cart.cjs",
         ] {
             assert!(
                 !is_test_file(Path::new(path)),
