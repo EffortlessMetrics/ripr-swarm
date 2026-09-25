@@ -35,11 +35,14 @@ use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
     COLLECT_REPAIR_PACKET_COMMAND, COLLECT_TOP_LIMITATION_COMMAND,
     COLLECT_WORKSPACE_STATUS_COMMAND, COPY_AFTER_SNAPSHOT_COMMAND, COPY_AGENT_BRIEF_COMMAND,
-    COPY_AGENT_PACKET_COMMAND, COPY_AGENT_RECEIPT_COMMAND, COPY_AGENT_VERIFY_COMMAND,
-    COPY_CONTEXT_COMMAND, COPY_SUGGESTED_ASSERTION_COMMAND, COPY_TARGETED_TEST_BRIEF_COMMAND,
-    HOVER_TEXT, OPEN_RELATED_TEST_COMMAND, REFRESH_COMMAND, build_service,
+    COPY_AGENT_PACKET_COMMAND, COPY_AGENT_RECEIPT_COMMAND, COPY_AGENT_REPAIR_COMMAND,
+    COPY_AGENT_VERIFY_COMMAND, COPY_CONTEXT_COMMAND, COPY_SUGGESTED_ASSERTION_COMMAND,
+    COPY_TARGETED_TEST_BRIEF_COMMAND, HOVER_TEXT, OPEN_RELATED_TEST_COMMAND, REFRESH_COMMAND,
+    build_service,
 };
 use crate::analysis::cancellation::AnalysisCancellationToken;
+use crate::analysis::is_test_surface_path;
+use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
 use crate::app::Mode;
 use crate::domain::{
@@ -48,6 +51,7 @@ use crate::domain::{
     RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState,
     StaticLimitKind, ValueContext, ValueFact,
 };
+use crate::output::agent_seam_packets::recommended_test_for;
 use serial_test::serial;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -4047,6 +4051,7 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         vec![
             COPY_CONTEXT_COMMAND,
             COPY_TARGETED_TEST_BRIEF_COMMAND,
+            COPY_AGENT_REPAIR_COMMAND,
             COPY_AGENT_PACKET_COMMAND,
             COPY_AGENT_BRIEF_COMMAND,
             COPY_AFTER_SNAPSHOT_COMMAND,
@@ -4070,25 +4075,43 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         "expected targeted test brief argument, got {:?}",
         commands[1].2
     );
-    assert_eq!(commands[2].0, "Agent handoff: copy packet command");
-    assert_eq!(commands[2].2[0]["label"], "agent_packet");
+    // The sample seam passes the fail-closed repair-packet flip, so the
+    // repair start leads the agent loop (#3906).
+    assert!(repair_packet_eligibility(&seam).eligible());
+    assert_eq!(commands[2].0, "Start repair: copy repair command");
+    assert_eq!(commands[2].2[0]["label"], "agent_repair");
     assert_eq!(commands[2].2[0]["root"], ".");
-    assert_eq!(commands[2].2[0]["base"], "origin/main");
-    assert_eq!(commands[2].2[0]["mode"], "draft");
     assert_eq!(commands[2].2[0]["seam_id"], seam.seam.id().as_str());
-    assert_eq!(commands[2].2[0]["seam_kind"], "predicate_boundary");
-    assert_eq!(commands[2].2[0]["seam_file"], "src/pricing.rs");
-    assert_eq!(commands[2].2[0]["owner"], "pricing::discounted_total");
-    assert_eq!(commands[2].2[0]["line"], 88);
-    assert_eq!(commands[2].2[0]["severity"], "warning");
     assert_eq!(
         commands[2].2[0]["target_artifact"],
+        "target/ripr/repair-attempts"
+    );
+    assert_eq!(
+        commands[2].2[0]["command"],
+        format!(
+            "ripr agent repair --root . --seam-id {} --phase before",
+            seam.seam.id().as_str()
+        )
+    );
+    assert_eq!(commands[3].0, "Agent handoff: copy packet command");
+    assert_eq!(commands[3].2[0]["label"], "agent_packet");
+    assert_eq!(commands[3].2[0]["root"], ".");
+    assert_eq!(commands[3].2[0]["base"], "origin/main");
+    assert_eq!(commands[3].2[0]["mode"], "draft");
+    assert_eq!(commands[3].2[0]["seam_id"], seam.seam.id().as_str());
+    assert_eq!(commands[3].2[0]["seam_kind"], "predicate_boundary");
+    assert_eq!(commands[3].2[0]["seam_file"], "src/pricing.rs");
+    assert_eq!(commands[3].2[0]["owner"], "pricing::discounted_total");
+    assert_eq!(commands[3].2[0]["line"], 88);
+    assert_eq!(commands[3].2[0]["severity"], "warning");
+    assert_eq!(
+        commands[3].2[0]["target_artifact"],
         "target/ripr/agent/agent-packet.json"
     );
     // Issue #3872: pasted redirect targets anchor at the resolved --root
     // (the anchor math itself is pinned in loop_commands tests).
     assert_eq!(
-        commands[2].2[0]["command"],
+        commands[3].2[0]["command"],
         crate::agent::loop_commands::agent_packet_command(
             ".",
             seam.seam.id().as_str(),
@@ -4096,9 +4119,9 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         )
         .as_str()
     );
-    assert_eq!(commands[3].0, "Agent handoff: copy brief command");
+    assert_eq!(commands[4].0, "Agent handoff: copy brief command");
     assert_eq!(
-        commands[3].2[0]["command"],
+        commands[4].2[0]["command"],
         crate::agent::loop_commands::agent_brief_command(
             ".",
             seam.seam.id().as_str(),
@@ -4107,11 +4130,11 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         .as_str()
     );
     assert_eq!(
-        commands[4].0,
+        commands[5].0,
         "Verify after test: copy after-snapshot command"
     );
     assert_eq!(
-        commands[4].2[0]["command"],
+        commands[5].2[0]["command"],
         crate::agent::loop_commands::check_repo_exposure_command_with_base(
             ".",
             Some("origin/main"),
@@ -4120,9 +4143,9 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         )
         .as_str()
     );
-    assert_eq!(commands[5].0, "Verify after test: copy verify command");
+    assert_eq!(commands[6].0, "Verify after test: copy verify command");
     assert_eq!(
-        commands[5].2[0]["command"],
+        commands[6].2[0]["command"],
         crate::agent::loop_commands::agent_verify_command(
             ".",
             "target/ripr/pilot/repo-exposure.json",
@@ -4131,32 +4154,276 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         )
         .as_str()
     );
-    assert_eq!(commands[6].0, "Review result: copy receipt command");
+    assert_eq!(commands[7].0, "Review result: copy receipt command");
     assert_eq!(
-        commands[6].2[0]["command"],
+        commands[7].2[0]["command"],
         format!(
             "ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id {} --json --out target/ripr/agent/agent-receipt.json",
             seam.seam.id().as_str()
         )
     );
     assert_eq!(
-        commands[7].0,
+        commands[8].0,
         "Write targeted test: copy suggested assertion"
     );
     assert!(
-        commands[7].2[0]["assertion"]
+        commands[8].2[0]["assertion"]
             .as_str()
             .is_some_and(|value| value.contains("assert_eq!(discounted_total")),
         "expected assertion argument, got {:?}",
-        commands[7].2
+        commands[8].2
     );
-    assert_eq!(commands[8].0, "Write targeted test: open best related test");
+    assert_eq!(commands[9].0, "Write targeted test: open best related test");
     assert_eq!(
-        commands[8].2[0]["uri"],
+        commands[9].2[0]["uri"],
         "file:///workspace/tests/pricing.rs"
     );
-    assert_eq!(commands[8].2[0]["line"], 12);
+    assert_eq!(commands[9].2[0]["line"], 12);
     Ok(())
+}
+
+#[test]
+fn repair_start_is_offered_only_for_a_seam_past_the_repair_packet_flip() -> Result<(), String> {
+    // #3906 outcome 3: the editor offers `ripr agent repair ... --phase
+    // before` (code action, hover line, evidence-context field) exactly when
+    // `agent repair` would accept the seam: it passes the fail-closed flip
+    // `repair_packet_eligibility(..).eligible()` (RIPR-SPEC-0087 §8) and its
+    // recommended test file is a test surface. Any other seam gets none of
+    // it, because `agent repair` would refuse it.
+    let eligible = sample_classified_seam();
+    let flip_refused = route_ready_seam_with_external_language_related_test();
+    let inline_target = eligible_seam_with_inline_test_module_target();
+
+    // Preconditions, so no half can pass vacuously: every seam is
+    // route-ready; the first passes the flip with a test-surface target; the
+    // second fails only the flip; the third passes the flip but its
+    // recommended test file is the source file itself.
+    let eligible_verdict = repair_packet_eligibility(&eligible);
+    assert!(eligible_verdict.readiness.is_repair_ready());
+    assert!(eligible_verdict.eligible());
+    assert!(is_test_surface_path(&recommended_test_for(&eligible).file));
+    let flip_refused_verdict = repair_packet_eligibility(&flip_refused);
+    assert!(
+        flip_refused_verdict.readiness.is_repair_ready(),
+        "the flip negative must be route-ready so only the flip separates it"
+    );
+    assert!(!flip_refused_verdict.eligible());
+    let inline_verdict = repair_packet_eligibility(&inline_target);
+    assert!(inline_verdict.readiness.is_repair_ready());
+    assert!(
+        inline_verdict.eligible(),
+        "the inline-target negative must pass the flip so only the target separates it"
+    );
+    assert_eq!(recommended_test_for(&inline_target).file, "src/pricing.rs");
+    assert!(!is_test_surface_path(
+        &recommended_test_for(&inline_target).file
+    ));
+
+    let expected = format!(
+        "ripr agent repair --root . --seam-id {} --phase before",
+        eligible.seam.id().as_str()
+    );
+
+    let eligible_commands = seam_code_action_commands_for(&eligible)?;
+    let repair_actions = eligible_commands
+        .iter()
+        .filter(|(_, command, _)| command == COPY_AGENT_REPAIR_COMMAND)
+        .collect::<Vec<_>>();
+    assert_eq!(repair_actions.len(), 1, "{eligible_commands:?}");
+    assert_eq!(repair_actions[0].0, "Start repair: copy repair command");
+    assert_eq!(repair_actions[0].2[0]["label"], "agent_repair");
+    assert_eq!(repair_actions[0].2[0]["command"], expected.as_str());
+    let first_loop_command = eligible_commands
+        .iter()
+        .map(|(_, command, _)| command.as_str())
+        .find(|command| {
+            [
+                COPY_AGENT_REPAIR_COMMAND,
+                COPY_AGENT_PACKET_COMMAND,
+                COPY_AGENT_BRIEF_COMMAND,
+                COPY_AFTER_SNAPSHOT_COMMAND,
+                COPY_AGENT_VERIFY_COMMAND,
+                COPY_AGENT_RECEIPT_COMMAND,
+            ]
+            .contains(command)
+        });
+    assert_eq!(
+        first_loop_command,
+        Some(COPY_AGENT_REPAIR_COMMAND),
+        "the repair start leads the agent loop"
+    );
+
+    let eligible_hover = seam_hover_markdown_for(&eligible)?;
+    assert!(
+        eligible_hover.contains(&format!("- repair (start here): `{expected}`")),
+        "{eligible_hover}"
+    );
+    assert_eq!(
+        collect_evidence_context_packet_for(eligible)?["repair_command"],
+        expected.as_str()
+    );
+
+    for (case, refused) in [
+        ("flip refused", flip_refused),
+        ("inline test target", inline_target),
+    ] {
+        let commands = seam_code_action_commands_for(&refused)?;
+        assert!(
+            commands.iter().all(|(title, command, arguments)| {
+                command != COPY_AGENT_REPAIR_COMMAND
+                    && title != "Start repair: copy repair command"
+                    && !arguments.iter().any(|argument| {
+                        argument["command"]
+                            .as_str()
+                            .is_some_and(|value| value.starts_with("ripr agent repair"))
+                    })
+            }),
+            "{case}: the seam must not be offered the repair start: {commands:?}"
+        );
+        // The rest of the agent loop is unchanged, so the absence above is
+        // the repair gate and not a suppressed action list.
+        assert!(
+            commands
+                .iter()
+                .any(|(_, command, _)| command == COPY_AGENT_PACKET_COMMAND),
+            "{case}: {commands:?}"
+        );
+
+        let hover = seam_hover_markdown_for(&refused)?;
+        assert!(
+            hover.contains("## Handoff, verify, and receipt commands")
+                && !hover.contains("ripr agent repair")
+                && !hover.contains("repair (start here)"),
+            "{case}: {hover}"
+        );
+
+        assert!(
+            collect_evidence_context_packet_for(refused)?["repair_command"].is_null(),
+            "{case}: the evidence-context packet must carry a null repair command"
+        );
+    }
+    Ok(())
+}
+
+/// A Rust seam that is route-ready but fails the repair-packet flip: its
+/// related tests include a Rust test and a TypeScript file, so the oracle
+/// path is cross-language unresolved while the Rust-side target is known.
+fn route_ready_seam_with_external_language_related_test() -> crate::analysis::ClassifiedSeam {
+    use crate::analysis::test_grip_evidence::{
+        RelatedTestGrip, RelationConfidence, RelationReason,
+    };
+
+    let mut seam = sample_classified_seam();
+    seam.evidence.related_tests.push(RelatedTestGrip {
+        test_name: "discounted total at threshold".to_string(),
+        file: PathBuf::from("tests/pricing.test.ts"),
+        line: 4,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    });
+    seam
+}
+
+/// A Rust seam that passes the repair-packet flip but whose only related
+/// test lives in an inline `#[cfg(test)]` module of the source file, so the
+/// recommended test file is `src/pricing.rs`: not a test surface, and
+/// `agent repair` refuses to edit it.
+fn eligible_seam_with_inline_test_module_target() -> crate::analysis::ClassifiedSeam {
+    use crate::analysis::test_grip_evidence::TestTargetEvidence;
+
+    let mut seam = sample_classified_seam();
+    for related in &mut seam.evidence.related_tests {
+        related.file = PathBuf::from("src/pricing.rs");
+        related.line = 120;
+        related.test_target = Some(TestTargetEvidence::fixture(
+            related.test_name.as_str(),
+            Path::new("src/pricing.rs"),
+            120,
+        ));
+    }
+    seam
+}
+
+fn seam_code_action_commands_for(
+    seam: &crate::analysis::ClassifiedSeam,
+) -> Result<Vec<(String, String, Vec<serde_json::Value>)>, String> {
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    code_action_commands(&actions)
+}
+
+fn seam_hover_markdown_for(seam: &crate::analysis::ClassifiedSeam) -> Result<String, String> {
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    match classified_seam_hover_response(seam, &diagnostic, Some(&snapshot)).contents {
+        HoverContents::Markup(markup) => Ok(markup.value),
+        other => Err(format!("expected markdown hover, got {other:?}")),
+    }
+}
+
+fn collect_evidence_context_packet_for(
+    seam: crate::analysis::ClassifiedSeam,
+) -> Result<serde_json::Value, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let seam_id = seam.seam.id().as_str().to_string();
+        let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+            .ok_or_else(|| "expected seam diagnostic".to_string())?;
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        let mut diagnostics = sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri,
+            vec![diagnostic],
+            Vec::new(),
+        );
+        diagnostics.snapshot.classified_seams = vec![seam];
+        let Some(_) = backend.refresh_plan(diagnostics) else {
+            return Err("expected refresh plan".to_string());
+        };
+        let params = ExecuteCommandParams {
+            command: COLLECT_EVIDENCE_CONTEXT_COMMAND.to_string(),
+            arguments: vec![serde_json::json!({
+                "seam_id": seam_id,
+                "uri": "file:///workspace/src/pricing.rs",
+                "line": 88,
+            })],
+            work_done_progress_params: Default::default(),
+        };
+        backend
+            .execute_command(params)
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected evidence context packet".to_string())
+    })
 }
 
 #[test]
@@ -6173,6 +6440,7 @@ fn seam_code_actions_keep_legacy_finding_context_when_both_diagnostics_are_prese
         vec![
             "Inspect Test Gap - Copy Context",
             "Write targeted test: copy brief",
+            "Start repair: copy repair command",
             "Agent handoff: copy packet command",
             "Agent handoff: copy brief command",
             "Verify after test: copy after-snapshot command",
@@ -6185,8 +6453,11 @@ fn seam_code_actions_keep_legacy_finding_context_when_both_diagnostics_are_prese
         ]
     );
     assert_eq!(commands[0].2[0]["seam_id"], seam.seam.id().as_str());
-    assert_eq!(commands[9].2[0]["finding_id"], "probe:pricing:88:predicate");
-    assert_eq!(commands[9].2[0]["probe_id"], "probe:pricing:88:predicate");
+    assert_eq!(
+        commands[10].2[0]["finding_id"],
+        "probe:pricing:88:predicate"
+    );
+    assert_eq!(commands[10].2[0]["probe_id"], "probe:pricing:88:predicate");
     Ok(())
 }
 
@@ -7718,6 +7989,96 @@ fn initialize_surfaces_poisoned_client_features_store_as_a_session_failure() -> 
             status["analysis_status"]["failure"]["kind"],
             "session_state_inconsistent"
         );
+        Ok(())
+    })
+}
+
+#[test]
+fn poisoned_initialize_failure_commit_survives_a_wedged_client_channel() -> Result<(), String> {
+    // #3802: once the session is initialized (client deliveries are no
+    // longer suppressed by the library's pre-initialize gate), a root change
+    // pre-fills the capacity-1 client egress channel while the peer socket
+    // stays undriven. The poisoned-profile branch must commit the owning
+    // session failure and return within its bounded disclosure window
+    // instead of hanging on the wedged client log/status await.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        use tower::Service as _;
+        let root_first = unique_lsp_test_root("poisoned-initialize-wedged-first")?;
+        let root_second = unique_lsp_test_root("poisoned-initialize-wedged-second")?;
+        let (mut service, _socket) = build_service(PathBuf::from("."));
+        // Flip the service state to Initialized by driving one healthy
+        // initialize through the service layers; the direct backend call
+        // below then reaches the real capacity-1 client channel instead of
+        // being suppressed pre-initialize.
+        let healthy = tower::ServiceExt::ready(&mut service)
+            .await
+            .map_err(|err| format!("service never became ready: {err:?}"))?
+            .call(
+                tower_lsp_server::jsonrpc::Request::build("initialize")
+                    .params(
+                        serde_json::to_value(initialize_params(
+                            None,
+                            Some(file_uri_for_path(root_first.path())?),
+                        ))
+                        .map_err(|err| format!("initialize params serialize failed: {err}"))?,
+                    )
+                    .id(1)
+                    .finish(),
+            )
+            .await
+            .map_err(|err| format!("healthy framed initialize failed: {err:?}"))?;
+        if healthy
+            .as_ref()
+            .and_then(|response| response.error())
+            .is_some()
+        {
+            return Err("healthy framed initialize must succeed".to_string());
+        }
+        let backend = service.inner();
+        backend.poison_client_features_for_test();
+        // The changed root exercises the transition path whose analysis
+        // status publication fills the capacity-1 client channel before the
+        // poisoned branch runs.
+        let poisoned = tokio::time::timeout(
+            Duration::from_secs(10),
+            backend.initialize(initialize_params(
+                None,
+                Some(file_uri_for_path(root_second.path())?),
+            )),
+        )
+        .await
+        .map_err(|_elapsed| {
+            // Discriminates the issue's middle state: the failure path was
+            // entered, but the undriven client delivery deadlocked it
+            // before the owning state transition could complete.
+            "poisoned initialize did not return within the inner bound; \
+             the failure commit is blocked behind an undriven client \
+             delivery await (#3802)"
+                .to_string()
+        })?;
+        poisoned.map_err(|err| format!("poisoned initialize failed: {err}"))?;
+        // The owning failure must be committed even though client delivery
+        // never completed.
+        let failure = backend
+            .configuration_failure()
+            .ok_or_else(|| "poisoned profile store must surface a session failure".to_string())?;
+        if failure.kind != AnalysisFailureKind::SessionStateInconsistent {
+            return Err(format!(
+                "poisoned profile store surfaced the wrong failure kind: {}",
+                failure.kind.as_str()
+            ));
+        }
+        if !backend.initialize_failure_disclosure_omitted() {
+            return Err(
+                "wedged client delivery must be recorded as omitted, not silently dropped"
+                    .to_string(),
+            );
+        }
         Ok(())
     })
 }
@@ -12309,6 +12670,10 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
             ) && value.contains("--out target/ripr/agent/agent-receipt.json")
         }));
         assert_eq!(
+            packet["repair_command"],
+            format!("ripr agent repair --root . --seam-id {seam_id} --phase before")
+        );
+        assert_eq!(
             packet["limits_note"],
             "Static evidence only; no runtime mutation execution."
         );
@@ -13435,6 +13800,60 @@ fn write_actionable_gaps_report(
     Ok(())
 }
 
+/// A complete, agent-packet-eligible gap decision ledger record used to
+/// exercise the repair-packet ledger fallback path.
+fn write_gap_decision_ledger(root: &std::path::Path) -> Result<(), String> {
+    let reports_dir = root.join("target/ripr/reports");
+    std::fs::create_dir_all(&reports_dir)
+        .map_err(|err| format!("create reports dir failed: {err}"))?;
+    let path = reports_dir.join("gap-decision-ledger.json");
+    std::fs::write(&path, complete_gap_decision_ledger_json())
+        .map_err(|err| format!("write gap-decision-ledger.json failed: {err}"))?;
+    Ok(())
+}
+
+fn complete_gap_decision_ledger_json() -> &'static str {
+    r#"{
+  "records": [
+    {
+      "gap_id": "gap:pr:pricing:threshold-boundary",
+      "source_currentness": "candidate_current",
+      "canonical_gap_id": "gap:rust:pricing:threshold-boundary",
+      "kind": "MissingBoundaryAssertion",
+      "language": "rust",
+      "language_status": "stable",
+      "scope": "pr_local",
+      "evidence_class": "static_exposure",
+      "gap_state": "actionable",
+      "policy_state": "new",
+      "repairability": "repairable",
+      "repair_route": {
+        "route_kind": "AddBoundaryAssertion",
+        "target_file": "tests/pricing.rs",
+        "target_line": 33,
+        "related_test": "tests/pricing.rs::discount_threshold",
+        "assertion_shape": "assert_eq!(price(threshold), expected)",
+        "changed_behavior": "amount >= threshold",
+        "stop_conditions": ["Stop if the target owner moved."]
+      },
+      "anchor": {
+        "file": "src/pricing.rs",
+        "line": 42,
+        "owner": "pricing::discounted_total",
+        "dedupe_fingerprint": "gap:rust:pricing:threshold-boundary"
+      },
+      "evidence_ids": ["evidence:pricing"],
+      "projection_eligibility": {
+        "agent_packet": { "eligible": true, "reason": "bounded_repair_route" }
+      },
+      "verification_commands": ["cargo xtask fixtures boundary_gap"],
+      "receipt_command": "ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-pr-pricing.targeted-test-outcome.json",
+      "authority_boundary": "advisory"
+    }
+  ]
+}"#
+}
+
 fn seed_successful_snapshot(backend: &Backend) -> Result<(), String> {
     backend.initialize_test_workspace_root();
     let finding = sample_finding();
@@ -13680,6 +14099,99 @@ fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> R
                 "repair packet must not contain mutation-runtime term '{term}'"
             );
         }
+        Ok(())
+    })
+}
+
+#[test]
+fn execute_command_collect_repair_packet_malformed_actionable_gaps_returns_sentinel()
+-> Result<(), String> {
+    // A present-but-unparseable actionable-gaps.json must surface a typed
+    // malformed-source sentinel — not a silent null and not a fallback to the
+    // ledger — even when the ledger fallback source is valid.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-malformed-actionable")?;
+        let reports_dir = root.path().join("target/ripr/reports");
+        std::fs::create_dir_all(&reports_dir)
+            .map_err(|err| format!("create reports dir failed: {err}"))?;
+        std::fs::write(reports_dir.join("actionable-gaps.json"), "{ not valid json")
+            .map_err(|err| format!("write malformed actionable-gaps.json failed: {err}"))?;
+        write_gap_decision_ledger(root.path())?;
+
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let result = backend
+            .execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments: vec![],
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected malformed-source sentinel, not null".to_string())?;
+        assert_eq!(result["kind"], "repair_packet");
+        assert_eq!(result["status"], "not_actionable_or_incomplete");
+        let reason = result["reason"]
+            .as_str()
+            .ok_or_else(|| "sentinel must carry a string reason".to_string())?;
+        assert!(
+            reason.contains("actionable-gaps.json is malformed"),
+            "malformed actionable-gaps.json must be named in the reason, got {result}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn execute_command_collect_repair_packet_missing_actionable_gaps_falls_back_to_ledger()
+-> Result<(), String> {
+    // Absence of actionable-gaps.json is a normal state: the ledger fallback
+    // must still produce the full repair packet.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-ledger-fallback")?;
+        write_gap_decision_ledger(root.path())?;
+
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let packet = backend
+            .execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments: vec![],
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected ledger fallback repair packet".to_string())?;
+        assert_eq!(packet["kind"], "repair_packet");
+        assert_eq!(
+            packet["canonical_gap_id"], "gap:rust:pricing:threshold-boundary",
+            "ledger fallback must carry canonical_gap_id"
+        );
+        assert_eq!(
+            packet["repair_kind"], "AddBoundaryAssertion",
+            "ledger fallback must carry repair_kind"
+        );
+        assert_eq!(
+            packet["verify_command"], "cargo xtask fixtures boundary_gap",
+            "ledger fallback must carry verify_command"
+        );
+        assert_eq!(
+            packet["source_location"]["line"].as_u64(),
+            Some(42),
+            "ledger fallback must resolve a real anchor line"
+        );
         Ok(())
     })
 }

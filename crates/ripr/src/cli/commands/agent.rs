@@ -23,6 +23,7 @@ use crate::cli::commands_agent_support::{
 use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
 use crate::config::load_for_root;
 use crate::output;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::{
     fs::File,
@@ -32,6 +33,14 @@ use std::{
 use super::agent_dispatch;
 use super::agent_gap_packet::render_agent_packet_from_gap_ledger;
 use super::write_text_file;
+
+/// Schema version of the `ripr agent repair --phase after` success envelope
+/// (`kind: "repair_after_result"`). The envelope is its own versioned
+/// contract: the agent verify 0.3 document rides unchanged under `verify`
+/// and the agent status 0.1 document under `agent_status`, so every stdout
+/// document's shape is identifiable from its `schema_version`. Refusal
+/// paths keep printing the bare agent verify 0.3 document instead.
+const REPAIR_AFTER_RESULT_SCHEMA_VERSION: &str = "0.1";
 
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
     let command = parse_agent_args(args)?;
@@ -566,10 +575,24 @@ fn run_agent_repair_phase(
                 root.display()
             );
 
-            // Compose existing commands: start (creates workflow + brief) + packet.
-            // Stdout carries only the packet JSON. The start step's
-            // `Next: ripr check ...` hint is dropped because this phase writes
-            // that before snapshot itself; printing it sent users to redo it.
+            // Render and admit the packet first (F15-12): a seam whose repair
+            // packet names no test file ripr may edit refuses here, before any
+            // workflow artifact is written, so neither this phase nor
+            // `ripr agent status` reads as a started repair.
+            let packet = render_agent_packet(&AgentPacketOptions {
+                root: root.clone(),
+                seam_id: Some(seam_id.clone()),
+                gap_ledger: None,
+                gap_id: None,
+                json: true,
+            })?;
+            crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
+                .map_err(|error| before_phase_refusal(&seam_id, &error))?;
+
+            // Compose existing commands: start (creates workflow + brief) +
+            // packet. The start step's `Next: ripr check ...` hint is dropped
+            // because this phase writes that before snapshot itself; printing
+            // it sent users to redo it.
             let started = write_agent_start(AgentStartOptions {
                 root: root.clone(),
                 seam_id: seam_id.clone(),
@@ -582,21 +605,24 @@ fn run_agent_repair_phase(
             let before = root.join("target/ripr/workflow/before.repo-exposure.json");
             write_agent_repo_exposure_snapshot(&root, &before)?;
 
-            let packet = render_agent_packet(&AgentPacketOptions {
-                root: root.clone(),
-                seam_id: Some(seam_id),
-                gap_ledger: None,
-                gap_id: None,
-                json: true,
-            })?;
             let packet_path = root.join("target/ripr/workflow/agent-packet.json");
             write_text_file(&packet_path, &packet)?;
-            print!("{packet}");
-
             eprintln!("ripr: wrote {}", packet_path.display());
-            eprintln!(
-                "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below."
+            // Stdout carries the packet JSON when it is piped or redirected,
+            // which is how agents and scripts read it. A terminal reader gets
+            // a short summary instead of ~13 KB of JSON (F15-7); the packet
+            // file above is the same bytes either way.
+            print!(
+                "{}",
+                before_phase_stdout(
+                    &packet,
+                    "target/ripr/workflow/agent-packet.json",
+                    std::io::stdout().is_terminal(),
+                )
             );
+            // "Complete" and the next step are printed once the attempt is
+            // published (`cli::persist_before_repair_attempt`), so a refusal
+            // there is never preceded by a completion line.
             Ok(())
         }
         AgentRepairPhase::After => {
@@ -733,121 +759,167 @@ fn run_agent_repair_phase(
                 }
             };
             write_text_file(&verify_json, &rendered_verify)?;
-            print!("{rendered_verify}");
 
-            // The retained binding's manifest bytes are confirmed again
-            // immediately before the durable finish: the apply verification
-            // ran before several expensive operations, and a manifest
-            // replaced inside that window must refuse instead of silently
-            // advancing the attempt against replaced trust data.
-            if let Some(binding) = &retained_binding {
-                crate::app::python_repair_binding::confirm_manifest_unchanged(binding)?;
-            }
+            // Stdout carries exactly one JSON document on every path, like
+            // every other agent command. The verify outcome is held until the
+            // tail below settles: on success the single document is the
+            // repair-after-result envelope carrying the verify result under
+            // `verify` and the status report under `agent_status`; when the
+            // tail refuses, the verify document alone is printed — the
+            // refusal bytes this phase always produced, and still one document
+            // an orchestrator can parse with one JSON.parse call.
+            let after_tail = || -> Result<String, String> {
+                use crate::app::python_repair_binding::{
+                    confirm_manifest_unchanged, write_apply_record,
+                };
+                use crate::app::repair_attempt::{
+                    finish_repair_attempt, restore_repair_attempt_to_awaiting_edit,
+                };
 
-            // Finish only after all command-owned after artifacts exist. This
-            // makes the durable delta the exact delta the receipt binds, while
-            // the receipt itself remains outside the measured edit window.
-            let cage_after = crate::app::repair_attempt::finish_repair_attempt(
-                &root,
-                &attempt.attempt_id,
-                &packet_path,
-                head_movement,
-            )?;
-            eprintln!(
-                "ripr: edit-cage verdict for attempt `{}`: {:?}",
-                cage_after.attempt_id.as_str(),
-                cage_after.verdict.status
-            );
-            for line in repair_after_cage_recovery_lines(
-                &root,
-                &attempt.seam_id,
-                &attempt.repository_head,
-                &cage_after,
-            ) {
-                eprintln!("ripr: {line}");
-            }
+                // The retained binding's manifest bytes are confirmed again
+                // immediately before the durable finish: the apply
+                // verification ran before several expensive operations, and a
+                // manifest replaced inside that window must refuse instead of
+                // silently advancing the attempt against replaced trust data.
+                if let Some(binding) = &retained_binding {
+                    confirm_manifest_unchanged(binding)?;
+                }
 
-            // The receipt can refuse (for example an escape verdict is not
-            // receipt-ready). The refusal must not swallow the typed apply
-            // evidence, so the outcome is carried to the end and the apply
-            // record is published either way.
-            let receipt_result = run_agent_receipt_for_attempt(
-                AgentReceiptOptions {
-                    root: root.clone(),
-                    verify_json: verify_json.clone(),
-                    seam_id: attempt.seam_id,
-                    test_changed: None,
-                    commands_run: Vec::new(),
-                    json: true,
-                    out: Some(root.join("target/ripr/reports/agent-receipt.json")),
-                },
-                Some(cage_after.attempt_id.as_str()),
-                Some(&packet_path),
-            );
+                // Finish only after all command-owned after artifacts exist.
+                // This makes the durable delta the exact delta the receipt
+                // binds, while the receipt itself remains outside the measured
+                // edit window.
+                let cage_after =
+                    finish_repair_attempt(&root, &attempt.attempt_id, &packet_path, head_movement)?;
+                eprintln!(
+                    "ripr: edit-cage verdict for attempt `{}`: {:?}",
+                    cage_after.attempt_id.as_str(),
+                    cage_after.verdict.status
+                );
+                for line in repair_after_cage_recovery_lines(
+                    &root,
+                    &attempt.seam_id,
+                    &attempt.repository_head,
+                    &cage_after,
+                ) {
+                    eprintln!("ripr: {line}");
+                }
 
-            run_agent_status(AgentStatusOptions {
-                root: root.clone(),
-                json: true,
-                out_dir: Some(std::path::PathBuf::from("target/ripr/workflow")),
-            })?;
+                // The receipt can refuse (for example an escape verdict is not
+                // receipt-ready). The refusal must not swallow the typed apply
+                // evidence, so the outcome is carried to the end and the apply
+                // record is published either way.
+                let receipt_result = run_agent_receipt_for_attempt(
+                    AgentReceiptOptions {
+                        root: root.clone(),
+                        verify_json: verify_json.clone(),
+                        seam_id: attempt.seam_id.clone(),
+                        test_changed: None,
+                        commands_run: Vec::new(),
+                        json: true,
+                        out: Some(root.join("target/ripr/reports/agent-receipt.json")),
+                    },
+                    Some(cage_after.attempt_id.as_str()),
+                    Some(&packet_path),
+                );
 
-            // The apply record is published last: the receipt re-evaluates the
-            // edit cage over the exact delta finish measured, so no artifact
-            // write may land between finish and the receipt binding.
-            // The retained binding's manifest bytes are confirmed once more
-            // immediately before the record write: the earlier confirmation
-            // ran before the durable finish, so a manifest replaced inside
-            // that finalize window must refuse here instead of publishing an
-            // apply record against replaced trust data. The refusal restores
-            // the attempt to awaiting_edit, so the identical retry
-            // re-verifies everything.
-            let mut apply_record_result = Ok(());
-            if let (Some(binding), Some(verified)) = (&retained_binding, &verified_binding) {
-                let record_outcome =
-                    crate::app::python_repair_binding::confirm_manifest_unchanged(binding)
-                        .and_then(|()| {
-                            crate::app::python_repair_binding::write_apply_record(
-                                &root,
-                                &attempt.attempt_id,
-                                &binding.artifact_sha256,
-                                verified,
-                                edit_authorization.authority.as_deref().unwrap_or_default(),
-                                &cage_after,
-                            )
-                        });
-                match record_outcome {
-                    Ok(apply_record_path) => {
-                        eprintln!(
-                            "ripr: python repair-trust apply record: {}",
-                            apply_record_path.display()
-                        );
-                    }
-                    Err(error) => {
-                        // Finish already advanced the durable state, so a
-                        // failed record publication must restore the attempt
-                        // to awaiting_edit: the identical retry is otherwise
-                        // rejected and the record could never be recreated.
-                        match crate::app::repair_attempt::restore_repair_attempt_to_awaiting_edit(
+                // The status report the finished after phase embeds in its
+                // single stdout document. Built here it reads exactly what
+                // `ripr agent status --json` would print at this point: after
+                // the finish and the receipt write, before the apply record.
+                let status_report = app::agent_status::build_agent_status_report(&root, &root);
+                let status_rendered = app::agent_status::render_agent_status_json(&status_report)?;
+
+                // The apply record is published last: the receipt re-evaluates
+                // the edit cage over the exact delta finish measured, so no
+                // artifact write may land between finish and the receipt
+                // binding.
+                // The retained binding's manifest bytes are confirmed once
+                // more immediately before the record write: the earlier
+                // confirmation ran before the durable finish, so a manifest
+                // replaced inside that finalize window must refuse here
+                // instead of publishing an apply record against replaced trust
+                // data. The refusal restores the attempt to awaiting_edit, so
+                // the identical retry re-verifies everything.
+                let mut apply_record_result: Result<(), String> = Ok(());
+                let apply_inputs = (&retained_binding, &verified_binding);
+                if let (Some(binding), Some(verified)) = apply_inputs {
+                    let record_outcome = confirm_manifest_unchanged(binding).and_then(|()| {
+                        write_apply_record(
                             &root,
                             &attempt.attempt_id,
-                        ) {
-                            Ok(()) => {
-                                eprintln!(
-                                    "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
-                                );
-                                apply_record_result = Err(error);
-                            }
-                            Err(restore_error) => {
-                                apply_record_result = Err(format!(
-                                    "{error}; rolling the attempt back for a retry also failed: {restore_error}"
-                                ));
+                            &binding.artifact_sha256,
+                            verified,
+                            edit_authorization.authority.as_deref().unwrap_or_default(),
+                            &cage_after,
+                        )
+                    });
+                    match record_outcome {
+                        Ok(apply_record_path) => {
+                            eprintln!(
+                                "ripr: python repair-trust apply record: {}",
+                                apply_record_path.display()
+                            );
+                        }
+                        Err(error) => {
+                            // Finish already advanced the durable state, so a
+                            // failed record publication must restore the
+                            // attempt to awaiting_edit: the identical retry is
+                            // otherwise rejected and the record could never be
+                            // recreated.
+                            match restore_repair_attempt_to_awaiting_edit(
+                                &root,
+                                &attempt.attempt_id,
+                            ) {
+                                Ok(()) => {
+                                    eprintln!(
+                                        "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
+                                    );
+                                    apply_record_result = Err(error);
+                                }
+                                Err(restore_error) => {
+                                    apply_record_result = Err(format!(
+                                        "{error}; rolling the attempt back for a retry also failed: {restore_error}"
+                                    ));
+                                }
                             }
                         }
                     }
                 }
-            }
-            receipt_result?;
-            apply_record_result?;
+                receipt_result?;
+                apply_record_result?;
+
+                Ok(status_rendered)
+            };
+            let status_rendered = match after_tail() {
+                Ok(status_rendered) => status_rendered,
+                Err(error) => {
+                    print!("{rendered_verify}");
+                    return Err(error);
+                }
+            };
+            let document: serde_json::Value = serde_json::from_str(&rendered_verify)
+                .map_err(|error| format!("parse rendered agent verify JSON failed: {error}"))?;
+            let status_document: serde_json::Value = serde_json::from_str(&status_rendered)
+                .map_err(|error| format!("parse rendered agent status JSON failed: {error}"))?;
+            // The success output is its own versioned envelope
+            // (`repair_after_result`), not a mutated verify document: the
+            // verify outcome already owns the top-level `status` name
+            // (`advisory`), so splicing `agent_status` into the 0.3 document
+            // would leave two same-version documents with different shapes.
+            // The verify document keeps every field, name, and value under
+            // `verify`, and the status report rides beside it under
+            // `agent_status`.
+            let envelope = serde_json::json!({
+                "schema_version": REPAIR_AFTER_RESULT_SCHEMA_VERSION,
+                "kind": "repair_after_result",
+                "verify": document,
+                "agent_status": status_document,
+            });
+            let combined = serde_json::to_string_pretty(&envelope).map_err(|error| {
+                format!("serialize after-phase result document failed: {error}")
+            })?;
+            println!("{combined}");
 
             let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
             for line in repair_after_summary_lines(&receipt_path) {
@@ -1112,6 +1184,75 @@ fn repair_after_input_drift_lines(
         )),
     }
     lines
+}
+
+/// A before phase refused because the seam's repair packet cannot bound a
+/// test-only edit. Names the seam and the reason in plain words, says that
+/// nothing was started, and points at the surfaces that only offer a repair
+/// start for seams that pass this check.
+fn before_phase_refusal(seam_id: &str, error: &str) -> String {
+    format!(
+        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. Pick a seam whose `ripr pilot` output or review card shows a repair start. Cause: {error}"
+    )
+}
+
+/// What the before phase prints on stdout: the packet JSON for a pipe or
+/// file, a short summary for a terminal. A packet the summary cannot read
+/// falls back to the JSON, so nothing is hidden.
+fn before_phase_stdout(packet: &str, packet_path: &str, terminal: bool) -> String {
+    if terminal && let Some(summary) = before_phase_summary(packet, packet_path) {
+        return summary;
+    }
+    packet.to_string()
+}
+
+fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(packet).ok()?;
+    let item = value.get("packets")?.as_array()?.first()?;
+    let text = |pointer: &str| {
+        item.pointer(pointer)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+    };
+    let seam_id = text("/seam_id")?;
+    let test_file = text("/recommended_test/file")?;
+    let mut lines = Vec::new();
+    let location = match (
+        text("/file"),
+        item.get("line").and_then(serde_json::Value::as_u64),
+    ) {
+        (Some(file), Some(line)) => format!(" at {file}:{line}"),
+        (Some(file), None) => format!(" at {file}"),
+        _ => String::new(),
+    };
+    let owner = text("/owner")
+        .map(|owner| format!(" in {owner}"))
+        .unwrap_or_default();
+    lines.push(format!(
+        "Repair prepared for seam {seam_id}{location}{owner}."
+    ));
+    if let Some(expression) = text("/changed_expression") {
+        lines.push(format!("  changed behavior: {expression}"));
+    }
+    if let Some(missing) = text("/missing_discriminators/0/value") {
+        lines.push(format!("  missing discriminator: {missing}"));
+    }
+    match text("/recommended_test/name") {
+        Some(name) => lines.push(format!(
+            "  edit one test file: {test_file} (suggested test `{name}`); leave production code unchanged"
+        )),
+        None => lines.push(format!(
+            "  edit one test file: {test_file}; leave production code unchanged"
+        )),
+    }
+    if let Some(assertion) = text("/suggested_assertions/0") {
+        lines.push(format!("  assertion shape: {assertion}"));
+    }
+    lines.push(format!(
+        "  full repair packet (JSON): {packet_path}; stdout carries it when piped"
+    ));
+    Some(lines.join("\n") + "\n")
 }
 
 fn short_head(head: &str) -> &str {
@@ -1671,5 +1812,71 @@ mod repair_summary_tests {
     fn repair_summary_is_empty_when_the_receipt_lacks_movement() {
         assert!(repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#).is_empty());
         assert!(repair_receipt_summary_lines("not json").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod before_phase_stdout_tests {
+    use super::before_phase_stdout;
+
+    const PACKET: &str = r#"{
+  "schema_version": "0.1",
+  "packets": [
+    {
+      "seam_id": "0d196886bad1b124",
+      "owner": "src/lib.rs::discounted_total",
+      "file": "src/lib.rs",
+      "line": 11,
+      "changed_expression": "amount >= DISCOUNT_THRESHOLD",
+      "recommended_test": {
+        "name": "discounted_total_boundary_discriminator",
+        "file": "tests/pricing.rs"
+      },
+      "missing_discriminators": [
+        { "value": "DISCOUNT_THRESHOLD (equality boundary)" }
+      ],
+      "suggested_assertions": ["assert_eq!(discounted_total(10_000), 9_000)"]
+    }
+  ]
+}"#;
+
+    /// F15-7: a pipe or file gets the packet JSON byte for byte, so agents
+    /// and scripts that parse stdout keep their contract.
+    #[test]
+    fn piped_stdout_is_the_packet_json_unchanged() {
+        assert_eq!(
+            before_phase_stdout(PACKET, "target/ripr/workflow/agent-packet.json", false),
+            PACKET
+        );
+    }
+
+    /// F15-7: a terminal gets a short summary naming the seam, the one test
+    /// file to edit, and where the full packet is, instead of the JSON.
+    #[test]
+    fn terminal_stdout_is_a_short_summary_of_the_same_packet() {
+        let summary = before_phase_stdout(PACKET, "target/ripr/workflow/agent-packet.json", true);
+        assert!(!summary.contains('{'), "{summary}");
+        assert!(summary.lines().count() <= 8, "{summary}");
+        for expected in [
+            "Repair prepared for seam 0d196886bad1b124 at src/lib.rs:11 in src/lib.rs::discounted_total.",
+            "  changed behavior: amount >= DISCOUNT_THRESHOLD",
+            "  missing discriminator: DISCOUNT_THRESHOLD (equality boundary)",
+            "  edit one test file: tests/pricing.rs (suggested test `discounted_total_boundary_discriminator`); leave production code unchanged",
+            "  assertion shape: assert_eq!(discounted_total(10_000), 9_000)",
+            "  full repair packet (JSON): target/ripr/workflow/agent-packet.json; stdout carries it when piped",
+        ] {
+            assert!(
+                summary.lines().any(|line| line == expected),
+                "missing `{expected}` in:\n{summary}"
+            );
+        }
+    }
+
+    /// A packet the summary cannot read (no test file) falls back to the JSON
+    /// rather than hiding it behind an empty summary.
+    #[test]
+    fn unreadable_packet_falls_back_to_the_json_on_a_terminal() {
+        let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
+        assert_eq!(before_phase_stdout(packet, "p", true), packet);
     }
 }

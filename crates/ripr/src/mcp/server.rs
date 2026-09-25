@@ -8,8 +8,13 @@ use rpc::{
 };
 use serde_json::{Map, Value};
 
-pub(super) fn bounded_error_response(code: i64, message: &str, data: Option<Value>) -> Value {
-    rpc::bounded_error_response(code, message, data)
+pub(super) fn bounded_error_response(
+    id: Option<Value>,
+    code: i64,
+    message: &str,
+    data: Option<Value>,
+) -> Value {
+    rpc::bounded_error_response(id, code, message, data)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

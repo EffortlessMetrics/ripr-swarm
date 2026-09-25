@@ -296,6 +296,16 @@ fn run_git_deadline(
     args: &[&str],
     deadline: Duration,
 ) -> Result<FixtureGitOutcome, String> {
+    // Mirror the canonical runner in `crate::git`: a zero deadline is refused
+    // before spawning. Spawning would let any git that exits before the first
+    // `try_wait` below report as finished, so a zero-deadline caller would
+    // see success, a git failure or a timeout depending on scheduling.
+    if deadline.is_zero() {
+        return Ok(FixtureGitOutcome::TimedOut(format!(
+            "{FIXTURE_GIT_TIMEOUT_PREFIX}: fixture git {args:?} was given a zero deadline (not spawned) in {}",
+            root.display()
+        )));
+    }
     let mut child = Command::new("git")
         .args(args)
         .current_dir(root)
@@ -409,35 +419,22 @@ mod tests {
             Duration::ZERO,
         ) {
             Ok(()) => return Err("zero-deadline init unexpectedly succeeded".to_string()),
-            Err(error) if error.contains("retry timed out") => {}
+            // Both attempts refused before spawning: init is retried, and the
+            // retry is refused the same way.
+            Err(error) if error.contains("retry timed out") && error.contains("(not spawned)") => {}
             Err(error) => {
                 return Err(format!("unexpected init error shape: {error}"));
             }
         }
-        // Either refusal is correct, and which one surfaces is a race the zero
-        // deadline cannot decide. `run_git_deadline` calls `try_wait` before it
-        // consults the deadline, so a child that has already exited is reported
-        // as `Finished` however short the deadline is. The
-        // pre-commit probe runs `rev-parse --verify HEAD` against an unborn
-        // repository, which exits non-zero almost immediately:
-        //
-        // - not yet reaped at the first poll: `TimedOut`, and the probe
-        //   refuses with `probe fixture HEAD`;
-        // - already reaped: `Finished` with a non-zero status, which is the
-        //   unborn-HEAD answer rather than an error, so the probe returns
-        //   `Ok(None)` and the bare `fixture_git_timeout` from the commit
-        //   itself propagates instead.
-        //
-        // Asserting one of those shapes made this test fail whenever
-        // scheduling favored the child, which is why it went red under
-        // full-suite parallelism while passing in isolation (#3742). The
-        // property the test exists for is that a zero deadline never lets the
-        // commit succeed, and that is still asserted below.
+        // A commit is never re-run. Its pre-commit HEAD probe is refused
+        // before spawning, and that refusal propagates, so the commit itself
+        // never runs. When the runner still spawned on a zero deadline, this
+        // outcome depended on whether each git exited before the first poll
+        // (#3742), and hosted CI hit the init retry's lock failure on #4014.
         match fixture_git_ok_with_deadline(&root, &["commit", "-m", "x"], Duration::ZERO) {
             Ok(()) => Err("zero-deadline commit unexpectedly succeeded".to_string()),
             Err(error)
-                if error.contains("probe fixture HEAD")
-                    || error.contains("fixture_git_timeout") =>
+                if error.contains("probe fixture HEAD") && error.contains("(not spawned)") =>
             {
                 Ok(())
             }

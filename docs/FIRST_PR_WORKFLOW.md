@@ -161,11 +161,18 @@ its first local reproduction command, and its Markdown, like
 manual labels. The generated CI job summary leads its `First-run status` block
 with it, and its `Agent review packet` block says no receipt is expected before
 a repair and leads with the same start. Only cards past the fail-closed repair-packet flip carry the command;
-first-pr copies it and never builds one from a seam id. If no card carries one,
-the no-action reason says why and, when the cards are missing or were rendered
-from the gap ledger, names the seam-level
-`ripr review-comments --root . --base origin/main --head HEAD --out target/ripr/review/comments.json`
-route.
+first-pr copies it and never builds one from a seam id.
+
+On a Rust root, first-pr does not report "no actionable gap" from cards it
+could not use. When the cards are missing it stops with `missing_artifact`;
+when they are unreadable, incomplete, or were built for another root, base, or
+head it stops with the matching blocked state. Either way the next command is
+the seam-level
+`ripr review-comments --root . --base origin/main --head HEAD --out target/ripr/review/comments.json`.
+On a fresh checkout that makes three regeneration steps before the start:
+repo exposure, gap ledger, then review cards. Each run names the next one.
+Only current cards that carry no repair start, or cards rendered from the gap
+ledger, end in no-action; the reason says which.
 
 For a gap-ledger-backed task, create the focused agent packet:
 

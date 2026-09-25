@@ -77,7 +77,14 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 
 The before phase writes the before snapshot, brief, packet, and workflow files
 and prints the exact `--attempt` command for the after phase. The after phase
-writes the after snapshot, analysis outcome, verify JSON, and receipt. For the
+writes the after snapshot, analysis outcome, verify JSON, and receipt. Its
+stdout is exactly one JSON document — the versioned `repair_after_result`
+envelope (`schema_version` `0.1`) carrying the verify 0.3 document unchanged
+under `verify` with the status report embedded beside it under
+`agent_status` — so an orchestrator can `JSON.parse` stdout once and every
+stdout document's shape is identifiable from its `schema_version`; narration
+stays on stderr. When the after phase refuses after the verify render, stdout
+is the bare verify 0.3 document alone. For the
 separately authorized `verify` phase of a trust-bound Python attempt, see
 [Repair attempt identity](REPAIR_ATTEMPT.md). The numbered steps below are the
 lower-level manual equivalent, kept for explicit control and debugging.
@@ -170,6 +177,30 @@ If the operator needs the full seam packet as well:
 ```bash
 ripr agent packet --root . --seam-id <seam-id> --json > target/ripr/workflow/agent-packet.json
 ```
+
+If the operator is starting from a gap decision ledger instead of live seam
+analysis, the same packet envelope can be rendered straight from a ledger
+record:
+
+```bash
+ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id <gap-id> --json > target/ripr/workflow/agent-packet.json
+```
+
+This route does not rerun analysis: the record is read from the ledger named
+in the envelope's `inputs.gap_ledger`, and the packet reports
+`source: "gap_decision_ledger"`. It requires the record to carry a
+`repair_route` and at least one `verification_commands` entry; `--seam-id`
+and `--gap-ledger`/`--gap-id` are mutually exclusive. Against the seam
+packet, the per-gap packet fields add gap identity and governance state —
+`gap_id`, `canonical_gap_id`, `gap_kind`, `language`, `policy_state`,
+`gap_state`, `evidence_class`, `repairability`, `current_evidence_strength` —
+plus `allowed_edit_surface`/`allowed_files`/`forbidden_files`,
+`conflict_group`, `stop_conditions`, `must_not_change`,
+`discriminator_guidance`, `recommended_test`, `verify_command`,
+`receipt_command`, `receipt_status`, a `repair_card`, and `llm_guidance`
+with the prompt, stop conditions, and a copyable packet. The edit-surface
+authority, stop conditions, and verify/receipt commands carry the same
+advisory boundary as the seam packet.
 
 If the operator is starting from a working set rather than one seam, use a
 brief command instead:
@@ -291,6 +322,60 @@ The review summary joins:
 It should tell the reviewer which seam was targeted, what static movement was
 recorded, which receipt and verify artifacts carry the evidence, what is still
 missing, and what static limits remain.
+
+## Bounded execution: `ripr agent verify-execute`
+
+`ripr agent verify-execute` is the only standalone command in the agent loop
+that executes a process; `ripr agent repair --phase verify` also runs the
+retained packet's typed verify route through the bounded execution runner. It
+accepts one canonical producer-shaped packet and runs only the direct
+`ripr agent verify` route that packet declares — no shell, no display-text
+execution, no receipt issuance:
+
+```bash
+ripr agent verify-execute \
+  --root . \
+  --packet target/ripr/workflow/agent-packet.json \
+  --result-json target/ripr/workflow/verification-execution.json \
+  --authorize \
+  --json
+```
+
+- `--packet` and `--result-json` are required, along with `--json`; `--root`
+  selects the repository the packet and result paths must stay inside.
+- `--authorize` is required for execution. Omitting it is not a usage error;
+  it is a policy refusal reported as the typed
+  `verification_rejected_policy` disposition.
+- `--cancel-after-ms <n>` requests cancellation after `n` milliseconds; it
+  must be a positive value below the command timeout.
+- Typed JSON on every terminal state: each run — including pre-execution
+  refusals and a failing verify command — emits one JSON response on stdout
+  with a `disposition` field (for example `verification_executed_pass`,
+  `verification_executed_fail`, `verification_rejected_policy`,
+  `verification_wrong_root`, `verification_timed_out`,
+  `verification_cancelled`). Usage errors stay plain stderr messages with no
+  disposition. The exit status distinguishes only whether a bounded
+  observation was committed.
+
+The packet chooses which provenance-validated producer artifacts to compare;
+it never authors the command. Route authority is layered: the typed
+`command_specs.verify` must be reproducible from the packet's own
+`verification_commands`, and the route's `--before`/`--after` inputs must
+pass the repo-exposure provenance contract, after which RIPR recomputes the
+canonical route and requires equality. See
+[`OUTPUT_SCHEMA.md`](OUTPUT_SCHEMA.md#agent-verify-execute) for the full
+envelope, environment posture, and declared limitations.
+
+## MCP adapter
+
+`ripr mcp --stdio` exposes a bounded, read-only workspace-status projection
+for MCP clients: one tool (`ripr_workspace_status`) and one resource
+(`ripr://workspace/status`), both returning the same
+`ripr-mcp-workspace-status-v1` document. It declares no source-edit,
+verification-execution, mutation-execution, or model-provider authority
+(ADR 0022), and the status is resolved once at process startup — a static
+snapshot for the life of the server, not a live view. See
+[`docs/interop/mcp.md`](interop/mcp.md).
 
 ## CI Path
 

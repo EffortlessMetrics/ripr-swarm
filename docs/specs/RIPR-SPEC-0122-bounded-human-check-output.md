@@ -118,6 +118,18 @@ so the renderer strips that prefix and emits
 prefix and are rendered unchanged. This governs the human digest only; no
 machine format reads the label.
 
+The digest's `Why <class>:` line restates the stage evidence that placed the
+finding in its class, so it must agree with the `reach` / `observe` evidence
+lines rendered beneath it:
+
+- `no_static_path` with reach `no` — `no related test was found that reaches
+  this change` (the classifier's own reason; it never claims an output trace
+  was attempted);
+- `reachable_unrevealed` with observe `no` — `a related test reaches this
+  change, but no assertion observes the changed behavior`;
+- any other stage combination for those classes falls back to wording that
+  does not deny a reaching test.
+
 The bounded renderer selects at most one visible unsuppressed finding. The
 selector is deterministic:
 

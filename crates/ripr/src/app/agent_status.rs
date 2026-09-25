@@ -15,7 +15,7 @@ use crate::app::repair_attempt::{
     after_phase_head_admission, diverged_head_recovery, inventory_repair_attempts,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
-use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, powershell_command};
+use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
 use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -66,6 +66,42 @@ const ARTIFACTS: &[AgentStatusArtifactDef] = &[
         path: WORKFLOW_AGENT_RECEIPT_ARTIFACT,
     },
 ];
+
+/// Artifacts whose repository-global copies the repair-attempt authority
+/// supersedes while a repair attempt is present. Per
+/// `docs/REPAIR_ATTEMPT.md` ("Durable location" and "Compatibility
+/// outputs"), repository-global workflow files remain compatibility
+/// projections and are not repair-attempt identity: the attempt retains its
+/// own digest-bound before artifacts under `target/ripr/repair-attempts/`,
+/// and the manifest records that after-phase verify and receipt outputs
+/// remain mirrored through the workflow compatibility paths. Status must not
+/// report a projection the active loop mode does not enforce as `required`.
+///
+/// Shared with `app::agent_workflow`: the workflow manifest is the agent
+/// loop's machine-readable contract, so its `required` flags must follow the
+/// same rule instead of claiming the legacy loop is enforced while an
+/// attempt is present. Both owners consume `artifact_required_by_active_loop`.
+pub(crate) const REPAIR_ATTEMPT_SUPERSEDED_ARTIFACTS: &[&str] = &[
+    "before_snapshot",
+    "after_snapshot",
+    "analysis_outcome",
+    "agent_brief",
+    "agent_packet",
+    "agent_verify",
+    "agent_receipt",
+];
+
+/// Whether the active loop mode requires this artifact: every artifact is
+/// required by the legacy artifact loop when no repair attempt is present;
+/// artifacts the repair-attempt authority supersedes are not required while
+/// an attempt is present, because the attempt directory holds the enforced
+/// identity and the global files are compatibility projections.
+///
+/// `pub(crate)` because `app::agent_workflow` computes the same per-artifact
+/// `required` classification for the workflow manifest contract.
+pub(crate) fn artifact_required_by_active_loop(name: &str, repair_attempt_present: bool) -> bool {
+    !(repair_attempt_present && REPAIR_ATTEMPT_SUPERSEDED_ARTIFACTS.contains(&name))
+}
 
 const MISSING_COMMAND_ORDER: &[&str] = &[
     "before_snapshot",
@@ -141,13 +177,21 @@ pub(crate) enum AgentStatusAttemptReceipt {
     /// The attempt has no compliant, current after verdict to issue against.
     NotApplicable,
     /// No receipt at the workflow receipt path is bound to this attempt's
-    /// after verdict (it is missing, unreadable, or belongs to other work).
+    /// after verdict (the file is absent, or it parses but belongs to other
+    /// work). A receipt whose JSON cannot be read at all is `Unreadable`,
+    /// not `NotIssued`: conflating them would tell an orchestrator the
+    /// receipt was never issued.
     NotIssued,
     /// The workflow receipt is bound to a different repair attempt. The
     /// workflow keeps one receipt, so a later attempt's after phase replaced
     /// the receipt this attempt's after phase wrote; its outcome can no
     /// longer be read from it.
     Superseded { by_attempt_id: String },
+    /// The receipt file at the workflow receipt path exists but is not
+    /// parseable JSON, so status cannot tell whether it was issued for this
+    /// attempt's after verdict. Distinct from `NotIssued`, which means no
+    /// receipt file is there (or the readable file belongs to other work).
+    Unreadable,
     /// The receipt bound to this attempt's after verdict, read through the
     /// receipt owner.
     Issued(AgentReceiptReading),
@@ -221,8 +265,7 @@ pub(crate) fn build_agent_status_report(root: &Path, root_argument: &Path) -> Ag
     warnings.extend(stale_warnings(&artifacts));
     let missing_commands = missing_commands(root_argument, seam.as_ref(), &artifacts);
     let receipt = read_workflow_receipt(root);
-    let repair_attempts =
-        inspect_repair_attempts(root, &root_display, receipt.as_ref(), &mut warnings);
+    let repair_attempts = inspect_repair_attempts(root, &root_display, &receipt, &mut warnings);
     let next_command = select_next_command(
         root,
         &root_display,
@@ -249,7 +292,7 @@ pub(crate) fn build_agent_status_report(root: &Path, root_argument: &Path) -> Ag
 fn inspect_repair_attempts(
     root: &Path,
     root_display: &str,
-    receipt: Option<&Value>,
+    receipt: &WorkflowReceiptRead,
     warnings: &mut Vec<AgentStatusWarning>,
 ) -> Option<Vec<AgentStatusRepairAttempt>> {
     let entries = match inventory_repair_attempts(root) {
@@ -300,11 +343,40 @@ fn inspect_repair_attempts(
     trusted.then_some(attempts)
 }
 
+/// The workflow receipt read against one attempt's after verdict. Status
+/// reads the receipt only to match it against a finished attempt's after
+/// verdict; a receipt whose JSON cannot be parsed keeps its own state so a
+/// malformed file is never reported as "never issued".
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum WorkflowReceiptRead {
+    /// No receipt file exists at the workflow receipt path.
+    Missing,
+    /// The receipt file exists but is not parseable JSON.
+    Unreadable,
+    Parsed(Value),
+}
+
 /// The workflow receipt, when it exists and parses. Status reads it only to
 /// match it against a finished attempt's after verdict.
-fn read_workflow_receipt(root: &Path) -> Option<Value> {
-    let text = std::fs::read_to_string(root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT)).ok()?;
-    serde_json::from_str(&text).ok()
+fn read_workflow_receipt(root: &Path) -> WorkflowReceiptRead {
+    let text = match std::fs::read_to_string(root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT)) {
+        Ok(text) => text,
+        Err(error) => {
+            return if error.kind() == std::io::ErrorKind::NotFound {
+                WorkflowReceiptRead::Missing
+            } else {
+                // The file exists but cannot be read (permissions, race with
+                // a rewrite, ...): that is an unreadable receipt, never a
+                // missing one — reporting it as Missing would claim the
+                // receipt was never issued.
+                WorkflowReceiptRead::Unreadable
+            };
+        }
+    };
+    match serde_json::from_str(&text) {
+        Ok(value) => WorkflowReceiptRead::Parsed(value),
+        Err(_) => WorkflowReceiptRead::Unreadable,
+    }
 }
 
 /// Whether the workflow receipt was issued for exactly this attempt's after
@@ -315,7 +387,7 @@ fn read_workflow_receipt(root: &Path) -> Option<Value> {
 /// the same attempt, does not match.
 fn attempt_receipt(
     manifest: &RepairAttemptManifest,
-    receipt: Option<&Value>,
+    receipt: &WorkflowReceiptRead,
 ) -> AgentStatusAttemptReceipt {
     let Some(after) = manifest
         .after
@@ -324,8 +396,10 @@ fn attempt_receipt(
     else {
         return AgentStatusAttemptReceipt::NotApplicable;
     };
-    let Some(receipt) = receipt else {
-        return AgentStatusAttemptReceipt::NotIssued;
+    let receipt = match receipt {
+        WorkflowReceiptRead::Missing => return AgentStatusAttemptReceipt::NotIssued,
+        WorkflowReceiptRead::Unreadable => return AgentStatusAttemptReceipt::Unreadable,
+        WorkflowReceiptRead::Parsed(value) => value,
     };
     let bound = |pointer: &str, expected: &str| {
         receipt.pointer(pointer).and_then(Value::as_str) == Some(expected)
@@ -360,7 +434,7 @@ fn status_repair_attempt(
     root_display: &str,
     manifest: &RepairAttemptManifest,
     current_head: Option<&str>,
-    receipt: Option<&Value>,
+    receipt: &WorkflowReceiptRead,
 ) -> AgentStatusRepairAttempt {
     let restart = Some(new_repair_attempt_command(root_display, &manifest.seam_id));
     let receipt = attempt_receipt(manifest, receipt);
@@ -558,6 +632,9 @@ fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
         ),
         AgentStatusAttemptReceipt::Superseded { by_attempt_id } => format!(
             "the receipt its after phase wrote to `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` was superseded by the receipt for repair attempt `{by_attempt_id}` (the workflow keeps one receipt), so status can no longer read this attempt's outcome"
+        ),
+        AgentStatusAttemptReceipt::Unreadable => format!(
+            "the receipt at `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` exists but could not be parsed as JSON, so status cannot tell whether it was issued for this attempt's after verdict"
         ),
         _ => format!(
             "no receipt at `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` was issued for its after verdict"
@@ -836,6 +913,9 @@ fn attempt_outcome(attempt: &AgentStatusRepairAttempt) -> String {
         AgentStatusAttemptReceipt::Superseded { by_attempt_id } => {
             parts.push(format!("receipt superseded by attempt `{by_attempt_id}`"));
         }
+        AgentStatusAttemptReceipt::Unreadable => {
+            parts.push("receipt present but unreadable".to_string());
+        }
         AgentStatusAttemptReceipt::NotApplicable => {}
     }
     match attempt.disposition {
@@ -890,13 +970,19 @@ fn keep_follow_up_templates_reachable(root: &str) {
 
 pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<String, String> {
     let next_command = report.next_command.as_ref().map(agent_status_command_json);
+    let repair_attempt_present = !report.repair_attempts.is_empty();
+    let artifacts = report
+        .artifacts
+        .iter()
+        .map(|artifact| agent_status_artifact_json(artifact, repair_attempt_present))
+        .collect::<Vec<_>>();
     let value = serde_json::json!({
         "schema_version": AGENT_STATUS_SCHEMA_VERSION,
         "tool": "ripr",
         "status": report.status(),
         "root": report.root,
         "seam": report.seam.as_ref().map(agent_status_seam_json),
-        "artifacts": report.artifacts.iter().map(agent_status_artifact_json).collect::<Vec<_>>(),
+        "artifacts": artifacts,
         "repair_attempts": report.repair_attempts.iter().map(agent_status_repair_attempt_json).collect::<Vec<_>>(),
         "missing_commands": report.missing_commands.iter().map(agent_status_command_json).collect::<Vec<_>>(),
         "next_command": next_command,
@@ -961,13 +1047,14 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         rendered.push_str("```bash\n");
         rendered.push_str(&next.command);
         rendered.push_str("\n```\n");
-        match powershell_command(&next.command) {
-            Some(line) => {
+        match powershell_form(&next.command) {
+            PowershellForm::Translated(line) => {
                 rendered.push_str("\n```powershell\n");
                 rendered.push_str(&line);
                 rendered.push_str("\n```\n");
             }
-            None => rendered.push_str(&format!(
+            PowershellForm::SameAsBash => {}
+            PowershellForm::Unavailable => rendered.push_str(&format!(
                 "{}: `{}`\n",
                 crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE,
                 next.command
@@ -1007,12 +1094,15 @@ fn agent_status_seam_json(seam: &AgentStatusSeam) -> Value {
     })
 }
 
-fn agent_status_artifact_json(artifact: &AgentStatusArtifact) -> Value {
+fn agent_status_artifact_json(
+    artifact: &AgentStatusArtifact,
+    repair_attempt_present: bool,
+) -> Value {
     serde_json::json!({
         "name": artifact.name,
         "label": artifact.label,
         "path": artifact.path,
-        "required": true,
+        "required": artifact_required_by_active_loop(&artifact.name, repair_attempt_present),
         "state": if artifact.present { "present" } else { "missing" },
         "bytes": artifact.bytes,
         "modified_unix_ms": modified_unix_ms(artifact.modified)
@@ -1037,17 +1127,19 @@ fn agent_status_repair_attempt_json(attempt: &AgentStatusRepairAttempt) -> Value
 }
 
 fn attempt_receipt_json(receipt: &AgentStatusAttemptReceipt) -> Value {
-    let (reading, superseded_by) = match receipt {
+    let (reading, superseded_by, unreadable) = match receipt {
         AgentStatusAttemptReceipt::NotApplicable => return Value::Null,
-        AgentStatusAttemptReceipt::NotIssued => (None, None),
+        AgentStatusAttemptReceipt::NotIssued => (None, None, false),
         AgentStatusAttemptReceipt::Superseded { by_attempt_id } => {
-            (None, Some(by_attempt_id.as_str()))
+            (None, Some(by_attempt_id.as_str()), false)
         }
-        AgentStatusAttemptReceipt::Issued(reading) => (Some(reading), None),
+        AgentStatusAttemptReceipt::Unreadable => (None, None, true),
+        AgentStatusAttemptReceipt::Issued(reading) => (Some(reading), None, false),
     };
     serde_json::json!({
         "path": WORKFLOW_AGENT_RECEIPT_ARTIFACT,
         "issued_for_attempt": reading.is_some(),
+        "unreadable": unreadable,
         "superseded_by": superseded_by,
         "status": reading.and_then(|reading| reading.status.as_deref()),
         "movement": reading.and_then(|reading| reading.movement.as_deref()),
@@ -1407,6 +1499,19 @@ mod tests {
         assert_eq!(value["status"], "incomplete");
         assert_eq!(value["seam"], Value::Null);
         assert_eq!(value["artifacts"].as_array().map(Vec::len), Some(7));
+        // No repair attempt is present, so the legacy artifact loop is the
+        // active mode and every workflow artifact is required
+        // (docs/LEARNINGS.md, 2026-07-25 false-confidence gates).
+        let artifacts = value["artifacts"]
+            .as_array()
+            .ok_or_else(|| "status JSON must carry an artifacts array".to_string())?;
+        for artifact in artifacts {
+            assert_eq!(
+                artifact["required"], true,
+                "legacy loop must require `{}`",
+                artifact["name"]
+            );
+        }
         assert_eq!(value["missing_commands"].as_array().map(Vec::len), Some(7));
         assert_eq!(value["repair_attempts"], serde_json::json!([]));
         // A fresh workspace knows no seam and has no workflow directory, so the
@@ -1416,6 +1521,239 @@ mod tests {
         assert_eq!(value["next_command"]["command"], "ripr pilot --root .");
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// The artifact `required` flags must claim no more than the active loop
+    /// mode enforces (docs/LEARNINGS.md, 2026-07-25 false-confidence gates).
+    /// With no repair attempt present the legacy artifact loop is active and
+    /// requires every workflow artifact; with a trusted repair attempt
+    /// present the attempt authority supersedes the repository-global
+    /// projections (docs/REPAIR_ATTEMPT.md, "Durable location" and
+    /// "Compatibility outputs"), so none of them is required.
+    #[test]
+    fn agent_status_artifact_required_flags_follow_the_enforced_loop_mode() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("required-flags-repair");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        run_git(&root, &["init"])?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&root, &["config", "user.name", "RIPR Test"])?;
+        write_file(&root.join("README.md"), "# test\n")?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        prepare_attempt_fixture(&root, "seam:status-honesty")?;
+
+        let report = build_agent_status_report(&root, &root);
+        assert_eq!(
+            report.repair_attempts.len(),
+            1,
+            "the prepared attempt must be the active loop mode"
+        );
+        let rendered = render_agent_status_json(&report)?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse status JSON: {err}"))?;
+        let artifacts = value["artifacts"]
+            .as_array()
+            .ok_or_else(|| "status JSON must carry an artifacts array".to_string())?;
+        for artifact in artifacts {
+            assert_eq!(
+                artifact["required"], false,
+                "repair loop must not require the superseded projection `{}`",
+                artifact["name"]
+            );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// Every artifact status reports on must carry an explicit classification
+    /// for the repair-attempt loop mode, so a newly added artifact cannot
+    /// silently inherit an all-`true` or all-`false` claim.
+    #[test]
+    fn agent_status_every_artifact_has_a_loop_mode_classification() {
+        let reported = ARTIFACTS
+            .iter()
+            .map(|artifact| artifact.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            REPAIR_ATTEMPT_SUPERSEDED_ARTIFACTS, reported,
+            "each reported artifact needs an explicit active-loop classification"
+        );
+    }
+
+    /// Reading the workflow receipt must distinguish a missing file from a
+    /// malformed one: they are different facts, and only the second makes the
+    /// receipt's content unreachable.
+    #[test]
+    fn agent_status_receipt_read_distinguishes_missing_from_malformed() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("receipt-read");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+
+        assert_eq!(
+            read_workflow_receipt(&root),
+            WorkflowReceiptRead::Missing,
+            "no receipt file must read as missing"
+        );
+
+        write_file(&root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT), "{not json")?;
+        assert_eq!(
+            read_workflow_receipt(&root),
+            WorkflowReceiptRead::Unreadable,
+            "a malformed receipt file must read as unreadable, not missing"
+        );
+
+        write_file(&root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT), "{}")?;
+        match read_workflow_receipt(&root) {
+            WorkflowReceiptRead::Parsed(_) => {}
+            other => return Err(format!("a valid receipt must parse, got {other:?}")),
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// A read failure that is not simple absence (e.g. the receipt path is a
+    /// directory, or permissions deny the read) must read as `Unreadable`,
+    /// never as `Missing` — `Missing` claims the receipt was never issued.
+    #[test]
+    fn agent_status_receipt_read_treats_io_errors_as_unreadable() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("receipt-read-io-error");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        // A directory at the receipt path makes read_to_string fail with a
+        // non-NotFound error on every supported platform.
+        std::fs::create_dir_all(root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT))
+            .map_err(|err| format!("create receipt-dir: {err}"))?;
+        assert_eq!(
+            read_workflow_receipt(&root),
+            WorkflowReceiptRead::Unreadable,
+            "an unreadable receipt path must not be reported as missing"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// A `ready_to_finish` attempt whose workflow receipt file is malformed
+    /// must report the typed receipt as `Unreadable`, not `NotIssued`: an
+    /// orchestrator's next-command decision needs "a receipt exists but
+    /// cannot be read", not "no receipt was ever issued".
+    #[test]
+    fn agent_status_ready_to_finish_attempt_reports_unreadable_receipt() -> Result<(), String> {
+        let manifest = ready_to_finish_manifest()?;
+
+        assert_eq!(
+            attempt_receipt(&manifest, &WorkflowReceiptRead::Unreadable),
+            AgentStatusAttemptReceipt::Unreadable
+        );
+        assert_eq!(
+            attempt_receipt(&manifest, &WorkflowReceiptRead::Missing),
+            AgentStatusAttemptReceipt::NotIssued,
+            "a missing receipt file stays not issued"
+        );
+        let unbound = serde_json::json!({});
+        assert_eq!(
+            attempt_receipt(&manifest, &WorkflowReceiptRead::Parsed(unbound)),
+            AgentStatusAttemptReceipt::NotIssued,
+            "a readable receipt bound to other work stays not issued"
+        );
+
+        // The JSON rendering exposes the distinction machine-readably.
+        let unreadable = attempt_receipt_json(&AgentStatusAttemptReceipt::Unreadable);
+        assert_eq!(unreadable["unreadable"], true);
+        assert_eq!(unreadable["issued_for_attempt"], false);
+        let not_issued = attempt_receipt_json(&AgentStatusAttemptReceipt::NotIssued);
+        assert_eq!(not_issued["unreadable"], false);
+        Ok(())
+    }
+
+    fn ready_to_finish_manifest() -> Result<RepairAttemptManifest, String> {
+        use crate::app::repair_attempt::{RepairAttemptAfter, RepairAttemptId};
+        use crate::edit_cage::{EditCageVerdict, EditCageVerdictStatus};
+        let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")
+            .map_err(|err| format!("parse attempt id: {err}"))?;
+        let schema_version = crate::app::repair_attempt::REPAIR_ATTEMPT_SCHEMA_VERSION;
+        let head = "0123456789abcdef0123456789abcdef01234567".to_string();
+        Ok(RepairAttemptManifest {
+            schema_version: schema_version.to_string(),
+            kind: "repair_attempt".to_string(),
+            repair_attempt_id: attempt_id.clone(),
+            state: RepairAttemptState::ReadyToFinish,
+            root: ".".to_string(),
+            repository_head: head.clone(),
+            producer_version: "test".to_string(),
+            seam_id: "seam-a".to_string(),
+            created_unix_ms: 0,
+            artifacts: Vec::new(),
+            next_command: "ripr agent repair --root . --seam-id seam-a --phase after".to_string(),
+            limitations: Vec::new(),
+            non_claims: Vec::new(),
+            after: Some(RepairAttemptAfter {
+                attempt_id,
+                repository_head: head,
+                delta_sha256: "sha256:delta".to_string(),
+                packet_sha256: "sha256:packet".to_string(),
+                current: true,
+                verdict: EditCageVerdict {
+                    status: EditCageVerdictStatus::Compliant,
+                    changed_paths: vec!["tests/target.rs".to_string()],
+                    violations: Vec::new(),
+                },
+            }),
+            last_after_refusal: None,
+        })
+    }
+
+    fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
+        crate::testing::fixture_git::fixture_git_ok(root, args)
+    }
+
+    /// Publishes one real repair attempt the way the before phase does, so
+    /// status reads a trusted attempt directory rather than a synthetic one.
+    fn prepare_attempt_fixture(root: &Path, seam_id: &str) -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeginRepairAttemptOptions, begin_repair_attempt_with,
+            edit_cage_policy_from_packet, write_edit_cage_baseline,
+        };
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow)
+            .map_err(|err| format!("create {}: {err}", workflow.display()))?;
+        let before = workflow.join("before-status-honesty.json");
+        let packet = workflow.join("packet-status-honesty.json");
+        let baseline = workflow.join("baseline-status-honesty.json");
+        write_file(&before, "{}")?;
+        let packet_text = serde_json::json!({
+            "seam_id": seam_id,
+            "allowed_edit_surface": ["tests/target.rs"],
+            "forbidden_files": []
+        })
+        .to_string();
+        write_file(&packet, &packet_text)?;
+        let policy = edit_cage_policy_from_packet(&packet_text, seam_id)?;
+        write_edit_cage_baseline(root, &baseline, &policy)?;
+        begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root,
+            root_argument: root,
+            seam_id,
+            sources: &[
+                BeforeArtifactSource {
+                    role: "before_snapshot",
+                    path: &before,
+                },
+                BeforeArtifactSource {
+                    role: "agent_packet",
+                    path: &packet,
+                },
+                BeforeArtifactSource {
+                    role: "edit_cage_baseline",
+                    path: &baseline,
+                },
+            ],
+            expected_repository_head: None,
+            next_command_suffix: None,
+        })?;
         Ok(())
     }
 
@@ -1601,7 +1939,7 @@ mod tests {
         );
         let powershell_form = format!(
             "```powershell\n{}\n```\n",
-            powershell_command(&next)
+            crate::output::markdown::powershell_command(&next)
                 .ok_or_else(|| "redirect commands gain a powershell variant".to_string())?
         );
         assert!(
@@ -1845,6 +2183,22 @@ mod tests {
         write_file(
             &root.join(PILOT_SUMMARY_ARTIFACT),
             r#"{"next": {"repair_command": null}}"#,
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        let next = report
+            .next_command
+            .as_ref()
+            .ok_or_else(|| "expected a next command".to_string())?;
+        assert_eq!(next.step, "select_seam");
+        assert_eq!(next.command, "ripr pilot --root .");
+
+        // Status repeats the pilot value as its next command, so only a repair
+        // start may pass. Any other string, even another ripr command, leaves
+        // status on `select_seam`, exactly as `null` does. `ripr pilot` never
+        // writes such a value, so no end-to-end run reaches this case.
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            r#"{"next": {"repair_command": "ripr check --root ."}}"#,
         )?;
         let report = build_agent_status_report(&root, Path::new("."));
         let next = report

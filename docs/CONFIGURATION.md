@@ -469,6 +469,7 @@ The extension contributes:
 - `ripr.copyContext`
 - `ripr.copySuggestedAssertion`
 - `ripr.copyTargetedTestBrief`
+- `ripr.copyAgentRepairCommand` (offered only for a repair-eligible seam)
 - `ripr.copyAgentPacketCommand`
 - `ripr.copyAgentBriefCommand`
 - `ripr.copyAfterSnapshotCommand`
@@ -764,6 +765,32 @@ them. It does not enable runtime mutation execution or CI blocking policy.
 | --- | --- | --- | --- |
 | `mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Default analysis mode when not set by a CLI flag or LSP initialization option. |
 | `include_unchanged_tests` | boolean | `true` | Whether unchanged tests may be indexed as static evidence. |
+| `production_like_targets` | array of repository-relative paths | `[]` (empty — no opt-in) | Workspace-relative targets opted in as production-like test infrastructure (#3283, RIPR-SPEC-0153): analyzed as production behavior rather than test evidence. Paths must be repository-relative with `/` separators — backslashes, drive/scheme prefixes, leading `/`, and `..` escape fail closed at parse time. |
+| `test_harnesses` | array of `[[analysis.test_harnesses]]` tables | `[]` (empty — no registration recognized) | Repository-governed test-harness registrations (#3532, RIPR-SPEC-0153). Registration is explicit configuration only: without an entry, no custom harness or registered test producer is recognized. See `[analysis.test_harnesses]` entries below. |
+
+#### `[analysis.test_harnesses]` entries
+
+Each registration names one exact Cargo target and one exact harness family.
+Unknown kinds or adapters, a kind/adapter mismatch, duplicate
+`registration_id` or `target` values, or a non-exact `marker` are config
+errors that fail closed at parse time.
+
+| Field | Type | Allowed values | Effect |
+| --- | --- | --- | --- |
+| `registration_id` | string | unique across registrations | Stable identifier named in limitations and subject provenance. |
+| `target` | repository-relative path | one unique target file per registration | Exact workspace-relative Cargo target file the registration claims. |
+| `kind` | enum | `custom_harness` \| `registered_attribute` | `custom_harness`: a `[[test]]` target with `harness = false`, evidence role file-wide. `registered_attribute`: a test-producing attribute applied to functions inside one exact target file. |
+| `adapter` | enum | `libtest_mimic_v1` \| `exact_attribute_v1` | Adapter generation bound to the kind: `libtest_mimic_v1` supports `custom_harness`; `exact_attribute_v1` supports `registered_attribute`. |
+| `marker` | exact identifier path | e.g. `libtest_mimic`, `myco::contract_test` | Exact source marker: the harness crate path for `custom_harness` or the exact attribute path for `registered_attribute`. Prefix/suffix lookalikes never match. |
+
+A registration classifies source and describes a selector route; it cannot
+execute anything during passive analysis and grants no process, network,
+edit, GitHub, or publication capability.
+
+Both `production_like_targets` and `test_harnesses` are opt-in keys with
+empty defaults, so the generated `ripr.toml.example` profile (which
+materializes built-in defaults only, per the `ripr.toml` section above) does
+not list them.
 
 ### `[oracles]`
 

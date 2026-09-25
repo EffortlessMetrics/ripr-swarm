@@ -555,9 +555,9 @@ fn timeout_summary_md_explains_partial_status_and_retry_command() {
     }
 }
 
-/// The retry command carries no redirect and no quoting, so its PowerShell
-/// form is the same text; the fences must still both be present and the bash
-/// form must stay byte-identical (#2628).
+/// The retry command carries no redirect and no quoting, so it runs unchanged
+/// in PowerShell: the bash form stays byte-identical and no identical
+/// PowerShell block repeats it (#2628, F60-12).
 #[test]
 fn timeout_summary_md_pairs_bash_retry_with_powershell_variant() -> Result<(), String> {
     let artifacts = pilot_artifacts();
@@ -569,8 +569,8 @@ fn timeout_summary_md_pairs_bash_retry_with_powershell_variant() -> Result<(), S
         "bash retry block drifted:\n{md}"
     );
     assert!(
-        md.contains(&format!("```powershell\n{retry}\n```")),
-        "powershell retry block missing or drifted:\n{md}"
+        !md.contains("```powershell"),
+        "an unchanged retry must not repeat as a PowerShell block:\n{md}"
     );
     let disclosure = md
         .find("cmd.exe is not supported")

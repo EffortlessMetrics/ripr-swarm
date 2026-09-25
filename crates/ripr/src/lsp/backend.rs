@@ -17,7 +17,8 @@ use super::hover::{
 };
 use super::lens::{LensViewIdentity, code_lens_response, lens_view_identity};
 use super::payload_bounds::{
-    check_execute_command_arguments, check_initialization_options, check_previous_result_ids,
+    check_execute_command_arguments, check_initialization_options,
+    check_list_actionable_items_params, check_previous_result_ids,
 };
 use super::progress::{AnalysisProgressEnd, AnalysisProgressPhase, AnalysisProgressTracker};
 use super::refresh_scheduler::{
@@ -31,8 +32,8 @@ use super::state::{
     WorkspaceRootAuthority, WorkspaceRootState, content_digest, format_duration,
 };
 use super::uri::{
-    absolute_join, display_path, file_uri_for_path, file_uri_is_within_root, file_uris_match,
-    path_from_file_uri, path_is_within_root,
+    CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uri_is_within_root,
+    file_uris_match, path_from_file_uri, path_is_within_root, read_artifact_capped,
 };
 use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
@@ -54,6 +55,7 @@ use crate::output::agent_seam_packets::{
     render_agent_gap_record_packet_json, suggested_assertion_for_classified_seam,
     targeted_test_brief_outline_for_classified_seam, validate_agent_gap_record_packet,
 };
+use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::gap_decision_ledger::{
     DEFAULT_GAP_DECISION_LEDGER_OUT, GapRecord, parse_gap_records_json,
@@ -61,7 +63,7 @@ use crate::output::gap_decision_ledger::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -70,6 +72,15 @@ use std::time::{Duration, Instant};
 /// analysis run instead of canceling and re-queuing on every keystroke.
 /// Explicit refresh and config reload bypass the debounce (#1908).
 const INTERACTIVE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
+
+/// Upper bound on the optional client disclosures that follow an
+/// initialize-time failure commit (#3802). The owning session failure is
+/// recorded synchronously first, so a wedged or undriven peer can delay only
+/// this advisory `window/logMessage` + status delivery window, never the
+/// failure state transition itself. Healthy delivery completes in
+/// microseconds; an expired window is recorded on the backend and the
+/// failure state is re-disclosed by the next status publication.
+const INITIALIZE_FAILURE_DISCLOSURE_BUDGET: Duration = Duration::from_secs(2);
 
 const SAVED_WORKTREE_LIMITS_NOTE: &str = "Static evidence only; staged and unstaged tracked files are analyzed; untracked files remain out of scope until staged or supplied through an explicit diff.";
 use tokio::sync::{Mutex as AsyncMutex, Notify};
@@ -151,6 +162,12 @@ pub(super) struct Backend {
     /// snapshot: a byte-identical repeated degradation warns once, a new
     /// signature warns again, and a cleared signature logs one recovery line.
     last_component_degradation: Mutex<Option<String>>,
+    /// Set when the bounded disclosure window after an initialize-time
+    /// failure commit expired without completing client delivery (#3802).
+    /// The owning session failure stays committed; this records the delivery
+    /// omission locally instead of dropping it silently. Reflects the most
+    /// recent disclosure attempt.
+    initialize_failure_disclosure_omitted: AtomicBool,
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
     refresh_idle: Notify,
@@ -224,6 +241,7 @@ impl Backend {
             last_lens_view_identity: Mutex::new(None),
             dynamic_file_watch_registration: Mutex::new(false),
             last_component_degradation: Mutex::new(None),
+            initialize_failure_disclosure_omitted: AtomicBool::new(false),
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
             refresh_idle: Notify::new(),
@@ -1435,6 +1453,29 @@ impl Backend {
             .await;
     }
 
+    /// Deliver the optional client disclosures that follow an
+    /// initialize-time failure commit — one `window/logMessage` warning plus
+    /// one analysis-status publication — within
+    /// [`INITIALIZE_FAILURE_DISCLOSURE_BUDGET`] (#3802). The owning failure
+    /// is already committed when this runs, so a wedged or undriven peer can
+    /// never delay the state transition through these awaits: an expired
+    /// window is recorded on the backend instead of being dropped silently,
+    /// and the committed failure is re-disclosed by the next status
+    /// publication.
+    async fn deliver_initialize_failure_disclosures(&self, warning: String) {
+        self.initialize_failure_disclosure_omitted
+            .store(false, Ordering::Release);
+        let delivery = tokio::time::timeout(INITIALIZE_FAILURE_DISCLOSURE_BUDGET, async {
+            self.client.log_message(MessageType::WARNING, warning).await;
+            self.publish_analysis_status().await;
+        })
+        .await;
+        if delivery.is_err() {
+            self.initialize_failure_disclosure_omitted
+                .store(true, Ordering::Release);
+        }
+    }
+
     fn analysis_status_payload(&self) -> LSPAny {
         let health = self.analysis_health_snapshot();
         self.analysis_status_payload_for_health(&health)
@@ -1934,6 +1975,18 @@ impl Backend {
             .lock()
             .ok()
             .and_then(|guard| guard.as_ref().cloned())
+    }
+
+    /// Whether the most recent bounded disclosure window after an
+    /// initialize-time failure commit expired without completing client
+    /// delivery (#3802). Unreadable state fails closed: an unknown delivery
+    /// outcome is reported as omitted rather than silently clean. Read
+    /// locally by tests; production surfaces observe the committed failure
+    /// itself, which the next status publication re-discloses.
+    #[cfg(test)]
+    pub(super) fn initialize_failure_disclosure_omitted(&self) -> bool {
+        self.initialize_failure_disclosure_omitted
+            .load(Ordering::Acquire)
     }
 
     async fn reload_repository_config(&self) {
@@ -3425,8 +3478,12 @@ impl Backend {
     /// needs — this is a pure transform, no new analysis.
     pub(super) async fn ripr_list_actionable_items(
         &self,
-        _params: LSPAny,
+        params: LSPAny,
     ) -> LspResult<Option<LSPAny>> {
+        // Ingress payload bound (#2034) before any snapshot access or
+        // early-return fast path; the handler reads no client-supplied
+        // fields, so only the params blob size is enforced.
+        check_list_actionable_items_params(&params)?;
         // A poisoned lock and an empty slot both fail closed to `no_snapshot`;
         // `and_then` flattens the stored `Option<Arc<AnalysisSnapshot>>`.
         let snapshot = self
@@ -3656,14 +3713,13 @@ impl LanguageServer for Backend {
         ));
         self.apply_workspace_root_resolution(resolution).await;
         if let Some(error) = config_error {
-            self.client
-                .log_message(
-                    MessageType::WARNING,
-                    format!("ripr config load failed; analysis is paused: {error}"),
-                )
-                .await;
+            // Commit the owning config failure before the optional client
+            // disclosures (#3802): the state transition must not depend on a
+            // client await, so a wedged or undriven peer can delay only the
+            // bounded disclosure window, never the failure itself.
+            let warning = format!("ripr config load failed; analysis is paused: {error}");
             self.set_configuration_failure(error);
-            self.publish_analysis_status().await;
+            self.deliver_initialize_failure_disclosures(warning).await;
         }
         // The profile store lands after the root application and config
         // failure handling because applying a workspace-root authority
@@ -3679,17 +3735,19 @@ impl LanguageServer for Backend {
             // through the same blocking-failure channel as a config load
             // failure so the status payload discloses the state and analysis
             // stays paused instead of running on a torn negotiation.
-            self.client
-                .log_message(
-                    MessageType::WARNING,
-                    "ripr client feature profile could not be stored; analysis is paused",
-                )
-                .await;
+            // Commit the owning failure BEFORE any client delivery (#3802):
+            // the state transition must not depend on an optional client
+            // await, so a wedged or undriven peer can delay only the bounded
+            // disclosure window and never leave the session hanging
+            // half-initialized without its failure committed.
             self.record_blocking_failure(
                 AnalysisFailureKind::SessionStateInconsistent,
                 "client feature profile could not be stored after initialize negotiation; analysis is paused",
             );
-            self.publish_analysis_status().await;
+            self.deliver_initialize_failure_disclosures(
+                "ripr client feature profile could not be stored; analysis is paused".to_string(),
+            )
+            .await;
         }
         Ok(initialize_result_for_client(
             supports_pull_diagnostics,
@@ -6074,8 +6132,27 @@ fn collect_gap_record_context_packet(
         .filter(|value| !value.is_empty())
         .unwrap_or(DEFAULT_GAP_DECISION_LEDGER_OUT);
     let ledger_path = absolute_join(root, Path::new(ledger_arg));
-    let contents = fs::read_to_string(&ledger_path).ok()?;
-    let records = parse_gap_records_json(&contents).ok()?;
+    // Client-supplied path: confine reads to the workspace root so a client
+    // message cannot make the long-running server read arbitrary files.
+    // `absolute_join` passes absolute paths through unchanged, so an
+    // out-of-root absolute path or a symlink escape is rejected here
+    // (canonicalizing both sides, like `validate_agent_brief_diff_path`).
+    if !path_is_within_root(root, &ledger_path) {
+        return None;
+    }
+    let contents = match read_artifact_capped(&ledger_path) {
+        CappedArtifactRead::Contents(contents) => contents,
+        // Absent ledger: no packet is available, which is a normal state.
+        CappedArtifactRead::Missing => return None,
+        // Present but oversize/unreadable: typed sentinel, not a silent None.
+        CappedArtifactRead::Unusable => {
+            return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
+        }
+    };
+    let records = match parse_gap_records_json(&contents) {
+        Ok(records) => records,
+        Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
+    };
     let record = records
         .iter()
         .find(|record| gap_record_matches(record, gap_id))?;
@@ -6484,8 +6561,20 @@ fn workspace_receipt_status_report_paths() -> serde_json::Value {
 }
 
 fn collect_repair_packet_from_actionable_gaps(path: &Path, gap_id: Option<&str>) -> Option<LSPAny> {
-    let contents = fs::read_to_string(path).ok()?;
-    let report: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let contents = match read_artifact_capped(path) {
+        CappedArtifactRead::Contents(contents) => contents,
+        // Absent artifact: falling back to the next packet source is honest.
+        CappedArtifactRead::Missing => return None,
+        // Present but oversize/unreadable: typed sentinel so the client can
+        // distinguish a corrupt source from "no packet"; no fallback.
+        CappedArtifactRead::Unusable => {
+            return Some(repair_packet_sentinel(MALFORMED_ACTIONABLE_GAPS_REASON));
+        }
+    };
+    let report: serde_json::Value = match serde_json::from_str(&contents) {
+        Ok(report) => report,
+        Err(_) => return Some(repair_packet_sentinel(MALFORMED_ACTIONABLE_GAPS_REASON)),
+    };
     let packets = report.get("packets").and_then(|v| v.as_array())?;
     let packet = if let Some(id) = gap_id {
         packets
@@ -6647,8 +6736,19 @@ fn validate_and_render_actionable_gap_packet(packet: &serde_json::Value) -> Opti
 }
 
 fn collect_repair_packet_from_ledger(path: &Path, gap_id: Option<&str>) -> Option<LSPAny> {
-    let contents = fs::read_to_string(path).ok()?;
-    let records = parse_gap_records_json(&contents).ok()?;
+    let contents = match read_artifact_capped(path) {
+        CappedArtifactRead::Contents(contents) => contents,
+        // Absent artifact: no packet is available, which is a normal state.
+        CappedArtifactRead::Missing => return None,
+        // Present but oversize/unreadable: typed sentinel, not a silent None.
+        CappedArtifactRead::Unusable => {
+            return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
+        }
+    };
+    let records = match parse_gap_records_json(&contents) {
+        Ok(records) => records,
+        Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
+    };
     let record = if let Some(id) = gap_id {
         records
             .iter()
@@ -6726,6 +6826,13 @@ fn repair_packet_sentinel(reason: &str) -> LSPAny {
     })
 }
 
+/// Typed-degradation reasons for a present-but-unparseable packet source.
+/// Vocabulary mirrors `limitation_non_claims("malformed_artifact")`: the
+/// client must be able to tell "no packet" apart from "packet source corrupt;
+/// artifact regeneration required before exposure can be assessed".
+const MALFORMED_ACTIONABLE_GAPS_REASON: &str = "actionable-gaps.json is malformed; artifact regeneration required before exposure can be assessed";
+const MALFORMED_GAP_LEDGER_REASON: &str = "gap-decision-ledger.json is malformed; artifact regeneration required before exposure can be assessed";
+
 fn gap_record_matches(record: &GapRecord, gap_id: &str) -> bool {
     record.gap_id == gap_id || record.canonical_gap_id == gap_id
 }
@@ -6798,6 +6905,10 @@ fn evidence_context_packet(snapshot: &AnalysisSnapshot, entry: &ClassifiedSeam) 
             "candidate_value": outline.candidate_value,
             "assertion_shape": outline.assertion_shape,
         },
+        // The repair start only for a seam `agent repair` would accept (the
+        // fail-closed repair-packet flip, RIPR-SPEC-0087 §8, plus a
+        // test-surface target); `null` otherwise (#3906).
+        "repair_command": repair_start_command_for(entry),
         "agent_packet_command": loop_commands::agent_packet_command(
             ".",
             seam_id,
@@ -7050,8 +7161,8 @@ mod gap_record_context_tests {
     }
 
     #[test]
-    fn collect_gap_record_context_packet_with_malformed_ledger_returns_none() -> Result<(), String>
-    {
+    fn collect_gap_record_context_packet_with_malformed_ledger_returns_sentinel()
+    -> Result<(), String> {
         let root = temp_root()?;
         let path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
         fs::write(path, "{ not valid json")
@@ -7065,11 +7176,128 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
+        let packet =
+            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
+                .ok_or_else(|| "expected malformed-artifact sentinel, not null".to_string())?;
+        assert_eq!(packet["kind"], "repair_packet");
+        assert_eq!(packet["status"], "not_actionable_or_incomplete");
+        assert_eq!(packet["reason"], MALFORMED_GAP_LEDGER_REASON);
+
+        fs::remove_dir_all(&root)
+            .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn collect_gap_record_context_packet_rejects_out_of_root_ledger() -> Result<(), String> {
+        let root = temp_root()?;
+        // A client-supplied absolute path outside the workspace root must not
+        // be read, even when the file exists and is a valid ledger.
+        let outside = std::env::temp_dir().join(format!(
+            "ripr-lsp-gap-record-outside-{}-{}",
+            std::process::id(),
+            TEMP_ROOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&outside)
+            .map_err(|err| format!("create outside dir {} failed: {err}", outside.display()))?;
+        let outside_ledger = outside.join("gap-decision-ledger.json");
+        fs::write(&outside_ledger, gap_ledger_json()).map_err(|err| {
+            format!(
+                "write outside ledger {} failed: {err}",
+                outside_ledger.display()
+            )
+        })?;
+        let args_value = serde_json::json!({
+            "gap_id": "gap:pr:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
+            "gap_ledger": outside_ledger,
+        });
+        let args = args_value
+            .as_object()
+            .ok_or_else(|| "expected object args".to_string())?;
+
         assert!(
             collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
                 .is_none()
         );
 
+        fs::remove_dir_all(&outside)
+            .map_err(|err| format!("remove outside dir {} failed: {err}", outside.display()))?;
+        fs::remove_dir_all(&root)
+            .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn collect_gap_record_context_packet_accepts_in_root_absolute_ledger() -> Result<(), String> {
+        let root = temp_root()?;
+        write_gap_ledger(&root)?;
+        // An absolute path that stays at-or-below the root remains readable.
+        let absolute_ledger = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
+        let args_value = serde_json::json!({
+            "gap_id": "gap:pr:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
+            "gap_ledger": absolute_ledger,
+        });
+        let args = args_value
+            .as_object()
+            .ok_or_else(|| "expected object args".to_string())?;
+
+        let packet =
+            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
+                .ok_or_else(|| "expected gap packet".to_string())?;
+        assert_eq!(packet["source"], "gap_decision_ledger");
+
+        fs::remove_dir_all(&root)
+            .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn collect_gap_record_context_packet_rejects_symlink_escape_ledger() -> Result<(), String> {
+        let root = temp_root()?;
+        let outside = std::env::temp_dir().join(format!(
+            "ripr-lsp-gap-record-symlink-outside-{}-{}",
+            std::process::id(),
+            TEMP_ROOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&outside)
+            .map_err(|err| format!("create outside dir {} failed: {err}", outside.display()))?;
+        let outside_ledger = outside.join("gap-decision-ledger.json");
+        fs::write(&outside_ledger, gap_ledger_json()).map_err(|err| {
+            format!(
+                "write outside ledger {} failed: {err}",
+                outside_ledger.display()
+            )
+        })?;
+        let link = root.join("linked-ledger");
+        #[cfg(unix)]
+        let link_result = std::os::unix::fs::symlink(&outside_ledger, &link);
+        #[cfg(windows)]
+        let link_result = std::os::windows::fs::symlink_file(&outside_ledger, &link);
+        if let Err(err) = link_result {
+            eprintln!("skipping symlink escape test: {err}");
+            let _ = fs::remove_dir_all(&outside);
+            let _ = fs::remove_dir_all(&root);
+            return Ok(());
+        }
+        let args_value = serde_json::json!({
+            "gap_id": "gap:pr:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
+            "gap_ledger": "linked-ledger",
+        });
+        let args = args_value
+            .as_object()
+            .ok_or_else(|| "expected object args".to_string())?;
+
+        assert!(
+            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
+                .is_none(),
+            "symlink escape out of the workspace root must be rejected"
+        );
+
+        fs::remove_dir_all(&outside)
+            .map_err(|err| format!("remove outside dir {} failed: {err}", outside.display()))?;
         fs::remove_dir_all(&root)
             .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
         Ok(())
@@ -8713,6 +8941,113 @@ mod list_actionable_items_tests {
             serde_json::json!(["source_edits", "workspace_edit", "autonomous_repair"])
         );
         assert!(response.get("error").is_none());
+        Ok(())
+    }
+
+    /// Sort a JSON object's keys for a closed-shape comparison.
+    fn sorted_keys(value: &serde_json::Value) -> Vec<String> {
+        let mut keys: Vec<String> = value
+            .as_object()
+            .map(|object| object.keys().cloned().collect())
+            .unwrap_or_default();
+        keys.sort();
+        keys
+    }
+
+    /// Pin the CURRENT interim response shape of `ripr/listActionableItems`
+    /// as a closed key set — the same shape recorded in
+    /// `docs/OUTPUT_SCHEMA.md`. This is the #1603 interim transform, NOT the
+    /// full `ripr-agent-success.schema.json` envelope reserved for #3009;
+    /// any field addition or removal is a deliberate wire change that must
+    /// update the doc and this test together.
+    #[test]
+    fn list_actionable_items_interim_response_shape_is_closed() -> Result<(), String> {
+        let harness = handler_harness()?;
+        install_snapshot(
+            &harness,
+            snapshot_with_selection(Some(applied_selection()?)),
+        )?;
+        let response = call_handler(&harness)?;
+
+        assert_eq!(
+            sorted_keys(&response),
+            vec![
+                "allowed_edit_surface",
+                "budget_identity",
+                "complete_evidence_identity",
+                "continuation_or_inspect_route",
+                "kind",
+                "must_not_change",
+                "omitted_count",
+                "selected_count",
+                "snapshot_id",
+                "status",
+                "total_count",
+            ]
+        );
+
+        // Error fast paths carry only the closed `error` object; every
+        // variant shares the same three-field error shape.
+        let expected_error_keys = vec![
+            "kind".to_string(),
+            "message".to_string(),
+            "recovery_route".to_string(),
+        ];
+        let cases = [(false, "no_snapshot"), (true, "analysis_in_flight")];
+        for (install_empty_selection, expected_kind) in cases {
+            let empty_harness = handler_harness()?;
+            if install_empty_selection {
+                install_snapshot(&empty_harness, snapshot_with_selection(None))?;
+            }
+            let response = call_handler(&empty_harness)?;
+            assert_eq!(
+                sorted_keys(&response),
+                vec!["error".to_string()],
+                "top-level shape for {expected_kind}"
+            );
+            assert_eq!(response["error"]["kind"], expected_kind);
+            assert_eq!(
+                sorted_keys(&response["error"]),
+                expected_error_keys,
+                "error shape for {expected_kind}"
+            );
+        }
+        Ok(())
+    }
+
+    /// The #2034 ingress bound runs before any snapshot access or
+    /// early-return fast path: an over-budget params blob is rejected with a
+    /// bounded `-32602` even when a fully usable snapshot is installed.
+    #[test]
+    fn list_actionable_items_oversized_params_are_rejected_before_handler_work()
+    -> Result<(), String> {
+        let harness = handler_harness()?;
+        install_snapshot(
+            &harness,
+            snapshot_with_selection(Some(applied_selection()?)),
+        )?;
+        let limit = super::super::payload_bounds::MAX_LIST_ACTIONABLE_ITEMS_PARAMS_BYTES;
+        let oversized = serde_json::Value::String("x".repeat(limit + 1));
+        let result = harness.runtime.block_on(
+            harness
+                .service
+                .inner()
+                .ripr_list_actionable_items(oversized),
+        );
+        let error = result
+            .err()
+            .ok_or("over-budget params must be rejected with an LSP error")?;
+        assert_eq!(
+            error.code,
+            tower_lsp_server::jsonrpc::ErrorCode::InvalidParams
+        );
+        assert!(
+            error
+                .message
+                .contains("ripr/listActionableItems params exceed 16384 bytes"),
+            "rejection must name the bound, got: {}",
+            error.message
+        );
         Ok(())
     }
 }

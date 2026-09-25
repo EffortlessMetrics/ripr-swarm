@@ -45,6 +45,7 @@ map is:
 | `ripr agent packet` | `schema_version` | `0.4` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
+| `ripr agent repair --phase after` success stdout | `schema_version` | `0.1` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
@@ -1199,6 +1200,11 @@ JSON fields:
   optional `owner`, `verify_command`, optional `receipt_command`, `allowed_edit_surface[]`,
   `forbidden_files[]`, `must_not_change[]`, optional `assertion_shape`,
   optional `repair_kind`, optional `target_test`, and optional `missing_discriminator`.
+  When present, `receipt_command` is the canonical RIPR-SPEC-0079
+  `ripr receipt write --gap <canonical_gap_id> --verify-command <verify_command>
+  --status not_run --out target/ripr/receipts/<gap_slug>.json` command built by
+  the shared receipt-write owner — the same string the gap decision ledger
+  synthesizes for that gap — and never a `ripr outcome` movement command.
   When absent, the human output contains a named `status: not actionable` limitation
   section instead. This field is RIPR-SPEC-0088 §2.2. It is not a gate, badge, or
   public repair authority; authority boundary remains `preview_advisory_only`.
@@ -6640,6 +6646,54 @@ Field contract:
 - `new_gaps[]` / `resolved_gaps[]` - seam identity and static class for seam IDs
   present in only one snapshot.
 
+### Agent repair after-phase stdout
+
+`ripr agent repair --attempt <id> --phase after` holds the verify render until
+its post-verify tail (edit-cage finish, receipt write, apply record) settles,
+then prints exactly one JSON document on stdout. On success the document is
+its own versioned envelope, not a mutated verify document:
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "repair_after_result",
+  "verify": {
+    "schema_version": "0.3",
+    "tool": "ripr",
+    "status": "advisory"
+  },
+  "agent_status": {
+    "schema_version": "0.1",
+    "status": "complete"
+  }
+}
+```
+
+Field contract:
+
+- `schema_version` - currently `"0.1"`, versioning the envelope contract
+  independently of both children. The envelope exists so every stdout
+  document's shape is identifiable from its `schema_version`: the success
+  document wraps the two children instead of splicing `agent_status` into the
+  verify 0.3 document, which would leave two documents sharing one
+  `schema_version` with different shapes depending on the invocation path.
+- `kind` - always `"repair_after_result"`.
+- `verify` - the agent verify `0.3` document: every verify field keeps its
+  name and value, including the verify outcome's own top-level `status`
+  (keys are re-serialized in sorted order, so bytes may differ from a direct
+  `ripr agent verify --json` capture even though every field is identical). Consumers must read the verify
+  outcome under `verify`, not at the envelope top level.
+- `agent_status` - what `ripr agent status --json` prints at this point (agent
+  status `0.1`), embedded beside the verify document because the verify
+  outcome already owns the `status` field name.
+- Refusal paths are the exception, not the envelope: when the after phase
+  refuses after the verify render (for example the receipt is not
+  receipt-ready or the apply record failed), stdout is the bare agent verify
+  `0.3` document alone — a pure verify document, honestly labeled, still one
+  parseable document. A consumer dispatching on `schema_version` therefore
+  sees `0.1` only for the two-child envelope and `0.3` only for the pure
+  verify document, whichever path produced it.
+
 ## Agent Verify Execute
 
 `ripr agent verify-execute --root <workspace> --packet <packet-json>
@@ -6960,6 +7014,63 @@ request, or editor action automatically executes a command. A future execution
 slice must bind the typed command, working root, repository revision, process
 disposition, bounded output commitments, and currentness before emitting an
 executed state. A static-only receipt must remain visibly lower assurance.
+
+## LSP riprAgent: ripr/listActionableItems (interim response shape)
+
+> **Interim record.** This section documents the response bytes the live
+> `ripr/listActionableItems` LSP custom request actually emits today
+> (#1603, producer: `ripr_list_actionable_items` in
+> `crates/ripr/src/lsp/backend.rs`). It does **not** conform to
+> `schemas/ripr/ripr-agent-success.schema.json` or
+> `schemas/ripr/ripr-agent-error.schema.json`; those envelopes stay
+> `reserved` for #3009, which owns redesigning the wire to the full schema.
+> Redesigning the envelope is out of scope here; this section exists so the
+> interim shape is documented somewhere and cannot silently drift. The
+> closed shape is pinned by
+> `list_actionable_items_interim_response_shape_is_closed` in
+> `crates/ripr/src/lsp/backend.rs`.
+
+Ingress: params are accepted but no client-supplied field is read; the
+serialized params blob is bounded to 16 KiB at handler entry
+(`crates/ripr/src/lsp/payload_bounds.rs`) and larger payloads are rejected
+with a bounded `-32602` before any handler work.
+
+Success payload (200-level result object, no `protocol_version`,
+`schema_version`, or `request` envelope fields):
+
+- `kind` — always `"actionable_items"`.
+- `status` — always `"ok"` on this path.
+- `snapshot_id` — echoes `RefreshMetadata::snapshot_id` of the committed
+  analysis snapshot. This is the interim refresh **generation identity**,
+  NOT the immutable snapshot-handle contract reserved for #1602; the
+  `riprAgent` capability advertises `snapshot_handles: false` until that
+  contract lands. `null` when the snapshot carries no generation identity.
+- `selected_count` / `omitted_count` / `total_count` — diagnostic-budget
+  counts from the committed delivery selection.
+- `budget_identity` — the snapshot profile budget identity string.
+- `complete_evidence_identity` — the complete-evidence identity string.
+- `continuation_or_inspect_route` — the route string for continuing or
+  inspecting the selection.
+- `allowed_edit_surface` — always `"read_only"`.
+- `must_not_change` — always
+  `["source_edits", "workspace_edit", "autonomous_repair"]`.
+
+Fail-closed payloads (still HTTP-success LSP results, distinguished by the
+`error` object). All variants carry exactly the same closed three-field
+error object:
+
+- `error.kind` — `no_snapshot` (no committed analysis snapshot),
+  `analysis_in_flight` (delivery selection missing, or the diagnostic
+  budget is unavailable for this snapshot).
+- `error.message` — bounded human-readable explanation.
+- `error.recovery_route` — always `"refresh"`.
+
+Error payloads never carry `snapshot_id`, `kind` (response kind), or any
+other success field.
+
+Non-claims: this response is a pure transform of the committed analysis
+snapshot; it performs no new analysis, proves no runtime adequacy, and its
+`snapshot_id` must not be read as an immutable handle.
 
 ## PR Test Guidance
 
@@ -11682,7 +11793,9 @@ Field contract:
   `selected.receipt_path`, `selected.receipt_command_source`, and
   `selected.receipt_state` are the static movement proof path. When the source
   gap ledger omits a receipt command, `ripr first-pr` may provide a deterministic
-  `ripr outcome` command under the configured receipts directory. A missing
+  canonical `ripr receipt write` command (RIPR-SPEC-0079) under the configured
+  receipts directory; `receipt_command_source` is then
+  `first_pr.default_receipt_write_command`. A missing
   receipt is not failure, merge approval, mutation proof, or runtime adequacy.
   `selected.receipt_state` uses the canonical receipt lifecycle vocabulary:
   `receipt_missing`, `receipt_found`, `receipt_stale`,
@@ -12090,7 +12203,7 @@ The JSON schema is version `0.1`:
       "state": "computed",
       "status": "complete",
       "required": true,
-      "summary": "6 required artifacts present, 0 missing, 0 warnings."
+      "summary": "6 of 6 required artifacts present, 0 missing, 0 warnings."
     }
   ],
   "ci_artifacts": [
@@ -12981,7 +13094,7 @@ The queue envelope is:
         "reason": "repo-exposure source input identity no longer matches the current producer configuration; regenerate the source and ledger before assignment"
       },
       "refresh_commands": [
-        "ripr agent check-repo-exposure --root . --repo-exposure target/ripr/reports/repo-exposure.json --mode draft",
+        "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/reports/repo-exposure.json",
         "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --root . --out target/ripr/reports/gap-decision-ledger.json"
       ]
     }
@@ -14680,7 +14793,7 @@ JSON shape:
         "markdown_path": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
         "expected_report": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.json",
         "expected_markdown": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
-        "status": "pass",
+        "status": "warn",
         "missing_expected": 0,
         "warnings": 0,
         "failures": 0,
@@ -14696,7 +14809,7 @@ JSON shape:
           "validation_receipts",
           "sarif_badges"
         ],
-        "expected_status": "pass",
+        "expected_status": "warn",
         "expected_missing_expected": 0,
         "expected_warnings": 0,
         "expected_failures": 0,
@@ -15032,13 +15145,13 @@ The checked report-packet index receipt cases are:
 
 | Case | Expected status | Purpose |
 | --- | --- | --- |
-| `complete_packet` | `pass` | Shows the complete reviewer-first packet, including start-here and gate-authority links. |
+| `complete_packet` | `warn` | Shows the complete reviewer-first packet, including start-here and gate-authority links. |
 | `sparse_advisory` | `warn` | Keeps sparse adoption advisory while showing missing optional surfaces. |
 | `missing_front_panel` | `warn` | Makes a missing first-screen front panel visible instead of forcing artifact archaeology. |
 | `blocked_gate` | `fail` | Preserves a configured blocked gate state while naming gate decision as authority. |
 | `missing_assistant_proof` | `warn` | Routes users to regenerate missing assistant proof instead of hiding the gap. |
 | `missing_receipts` | `warn` | Shows missing validation receipts and their regeneration commands. |
-| `coverage_grip_present` | `pass` | Keeps coverage/grip context findable as calibration context, not runtime confirmation. |
+| `coverage_grip_present` | `warn` | Keeps coverage/grip context findable as calibration context, not runtime confirmation. |
 
 The checked generated-CI cockpit receipt cases are:
 
@@ -15071,7 +15184,12 @@ committed LSP fixture expectations, plus the VS Code e2e smoke test file, and
 summarizes the editor surface without opening VS Code.
 For seam fixtures, `status` downgrades from `pass` when the editor-agent loop
 command actions for packet, brief, after-snapshot, verify, or receipt are
-missing from the pinned action payloads.
+missing from the pinned action payloads. The repair-start action
+(`ripr.copyAgentRepairCommand`, `ripr agent repair --root . --seam-id <id>
+--phase before`) is offered only for a seam that passes the fail-closed
+repair-packet flip (RIPR-SPEC-0087 §8) with a test-surface target, so
+`agent_repair_command_available` is reported separately and does not affect
+`status`.
 
 JSON shape:
 
@@ -15096,6 +15214,7 @@ JSON shape:
         "titles": [
           "Inspect Test Gap - Copy Context",
           "Write targeted test: copy brief",
+          "Start repair: copy repair command",
           "Agent handoff: copy packet command",
           "Agent handoff: copy brief command",
           "Verify after test: copy after-snapshot command",
@@ -15108,6 +15227,7 @@ JSON shape:
         "commands": [
           "ripr.copyContext",
           "ripr.copyTargetedTestBrief",
+          "ripr.copyAgentRepairCommand",
           "ripr.copyAgentPacketCommand",
           "ripr.copyAgentBriefCommand",
           "ripr.copyAfterSnapshotCommand",
@@ -15145,6 +15265,7 @@ JSON shape:
       "context": {
         "seam_packet_available": true,
         "targeted_test_brief_available": true,
+        "agent_repair_command_available": true,
         "agent_packet_command_available": true,
         "agent_brief_command_available": true,
         "after_snapshot_command_available": true,
@@ -15163,6 +15284,7 @@ JSON shape:
       "ripr.copyAgentBriefCommand",
       "ripr.copyAgentPacketCommand",
       "ripr.copyAgentReceiptCommand",
+      "ripr.copyAgentRepairCommand",
       "ripr.copyAgentVerifyCommand",
       "ripr.copyContext",
       "ripr.copySuggestedAssertion",
@@ -15179,6 +15301,7 @@ JSON shape:
       "ripr.copyAgentBriefCommand",
       "ripr.copyAgentPacketCommand",
       "ripr.copyAgentReceiptCommand",
+      "ripr.copyAgentRepairCommand",
       "ripr.copyAgentVerifyCommand",
       "ripr.copyContext",
       "ripr.copySuggestedAssertion",
@@ -15194,6 +15317,7 @@ JSON shape:
       "ripr.copyAgentBriefCommand",
       "ripr.copyAgentPacketCommand",
       "ripr.copyAgentReceiptCommand",
+      "ripr.copyAgentRepairCommand",
       "ripr.copyAgentVerifyCommand",
       "ripr.copyContext",
       "ripr.copySuggestedAssertion",

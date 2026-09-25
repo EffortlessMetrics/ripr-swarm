@@ -3979,18 +3979,47 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     assert!(!coordinated_rejected.status.success());
     std::fs::write(&baseline_path, baseline_bytes)?;
     std::fs::write(&manifest_path, &manifest_bytes)?;
-    // The status the after phase prints is `complete` only when the receipt
-    // it issued is `advisory` (improved grip at the current HEAD); an
+    // The after phase's stdout is exactly one JSON document — the versioned
+    // `repair_after_result` envelope holding the verify 0.3 document under
+    // `verify` and the status report under `agent_status` — so one
+    // JSON.parse consumes it. The embedded status is `complete` only when the
+    // receipt it issued is `advisory` (improved grip at the current HEAD); an
     // `invalid` or `incomplete` receipt keeps it at `warning` (F15-4).
     let expected_status = if receipt["status"] == "advisory" {
-        "\"status\": \"complete\""
+        "complete"
     } else {
-        "\"status\": \"warning\""
+        "warning"
     };
-    assert!(
-        String::from_utf8_lossy(&after.stdout).contains(expected_status),
+    let after_document: serde_json::Value = serde_json::from_slice(&after.stdout)?;
+    assert_eq!(
+        after_document["schema_version"].as_str(),
+        Some("0.1"),
+        "the after-phase success stdout is the repair_after_result envelope:\n{}",
+        String::from_utf8_lossy(&after.stdout)
+    );
+    assert_eq!(
+        after_document["kind"].as_str(),
+        Some("repair_after_result"),
+        "the after-phase success stdout names its envelope kind:\n{}",
+        String::from_utf8_lossy(&after.stdout)
+    );
+    assert_eq!(
+        after_document["verify"]["schema_version"].as_str(),
+        Some("0.3"),
+        "the envelope carries the verify document intact under `verify`:\n{}",
+        String::from_utf8_lossy(&after.stdout)
+    );
+    assert_eq!(
+        after_document["agent_status"]["status"].as_str(),
+        Some(expected_status),
         "after phase status must follow the receipt ({}):\n{}",
         receipt["status"],
+        String::from_utf8_lossy(&after.stdout)
+    );
+    assert_eq!(
+        after_document["verify"]["status"].as_str(),
+        Some("advisory"),
+        "the verify outcome keeps its own top-level status under `verify`:\n{}",
         String::from_utf8_lossy(&after.stdout)
     );
     assert!(String::from_utf8_lossy(&after.stderr).contains("after phase complete"));
@@ -4396,6 +4425,84 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
     std::fs::remove_file(root.join("notes.txt"))?;
     assert_success(&rerun_repair_receipt(&root, true)?);
 
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// F15-12: a seam whose only related test lives inline in another crate has
+/// no test file the repair can edit. The before phase refuses before it
+/// writes any workflow artifact and never prints a completion line first, so
+/// neither the phase nor a later `agent status` reads as a started repair.
+#[test]
+fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anything()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-repair-no-test-target");
+    std::fs::create_dir_all(root.join("crates/rates/src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/rates\"]\nresolver = \"2\"\n",
+    )?;
+    std::fs::write(
+        root.join("crates/rates/Cargo.toml"),
+        "[package]\nname = \"rates\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(
+        root.join("crates/rates/src/lib.rs"),
+        "/// Tax in basis points for the given region code.\npub fn tax_bps(region: &str) -> u32 {\n    match region {\n        \"EU\" => 2000,\n        _ => 0,\n    }\n}\n\n/// Orders at or above this many items ship free.\npub fn ships_free(items: u32) -> bool {\n    items >= 10\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn eu_tax() {\n        assert_eq!(tax_bps(\"EU\"), 2000);\n    }\n}\n",
+    )?;
+    std::fs::write(root.join(".gitignore"), "/target\n")?;
+    run_git(&root, &["init", "-q"])?;
+    run_git(&root, &["add", "."])?;
+    commit_repair_fixture(&root, &["-qm", "rates"])?;
+
+    let root_arg = root.display().to_string();
+    let exposure = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+    ]);
+    assert_success(&exposure);
+    let exposure: serde_json::Value = serde_json::from_slice(&exposure.stdout)?;
+    let seam = exposure["seams"]
+        .as_array()
+        .ok_or("repo exposure has no seams array")?
+        .iter()
+        .find(|seam| seam["owner"] == "crates/rates/src/lib.rs::ships_free")
+        .ok_or("precondition: the ships_free boundary seam exists")?;
+    let seam_id = seam["seam_id"]
+        .as_str()
+        .ok_or("seam has no id")?
+        .to_string();
+    // Fixture construction: the seam's only related test is the inline one.
+    assert_eq!(seam["related_tests"][0]["file"], "crates/rates/src/lib.rs");
+
+    let before = run_repair_phase(&root, &["--seam-id", &seam_id], "before")?;
+    assert_failure(&before);
+    let stderr = String::from_utf8_lossy(&before.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started."
+        )),
+        "the refusal must say why in plain words:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("before phase complete"),
+        "a refused before phase must not claim completion:\n{stderr}"
+    );
+    for artifact in [
+        "target/ripr/workflow/before.repo-exposure.json",
+        "target/ripr/workflow/agent-packet.json",
+        "target/ripr/workflow/workflow.json",
+    ] {
+        assert!(
+            !root.join(artifact).exists(),
+            "refused before writing {artifact}"
+        );
+    }
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -8062,6 +8169,169 @@ fn baseline_update_removes_resolved_without_adopting_new_debt() -> Result<(), St
     assert!(stderr.contains("adopting new debt is not supported"));
 
     ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// The first-PR workflow and every evidence record's `verify_command` name
+/// pilot's `repo-exposure.json` as the `--before` of `ripr agent verify`
+/// (#3906). Walk that route as a user would: pilot, add the missing boundary
+/// test, take the after snapshot with the exact command pilot prints, verify.
+#[test]
+fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("pilot-verify-baseline");
+    std::fs::create_dir_all(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let root_arg = root.display().to_string();
+
+    // From the repository, as a user runs it: pilot's default `--out` is
+    // relative to the working directory.
+    let pilot = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["pilot", "--root", ".", "--mode", "draft"],
+    )?;
+    assert_success(&pilot);
+    let pilot_dir = root.join("target/ripr/pilot");
+    let before: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        pilot_dir.join("repo-exposure.json"),
+    )?)?;
+    assert!(
+        before.pointer("/artifact/content_sha256").is_some(),
+        "pilot repo-exposure.json must carry the producer-owned artifact identity"
+    );
+    let summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        pilot_dir.join("pilot-summary.json"),
+    )?)?;
+    let after_command = summary
+        .pointer("/next/after_snapshot_command")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("pilot summary names no after-snapshot command")?;
+    // Run the printed command's arguments, not a hand-written equivalent:
+    // a drift between pilot's identity and the command it prints is the bug.
+    let (check_part, redirect) = after_command
+        .split_once(" > ")
+        .ok_or_else(|| format!("after command has no redirect: {after_command}"))?;
+    let check_args: Vec<&str> = check_part
+        .strip_prefix("ripr ")
+        .ok_or_else(|| format!("after command is not a ripr command: {after_command}"))?
+        .split_whitespace()
+        .collect();
+    // Pilot anchors the redirect at the resolved root (#3938), so the printed
+    // target may be absolute; either way it must land in pilot's own out dir.
+    let redirect_path = std::path::Path::new(redirect.trim().trim_matches('\''));
+    let after = if redirect_path.is_absolute() {
+        redirect_path.to_path_buf()
+    } else {
+        root.join(redirect_path)
+    };
+    assert_eq!(
+        after.file_name().and_then(std::ffi::OsStr::to_str),
+        Some("after.repo-exposure.json"),
+        "{after_command}"
+    );
+    let pilot_dir = pilot_dir.canonicalize()?;
+    assert_eq!(
+        after
+            .parent()
+            .ok_or("after snapshot path has no parent")?
+            .canonicalize()?,
+        pilot_dir,
+        "{after_command}"
+    );
+
+    let mut tests = std::fs::read_to_string(root.join("tests/pricing.rs"))?;
+    tests.push_str(
+        "\n#[test]\nfn threshold_equality_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+    );
+    std::fs::write(root.join("tests/pricing.rs"), tests)?;
+
+    let check = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &check_args)?;
+    assert_success(&check);
+    std::fs::write(&after, &check.stdout)?;
+
+    let verify = run_ripr(&[
+        "agent",
+        "verify",
+        "--root",
+        &root_arg,
+        "--before",
+        &pilot_dir.join("repo-exposure.json").display().to_string(),
+        "--after",
+        &after.display().to_string(),
+        "--json",
+    ]);
+    assert_success(&verify);
+    let report: serde_json::Value = serde_json::from_slice(&verify.stdout)?;
+    assert_eq!(
+        report.pointer("/summary/improved"),
+        Some(&serde_json::json!(1)),
+        "{report}"
+    );
+    assert_eq!(
+        report.pointer("/summary/gap_movement/closed"),
+        Some(&serde_json::json!(1)),
+        "{report}"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// When the pilot seam budget truncates the inventory, pilot's snapshot holds
+/// fewer seams than the after snapshot `ripr check` takes. It must not carry
+/// the comparable identity, or verify would compare two populations.
+#[test]
+fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("pilot-verify-truncated");
+    std::fs::create_dir_all(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let mut lib = std::fs::read_to_string(root.join("src/lib.rs"))?;
+    lib.push_str(
+        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n",
+    );
+    std::fs::write(root.join("src/lib.rs"), lib)?;
+
+    let pilot = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
+    )?;
+    assert_success(&pilot);
+    let before: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/repo-exposure.json"),
+    )?)?;
+    // Precondition: the budget really truncated a larger inventory.
+    let check = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &[
+            "check",
+            "--root",
+            ".",
+            "--mode",
+            "draft",
+            "--format",
+            "repo-exposure-json",
+        ],
+    )?;
+    assert_success(&check);
+    let full: serde_json::Value = serde_json::from_slice(&check.stdout)?;
+    let count = |doc: &serde_json::Value| {
+        doc.get("seams")
+            .and_then(serde_json::Value::as_array)
+            .map_or(0, Vec::len)
+    };
+    assert_eq!(count(&before), 1, "{before}");
+    assert!(
+        count(&full) > 1,
+        "fixture must have more seams than the budget: {full}"
+    );
+    assert!(
+        before.get("artifact").is_none(),
+        "a budget-truncated pilot snapshot must not carry the comparable identity"
+    );
+    std::fs::remove_dir_all(root)?;
     Ok(())
 }
 
@@ -12639,6 +12909,91 @@ fn check_worktree_base_head_analyzes_uncommitted_tracked_edit() -> Result<(), St
     Ok(())
 }
 
+/// RIPR-SPEC-0112: `--diff` analyzes the supplied patch, not committed
+/// history, so an uncommitted tracked edit in the same checkout was not
+/// "excluded" from it and must not be disclosed as unanalyzed. The fixture is
+/// first shown to trigger the disclosure on a `--base` run, so the negative
+/// result below is about `--diff`, not about a clean checkout.
+#[test]
+fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> Result<(), String> {
+    let root = unique_temp_workspace("unanalyzed-wt-diff-file");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|err| format!("write base lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"spec-0112-diff-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b + 1 }\n",
+    )
+    .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+    let patch = root.join("change.patch");
+    std::fs::write(
+        &patch,
+        "diff --git a/src/lib.rs b/src/lib.rs\n\
+--- a/src/lib.rs\n\
++++ b/src/lib.rs\n\
+@@ -1 +1 @@\n\
+-pub fn add(a: i32, b: i32) -> i32 { a + b }\n\
++pub fn add(a: i32, b: i32) -> i32 { a + b + 1 }\n",
+    )
+    .map_err(|err| format!("write patch: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+    let patch_str = patch.to_string_lossy().into_owned();
+
+    // Fixture construction: this checkout does trigger the disclosure on a
+    // committed-history run.
+    let base_run = run_ripr(&["check", "--root", &root_str, "--base", "HEAD", "--json"]);
+    assert_success(&base_run);
+    let base_json = String::from_utf8_lossy(&base_run.stdout).into_owned();
+    if !base_json.contains("\"unanalyzed_working_tree\": true") {
+        return Err(format!(
+            "fixture precondition: a --base run on this dirty checkout must disclose it:\n{base_json}"
+        ));
+    }
+    // Same for the human note, so the negative below cannot pass because the
+    // note's wording changed.
+    let base_human_run = run_ripr(&["check", "--root", &root_str, "--base", "HEAD"]);
+    assert_success(&base_human_run);
+    let base_human = String::from_utf8_lossy(&base_human_run.stdout).into_owned();
+    if !base_human.contains("uncommitted changes to tracked source were not analyzed") {
+        return Err(format!(
+            "fixture precondition: a --base run on this dirty checkout must print the note:\n{base_human}"
+        ));
+    }
+
+    let json_run = run_ripr(&["check", "--root", &root_str, "--diff", &patch_str, "--json"]);
+    assert_success(&json_run);
+    let json = String::from_utf8_lossy(&json_run.stdout).into_owned();
+    if json.contains("unanalyzed_working_tree") {
+        return Err(format!(
+            "a --diff run must not emit unanalyzed_working_tree:\n{json}"
+        ));
+    }
+    let human_run = run_ripr(&["check", "--root", &root_str, "--diff", &patch_str]);
+    assert_success(&human_run);
+    let human = String::from_utf8_lossy(&human_run.stdout).into_owned();
+    if human.contains("uncommitted changes to tracked source were not analyzed") {
+        return Err(format!(
+            "a --diff run must not print the unanalyzed working tree note:\n{human}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// RIPR-SPEC-0116: an empty `--worktree` result is honest when the working tree
 /// has no tracked changes against the requested base.
 #[test]
@@ -13342,6 +13697,70 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
         serde_json::Value::Null,
         "{report:#}"
     );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// The after phase's stdout is exactly one JSON document end-to-end: an
+/// orchestrator can run a single JSON.parse on it. The document is the
+/// versioned `repair_after_result` envelope (`schema_version` `0.1`): the
+/// agent verify 0.3 document rides unchanged under `verify` — every verify
+/// field keeps its name and value, including the verify outcome's own
+/// `status` — and what `ripr agent status --json` prints rides under
+/// `agent_status`. The old shape concatenated the verify JSON and the status
+/// JSON with no seam marker, and the intermediate shape spliced
+/// `agent_status` into the 0.3 verify document, so two documents sharing one
+/// `schema_version` had different shapes depending on the invocation path.
+#[test]
+fn agent_repair_after_phase_stdout_is_one_json_document() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = repair_route_workspace("after stdout single document")?;
+    let printed = repair_route_before(&root)?;
+    let attempt_id = repair_route_attempt_id(&printed)?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_BOUNDARY_TEST}"),
+    )?;
+    let after = repair_route_after(&root, &attempt_id);
+    assert_success(&after);
+
+    let stdout = String::from_utf8_lossy(&after.stdout);
+    // A second concatenated document would surface as trailing characters.
+    let document: serde_json::Value = serde_json::from_str(&stdout).map_err(|error| {
+        format!("after-phase stdout must parse as one JSON document: {error}\n{stdout}")
+    })?;
+    assert!(
+        !stdout.contains("ripr: "),
+        "narration belongs on stderr, not in the JSON document:\n{stdout}"
+    );
+    // The envelope names its own contract: its schema_version and kind are
+    // the shape identity a strict-schema consumer dispatches on.
+    assert_eq!(document["schema_version"].as_str(), Some("0.1"));
+    assert_eq!(document["kind"].as_str(), Some("repair_after_result"));
+    // Every existing verify field keeps its name and value under `verify`,
+    // and the child stays the agent verify 0.3 document.
+    assert_eq!(document["verify"]["schema_version"].as_str(), Some("0.3"));
+    assert_eq!(document["verify"]["tool"], "ripr");
+    assert_eq!(document["verify"]["status"], "advisory");
+    assert!(document["verify"]["inputs"]["before_content_sha256"].is_string());
+    assert!(document["verify"]["inputs"]["after_content_sha256"].is_string());
+    assert!(document["verify"]["changed_seams"].is_array());
+    // The status report rides under `agent_status` (the top-level `status`
+    // name is already the verify outcome's, one level down).
+    let agent_status = &document["agent_status"];
+    assert!(
+        matches!(
+            agent_status["status"].as_str(),
+            Some("complete" | "warning" | "incomplete")
+        ),
+        "{agent_status}"
+    );
+    let attempt = agent_status["repair_attempts"]
+        .as_array()
+        .and_then(|attempts| attempts.first())
+        .ok_or("agent_status lists no repair attempt")?;
+    assert_eq!(attempt["attempt_id"], attempt_id.as_str());
 
     let _ = std::fs::remove_dir_all(&root);
     Ok(())

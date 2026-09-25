@@ -1326,6 +1326,107 @@ mod tests {
         }
     }
 
+    /// The published repair-assurance schema is the orchestrator-facing
+    /// contract for the currentness vocabulary, so its enums must stay
+    /// exactly what the live producers emit — no token a production path
+    /// cannot produce, and no missing token either
+    /// (docs/LEARNINGS.md, 2026-07-25 false-confidence gates). This pins
+    /// both fields: `static_movement.currentness` carries the shared pair
+    /// renderer's closed vocabulary above, and `execution_result.currentness`
+    /// carries the vocabulary `VerificationExecutionResultV1` constructs (a
+    /// HEAD move → `historical_noncurrent`, a dirty worktree →
+    /// `dirty_worktree`, an unmoved clean pair → `current`; `unavailable`
+    /// exists only as a value the result validator rejects, so no schema may
+    /// claim it).
+    #[test]
+    fn published_assurance_schema_currentness_enums_match_the_producers() -> Result<(), String> {
+        let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/ripr/repair-assurance.schema.json");
+        let schema_text = std::fs::read_to_string(&schema_path)
+            .map_err(|error| format!("read {}: {error}", schema_path.display()))?;
+        let schema: serde_json::Value = serde_json::from_str(&schema_text)
+            .map_err(|error| format!("parse repair-assurance schema: {error}"))?;
+
+        let enum_strings = |pointer: &str| -> Result<Vec<String>, String> {
+            schema
+                .pointer(pointer)
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| format!("schema must define {pointer} as an array"))?
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| format!("{pointer} must contain only strings"))
+                })
+                .collect()
+        };
+
+        let pair_pointer = "/$defs/static_movement/properties/currentness/enum";
+        let pair_enum = enum_strings(pair_pointer)?;
+        // Derive the expected vocabulary from the producer itself — the
+        // distinct labels of the full 3x3 matrix, in match-arm order — so
+        // this expectation cannot drift from `pair_currentness_label`.
+        use ArtifactCurrentness::{Current, DirtyWorktree, Historical};
+        let mut pair_distinct: Vec<&str> = Vec::new();
+        for (before, after) in [
+            (Current, Current),
+            (Historical, Historical),
+            (Historical, Current),
+            (Current, Historical),
+            (DirtyWorktree, Current),
+            (DirtyWorktree, Historical),
+            (Current, DirtyWorktree),
+            (Historical, DirtyWorktree),
+            (DirtyWorktree, DirtyWorktree),
+        ] {
+            let label = pair_currentness_label(&before, &after);
+            if !pair_distinct.contains(&label) {
+                pair_distinct.push(label);
+            }
+        }
+        assert_eq!(
+            pair_enum, pair_distinct,
+            "{pair_pointer} drifted from pair_currentness_label; \
+             the schema must not claim tokens the producer cannot emit"
+        );
+
+        let execution_pointer = "/$defs/execution_result/properties/currentness/enum";
+        let execution_enum = enum_strings(execution_pointer)?;
+        // Derive the expectation from the producer type's own serialization,
+        // exactly the three variants a live execution constructs; `Unavailable`
+        // exists only as a value `validate_against` rejects, so it is absent.
+        let mut execution_distinct: Vec<String> = Vec::new();
+        for variant in [
+            crate::domain::VerificationCurrentnessV1::Current,
+            crate::domain::VerificationCurrentnessV1::DirtyWorktree,
+            crate::domain::VerificationCurrentnessV1::HistoricalNoncurrent,
+        ] {
+            let value = serde_json::to_value(variant)
+                .map_err(|error| format!("serialize currentness variant: {error}"))?;
+            execution_distinct.push(
+                value
+                    .as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| "currentness variant must serialize to a string".to_string())?,
+            );
+        }
+        assert_eq!(
+            execution_enum, execution_distinct,
+            "{execution_pointer} drifted from the VerificationExecutionResultV1 vocabulary"
+        );
+
+        for pointer in [pair_pointer, execution_pointer] {
+            assert!(
+                !enum_strings(pointer)?
+                    .iter()
+                    .any(|token| token == "unavailable"),
+                "{pointer} claims `unavailable`, which no production path emits"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn comparable_pair_rejects_analysis_mode_drift() {
         let before = comparable_artifact();

@@ -16,7 +16,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: no_static_path (warning, confidence 0.40)
-  Why no_static_path: the changed behavior could not be traced to an observable output
+  Why no_static_path: no related test was found that reaches this change
   Changed behavior: return this.valid.has(token.trim());
   Missing discriminator: No trusted TypeScript method receiver relation for `validate`. Direct `new ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked modules, protot…
   Next step: TypeScript preview advisory: method receiver relation is missing context; use a direct `new ClassName(...)` receiver observer when safe, and keep factories, dependency injection, m…
@@ -40,4 +40,4 @@ Note: ripr found no static test path for any of the 1 changed expression(s) in t
   integration tests that ripr's static model does not yet trace; if none does, add co-located tests
   that observe the changed behavior.
 
-Note: 1 Typescript(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

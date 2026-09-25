@@ -124,6 +124,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       async (target?: RiprTargetedTestBriefTarget) => controller?.copyTargetedTestBrief(target)
     ),
     vscode.commands.registerCommand(
+      'ripr.copyAgentRepairCommand',
+      async (target?: RiprAgentLoopCommandTarget) => controller?.copyAgentLoopCommand(target)
+    ),
+    vscode.commands.registerCommand(
       'ripr.copyAgentPacketCommand',
       async (target?: RiprAgentLoopCommandTarget) => controller?.copyAgentLoopCommand(target)
     ),

@@ -37,18 +37,12 @@ Repair:
 Verify after the test edit:
 `pytest tests/test_pricing.py::test_calculate_discount_smoke`
 
-Verify after the test edit (PowerShell):
-`pytest tests/test_pricing.py::test_calculate_discount_smoke`
-
-The first form is written for Bash; cmd.exe is not supported.
+It runs unchanged in Bash and PowerShell; cmd.exe is not supported.
 
 Receipt after verify:
 `ripr outcome --before .ripr/before.json --after .ripr/after.json --format json --out .ripr/receipts/python-threshold.json`
 
-Receipt after verify (PowerShell):
-`ripr outcome --before .ripr/before.json --after .ripr/after.json --format json --out .ripr/receipts/python-threshold.json`
-
-The first form is written for Bash; cmd.exe is not supported.
+It runs unchanged in Bash and PowerShell; cmd.exe is not supported.
 
 Agent packet command:
 `ripr agent packet --root fixtures/first_successful_pr/python-preview-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id 'gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --json > <cwd>/fixtures/first_successful_pr/python-preview-gap/target/ripr/workflow/agent-packet.json`

@@ -303,17 +303,43 @@ fn verify_revision(repo: &Path, rev: &str) -> Result<(), String> {
 }
 
 fn changed_files(repo: &Path, options: &PrEvidenceOptions) -> Result<Vec<String>, String> {
+    // Raw NUL-delimited inventory (#4006): `-z` output is never C-quoted,
+    // so exotic names survive byte-exact; parsing rules come from the
+    // shared authority in `decode_changed_files`, not from line splitting
+    // here. The `--diff-filter=ACMR` scope contract is unchanged.
     let range = format!("{}...{}", options.base, options.head);
-    let output = run_git_output(
+    let output = run_git_output_bytes(
         repo,
-        &["diff", "--name-only", "--diff-filter=ACMR", range.as_str()],
+        &[
+            "diff",
+            "--name-only",
+            "-z",
+            "--diff-filter=ACMR",
+            range.as_str(),
+        ],
     )?;
-    Ok(output
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_string)
-        .collect())
+    decode_changed_files(&output)
+}
+
+/// Decode raw `--name-only -z` bytes through the shared NUL path-record
+/// authority (#4006). Strict: non-UTF-8 or empty records fail loudly
+/// instead of collapsing through lossy conversion.
+fn decode_changed_files(output: &[u8]) -> Result<Vec<String>, String> {
+    crate::analysis::parse_git_path_records(output)
+        .map_err(|err| format!("pr-evidence changed-file inventory: {err}"))
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| {
+                    path.to_str().map(str::to_string).ok_or_else(|| {
+                        format!(
+                            "pr-evidence changed-file inventory: decoded path {} is not valid UTF-8",
+                            path.display()
+                        )
+                    })
+                })
+                .collect()
+        })
 }
 
 fn write_diff(repo: &Path, options: &PrEvidenceOptions) -> Result<(), String> {
@@ -362,6 +388,14 @@ fn command_root_path(repo: &Path, root: &str) -> PathBuf {
 }
 
 fn run_git_output(repo: &Path, args: &[&str]) -> Result<String, String> {
+    String::from_utf8(run_git_output_bytes(repo, args)?)
+        .map_err(|err| format!("git {args:?} produced non-UTF-8 output: {err}"))
+}
+
+/// Capture raw git stdout bytes through this file's single spawn site
+/// (#4006). Path inventories decode through the shared NUL authority at
+/// the call site; other callers keep the strict UTF-8 wrapper above.
+fn run_git_output_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -369,8 +403,7 @@ fn run_git_output(repo: &Path, args: &[&str]) -> Result<String, String> {
         .output()
         .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
     if output.status.success() {
-        String::from_utf8(output.stdout)
-            .map_err(|err| format!("git {args:?} produced non-UTF-8 output: {err}"))
+        Ok(output.stdout)
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1619,5 +1652,72 @@ mod tests {
 
     fn run_git(repo: &Path, args: &[&str]) -> Result<(), String> {
         run_git_output(repo, args).map(|_| ())
+    }
+
+    #[test]
+    fn strict_changed_file_inventory_rejects_non_utf8() -> Result<(), String> {
+        // The strict-failure side of the NUL authority at the product
+        // pr-evidence decode boundary: non-UTF-8 records fail loudly
+        // instead of collapsing through lossy conversion.
+        let err = match decode_changed_files(b"ok.txt\0\xffbad\0") {
+            Err(err) => err,
+            Ok(files) => {
+                return Err(format!("non-UTF-8 inventory must fail, decoded {files:?}"));
+            }
+        };
+        if !err.contains("not valid UTF-8") {
+            return Err(format!("unexpected strict-decode error: {err}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_files_decode_exotic_names_exact() -> Result<(), String> {
+        // Discriminates NUL-delimited inventory (#4006): space and
+        // non-ASCII names must decode byte-exact; the old line parser kept
+        // git's C-quoted octal form. Asserts through the real
+        // `changed_files` production path.
+        let repo = names_repo("ripr-pr-evidence-names")?;
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR Test"])?;
+        write_repo_file(&repo, "base.txt", "base\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        write_repo_file(&repo, "sp ace.txt", "spaces\n")?;
+        write_repo_file(&repo, "uni-\u{e9}.txt", "unicode\n")?;
+        run_git(&repo, &["add", "-A"])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "exotic"])?;
+
+        let options = PrEvidenceOptions {
+            base: "HEAD~1".to_string(),
+            head: "HEAD".to_string(),
+            ..PrEvidenceOptions::default()
+        };
+        let mut files = changed_files(&repo, &options)?;
+        files.sort();
+        let expected = vec!["sp ace.txt".to_string(), "uni-\u{e9}.txt".to_string()];
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        if files != expected {
+            return Err(format!(
+                "exotic changed-file inventory mismatch: got {files:?}, want {expected:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn names_repo(name: &str) -> Result<PathBuf, String> {
+        let unique = format!(
+            "{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|err| format!("system clock before epoch: {err}"))?
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&path).map_err(|err| format!("create {}: {err}", path.display()))?;
+        Ok(path)
     }
 }

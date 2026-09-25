@@ -71,4 +71,4 @@ Next step
   Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == ["index", "browse", "detail"]`.
 
 
-Note: 1 Python(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

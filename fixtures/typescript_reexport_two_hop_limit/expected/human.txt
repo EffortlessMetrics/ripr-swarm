@@ -16,7 +16,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: no_static_path (warning, confidence 0.40)
-  Why no_static_path: the changed behavior could not be traced to an observable output
+  Why no_static_path: no related test was found that reaches this change
   Changed behavior: return false;
   Missing discriminator: No test references `isRawNetworkError(` — add a test that calls the changed owner.
   Next step: TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet…
@@ -40,4 +40,4 @@ Note: ripr found no static test path for any of the 1 changed expression(s) in t
   integration tests that ripr's static model does not yet trace; if none does, add co-located tests
   that observe the changed behavior.
 
-Note: 1 Typescript(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

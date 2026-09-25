@@ -35,18 +35,12 @@ Repair:
 Verify after the test edit:
 `cargo xtask fixtures boundary_gap`
 
-Verify after the test edit (PowerShell):
-`cargo xtask fixtures boundary_gap`
-
-The first form is written for Bash; cmd.exe is not supported.
+It runs unchanged in Bash and PowerShell; cmd.exe is not supported.
 
 Receipt after verify:
 `ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command 'cargo xtask fixtures boundary_gap' --status not_run --out target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json`
 
-Receipt after verify (PowerShell):
-`ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command 'cargo xtask fixtures boundary_gap' --status not_run --out target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json`
-
-The first form is written for Bash; cmd.exe is not supported.
+It runs unchanged in Bash and PowerShell; cmd.exe is not supported.
 
 Agent packet command:
 `ripr agent packet --root fixtures/first_successful_pr/boundary-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:pricing:threshold-boundary --json > <cwd>/fixtures/first_successful_pr/boundary-gap/target/ripr/workflow/agent-packet.json`
