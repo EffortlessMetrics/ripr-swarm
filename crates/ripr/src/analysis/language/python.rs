@@ -23,6 +23,10 @@ use super::super::{
     AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
 };
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
+use crate::analysis_outcome::{
+    AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+    AnalysisStage,
+};
 use crate::config::{
     OraclePolicy, is_detectable_excluded_python_path, is_detectable_generated_python_path,
 };
@@ -50,6 +54,7 @@ mod discriminators;
 mod no_behavior;
 mod oracles;
 mod owners_tests;
+mod parse_budget;
 mod probe_shape;
 mod related_tests;
 mod repo;
@@ -389,6 +394,33 @@ fn push_identifier(out: &mut Vec<String>, current: &mut String, stop: &[&str]) {
     current.clear();
 }
 
+fn parse_budget_limitation(
+    relative: &Path,
+    facts: &source_facts::PythonSourceFacts,
+) -> Result<Option<AnalysisLimitation>, String> {
+    let Some(detail) = facts.limitations.iter().find_map(|limitation| {
+        limitation
+            .evidence
+            .split_once("parse_budget:")
+            .map(|(_, rest)| format!("parse_budget: {}", rest.trim()))
+    }) else {
+        return Ok(None);
+    };
+    Ok(Some(
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageScopeUnsupported,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::Retry,
+                "Split or simplify the deeply nested Python expression, then re-run the analysis.",
+            )?,
+        )
+        .with_path(normalized_path(relative))?
+        .with_affected_items(1)?
+        .with_detail(detail)?,
+    ))
+}
+
 impl LanguageAdapter for PythonAdapter {
     fn accepts_path(&self, path: &Path) -> bool {
         matches!(route(path), Some(LanguageId::Python))
@@ -405,6 +437,7 @@ impl LanguageAdapter for PythonAdapter {
         let mut all_tests: Vec<PythonTest> = Vec::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
+        let mut limitations = Vec::new();
         for relative in &workspace_files {
             let absolute = options.root.join(relative);
             let Ok(source) = std::fs::read_to_string(&absolute) else {
@@ -412,6 +445,9 @@ impl LanguageAdapter for PythonAdapter {
             };
             let facts = extract_source_facts(relative, &source);
             debug_assert!(source_fact_snapshot_observation(&facts) > 0);
+            if let Some(limitation) = parse_budget_limitation(relative, &facts)? {
+                limitations.push(limitation);
+            }
             docstring_ranges_by_file.insert(relative.clone(), facts.docstring_line_ranges.clone());
             if is_test_file(relative) {
                 all_tests.extend(facts.tests);
@@ -482,7 +518,7 @@ impl LanguageAdapter for PythonAdapter {
             changed_files_by_language: Vec::new(),
             partial_scope: None,
             skipped_files: 0,
-            limitations: Vec::new(),
+            limitations,
         })
     }
 
