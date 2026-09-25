@@ -1,34 +1,56 @@
 # Exit Codes
 
-ripr uses a simple two-value exit code contract:
+ripr uses a three-value exit code contract:
 
 | Code | Meaning |
 |------|---------|
 | `0`  | The command completed. |
-| `2`  | The command could not complete, or a command that owns a blocking decision blocked. |
+| `2`  | The command could not complete: usage, parse, operational, or internal error. |
+| `3`  | The command ran successfully and reached a blocking decision or a typed refusal. |
 
 `ripr check` is advisory: it exits `0` whether or not it found gaps, including
 `exposed` and `weakly_exposed` findings. A non-zero exit from `check` means the
 analysis did not complete, not that it disapproved of your diff. The blocking
-decision belongs to `ripr gate evaluate`, which exits `2` when the gate blocks.
-Do not build a CI gate on `check`'s exit code; read its output, or run the gate.
+decision belongs to `ripr gate evaluate`, which exits `3` when the gate blocks
+after writing its report. Do not build a CI gate on `check`'s exit code; read
+its output, or run the gate.
 
-## Why code 2?
+## Why codes 2 and 3?
 
-ripr uses exit code `2` for all failure conditions (not `1`) to distinguish
-it from shell-level errors (which typically use `1`). This makes it easier
-to distinguish "ripr ran and found issues" from "the shell could not run
-ripr" in CI pipelines.
+ripr uses exit code `2` for all could-not-complete conditions (not `1`) to
+distinguish it from shell-level errors (which typically use `1`). Code `3` is
+reserved for outcomes where the command itself ran to a deliberate, typed
+answer — a blocking gate decision, or a typed refusal such as `ripr agent
+verify-execute` declining a packet (the refusal JSON document is on stdout)
+— so an orchestrator can branch on the exit status alone:
+
+- `0`: the command completed (for `verify-execute`, the verification ran;
+  read the disposition in the stdout JSON).
+- `3`: the command completed by reaching a blocking decision or typed
+  refusal; read the report or the stdout JSON document for the answer.
+- `2`: the invocation or operation failed; retrying differently is
+  appropriate.
 
 ## When you see exit code 2
 
-- **Gate failure**: `ripr gate evaluate` blocked the PR. This is the only
-  findings-driven exit code ripr emits.
 - **Analysis error**: the diff could not be parsed, the base ref could not
   be resolved, or the workspace root could not be determined.
 - **User error**: unknown command, missing required argument, or invalid
   config.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
+
+## When you see exit code 3
+
+- **Gate failure**: `ripr gate evaluate` evaluated successfully and blocked
+  the PR; the full report was still written to `--out`.
+- **Typed refusal**: `ripr agent verify-execute` refused the packet (for
+  example `verification_rejected_policy` or `verification_wrong_root`) and
+  rendered the typed refusal JSON on stdout; `ripr agent repair --phase
+  after` refused after selecting its attempt (the refusal is recorded on the
+  attempt).
+
+These are findings- and policy-driven exits, not operational failures; a
+monitoring system should page on `2`, not on `3`.
 
 ## `ripr doctor` exit codes
 
@@ -39,8 +61,8 @@ the effective configuration).
 The `Cargo.toml`, `cargo`, and `rustc` checks apply only when Rust is in
 scope for the root: Rust is enabled and either Rust markers (`Cargo.toml` or
 `.rs` files) are detected or no other language is detected or enabled. A
-Python-only or TypeScript-only root reports those checks as `skipped` with the
-reason and does not fail on them. A Rust root, a root with Rust sources but no
+Python-only or TypeScript-only root reports those checks as `skipped` with
+the reason and does not fail on them. A Rust root, a root with Rust sources but no
 `Cargo.toml`, and an empty root under the Rust-only default still fail on a
 missing manifest or toolchain.
 
@@ -52,7 +74,8 @@ In generated GitHub Actions workflows, ripr preserves the exit code:
 ripr check --root . --mode draft --format json > check.json || check_status=$?
 ```
 
-The `|| check_status=$?` pattern captures the exit code without failing
-the step, so downstream review-comments and gate steps can consume the
+The `|| check_status=$?` pattern captures the exit code without failing the
+step, so downstream review-comments and gate steps can consume the
 output even when the analysis failed. Because `check` exits `0` on findings,
-a non-zero `check_status` here means the analysis itself did not complete.
+a non-zero `check_status` here means the analysis itself did not complete
+(code `2`; a gate step consumes code `3` as its blocking signal).

@@ -252,6 +252,11 @@ pub(crate) struct ExecutionOutcome {
     pub(crate) disposition: &'static str,
     /// True when RIPR could not produce and commit a bounded observation.
     pub(crate) failed: bool,
+    /// True when the terminal state is a typed refusal (the bounded
+    /// observation RIPR declined to commit), as opposed to an operational
+    /// failure such as `verification_result_write_failed`. The CLI maps typed
+    /// refusals to the decision exit code 3.
+    pub(crate) refused: bool,
 }
 
 /// Execute one validated producer-owned verification packet.
@@ -292,6 +297,7 @@ fn refusal_outcome(refusal: &Refusal) -> ExecutionOutcome {
         rendered: render(&response),
         disposition: refusal.disposition,
         failed: true,
+        refused: true,
     }
 }
 
@@ -434,6 +440,7 @@ fn run(
             rendered: render(&response),
             disposition,
             failed: false,
+            refused: false,
         }),
         Err(reason) => {
             response.result_committed = false;
@@ -443,6 +450,7 @@ fn run(
                 rendered: render(&response),
                 disposition: DISPOSITION_WRITE_FAILED,
                 failed: true,
+                refused: false,
             })
         }
     }
@@ -1380,6 +1388,8 @@ mod tests {
             execute_verify_packet(&root.path, &packet, Path::new("result.json"), false, None);
         assert_eq!(outcome.disposition, DISPOSITION_REJECTED);
         assert!(outcome.failed);
+        // A typed refusal maps to the decision exit code 3 at the CLI.
+        assert!(outcome.refused);
         let parsed: Value =
             serde_json::from_str(&outcome.rendered).map_err(|error| error.to_string())?;
         assert_eq!(

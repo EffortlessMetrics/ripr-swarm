@@ -11,6 +11,7 @@ use crate::app::agent_brief::{
     AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
 };
 use crate::app::{self, OutputFormat};
+use crate::cli::CommandError;
 use crate::cli::agent::{
     AgentBriefOptions, AgentCommand, AgentPacketOptions, AgentReceiptOptions, AgentRepairOptions,
     AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions, AgentStatusOptions,
@@ -42,21 +43,25 @@ use super::write_text_file;
 /// paths keep printing the bare agent verify 0.3 document instead.
 const REPAIR_AFTER_RESULT_SCHEMA_VERSION: &str = "0.1";
 
-pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
+pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     let command = parse_agent_args(args)?;
     if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
-        return result;
+        return result.map_err(CommandError::from);
     }
 
     match command {
-        AgentCommand::Start(options) => run_agent_start(options),
-        AgentCommand::Brief(options) => run_agent_brief(options),
-        AgentCommand::Packet(options) => run_agent_packet(options),
-        AgentCommand::Verify(options) => run_agent_verify(options),
+        AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
+        AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
+        AgentCommand::Packet(options) => run_agent_packet(options).map_err(CommandError::from),
+        AgentCommand::Verify(options) => run_agent_verify(options).map_err(CommandError::from),
+        // Typed refusals carry the Decision variant (exit code 3).
         AgentCommand::VerifyExecute(options) => run_agent_verify_execute(options),
-        AgentCommand::Receipt(options) => run_agent_receipt(options),
-        AgentCommand::Status(options) => run_agent_status(options),
-        AgentCommand::ReviewSummary(options) => run_agent_review_summary(options),
+        AgentCommand::Receipt(options) => run_agent_receipt(options).map_err(CommandError::from),
+        AgentCommand::Status(options) => run_agent_status(options).map_err(CommandError::from),
+        AgentCommand::ReviewSummary(options) => {
+            run_agent_review_summary(options).map_err(CommandError::from)
+        }
+        // After-phase refusals carry the Decision variant (exit code 3).
         AgentCommand::Repair(options) => run_agent_repair(options),
         help_command @ (AgentCommand::Help
         | AgentCommand::StartHelp
@@ -68,7 +73,9 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), String> {
         | AgentCommand::StatusHelp
         | AgentCommand::ReviewSummaryHelp
         | AgentCommand::RepairHelp) => agent_dispatch::run_agent_help_command(&help_command)
-            .unwrap_or_else(|| Err("agent help command was not dispatched".to_string())),
+            .unwrap_or_else(|| {
+                Err(CommandError::from("agent help command was not dispatched".to_string()))
+            }),
     }
 }
 
@@ -311,7 +318,7 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     )
 }
 
-fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), String> {
+fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
     ensure_command_root(&options.root, "agent verify-execute")?;
     let outcome = app::verification_execution::execute_verify_packet(
         &options.root,
@@ -321,11 +328,17 @@ fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), St
         options.cancel_after_ms,
     );
     // The typed disposition is the contract, so it reaches stdout on every
-    // terminal state — including refusals. The exit status only distinguishes
-    // "RIPR committed a bounded observation" from "it could not".
+    // terminal state — including refusals. A typed refusal is a successfully
+    // rendered blocking answer: it maps to the decision exit code 3 so an
+    // orchestrator can branch on `0` executed, `3` refused (read the stdout
+    // JSON), `2` could not complete. Only an uncommitted observation
+    // (`verification_result_write_failed`) remains a Failure.
     print!("{}", outcome.rendered);
+    if outcome.refused {
+        return Err(CommandError::Decision(outcome.disposition.to_string()));
+    }
     if outcome.failed {
-        return Err(outcome.disposition.to_string());
+        return Err(CommandError::from(outcome.disposition.to_string()));
     }
     Ok(())
 }
@@ -542,7 +555,7 @@ fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), St
 /// When an after phase refuses after it selected its attempt, the refusal is
 /// recorded on that attempt through the attempt authority, so `ripr agent
 /// status` reports it instead of repeating the refused command unannotated.
-fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
+fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
     let mut refusal = AfterPhaseRefusalContext::default();
     let result = run_agent_repair_phase(options, &mut refusal);
     if let (Err(error), Some((root, attempt_id))) = (&result, &refusal.selected_attempt)
@@ -557,7 +570,14 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             attempt_id.as_str()
         );
     }
-    result
+    // An error once the after phase selected its attempt is a typed refusal
+    // (recorded above), not an operational failure: it maps to the decision
+    // exit code 3. Errors before attempt selection are ordinary failures.
+    if refusal.selected_attempt.is_some() {
+        result.map_err(CommandError::Decision)
+    } else {
+        result.map_err(CommandError::Failure)
+    }
 }
 
 /// What an after phase that refuses leaves for the attempt record: the
@@ -1415,11 +1435,62 @@ mod tests {
     fn agent_rejects_unknown_subcommands() {
         assert_eq!(
             agent(&args(&["unknown"])),
-            Err(
+            Err(CommandError::Failure(
                 "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
                     .to_string()
-            )
+            ))
         );
+    }
+
+    #[test]
+    fn agent_verify_execute_refusal_maps_to_decision_exit_code() -> Result<(), String> {
+        let dir = unique_command_test_dir("agent-verify-execute-refusal");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        // A missing packet is a typed refusal (`verification_rejected_policy`),
+        // printed as the stdout JSON document: the command ran successfully
+        // and declined, so it maps to the decision exit code 3.
+        let result = agent(&args(&[
+            "verify-execute",
+            "--root",
+            &dir.display().to_string(),
+            "--packet",
+            &dir.join("missing-packet.json").display().to_string(),
+            "--result-json",
+            &dir.join("result.json").display().to_string(),
+            "--json",
+        ]));
+        let Err(error) = result else {
+            return Err("expected a typed refusal, got Ok".to_string());
+        };
+        assert!(
+            matches!(
+                &error,
+                CommandError::Decision(message) if message.contains("verification_rejected_policy")
+            ),
+            "typed refusal must carry the Decision variant: {error:?}"
+        );
+        assert_eq!(error.exit_code(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn agent_repair_failure_before_attempt_selection_stays_a_failure() {
+        // A missing root refuses before the after phase selects its attempt,
+        // so it is an ordinary Failure (exit code 2), not a Decision: only
+        // errors after attempt selection are recorded refusals.
+        assert!(matches!(
+            agent(&args(&[
+                "repair",
+                "--root",
+                "target/ripr/missing-agent-repair-root",
+                "--seam-id",
+                "seam-a",
+                "--phase",
+                "after",
+            ])),
+            Err(CommandError::Failure(message)) if message.contains("is not a directory")
+        ));
     }
 
     #[test]
@@ -1432,10 +1503,10 @@ mod tests {
                 "--seam-id",
                 "f3c9e4d21a0b7c88",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent start root target/ripr/missing-agent-start-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -1448,10 +1519,10 @@ mod tests {
                 "target/ripr/missing-agent-status-root",
                 "--json",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent status root target/ripr/missing-agent-status-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -1464,10 +1535,10 @@ mod tests {
                 "target/ripr/missing-agent-review-summary-root",
                 "--json",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent review-summary root target/ripr/missing-agent-review-summary-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -1482,10 +1553,10 @@ mod tests {
                 "f3c9e4d21a0b7c88",
                 "--json",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent packet root target/ripr/missing-agent-packet-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -1507,9 +1578,11 @@ mod tests {
             &dir.join("missing-after.json").display().to_string(),
             "--json",
         ]));
-        assert!(
-            matches!(missing_before, Err(message) if message.contains("canonicalize agent verify --before"))
-        );
+        assert!(matches!(
+            missing_before,
+            Err(CommandError::Failure(message))
+                if message.contains("canonicalize agent verify --before")
+        ));
 
         let missing_after = agent(&args(&[
             "verify",
@@ -1521,9 +1594,11 @@ mod tests {
             &dir.join("missing-after.json").display().to_string(),
             "--json",
         ]));
-        assert!(
-            matches!(missing_after, Err(message) if message.contains("canonicalize agent verify --after"))
-        );
+        assert!(matches!(
+            missing_after,
+            Err(CommandError::Failure(message))
+                if message.contains("canonicalize agent verify --after")
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
@@ -1552,7 +1627,10 @@ mod tests {
             "--json",
         ]));
 
-        assert!(matches!(result, Err(message) if message.contains("must stay under root")));
+        assert!(matches!(
+            result,
+            Err(CommandError::Failure(message)) if message.contains("must stay under root")
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
         Ok(())
@@ -1573,9 +1651,11 @@ mod tests {
             "seam-a",
             "--json",
         ]));
-        assert!(
-            matches!(missing, Err(message) if message.contains("canonicalize agent receipt --verify-json"))
-        );
+        assert!(matches!(
+            missing,
+            Err(CommandError::Failure(message))
+                if message.contains("canonicalize agent receipt --verify-json")
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
@@ -1600,7 +1680,10 @@ mod tests {
             "--json",
         ]));
 
-        assert!(matches!(result, Err(message) if message.contains("must stay under root")));
+        assert!(matches!(
+            result,
+            Err(CommandError::Failure(message)) if message.contains("must stay under root")
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
         Ok(())
@@ -1617,10 +1700,10 @@ mod tests {
                 "change.diff",
                 "--json",
             ])),
-            Err(
+            Err(CommandError::Failure(
                 "agent brief root target/ripr/missing-agent-brief-root is not a directory"
                     .to_string()
-            )
+            ))
         );
     }
 

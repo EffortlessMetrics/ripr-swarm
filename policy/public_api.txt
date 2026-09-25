@@ -61,6 +61,13 @@ pub enum ripr::lsp::diagnostic_budget::DiagnosticBudgetEligibility
 pub enum ripr::lsp::diagnostic_budget::DiagnosticBudgetError
 pub enum ripr::lsp::diagnostic_budget::DiagnosticOverflowReason
 pub enum ripr::lsp::diagnostic_budget::OmittedDiagnosticReason
+
+# CLI exit-code contract (swarm/q3-exit-codes): owner cli; reason:
+# intentional public error type returned by `ripr::cli::run`; carries the
+# exit-code contract (Failure -> 2, Decision -> 3) documented in
+# docs/EXIT_CODES.md; covered_by: cargo test -p ripr --lib cli,
+# cargo xtask check-public-api.
+pub enum ripr::cli::CommandError
 pub fn ripr::analysis::run_analysis
 pub fn ripr::analysis::run_repo_analysis
 pub fn ripr::app::pr_evidence::reject_pr_evidence_error_packet

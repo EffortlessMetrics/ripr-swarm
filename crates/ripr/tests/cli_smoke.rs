@@ -1715,6 +1715,13 @@ fn gate_evaluate_exception_policy_missing_ledger_is_config_error() -> Result<(),
         &out.display().to_string(),
     ]);
     assert_failure(&output);
+    // A config error means the evaluation could not complete: exit 2, the
+    // same code as any other usage or operational failure.
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a config error must exit with code 2"
+    );
 
     let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
     assert!(
@@ -1746,6 +1753,13 @@ fn gate_evaluate_complete_gap_ledger_blocks_only_in_explicit_blocking_mode() -> 
         &out.display().to_string(),
     ]);
     assert_failure(&output);
+    // A blocked gate decision is a successful evaluation reaching its blocking
+    // decision: the process exits 3, never the could-not-complete code 2.
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "a blocked gate decision must exit with code 3"
+    );
 
     let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
     let value: serde_json::Value = serde_json::from_str(&decision)
@@ -14824,7 +14838,7 @@ fn producer_verify_packet(
 fn verify_execute_disposition(
     root: &Path,
     argv: &[&str],
-) -> Result<(serde_json::Value, bool), Box<dyn std::error::Error>> {
+) -> Result<(serde_json::Value, Option<i32>), Box<dyn std::error::Error>> {
     let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(root), argv)?;
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|err| {
         format!(
@@ -14833,7 +14847,7 @@ fn verify_execute_disposition(
             String::from_utf8_lossy(&output.stderr)
         )
     })?;
-    Ok((parsed, output.status.success()))
+    Ok((parsed, output.status.code()))
 }
 
 /// The end-to-end contract: a producer-generated packet executes through the
@@ -15131,11 +15145,12 @@ fn agent_verify_execute_refusals_are_typed_dispositions() -> Result<(), Box<dyn 
         ),
     ];
     for (label, argv, expected) in cases {
-        let (parsed, succeeded) = verify_execute_disposition(&root, &argv)?;
+        let (parsed, exit_code) = verify_execute_disposition(&root, &argv)?;
         assert_eq!(parsed["disposition"], expected, "{label}: {parsed}");
         assert_eq!(parsed["executed"], false, "{label} must not execute");
         assert_eq!(parsed["result_committed"], false, "{label}");
-        assert!(!succeeded, "{label} must exit nonzero");
+        // A typed refusal ran successfully to a blocking answer: exit 3, not 2.
+        assert_eq!(exit_code, Some(3), "{label} must exit with code 3");
     }
     // No refusal left a result behind.
     for name in [
@@ -15158,7 +15173,7 @@ fn agent_verify_execute_refusals_are_typed_dispositions() -> Result<(), Box<dyn 
 fn agent_verify_execute_reports_result_write_failure() -> Result<(), Box<dyn std::error::Error>> {
     let (root, _) = producer_verify_packet("verify-execute-write-failed")?;
     std::fs::write(root.join("result.json"), "existing-artifact")?;
-    let (parsed, succeeded) = verify_execute_disposition(
+    let (parsed, exit_code) = verify_execute_disposition(
         &root,
         &[
             "agent",
@@ -15177,7 +15192,12 @@ fn agent_verify_execute_reports_result_write_failure() -> Result<(), Box<dyn std
     // The observation happened; only the commit failed. Both facts are reported.
     assert_eq!(parsed["executed"], true);
     assert_eq!(parsed["result_committed"], false);
-    assert!(!succeeded, "an uncommitted result must exit nonzero");
+    // An uncommitted observation could not complete: it stays on exit code 2.
+    assert_eq!(
+        exit_code,
+        Some(2),
+        "an uncommitted result must exit with code 2"
+    );
     assert_eq!(
         std::fs::read_to_string(root.join("result.json"))?,
         "existing-artifact",
@@ -15273,7 +15293,7 @@ fn agent_verify_execute_refuses_a_coherent_whole_packet_forgery()
         serde_json::to_vec_pretty(&forged)?,
     )?;
 
-    let (parsed, succeeded) = verify_execute_disposition(
+    let (parsed, exit_code) = verify_execute_disposition(
         &root,
         &[
             "agent",
@@ -15293,7 +15313,8 @@ fn agent_verify_execute_refuses_a_coherent_whole_packet_forgery()
         "a coherent forgery must be refused: {parsed}"
     );
     assert_eq!(parsed["executed"], false);
-    assert!(!succeeded);
+    // A typed refusal maps to the decision exit code 3.
+    assert_eq!(exit_code, Some(3));
     assert!(!root.join("forged-result.json").exists());
     std::fs::remove_dir_all(&root)?;
     Ok(())
