@@ -6,15 +6,71 @@ use super::*;
 
 /// Tokenize an expression string into identifier tokens longer than 3 chars.
 ///
-/// Only ASCII alphanumeric / underscore segments are kept; dot-qualifier and
-/// `::` segments are excluded so that shared qualifiers (e.g. `"amount"` from
-/// both `amount * 9` and an unrelated `amount * 2`) do not spuriously confirm.
+/// Only ASCII alphanumeric / underscore segments are kept. Segments adjacent
+/// to a dot (`.`) or path separator (`:`) are excluded — both the qualifier
+/// and the qualified member — so that shared names (e.g. `"amount"` from both
+/// `props.amount * 9` and an unrelated bare `amount * 2`) do not spuriously
+/// confirm: a dot-qualified name may belong to a different receiver.
 fn identifier_tokens(expr: &str) -> Vec<String> {
-    expr.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .filter(|tok| tok.len() > 3)
-        .map(|tok| tok.to_string())
-        .collect()
+    let mut tokens = Vec::new();
+    let mut start: Option<usize> = None;
+    for (idx, ch) in expr.char_indices() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            if start.is_none() {
+                start = Some(idx);
+            }
+        } else if let Some(segment_start) = start.take() {
+            push_identifier_token(expr, segment_start, idx, &mut tokens);
+        }
+    }
+    if let Some(segment_start) = start {
+        push_identifier_token(expr, segment_start, expr.len(), &mut tokens);
+    }
+    tokens
 }
+
+/// Push `expr[segment_start..segment_end]` as a confirmation token unless it
+/// is dot/path-adjacent (see [`identifier_tokens`]) or too short.
+fn push_identifier_token(
+    expr: &str,
+    segment_start: usize,
+    segment_end: usize,
+    tokens: &mut Vec<String>,
+) {
+    let preceded_by_qualifier = expr[..segment_start]
+        .chars()
+        .next_back()
+        .is_some_and(|ch| ch == '.' || ch == ':');
+    let followed_by_qualifier = expr[segment_end..]
+        .chars()
+        .next()
+        .is_some_and(|ch| ch == '.' || ch == ':');
+    if preceded_by_qualifier || followed_by_qualifier {
+        return;
+    }
+    let token = &expr[segment_start..segment_end];
+    if token.len() > 3 {
+        tokens.push(token.to_string());
+    }
+}
+
+/// Synthesized template words that `typescript_call_effect_discriminator`
+/// interpolates into its English-sentence discriminator (`call … includes …`,
+/// `call … occurs`, `mock interaction … is called`, `log contains …`). They
+/// are generator vocabulary, not changed code, so they must never serve as
+/// confirmation tokens for the RIPR-SPEC-0098 observation guard.
+const CALL_EFFECT_TEMPLATE_WORDS: &[&str] = &[
+    "includes",
+    "occurs",
+    "matching",
+    "called",
+    "interaction",
+    "contains",
+    "mock",
+    "with",
+    "call",
+    "log",
+];
 
 /// Strip the synthesized prefix that `typescript_missing_discriminator_value`
 /// adds so we recover the raw changed sub-expression.
@@ -60,9 +116,11 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 ///    (`MockExpectation` | `Snapshot` | `WholeObjectEquality`) — these capture
 ///    mock-call expectations, serialized snapshots, or persisted whole-object
 ///    state, all of which observe side effects directly; OR
-/// 2. It carries an `observed_expression` that either contains a changed token
-///    (> 3 chars) or names a side-channel (an expression that does NOT name the
-///    owner — e.g. a closure-local side-effect variable or a captured mock).
+/// 2. It carries an `observed_expression` that either shares an exact changed
+///    identifier token (> 3 chars, dot/path-adjacent segments excluded, same
+///    `identifier_tokens` rules on both sides) or names a side-channel (an
+///    expression that does NOT name the owner — e.g. a closure-local
+///    side-effect variable or a captured mock).
 ///
 /// Value-shaped strong oracles (`ExactValue` / `ExactErrorVariant`) that observe
 /// the owner's RETURN VALUE do NOT witness a `console.log`/side-effect change, so
@@ -101,6 +159,9 @@ pub(crate) fn ts_changed_value_is_observed(
     let changed_tokens: Vec<String> = if let Some(ref disc) = raw_discriminator {
         let raw_expr = strip_synthesized_prefix(disc);
         identifier_tokens(raw_expr)
+            .into_iter()
+            .filter(|tok| !CALL_EFFECT_TEMPLATE_WORDS.contains(&tok.as_str()))
+            .collect()
     } else {
         Vec::new()
     };
@@ -136,14 +197,17 @@ pub(crate) fn ts_changed_value_is_observed(
             // extractor retained the `expect(<expr>)` argument text. These can
             // only ADD confirmations; their absence never re-promotes.
             if let Some(ref observed) = assertion.observed_expression {
-                // Token match: a changed token appears in the observed
-                // expression → this assertion observes the changed value.
-                if !changed_tokens.is_empty()
-                    && changed_tokens
-                        .iter()
-                        .any(|tok| observed.contains(tok.as_str()))
-                {
-                    return true;
+                // Token match: tokenize the observed expression with the SAME
+                // `identifier_tokens` rules and require EXACT token equality.
+                // A raw substring `observed.contains(tok)` false-confirms on
+                // synthesized template words (e.g. a `.includes(...)` call in
+                // the test) and on tokens merely embedded in a larger
+                // identifier.
+                if !changed_tokens.is_empty() {
+                    let observed_tokens = identifier_tokens(observed);
+                    if changed_tokens.iter().any(|tok| observed_tokens.contains(tok)) {
+                        return true;
+                    }
                 }
                 // Side-channel: the observed expression does NOT name the owner,
                 // so it is asserting something other than the owner return value
@@ -334,11 +398,20 @@ fn owner_call_arguments(observed: &str, owner_name: &str) -> Vec<Vec<String>> {
         return calls;
     }
     for (idx, _) in observed.match_indices(owner_name) {
+        // Skip matches embedded in a longer identifier (`otherShippingFee`)
+        // and member accesses on a DIFFERENT receiver (`other.total(50)`):
+        // the match must start at a real owner call, so the preceding
+        // non-whitespace character must not be an identifier char, `_`, `$`,
+        // or `.`.
         let preceded_by_identifier = observed
             .get(..idx)
             .and_then(|before| before.chars().next_back())
             .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$');
-        if preceded_by_identifier {
+        let preceded_by_member_access = observed
+            .get(..idx)
+            .and_then(|before| before.trim_end().chars().next_back())
+            == Some('.');
+        if preceded_by_identifier || preceded_by_member_access {
             continue;
         }
         let Some(inner) = observed

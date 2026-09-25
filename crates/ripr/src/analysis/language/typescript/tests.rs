@@ -6569,6 +6569,86 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
     Ok(())
 }
 
+/// Should-stay-`weakly_exposed` control (RIPR-SPEC-0098 false-confirmation
+/// family): a SideEffect seam whose discriminator is the call-effect sentence
+/// `call tracker.record includes event` must NOT be confirmed by a strong
+/// assertion that merely happens to call `.includes(...)` on the owner return
+/// value. Before this control, the raw substring check
+/// `observed.contains("includes")` promoted the swallowed side effect to
+/// `Exposed`. Template vocabulary (`includes` / `occurs` / …) is generator
+/// wording, not changed code, and dot-adjacent segments (`tracker`, `record`)
+/// name a different receiver's members; none of them may confirm.
+#[test]
+fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "trackLogin".to_string(),
+        file: PathBuf::from("src/tracker.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    // The observed expression names the owner (so the side-channel arm does
+    // not fire) but only "confirms" via the substring `includes` — which is
+    // synthesized discriminator vocabulary, not a changed token.
+    let test = TypeScriptTest {
+        name: "tracks login and checks the label".to_string(),
+        local_name: "tracks login and checks the label".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/tracker.test.ts"),
+        line: 1,
+        body_text: "expect(trackLogin(\"login\").includes(payload)).toBe(true);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            observed_expression: Some("trackLogin(\"login\").includes(payload)".to_string()),
+            expected_value_or_variant: Some("true".to_string()),
+            has_dynamic_matcher_arg: false,
+            oracle_confidence: OracleConfidence::High,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    };
+    // Changed line: SideEffect member call — the effect never escapes.
+    let finding = classify_change(
+        Path::new("src/tracker.ts"),
+        4,
+        "    tracker.record(event);",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // The `.includes(...)` assertion does NOT observe the call effect: it
+    // must fail closed to weakly_exposed with a propagation_unknown limitation.
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "expected WeaklyExposed (template word must not confirm), got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes when only a template word matched, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    let all_text: String = finding.missing.join("\n");
+    assert!(
+        all_text.contains("propagation_unknown"),
+        "expected propagation_unknown in missing, got: {all_text:?}"
+    );
+    Ok(())
+}
+
 // ── RIPR-SPEC-0099: tsconfig.json path-alias resolution ───────────────────────
 
 /// Build a strong `toBe` assertion for RIPR-SPEC-0099 alias tests.
@@ -7871,6 +7951,32 @@ fn spec_0027_boundary_witness_fails_closed_without_strong_owner_call_at_boundary
                 .collect::<Vec<_>>()
         );
     }
+    Ok(())
+}
+
+/// Should-stay-`weakly_exposed` control (RIPR-SPEC-0027 false-witness family):
+/// a strong assertion that calls a SAME-NAMED method on a DIFFERENT receiver
+/// (`expect(other.total(50)).toBe(120)`) must not witness the changed
+/// predicate boundary of owner `total`. The literal `50` is present, but the
+/// observed call sits on `other`, not on the owner, so the boundary is not
+/// witnessed and the finding must fail closed to `weakly_exposed`.
+#[test]
+fn spec_0027_same_named_method_on_other_receiver_does_not_witness() -> Result<(), String> {
+    let tests = [exact_value_test("total", "other.total(50)", "120")];
+    let finding = classify_boundary_line("total", "  if (total >= 50) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a same-named method on a different receiver must not witness the boundary"
+    );
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("changed predicate boundary `total == 50`")),
+        "boundary limitation must be named: {:?}",
+        finding.missing
+    );
     Ok(())
 }
 
