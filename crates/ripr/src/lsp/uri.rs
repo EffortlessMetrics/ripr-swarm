@@ -414,7 +414,7 @@ mod tests {
             let uri = parse_uri(value)?;
             assert_eq!(
                 path_from_file_uri(&uri),
-                Some(PathBuf::from("C:/Work/Ripr/src/lib.rs")),
+                Some(PathBuf::from(["C:", "Work", "Ripr", "src", "lib.rs"].join("/"))),
                 "{value}"
             );
             assert!(file_uris_match(&canonical, &uri), "{value}");
@@ -464,7 +464,7 @@ mod tests {
         );
         assert_eq!(
             path_from_file_uri(&parse_uri("file://localhost/C:/")?),
-            Some(PathBuf::from("C:/"))
+            Some(PathBuf::from(["C:", ""].join("/")))
         );
         Ok(())
     }
