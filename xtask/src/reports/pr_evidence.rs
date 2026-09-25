@@ -1140,12 +1140,11 @@ mod tests {
         assert_eq!(route["candidates"][0]["file"], "src/pricing.rs");
         assert_eq!(route["candidates"][0]["from"], ">=");
         assert_eq!(route["candidates"][0]["to"], ">");
+        let candidates = route["candidates"].as_array();
         assert!(
-            route["candidates"]
-                .as_array()
-                .unwrap()
+            candidates.is_some_and(|candidates| candidates
                 .iter()
-                .all(|candidate| candidate["file"] != "src/base.rs"),
+                .all(|candidate| candidate["file"] != "src/base.rs")),
             "base-side evidence must never name a head mutation target"
         );
         assert_eq!(route["limitations"], json!([]));
