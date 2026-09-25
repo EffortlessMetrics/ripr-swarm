@@ -204,7 +204,7 @@ pub(crate) fn build_report_packet_index_report(
         || entries.iter().any(|grouped| {
             matches!(
                 grouped.entry.status.as_str(),
-                "warn" | "incomplete" | "unreadable"
+                "warn" | "incomplete" | "unreadable" | "acknowledged"
             )
         })
     {
@@ -706,14 +706,12 @@ fn gate_status(status: &str) -> String {
         "pass" => "pass".to_string(),
         "blocked" => "blocked".to_string(),
         "config_error" | "fail" | "failure" => "fail".to_string(),
-        "advisory" => "warn".to_string(),
+        "advisory" | "warn" => "warn".to_string(),
         "acknowledged" => "acknowledged".to_string(),
         "suppressed" => "suppressed".to_string(),
-        "warn" => "warn".to_string(),
-        "incomplete" => "incomplete".to_string(),
         // Fail closed: the gate decision is authority, so an unrecognized
         // producer token is reported as incomplete rather than credited as
-        // a pass the index never verified.
+        // a pass the index never verified. `incomplete` lands here too.
         _ => "incomplete".to_string(),
     }
 }
@@ -726,9 +724,8 @@ fn front_panel_status(status: &str) -> String {
         "advisory" => "warn".to_string(),
         "acknowledged" => "acknowledged".to_string(),
         "warn" => "warn".to_string(),
-        "incomplete" => "incomplete".to_string(),
         // Fail closed: a required front panel with an unrecognized producer
-        // token is not credited as available.
+        // token is not credited as available. `incomplete` lands here too.
         _ => "incomplete".to_string(),
     }
 }
@@ -2269,6 +2266,9 @@ mod tests {
             return Err("expected pr_review_front_panel entry".to_string());
         };
         assert_eq!(e.status, "acknowledged");
+        // Acknowledged is visible state, not hidden success: the aggregate
+        // must not read pass while an entry carries it.
+        assert_eq!(report.status, "warn");
         Ok(())
     }
 
