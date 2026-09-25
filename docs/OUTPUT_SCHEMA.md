@@ -2817,6 +2817,14 @@ Field contract:
     `run_status` remains `"complete"` because the Rust repo-exposure scan
     completed. It carries `ts_file_count`, `repair_route`, and the optional
     nested `typescript_readiness` object.
+  - `category: "python_diff_first"` appears when a workspace has Python
+    files, no Rust files, and zero classified seams. `run_status` remains
+    `"complete"`. It carries `python_file_count`, `authority_boundary`
+    (`preview_advisory_only`), `analysis_model` (`diff_first`),
+    `non_claims`, and `repair_route`. The route points at diff-scoped
+    `ripr check`. This inventory still does not render Python findings, so
+    a zero-seam result is not a clean Python result. It does not claim that
+    full-repo Python analysis is unmodeled.
   - `typescript_readiness.source` is
     `"repo_exposure_typescript_readiness.v1"`.
   - `typescript_readiness.authority_boundary` is
@@ -14141,8 +14149,9 @@ Field contract:
   (`check_diff_first` or `unavailable_in_this_binary`), `command` (the diff-first
   `ripr check --root <root>`, which resolves the default base itself, or `null`),
   and `guidance_category`/`guidance`: the existing `typescript_diff_first`
-  repair route for TypeScript and JavaScript, the unavailable-adapter notice for
-  a language this binary cannot analyze, otherwise `null`.
+  repair route for TypeScript and JavaScript, the `python_diff_first` repair
+  route for Python, the unavailable-adapter notice for a language this binary
+  cannot analyze, otherwise `null`.
 - `next` — advisory follow-up commands. Complete summaries include the public
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam
