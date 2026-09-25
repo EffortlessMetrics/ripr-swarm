@@ -3731,7 +3731,6 @@ mod tests {
                 "pr-comments plan",
                 "ripr agent status",
                 "ripr agent review-summary",
-                "cargo xtask operator-cockpit",
             ],
             artifact_paths: &[
                 "target/ripr/pilot",
@@ -3849,7 +3848,6 @@ mod tests {
                 "Prepare RIPR editor-agent artifacts",
                 "Generate RIPR agent loop artifacts",
                 "Render RIPR repo badge artifacts",
-                "Render RIPR operator cockpit",
                 "Render RIPR baseline debt delta",
                 "Render RIPR Zero status",
                 "Render RIPR PR evidence ledger",
@@ -7511,7 +7509,8 @@ language = "rust"
         assert!(workflow.contains("RIPR_TOP_SEAM_ID"));
         assert!(workflow.contains(".top_actionable_seams[0].seam_id"));
         assert!(!workflow.contains(".top_seams[0].seam_id"));
-        assert!(workflow.contains("cargo xtask operator-cockpit"));
+        // An adopter repository has no xtask; the workflow must not call it.
+        assert!(!workflow.contains("cargo xtask"));
         assert!(workflow.contains("cat target/ripr/pilot/pilot-summary.md"));
         assert!(workflow.contains("cat target/ripr/workflow/agent-review-summary.md"));
         assert!(workflow.contains("repo-ripr-badge.json"));
@@ -7613,8 +7612,9 @@ language = "rust"
         assert!(workflow.contains("index_has_input=true"));
         assert!(workflow.contains("Set `RIPR_GATE_MODE`"));
         assert!(workflow.contains("No runtime mutation execution is performed"));
-        assert!(workflow.contains("hashFiles('crates/ripr/Cargo.toml')"));
-        assert!(workflow.contains("hashFiles('xtask/src/reports/operator.rs')"));
+        // The RIPR-source-tree-only cockpit step is gone from the adopter
+        // workflow (F60-8).
+        assert!(!workflow.contains("hashFiles('xtask/src/reports/operator.rs')"));
         assert!(workflow.contains("if: env.RIPR_UPLOAD_SARIF == 'true'"));
         assert!(workflow.contains(
             "if: env.RIPR_UPLOAD_SARIF == 'true' && github.event_name == 'pull_request'"
@@ -7785,13 +7785,13 @@ language = "rust"
         assert!(summary.contains("missing_start_here"));
         assert!(summary.contains("State: \\`missing_artifact\\`"));
         assert!(summary.contains(
-            "Safe next action: run \\`ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json"
+            "Safe next action: run \\`ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json"
         ));
         assert!(summary.contains(
             "start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority"
         ));
         assert!(summary.contains(
-            "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json"
+            "ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json"
         ));
         assert!(summary.contains(
             "Fallback safe next action: run \\`ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md\\`"
@@ -7884,6 +7884,12 @@ language = "rust"
 
         let prepare = workflow_step(&workflow, "Prepare RIPR editor-agent artifacts");
         assert!(prepare.contains("RIPR_TOP_SEAM_ID"));
+        // first-pr checks the review cards were built for its base; the
+        // cards use the PR's base, so first-pr must too (F60-8).
+        let first_pr = workflow_step(&workflow, "Render RIPR first-pr start-here");
+        assert!(first_pr.contains(
+            "--base \"origin/${{ github.base_ref || github.event.repository.default_branch }}\""
+        ));
         assert!(prepare.contains(".top_actionable_seams[0].seam_id"));
         assert!(
             !prepare.contains(".top_seams[0].seam_id"),
@@ -8541,7 +8547,7 @@ language = "rust"
         assert!(summary.contains("Boundary: \\`$start_boundary\\`"));
         assert!(summary.contains("missing_start_here"));
         assert!(summary.contains(
-            "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json"
+            "ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json"
         ));
         assert!(summary.contains(".summary.start_here // \"not_available\""));
         assert!(
