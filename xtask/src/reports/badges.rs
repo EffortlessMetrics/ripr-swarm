@@ -60,7 +60,18 @@ pub(crate) fn badge_artifacts_impl() -> Result<(), String> {
     } else if limited {
         (BADGE_IDENTITY_LIMITED_PHASE, Vec::new())
     } else {
-        (BADGE_IDENTITY_COMPLETE_PHASE, badge_output_identities())
+        // A missing or unreadable output file must not silently shrink the
+        // digest set: an incomplete attestation is a failed receipt, named
+        // on stderr, never a complete one.
+        match badge_output_identities() {
+            Ok(outputs) => (BADGE_IDENTITY_COMPLETE_PHASE, outputs),
+            Err(error) => {
+                eprintln!(
+                    "xtask: badge output identity incomplete; recording the receipt as failed, not complete: {error}"
+                );
+                (BADGE_IDENTITY_FAILED_PHASE, Vec::new())
+            }
+        }
     };
     let receipt = write_badge_input_identity(&input, phase, &outputs);
     outcome.and(receipt)
@@ -231,12 +242,15 @@ pub(crate) fn write_badge_input_identity(
     write_report("badge-artifacts-identity.json", &format!("{json}\n"))
 }
 
-fn badge_output_identities() -> Vec<BadgeOutputIdentity> {
+fn badge_output_identities() -> Result<Vec<BadgeOutputIdentity>, String> {
+    let reports = reports_dir();
     badge_artifact_jobs()
         .into_iter()
-        .filter_map(|job| {
-            let bytes = fs::read(reports_dir().join(job.output_file)).ok()?;
-            Some(BadgeOutputIdentity {
+        .map(|job| {
+            let bytes = fs::read(reports.join(job.output_file)).map_err(|error| {
+                format!("badge output {} is unreadable: {error}", job.output_file)
+            })?;
+            Ok(BadgeOutputIdentity {
                 format: job.format,
                 file: job.output_file,
                 sha256: sha256_hex(&bytes),
