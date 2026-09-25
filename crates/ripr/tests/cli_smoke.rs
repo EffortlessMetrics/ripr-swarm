@@ -4769,7 +4769,11 @@ fn agent_repair_operational_error_after_attempt_selection_stays_failure()
     let (attempt_id, manifest) = sole_repair_attempt(&root)?;
     let packet_rel = manifest["artifacts"]
         .as_array()
-        .and_then(|artifacts| artifacts.iter().find(|artifact| artifact["role"] == "agent_packet"))
+        .and_then(|artifacts| {
+            artifacts
+                .iter()
+                .find(|artifact| artifact["role"] == "agent_packet")
+        })
         .and_then(|artifact| artifact["path"].as_str())
         .ok_or("attempt manifest has no agent_packet artifact")?;
     std::fs::remove_file(root.join(packet_rel))?;
