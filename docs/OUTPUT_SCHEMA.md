@@ -6678,9 +6678,10 @@ Field contract:
   verify 0.3 document, which would leave two documents sharing one
   `schema_version` with different shapes depending on the invocation path.
 - `kind` - always `"repair_after_result"`.
-- `verify` - the agent verify `0.3` document exactly as `ripr agent verify
-  --json` rendered it: every verify field keeps its name and value, including
-  the verify outcome's own top-level `status`. Consumers must read the verify
+- `verify` - the agent verify `0.3` document: every verify field keeps its
+  name and value, including the verify outcome's own top-level `status`
+  (keys are re-serialized in sorted order, so bytes may differ from a direct
+  `ripr agent verify --json` capture even though every field is identical). Consumers must read the verify
   outcome under `verify`, not at the envelope top level.
 - `agent_status` - what `ripr agent status --json` prints at this point (agent
   status `0.1`), embedded beside the verify document because the verify

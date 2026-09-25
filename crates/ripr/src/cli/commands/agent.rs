@@ -744,11 +744,12 @@ fn run_agent_repair_phase(
 
             // Stdout carries exactly one JSON document on every path, like
             // every other agent command. The verify outcome is held until the
-            // tail below settles: on success the single document is the verify
-            // result with the status report embedded; when the tail refuses,
-            // the verify document alone is printed — the refusal bytes this
-            // phase always produced, and still one document an orchestrator
-            // can parse with one JSON.parse call.
+            // tail below settles: on success the single document is the
+            // repair-after-result envelope carrying the verify result under
+            // `verify` and the status report under `agent_status`; when the
+            // tail refuses, the verify document alone is printed — the
+            // refusal bytes this phase always produced, and still one document
+            // an orchestrator can parse with one JSON.parse call.
             let after_tail = || -> Result<String, String> {
                 use crate::app::python_repair_binding::{
                     confirm_manifest_unchanged, write_apply_record,
