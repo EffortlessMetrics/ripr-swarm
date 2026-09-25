@@ -1194,7 +1194,7 @@ JSON fields:
   `typescript_preview_card.repair_packet_ready == true` (i.e., the full RIPR-SPEC-0087
   contract is satisfied). It is an advisory repair-work packet projected via the shared
   renderer from the GapRecord computed by `typescript_gap_record_for`. It carries
-  `schema_version` (`"0.3"`), `source` (`"typescript_preview_projection"`),
+  `schema_version` (`"0.4"`), `source` (`"typescript_preview_projection"`),
   `gap_id`, `canonical_gap_id`, `language`, `language_status` (`"preview"`),
   `authority_boundary` (`"preview_advisory_only"`), optional `file`, optional `line`,
   optional `owner`, `verify_command`, optional `receipt_command`, `allowed_edit_surface[]`,
