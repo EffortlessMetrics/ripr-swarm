@@ -271,14 +271,19 @@ fn ts_observed_local_aliases_owner(
     let ident = observed.trim();
     let ident_bytes = ident.as_bytes();
     let ident_is_bare = !ident_bytes.is_empty()
-        && (ident_bytes[0].is_ascii_alphabetic() || ident_bytes[0] == b'_' || ident_bytes[0] == b'$')
+        && (ident_bytes[0].is_ascii_alphabetic()
+            || ident_bytes[0] == b'_'
+            || ident_bytes[0] == b'$')
         && ident_bytes.iter().all(|&b| is_ident_byte(b));
     if !ident_is_bare {
         return false;
     }
     let body = test_body.as_bytes();
     let mut search_from = 0;
-    while let Some(pos) = test_body.get(search_from..).and_then(|rest| rest.find(ident)) {
+    while let Some(pos) = test_body
+        .get(search_from..)
+        .and_then(|rest| rest.find(ident))
+    {
         let abs = search_from + pos;
         let before_ok = abs == 0 || !is_ident_byte(body[abs - 1]);
         let after = abs + ident.len();
