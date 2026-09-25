@@ -989,7 +989,7 @@ fn run_agent_repair_phase(
 
                 Ok(status_rendered)
             };
-            let status_rendered = match after_tail(&mut refusal) {
+            let status_rendered = match after_tail(&mut *refusal) {
                 Ok(status_rendered) => status_rendered,
                 Err(error) => {
                     print!("{rendered_verify}");
