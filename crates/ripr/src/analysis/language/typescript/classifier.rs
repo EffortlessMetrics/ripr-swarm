@@ -436,7 +436,7 @@ fn receiver_before_dot(before_match: &str) -> String {
     without_dot
         .chars()
         .rev()
-        .take_while(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
