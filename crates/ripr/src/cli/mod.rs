@@ -401,7 +401,9 @@ mod tests {
     fn run_dispatches_doctor_root_parse_errors() {
         assert_eq!(
             run(args(&["ripr", "doctor", "--root"])),
-            Err(CommandError::Failure("missing value for --root".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --root".to_string()
+            ))
         );
     }
 
@@ -409,7 +411,9 @@ mod tests {
     fn run_dispatches_init_parse_errors() {
         assert_eq!(
             run(args(&["ripr", "init", "--root"])),
-            Err(CommandError::Failure("missing value for --root".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --root".to_string()
+            ))
         );
     }
 
@@ -450,15 +454,21 @@ mod tests {
         );
         assert_eq!(
             run(args(&["ripr", "first-pr", "--gap-ledger"])),
-            Err(CommandError::Failure("missing value for --gap-ledger".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --gap-ledger".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "start-here", "--gap-ledger"])),
-            Err(CommandError::Failure("missing value for --gap-ledger".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --gap-ledger".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "first-action", "--assistant-proof"])),
-            Err(CommandError::Failure("missing value for --assistant-proof".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --assistant-proof".to_string()
+            ))
         );
     }
 
@@ -466,7 +476,13 @@ mod tests {
     fn command_error_exit_codes_distinguish_failure_from_decision() {
         assert_eq!(CommandError::Failure("usage".to_string()).exit_code(), 2);
         assert_eq!(CommandError::Decision("blocked".to_string()).exit_code(), 3);
-        assert_eq!(CommandError::Decision("blocked".to_string()).message(), "blocked");
-        assert_eq!(format!("{}", CommandError::Failure("usage".to_string())), "usage");
+        assert_eq!(
+            CommandError::Decision("blocked".to_string()).message(),
+            "blocked"
+        );
+        assert_eq!(
+            format!("{}", CommandError::Failure("usage".to_string())),
+            "usage"
+        );
     }
 }

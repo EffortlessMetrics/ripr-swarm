@@ -31,9 +31,7 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
         CliCommand::Zero(args) => commands::zero(&args).map_err(CommandError::from),
         CliCommand::Policy(args) => commands::policy(&args).map_err(CommandError::from),
         CliCommand::PrLedger(args) => commands::pr_ledger(&args).map_err(CommandError::from),
-        CliCommand::PrComments(args) => {
-            commands::pr_comments(&args).map_err(CommandError::from)
-        }
+        CliCommand::PrComments(args) => commands::pr_comments(&args).map_err(CommandError::from),
         CliCommand::PrReview(args) => commands::pr_review(&args).map_err(CommandError::from),
         CliCommand::CoverageGrip(args) => {
             commands::coverage_grip(&args).map_err(CommandError::from)
@@ -104,15 +102,21 @@ mod tests {
         );
         assert_eq!(
             execute(CliCommand::Doctor(args(&["--root"]))),
-            Err(CommandError::Failure("missing value for --root".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --root".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::Init(args(&["--root"]))),
-            Err(CommandError::Failure("missing value for --root".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --root".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::Config(args(&["validate", "--root"]))),
-            Err(CommandError::Failure("missing value for --root".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --root".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::Policy(args(&["unknown"]))),
@@ -129,15 +133,21 @@ mod tests {
         );
         assert_eq!(
             execute(CliCommand::Outcome(args(&["--format", "xml"]))),
-            Err(CommandError::Failure("unknown outcome format \"xml\"".to_string()))
+            Err(CommandError::Failure(
+                "unknown outcome format \"xml\"".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::EvidenceHealth(args(&["--root"]))),
-            Err(CommandError::Failure("missing value for --root".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --root".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::ReviewComments(args(&["--base"]))),
-            Err(CommandError::Failure("missing value for --base".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --base".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::Gate(args(&["evaluate", "--mode", "strict"]))),
@@ -145,46 +155,66 @@ mod tests {
         );
         assert_eq!(
             execute(CliCommand::Baseline(args(&["create", "--from"]))),
-            Err(CommandError::Failure("missing value for --from".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --from".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::Zero(args(&["status", "--delta"]))),
-            Err(CommandError::Failure("missing value for --delta".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --delta".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::PrLedger(args(&["record", "--pr-number"]))),
-            Err(CommandError::Failure("missing value for --pr-number".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --pr-number".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::PrComments(args(&["plan", "--mode"]))),
-            Err(CommandError::Failure("missing value for --mode".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --mode".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::PrReview(args(&[
                 "front-panel",
                 "--first-action"
             ]))),
-            Err(CommandError::Failure("missing value for --first-action".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --first-action".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::CoverageGrip(args(&["frontier", "--ledger"]))),
-            Err(CommandError::Failure("missing value for --ledger".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --ledger".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::AssistantLoop(args(&["proof", "--pr-guidance"]))),
-            Err(CommandError::Failure("missing value for --pr-guidance".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --pr-guidance".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::FirstPr(args(&["--gap-ledger"]))),
-            Err(CommandError::Failure("missing value for --gap-ledger".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --gap-ledger".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::FirstAction(args(&["--pr-guidance"]))),
-            Err(CommandError::Failure("missing value for --pr-guidance".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --pr-guidance".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::Reports(args(&["index", "--reports-dir"]))),
-            Err(CommandError::Failure("missing value for --reports-dir".to_string()))
+            Err(CommandError::Failure(
+                "missing value for --reports-dir".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::Calibrate(args(&[
@@ -192,7 +222,9 @@ mod tests {
                 "--format",
                 "xml"
             ]))),
-            Err(CommandError::Failure("unknown calibrate format \"xml\"".to_string()))
+            Err(CommandError::Failure(
+                "unknown calibrate format \"xml\"".to_string()
+            ))
         );
         assert_eq!(
             execute(CliCommand::Receipt(args(&["unknown"]))),
