@@ -4832,8 +4832,7 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
 /// `gap_state: static_limitation` with empty missing fields, so this would be
 /// a wrong actionable signal built from a deliberately excluded test).
 #[test]
-fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit()
--> Result<(), String> {
+fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> Result<(), String> {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
     let stamp = SystemTime::now()
