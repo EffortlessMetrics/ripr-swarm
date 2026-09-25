@@ -4228,10 +4228,7 @@ fn analyze_diff_dedups_colliding_probe_ids_for_identical_added_lines() -> Result
     );
     let first = &result.findings[0];
     let second = &result.findings[1];
-    assert_eq!(
-        first.probe.location.line, 2,
-        "findings stay in diff order"
-    );
+    assert_eq!(first.probe.location.line, 2, "findings stay in diff order");
     assert_eq!(second.probe.location.line, 5);
     assert_ne!(
         first.id, second.id,
