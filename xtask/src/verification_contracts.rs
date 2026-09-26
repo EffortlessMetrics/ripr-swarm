@@ -16,6 +16,66 @@ const RIPR_SCHEMA_PREFIX: &str = "schemas/ripr/";
 /// parked in `schemas/` declare itself in the audit rather than slip past.
 const SCHEMA_FILE_SUFFIX: &str = ".json";
 
+// Each published RIPR schema has one producer/version authority. Keep this
+// inventory exhaustive: a newly published schema needs an explicit owner.
+const VERSION_AUTHORITIES: &[(&str, &str, &str)] = &[
+    (
+        "check",
+        "crates/ripr/src/app.rs",
+        "const CHECK_OUTPUT_SCHEMA_VERSION: &str = \"",
+    ),
+    (
+        "gate-decision",
+        "crates/ripr/src/output/gate.rs",
+        "const SCHEMA_VERSION: &str = \"",
+    ),
+    (
+        "pr-evidence",
+        "xtask/src/reports/pr_evidence.rs",
+        "\"schema_version\": \"",
+    ),
+    (
+        "repair-assurance",
+        "crates/ripr/src/domain/verification_result.rs",
+        "pub const VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION: &str = \"",
+    ),
+    (
+        "repair-attempt",
+        "crates/ripr/src/app/repair_attempt.rs",
+        "const REPAIR_ATTEMPT_SCHEMA_VERSION: &str = \"",
+    ),
+    (
+        "review-comments",
+        "crates/ripr/src/output/review_comments.rs",
+        "const REVIEW_COMMENTS_SCHEMA_VERSION: &str = \"",
+    ),
+    (
+        "ripr-agent-capability",
+        "crates/ripr/src/lsp/agent_protocol.rs",
+        "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+    ),
+    (
+        "ripr-agent-error",
+        "crates/ripr/src/lsp/agent_protocol.rs",
+        "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+    ),
+    (
+        "ripr-agent-request",
+        "crates/ripr/src/lsp/agent_protocol.rs",
+        "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+    ),
+    (
+        "ripr-agent-success",
+        "crates/ripr/src/lsp/agent_protocol.rs",
+        "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+    ),
+    (
+        "rust-repair-trust-corpus",
+        "xtask/src/reports/rust_repair_trust.rs",
+        "get(\"schema_version\").and_then(Value::as_str) == Some(\"",
+    ),
+];
+
 /// Which value inside `fixture_path` a contract validates.
 ///
 /// A published schema is not always the shape of a whole file. Some producer
@@ -409,13 +469,40 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         }
     }
 
-    // Reverse-direction check: every schemas/ripr/*.schema.json must define a
-    // schema_version property with a const value. This is the first
-    // enforcement step toward #1720 (per-output version reconciliation).
+    let version_doc = read_text(root.join("docs/OUTPUT_SCHEMA.md"))?;
+    // Audit the disk inventory in both directions, then compare the producer,
+    // published schema, and the consumer-facing version table for each row.
+    let mut registered = BTreeSet::new();
+    for (name, source_path, prefix) in VERSION_AUTHORITIES {
+        if !registered.insert(*name) {
+            violations.push(format!("duplicate schema version authority: {name}"));
+        }
+        let schema_path = format!("schemas/ripr/{name}.schema.json");
+        if !published_schemas.contains(&schema_path) {
+            violations.push(format!("{schema_path} has an authority but is not published"));
+            continue;
+        }
+        let schema = read_json(root.join(&schema_path))?;
+        let pinned = schema.pointer("/properties/schema_version/const").and_then(Value::as_str);
+        let source = read_text(root.join(source_path))?;
+        if let Some(violation) = version_mismatch(
+            &schema_path, pinned, source_path, &source, prefix, &version_doc,
+        ) {
+            violations.push(violation);
+        }
+    }
+    // Reverse-direction check: every published RIPR schema declares a pinned
+    // version and has exactly one reconciled authority.
     for rel_str in published_schemas
         .iter()
         .filter(|path| path.starts_with(RIPR_SCHEMA_PREFIX))
     {
+        let name = rel_str
+            .strip_prefix(RIPR_SCHEMA_PREFIX)
+            .and_then(|name| name.strip_suffix(".schema.json"));
+        if !name.is_some_and(|name| registered.contains(name)) {
+            violations.push(format!("{rel_str} has no registered version authority"));
+        }
         let schema = read_json(root.join(rel_str))?;
         let props = schema.get("properties").and_then(Value::as_object);
         let Some(props) = props else {
@@ -452,6 +539,36 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
                 .map(|violation| format!("- {violation}"))
                 .collect::<Vec<_>>()
                 .join("\n")
+        ))
+    }
+}
+
+fn version_mismatch(
+    schema_path: &str,
+    pinned: Option<&str>,
+    source_path: &str,
+    source: &str,
+    prefix: &str,
+    version_doc: &str,
+) -> Option<String> {
+    let producer = source
+        .split_once(prefix)
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(version, _)| version);
+    let doc_row_prefix = format!("| `{schema_path}` | `");
+    let documented = version_doc
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix(&doc_row_prefix)?
+                .split_once('`')
+                .map(|(version, _)| version)
+        })
+        .collect::<Vec<_>>();
+    if pinned == producer && documented.len() == 1 && documented[0] == pinned.unwrap_or("") {
+        None
+    } else {
+        Some(format!(
+            "{schema_path} version mismatch: schema={pinned:?}, {source_path}={producer:?}, docs/OUTPUT_SCHEMA.md={documented:?}"
         ))
     }
 }
@@ -1110,6 +1227,29 @@ fn compact_json(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_version_reconciliation_rejects_each_drift_and_missing_rows() {
+        let path = "schemas/ripr/example.schema.json";
+        let source_path = "producer.rs";
+        let prefix = "const VERSION: &str = \"";
+        let source = "const VERSION: &str = \"0.1\";";
+        let doc = "| `schemas/ripr/example.schema.json` | `0.1` | producer |";
+        let check = |pinned, source, doc| version_mismatch(path, pinned, source_path, source, prefix, doc);
+
+        assert!(check(Some("0.1"), source, doc).is_none());
+        assert!(check(Some("0.2"), source, doc).is_some());
+        assert!(check(Some("0.1"), "const VERSION: &str = \"0.2\";", doc).is_some());
+        assert!(check(
+            Some("0.1"),
+            source,
+            "| `schemas/ripr/example.schema.json` | `0.2` | producer |"
+        )
+        .is_some());
+        assert!(check(Some("0.1"), source, "").is_some());
+        assert!(check(Some("0.1"), source, &format!("{doc}\n{doc}")).is_some());
+        assert!(check(None, source, doc).is_some());
+    }
 
     #[test]
     fn published_schema_inventory_is_read_from_disk() -> Result<(), String> {
