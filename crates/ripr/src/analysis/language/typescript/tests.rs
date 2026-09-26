@@ -10399,9 +10399,61 @@ fn overcredit_4103_unrelated_destructure_blocks_direct_owner_call() -> Result<()
     Ok(())
 }
 
+/// #4103 shape 1 (anchor complement): a CommonJS test with NO recorded
+/// import whose body destructures the owner from the owner's module
+/// (`const { applyDiscount } = require("../src/pricing")` inside the test
+/// body) anchors the bare call itself — the import layer extracts only
+/// top-level statements, so the anchor must come from the body-local
+/// destructure and the finding must be a credited `DirectOwnerCall`, not
+/// the heuristic fallback. The unrelated-source control still refuses.
+#[test]
+fn overcredit_4103_body_local_owner_destructure_anchors_direct_owner_call() -> Result<(), String> {
+    let owner = priced_owner();
+
+    let mut commonjs = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    commonjs.body_text = "const { applyDiscount } = require(\"../src/pricing\");\n\
+                          expect(applyDiscount(100)).toBe(90);"
+        .to_string();
+    commonjs.imports_in_file = Vec::new();
+    assert_eq!(
+        owner_call_relation(&commonjs, &owner, &ReExportIndex::empty(), None, None),
+        Some(TypeScriptRelationKind::DirectOwnerCall),
+        "the body-local owner-module destructure must anchor the direct relation"
+    );
+    let finding = classify_pricing_line(&owner, "  return 0;", &[commonjs])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a body-local destructure from the owner's module anchors the bare call"
+    );
+
+    let mut foreign = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    foreign.body_text = "const { applyDiscount } = require(\"../src/factory\");\n\
+                         expect(applyDiscount(100)).toBe(90);"
+        .to_string();
+    foreign.imports_in_file = Vec::new();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[foreign])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a body-local destructure from an unrelated source must stay uncredited"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: direct_owner_call")),
+        "an unrelated destructure must not be credited as a direct owner call: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
 /// #4103 shapes 2/3: `jest.doMock(...)` and `describe`-nested `vi.mock(...)`
-/// are hoisted mock registrations the extractor must collect into
-/// `mocks_in_file`; with the owner module mocked the finding stays
+/// are mock registrations the extractor must collect into
+/// `mocks_in_file` (`doMock` itself is the non-hoisted variant — collecting
+/// it is the conservative owner-module mock treatment, not a hoisting
+/// claim); with the owner module mocked the finding stays
 /// `weakly_exposed` under the `mocked_module` static limit instead of
 /// promoting on fabricated evidence.
 #[test]
@@ -10488,6 +10540,68 @@ fn overcredit_4103_spy_fabrication_blocks_owner_credit_and_names_limitation() ->
         finding.class,
         ExposureClass::Exposed,
         "a bare call-through spyOn still observes the owner"
+    );
+    Ok(())
+}
+
+/// #4103 shape 4 (fabrication tied to the owner spy): a call-through owner
+/// spyOn plus an unrelated `logger.mockReturnValue(...)` must NOT refuse the
+/// owner relation — the mock does not fabricate the owner spy's value, so
+/// the limitation must stay silent and the anchored relation must survive.
+/// The same fabrication invoked on the variable bound to the owner spy still
+/// refuses and names `typescript_spy_fabricated_observer`.
+#[test]
+fn overcredit_4103_spy_fabrication_must_be_tied_to_owner_spy() -> Result<(), String> {
+    let owner = priced_owner();
+
+    let mut unrelated = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    unrelated.body_text = "const logger = getLogger();\n\
+                           logger.mockReturnValue(\"noise\");\n\
+                           const spy = vi.spyOn(pricing, 'applyDiscount');\n\
+                           expect(applyDiscount(100)).toBe(90);"
+        .to_string();
+    assert_eq!(
+        owner_call_relation(&unrelated, &owner, &ReExportIndex::empty(), None, None),
+        Some(TypeScriptRelationKind::DirectOwnerCall),
+        "the anchored owner relation must survive an unrelated mock"
+    );
+    let finding = classify_pricing_line(&owner, "  return 0;", &[unrelated])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "an unrelated mock must not refuse a call-through owner spy"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_spy_fabricated_observer")),
+        "an unrelated mock must not disclose the spy-fabrication limitation: {:?}",
+        finding.evidence
+    );
+
+    let mut bound = priced_test("applyDiscount", "applyDiscount(100)", "42");
+    bound.body_text = "const spy = vi.spyOn(pricing, 'applyDiscount');\n\
+                       spy.mockReturnValue(42);\n\
+                       expect(applyDiscount(100)).toBe(42);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[bound])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a fabrication on the bound owner spy observes the fabrication, not the changed sink"
+    );
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_spy_fabricated_observer",
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: direct_owner_call")),
+        "a fabricated owner spy must not be credited as a direct owner call: {:?}",
+        finding.evidence
     );
     Ok(())
 }

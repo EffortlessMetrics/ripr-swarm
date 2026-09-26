@@ -226,3 +226,37 @@ test.only("discount boundary", () => {
     );
     assert_eq!(candidates[0].test.name, "discount boundary");
 }
+
+/// A mock call chained after another call (`jest.mock("a").mock("b")`) must
+/// still record the owner-module registration: the chained callee's object
+/// is descended into, so the owner-module mock guard keeps applying. A plain
+/// member mock on an unrelated receiver is still not a runner mock call.
+#[test]
+fn collects_mock_chained_after_a_mock_call() {
+    let tests = extract_tests(
+        Path::new("tests/pricing.test.ts"),
+        r#"
+jest.mock("../src/pricing").mock("../src/other");
+unrelated.mock("../src/pricing");
+
+test("chained mock registration", () => {
+    expect(applyDiscount(100, 100)).toBe(90);
+});
+"#,
+    );
+    assert_eq!(tests.len(), 1);
+    assert!(
+        tests[0]
+            .mocks_in_file
+            .iter()
+            .any(|mock| mock == "../src/pricing"),
+        "a registration chained after jest.mock(...) must be collected, got {:?}",
+        tests[0].mocks_in_file
+    );
+    assert_eq!(
+        tests[0].mocks_in_file.len(),
+        1,
+        "the chained ../src/other argument and the unrelated receiver mock are not runner mock registrations, got {:?}",
+        tests[0].mocks_in_file
+    );
+}

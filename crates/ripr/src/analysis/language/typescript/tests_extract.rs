@@ -46,11 +46,11 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
 }
 
 /// Walk a list of statements and collect every syntactic
-/// `vi.mock("path")` / `jest.mock("path")` (and the `doMock` hoisted variants)
-/// argument we see, at ANY statement depth the runners hoist through —
-/// including `describe(...)` callback bodies, where both Jest and Vitest
-/// legally allow `mock`/`doMock` calls. The list is deduplicated and used by
-/// the classifier to surface the `mocked_module` static-limit per
+/// `vi.mock("path")` / `jest.mock("path")` (and the non-hoisted `doMock`
+/// variants) argument we see, at ANY statement depth the runners hoist
+/// through — including `describe(...)` callback bodies, where both Jest and
+/// Vitest legally allow `mock`/`doMock` calls. The list is deduplicated and
+/// used by the classifier to surface the `mocked_module` static-limit per
 /// RIPR-SPEC-0026.
 ///
 /// This is purely syntactic — the adapter does not resolve the mocked
@@ -132,16 +132,21 @@ fn collect_mock_paths(statements: &[Statement<'_>], out: &mut Vec<String>) {
 
 /// Collect a mock path from an expression: a direct `vi.mock("path")` /
 /// `jest.doMock("path")` call, or a call whose function arguments are
-/// callbacks to recurse into (so a describe-scoped mock is found).
+/// callbacks to recurse into (so a describe-scoped mock is found). A mock
+/// call chained after another call (`jest.mock("a").mock("b")`) is found by
+/// descending into a `StaticMemberExpression` callee's object, so chained
+/// registrations stay under the owner-module mock guard.
 fn collect_mock_path_from_expression(expression: &Expression<'_>, out: &mut Vec<String>) {
     let Expression::CallExpression(call) = expression else {
         return;
     };
-    if let Some(path) = mock_path_from_call(call) {
-        if !out.iter().any(|existing| existing == &path) {
-            out.push(path);
-        }
-        return;
+    if let Some(path) = mock_path_from_call(call)
+        && !out.iter().any(|existing| existing == &path)
+    {
+        out.push(path);
+    }
+    if let Expression::StaticMemberExpression(member) = &call.callee {
+        collect_mock_path_from_expression(&member.object, out);
     }
     for argument in &call.arguments {
         match argument {
@@ -160,9 +165,10 @@ fn collect_mock_path_from_expression(expression: &Expression<'_>, out: &mut Vec<
 
 /// Extract the mocked module path from a `vi.mock("path")` /
 /// `jest.mock("path")` / `vi.doMock("path")` / `jest.doMock("path")` call.
-/// `doMock` is the hoisted-within-the-current-context variant both runners
-/// expose; the owner-module mock guard must treat it exactly like `mock`
-/// (#4103 shape 2).
+/// `doMock` is the non-hoisted variant both runners expose (it affects only
+/// modules loaded after the call); the adapter cannot prove the observed
+/// call reaches the real module, so the owner-module mock guard treats it
+/// exactly like `mock` (#4103 shape 2).
 fn mock_path_from_call(call: &oxc_ast::ast::CallExpression<'_>) -> Option<String> {
     let Expression::StaticMemberExpression(member) = &call.callee else {
         return None;

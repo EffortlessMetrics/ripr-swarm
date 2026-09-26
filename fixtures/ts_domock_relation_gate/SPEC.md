@@ -6,11 +6,15 @@ Spec: RIPR-SPEC-0026
 
 A TypeScript owner `applyDiscount(amount, threshold)` changes its predicate
 boundary (`amount > threshold` becomes `amount >= threshold`). The related
-test registers `jest.doMock("../src/pricing")` — the hoisted mock variant
-both Jest and Vitest support (issue #4103 shape 2). Without collecting
-`doMock` registrations, the extractor would miss the owner-module mock and
-the exact-value assertion on the mocked call would be credited as real
-boundary evidence.
+test registers `jest.doMock("../src/pricing")` — the non-hoisted mock
+variant both Jest and Vitest support (issue #4103 shape 2). Unlike `mock`,
+`doMock` does not hoist: it affects only modules loaded after the call, so
+the file's static `import` of the owner still executes the real code. The
+adapter cannot statically prove which module instance the observed call
+reaches, so collecting the registration and refusing owner-call credit is
+the conservative treatment; without collecting `doMock` registrations the
+extractor would miss the owner-module mock registration entirely and the
+exact-value assertion would be credited as real boundary evidence.
 
 The fixture workspace enables the TypeScript preview adapter via
 `ripr.toml`:
@@ -35,8 +39,10 @@ The TypeScript preview adapter:
 
 - collects the `jest.doMock("../src/pricing")` registration into
   `mocks_in_file` like a `jest.mock(...)` call,
-- refuses the trusted owner-call relation (the owner module is mocked, so
-  the call executes the mock, not the changed code),
+- refuses the trusted owner-call relation (a `doMock` registration of the
+  owner module is conservatively refused evidence: the adapter cannot prove
+  the observed call executes the changed code rather than a mocked
+  module instance loaded after the registration),
 - surfaces the `mocked_module` static limit with the named limitation
   `typescript_mock_only_observer`,
 - keeps the finding `weakly_exposed` and advisory.
