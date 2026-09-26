@@ -824,8 +824,7 @@ mod tests {
         let canonical = repository_root()?;
         let scratch = scratch(&canonical, "executed-diff-prefixes")?;
         let root = scratch.0.join("repo");
-        let (base, _head, _tree, baseline_identity) =
-            super::materialize_diff_fixture(&root)?;
+        let (base, _head, _tree, baseline_identity) = super::materialize_diff_fixture(&root)?;
 
         super::git(&root, &["config", "diff.noprefix", "true"], &[])?;
         let range = format!("{base}...HEAD");
