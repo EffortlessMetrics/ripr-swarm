@@ -374,7 +374,7 @@ fn canonicalize_with_missing_tail(path: &Path) -> Option<PathBuf> {
     }
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
+pub(super) fn normalize_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
