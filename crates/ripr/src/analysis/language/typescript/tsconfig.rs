@@ -694,7 +694,9 @@ mod tests {
 
         let map = load_alias_map(&root).ok_or("should parse")?;
         assert!(!map.base_url_absolute());
-        let resolved = map.resolve("@/owner").ok_or("relative baseUrl must still resolve")?;
+        let resolved = map
+            .resolve("@/owner")
+            .ok_or("relative baseUrl must still resolve")?;
         let resolved_str = resolved.to_string_lossy().replace('\\', "/");
         assert_eq!(resolved_str, "src/owner.ts");
         Ok(())

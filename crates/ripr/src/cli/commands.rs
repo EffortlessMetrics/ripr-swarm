@@ -734,8 +734,7 @@ fn typescript_limitations(args: &[String]) -> Result<(), String> {
     // An unreadable check output means the command could not complete:
     // surface the read failure (exit 2 per docs/EXIT_CODES.md) instead of
     // writing a `blocked` report and exiting 0 as if the run succeeded.
-    let check_output_json =
-        read_optional_text_for_report("check output", &options.check_output)?;
+    let check_output_json = read_optional_text_for_report("check output", &options.check_output)?;
     let input = output::typescript_limitations::TypeScriptLimitationLeaderboardInput {
         root: options.root,
         generated_at: typescript_limitations_generated_at()?,
@@ -760,10 +759,8 @@ fn typescript_false_actionable(args: &[String]) -> Result<(), String> {
     // An unreadable corpus means the command could not complete: surface the
     // read failure (exit 2 per docs/EXIT_CODES.md) instead of writing a
     // `blocked` report and exiting 0 as if the run succeeded.
-    let corpus_json = read_optional_text_for_report(
-        "TypeScript false-actionable audit corpus",
-        &options.corpus,
-    )?;
+    let corpus_json =
+        read_optional_text_for_report("TypeScript false-actionable audit corpus", &options.corpus)?;
     let input = output::typescript_false_actionable::TypeScriptFalseActionableAuditInput {
         root: options.root,
         generated_at: typescript_false_actionable_generated_at()?,
@@ -4080,8 +4077,8 @@ mod tests {
         // not complete: the CLI must return the read error (exit 2 at the
         // process boundary) instead of writing a `blocked` report and
         // exiting 0.
-        let missing = unique_command_test_dir("ts-limitations-missing")
-            .join("definitely-missing-check.json");
+        let missing =
+            unique_command_test_dir("ts-limitations-missing").join("definitely-missing-check.json");
         let result = reports(&args(&[
             "ts-limitations",
             "--check-output",
@@ -4168,9 +4165,9 @@ mod tests {
             "--corpus",
             &missing.display().to_string(),
         ]));
-        let err = result.err().unwrap_or_else(|| {
-            panic!("unreadable corpus must fail closed, not exit cleanly")
-        });
+        let err = result
+            .err()
+            .unwrap_or_else(|| panic!("unreadable corpus must fail closed, not exit cleanly"));
         assert!(
             err.contains("read TypeScript false-actionable audit corpus") && err.contains("failed"),
             "error must name the unreadable input, got: {err}"
