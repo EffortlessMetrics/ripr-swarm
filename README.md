@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  ripr gives developers, reviewers, and coding agents one bounded next test to
-  write, the command that verifies it, and a before/after receipt—without
-  running mutation testing.
+  ripr turns a changed behavior into one bounded next test when the static
+  evidence earns one—or an explicit reason it cannot—plus the verification
+  route and before/after receipt, without running mutation testing.
 </p>
 
 <p align="center">
@@ -51,8 +51,8 @@ start with **ripr: Show Status**. The extension manages its server; a separate
 
 ## Repair one gap
 
-For guided repository adoption, let `pilot` choose one current, repair-ready
-work item:
+For guided repository adoption, ask `pilot` to select one current work item when
+a repair-ready route exists:
 
 ```bash
 ripr pilot --root .
