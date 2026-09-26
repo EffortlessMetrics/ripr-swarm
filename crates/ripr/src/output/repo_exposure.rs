@@ -54,6 +54,36 @@ impl TsFullRepoGuidance {
          yet modeled (named limitation).";
 }
 
+/// Disclosure emitted when a workspace with Python source is scanned in a
+/// repo-scoped seam format (`repo-exposure-*`, and the sibling seam/badge
+/// formats) that renders the Rust/Perl seam inventory only.
+///
+/// Python repo-mode runs produce native preview-tier evidence (findings,
+/// per-language file counts, and `language_runs` partial-run disclosure on
+/// the shared repo analysis result), but these renderers reconstruct no
+/// Python semantics, so a Python-only workspace renders zero seams. Without
+/// this named disclosure, the user receives a silent empty result that can
+/// be misread as a clean scan. Like the TypeScript `typescript_diff_first`
+/// entry, this is a named limitation only — it never fabricates Python
+/// seams or claims findings exist that the run did not produce.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PythonRepoEvidenceGuidance {
+    /// Number of Python files detected in the workspace.
+    pub(crate) python_file_count: usize,
+}
+
+impl PythonRepoEvidenceGuidance {
+    /// The stable machine-readable category string for this disclosure.
+    pub(crate) const CATEGORY: &'static str = "python_repo_evidence_not_rendered";
+
+    /// The human-readable repair route for this disclosure.
+    pub(crate) const REPAIR_ROUTE: &'static str = "Python repo-mode evidence is not \
+         rendered by the repo seam formats; read the shared repo analysis \
+         result (Python findings and language_runs disclosure) or run \
+         'ripr check --diff <file>' for diff-scoped Python exposure. \
+         (named limitation).";
+}
+
 pub(crate) const REPO_EXPOSURE_SCHEMA_VERSION: &str = "0.3";
 pub(crate) const REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION: &str = "0.1";
 
@@ -71,9 +101,12 @@ pub(crate) fn render_repo_exposure_json(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
+    py_guidance: Option<&PythonRepoEvidenceGuidance>,
 ) -> String {
     let mut bytes = Vec::new();
-    if write_repo_exposure_json(classified, limit_info, ts_guidance, &mut bytes).is_err() {
+    if write_repo_exposure_json(classified, limit_info, ts_guidance, py_guidance, &mut bytes)
+        .is_err()
+    {
         return String::new();
     }
     match String::from_utf8(bytes) {
@@ -92,9 +125,10 @@ pub(crate) fn write_repo_exposure_json<W: io::Write>(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
+    py_guidance: Option<&PythonRepoEvidenceGuidance>,
     out: &mut W,
 ) -> io::Result<()> {
-    write_repo_exposure_json_document(classified, limit_info, ts_guidance, None, out)
+    write_repo_exposure_json_document(classified, limit_info, ts_guidance, py_guidance, None, out)
 }
 
 /// Stream a producer-owned repo-exposure artifact with repository, revision,
@@ -105,6 +139,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
+    py_guidance: Option<&PythonRepoEvidenceGuidance>,
     context: &RepoExposureArtifactContext,
     out: &mut W,
 ) -> Result<(), String> {
@@ -114,6 +149,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         classified,
         limit_info,
         ts_guidance,
+        py_guidance,
         Some(&placeholder),
         &mut hasher,
     )
@@ -121,8 +157,15 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     let content_sha256 = hasher.finish();
     let mut metadata = placeholder;
     metadata["content_sha256"] = serde_json::Value::String(content_sha256);
-    write_repo_exposure_json_document(classified, limit_info, ts_guidance, Some(&metadata), out)
-        .map_err(|err| format!("write repo exposure JSON failed: {err}"))
+    write_repo_exposure_json_document(
+        classified,
+        limit_info,
+        ts_guidance,
+        py_guidance,
+        Some(&metadata),
+        out,
+    )
+    .map_err(|err| format!("write repo exposure JSON failed: {err}"))
 }
 
 /// Render a producer-owned repo-exposure artifact for non-streaming library
@@ -131,6 +174,7 @@ pub(crate) fn render_repo_exposure_json_with_context(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
+    py_guidance: Option<&PythonRepoEvidenceGuidance>,
     context: &RepoExposureArtifactContext,
 ) -> Result<String, String> {
     let mut bytes = Vec::new();
@@ -138,6 +182,7 @@ pub(crate) fn render_repo_exposure_json_with_context(
         classified,
         limit_info,
         ts_guidance,
+        py_guidance,
         context,
         &mut bytes,
     )?;
@@ -148,6 +193,7 @@ fn write_repo_exposure_json_document<W: io::Write>(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
+    py_guidance: Option<&PythonRepoEvidenceGuidance>,
     artifact: Option<&serde_json::Value>,
     out: &mut W,
 ) -> io::Result<()> {
@@ -168,10 +214,11 @@ fn write_repo_exposure_json_document<W: io::Write>(
     // run_status and limitations[]:
     //   - "complete" with no limitations array when nothing limits the run.
     //   - "seam_limit_applied" with a limitations entry when seam capping fires.
-    //   - "typescript_diff_first" guidance is an additive entry in limitations[]
-    //     that fires when a TS-predominant workspace returns zero seams; it does
-    //     not change run_status (the Rust scan itself completed normally).
-    let has_limitations = limit_info.is_some() || ts_guidance.is_some();
+    //   - "typescript_diff_first" / "python_repo_evidence_not_rendered" guidance
+    //     entries are additive entries in limitations[] that fire when a
+    //     preview-language workspace returns zero seams; they do not change
+    //     run_status (the Rust scan itself completed normally).
+    let has_limitations = limit_info.is_some() || ts_guidance.is_some() || py_guidance.is_some();
     match limit_info {
         None => {
             writeln!(out, "  \"run_status\": \"complete\",")?;
@@ -275,6 +322,33 @@ fn write_repo_exposure_json_document<W: io::Write>(
                 out,
                 "      \"repair_route\": \"{}\"",
                 json_escape(TsFullRepoGuidance::REPAIR_ROUTE)
+            )?;
+            writeln!(out, "    }}")?;
+            first = false;
+        }
+        if let Some(guidance) = py_guidance {
+            if !first {
+                writeln!(out, "    ,")?;
+            }
+            writeln!(out, "    {{")?;
+            writeln!(
+                out,
+                "      \"category\": \"{}\",",
+                PythonRepoEvidenceGuidance::CATEGORY
+            )?;
+            writeln!(
+                out,
+                "      \"python_file_count\": {},",
+                guidance.python_file_count
+            )?;
+            writeln!(
+                out,
+                "      \"evidence_channel\": \"repo_analysis_language_runs\","
+            )?;
+            writeln!(
+                out,
+                "      \"repair_route\": \"{}\"",
+                json_escape(PythonRepoEvidenceGuidance::REPAIR_ROUTE)
             )?;
             writeln!(out, "    }}")?;
         }
@@ -648,6 +722,7 @@ pub(crate) fn render_repo_exposure_md(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
+    py_guidance: Option<&PythonRepoEvidenceGuidance>,
 ) -> String {
     let metrics = ExposureMetrics::from(classified);
     let mut out = String::new();
@@ -673,7 +748,7 @@ pub(crate) fn render_repo_exposure_md(
         ));
     }
 
-    let has_limitations = limit_info.is_some() || ts_guidance.is_some();
+    let has_limitations = limit_info.is_some() || ts_guidance.is_some() || py_guidance.is_some();
     if has_limitations {
         out.push_str("\n## Limitations\n\n");
         // Seam-limit disclosure: emit only when a real cap fired.
@@ -702,6 +777,18 @@ pub(crate) fn render_repo_exposure_md(
             out.push_str(TsFullRepoGuidance::REPAIR_ROUTE);
             out.push('\n');
             push_typescript_readiness_md(&mut out, &guidance.readiness);
+        }
+        // Emit the Python repo-evidence disclosure the same way: before the
+        // empty-seams bail-out so a Python-only workspace never renders a
+        // bare silent zero.
+        if let Some(guidance) = py_guidance {
+            out.push_str(&format!(
+                "**{}** (python_file_count: {})\n\n",
+                PythonRepoEvidenceGuidance::CATEGORY,
+                guidance.python_file_count,
+            ));
+            out.push_str(PythonRepoEvidenceGuidance::REPAIR_ROUTE);
+            out.push('\n');
         }
     }
 
@@ -973,6 +1060,10 @@ mod tests {
         }
     }
 
+    fn py_guidance(python_file_count: usize) -> PythonRepoEvidenceGuidance {
+        PythonRepoEvidenceGuidance { python_file_count }
+    }
+
     fn classified_at(file: &str, owner: &str, line: usize, class: SeamGripClass) -> ClassifiedSeam {
         let seam = RepoSeam::new(
             file,
@@ -1032,7 +1123,7 @@ mod tests {
 
     #[test]
     fn json_carries_schema_version_scope_and_metrics() {
-        let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None);
+        let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None, None);
         for needle in [
             "\"schema_version\": \"0.3\"",
             "\"scope\": \"repo\"",
@@ -1052,7 +1143,7 @@ mod tests {
 
     #[test]
     fn json_carries_run_status_complete_when_no_limit_applied() {
-        let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None);
+        let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None, None);
         assert!(
             json.contains("\"run_status\": \"complete\""),
             "run_status complete missing in:\n{json}"
@@ -1071,7 +1162,8 @@ mod tests {
             total: 10,
             source: SeamLimitSource::Configured,
         };
-        let json = render_repo_exposure_json(&[weakly_gripped_classified()], Some(&info), None);
+        let json =
+            render_repo_exposure_json(&[weakly_gripped_classified()], Some(&info), None, None);
         assert!(
             json.contains("\"run_status\": \"seam_limit_applied\""),
             "run_status seam_limit_applied missing in:\n{json}"
@@ -1101,7 +1193,7 @@ mod tests {
     #[test]
     fn json_emits_ts_guidance_limitations_when_ts_workspace_and_empty_seams() {
         let guidance = ts_guidance(3);
-        let json = render_repo_exposure_json(&[], None, Some(&guidance));
+        let json = render_repo_exposure_json(&[], None, Some(&guidance), None);
         assert!(
             json.contains("\"limitations\""),
             "limitations block missing in:\n{json}"
@@ -1160,7 +1252,7 @@ mod tests {
             source: SeamLimitSource::Default,
         };
         let guidance = ts_guidance(2);
-        let json = render_repo_exposure_json(&[], Some(&info), Some(&guidance));
+        let json = render_repo_exposure_json(&[], Some(&info), Some(&guidance), None);
         assert!(
             json.contains("\"category\": \"repo_seam_limit_applied\""),
             "seam_limit category missing in:\n{json}"
@@ -1172,8 +1264,53 @@ mod tests {
     }
 
     #[test]
+    fn json_emits_python_guidance_limitations_when_python_workspace_and_empty_seams() {
+        let guidance = py_guidance(4);
+        let json = render_repo_exposure_json(&[], None, None, Some(&guidance));
+        assert!(
+            json.contains("\"limitations\""),
+            "limitations block missing in:\n{json}"
+        );
+        assert!(
+            json.contains("\"category\": \"python_repo_evidence_not_rendered\""),
+            "category python_repo_evidence_not_rendered missing in:\n{json}"
+        );
+        assert!(
+            json.contains("\"python_file_count\": 4"),
+            "python_file_count missing in:\n{json}"
+        );
+        assert!(
+            json.contains("language_runs"),
+            "evidence_channel repair route missing in:\n{json}"
+        );
+        // run_status must still be complete (the guidance does not change
+        // the Rust scan status, mirroring typescript_diff_first).
+        assert!(
+            json.contains("\"run_status\": \"complete\""),
+            "run_status complete missing in:\n{json}"
+        );
+        // seams array must be empty — no fabricated Python seams.
+        assert!(json.contains("\"seams\": []"), "seams not empty:\n{json}");
+    }
+
+    #[test]
+    fn json_emits_python_guidance_alongside_ts_guidance_when_both_apply() {
+        let ts = ts_guidance(2);
+        let py = py_guidance(3);
+        let json = render_repo_exposure_json(&[], None, Some(&ts), Some(&py));
+        assert!(
+            json.contains("\"category\": \"typescript_diff_first\""),
+            "ts_guidance category missing in:\n{json}"
+        );
+        assert!(
+            json.contains("\"category\": \"python_repo_evidence_not_rendered\""),
+            "py_guidance category missing in:\n{json}"
+        );
+    }
+
+    #[test]
     fn json_carries_full_classified_record() {
-        let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None);
+        let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None, None);
         for needle in [
             "\"seam_id\":",
             "\"kind\": \"predicate_boundary\"",
@@ -1203,7 +1340,7 @@ mod tests {
 
     #[test]
     fn json_emits_empty_seams_array_when_inventory_is_empty() {
-        let json = render_repo_exposure_json(&[], None, None);
+        let json = render_repo_exposure_json(&[], None, None, None);
         assert!(json.contains("\"seams\": []"));
         assert!(json.contains("\"seams_total\": 0"));
     }
@@ -1289,7 +1426,7 @@ mod tests {
 
     #[test]
     fn markdown_renders_summary_table_and_top_gaps() {
-        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None);
+        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None, None);
         assert!(md.contains("# ripr repo exposure report"));
         assert!(md.contains("## Summary"));
         assert!(md.contains("| seams_total | 1 |"));
@@ -1302,7 +1439,7 @@ mod tests {
 
     #[test]
     fn markdown_explains_when_inventory_is_empty() {
-        let md = render_repo_exposure_md(&[], None, None);
+        let md = render_repo_exposure_md(&[], None, None, None);
         assert!(md.contains("repo seam inventory is empty"));
     }
 
@@ -1312,7 +1449,7 @@ mod tests {
         // the Top gaps section empty.
         let mut entry = weakly_gripped_classified();
         entry.class = SeamGripClass::StronglyGripped;
-        let md = render_repo_exposure_md(&[entry], None, None);
+        let md = render_repo_exposure_md(&[entry], None, None, None);
         assert!(md.contains("No headline-eligible seams"));
     }
 
@@ -1320,7 +1457,7 @@ mod tests {
     fn markdown_uses_static_exposure_vocabulary() {
         // Pin seam evidence framing strings; the repo-wide
         // check-static-language gate enforces forbidden-token absence.
-        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None);
+        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None, None);
         assert!(md.contains("ripr repo exposure report"));
         assert!(md.contains("Runtime confirmation"));
         assert!(md.contains("cargo-mutants"));
@@ -1329,7 +1466,7 @@ mod tests {
     #[test]
     fn markdown_emits_ts_guidance_section_when_ts_workspace_and_empty_seams() {
         let guidance = ts_guidance(5);
-        let md = render_repo_exposure_md(&[], None, Some(&guidance));
+        let md = render_repo_exposure_md(&[], None, Some(&guidance), None);
         assert!(
             md.contains("typescript_diff_first"),
             "guidance category missing in:\n{md}"
@@ -1373,9 +1510,42 @@ mod tests {
     #[test]
     fn markdown_does_not_emit_ts_guidance_when_rust_seams_present() {
         // When seams exist (Rust workspace), guidance must not fire.
-        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None);
+        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None, None);
         assert!(
             !md.contains("typescript_diff_first"),
+            "guidance must not appear for Rust workspace: {md}"
+        );
+    }
+
+    #[test]
+    fn markdown_emits_python_guidance_section_when_python_workspace_and_empty_seams() {
+        let guidance = py_guidance(5);
+        let md = render_repo_exposure_md(&[], None, None, Some(&guidance));
+        assert!(
+            md.contains("python_repo_evidence_not_rendered"),
+            "guidance category missing in:\n{md}"
+        );
+        assert!(
+            md.contains("python_file_count: 5"),
+            "python file count missing in:\n{md}"
+        );
+        assert!(
+            md.contains("language_runs"),
+            "evidence channel repair route missing in:\n{md}"
+        );
+        // Must also contain the empty seams message.
+        assert!(
+            md.contains("repo seam inventory is empty"),
+            "empty seam message missing in:\n{md}"
+        );
+    }
+
+    #[test]
+    fn markdown_does_not_emit_python_guidance_when_rust_seams_present() {
+        // When seams exist (Rust workspace), guidance must not fire.
+        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None, None);
+        assert!(
+            !md.contains("python_repo_evidence_not_rendered"),
             "guidance must not appear for Rust workspace: {md}"
         );
     }
@@ -1388,7 +1558,7 @@ mod tests {
             total: 1000,
             source: SeamLimitSource::Default,
         };
-        let md = render_repo_exposure_md(&[weakly_gripped_classified()], Some(&info), None);
+        let md = render_repo_exposure_md(&[weakly_gripped_classified()], Some(&info), None, None);
         assert!(
             md.contains("Partial scan"),
             "partial scan disclosure missing in:\n{md}"
@@ -1414,7 +1584,7 @@ mod tests {
     #[test]
     fn markdown_does_not_disclose_seam_limit_when_no_cap_fires() {
         // Fail-closed: no limit_info → no partial-scan line.
-        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None);
+        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None, None);
         assert!(
             !md.contains("Partial scan"),
             "partial scan must not appear without a real cap: {md}"
@@ -1433,7 +1603,7 @@ mod tests {
             total: 500,
             source: SeamLimitSource::Configured,
         };
-        let md = render_repo_exposure_md(&[], Some(&info), None);
+        let md = render_repo_exposure_md(&[], Some(&info), None, None);
         assert!(
             md.contains("Partial scan"),
             "partial scan disclosure missing in:\n{md}"
@@ -1450,7 +1620,7 @@ mod tests {
         // Both JSON and Markdown emit the relation_reason +
         // relation_confidence fields per related test. Pinned by
         // schema bump 0.1 → 0.2.
-        let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None);
+        let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None, None);
         assert!(
             json.contains("\"relation_reason\": \"direct_owner_call\""),
             "JSON missing relation_reason: {json}"
@@ -1460,7 +1630,7 @@ mod tests {
             "JSON missing relation_confidence: {json}"
         );
 
-        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None);
+        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None, None);
         assert!(
             md.contains("direct_owner_call"),
             "Markdown missing direct_owner_call tag: {md}"
@@ -1486,7 +1656,7 @@ mod tests {
             ),
         );
 
-        let json = render_repo_exposure_json(&[classified], None, None);
+        let json = render_repo_exposure_json(&[classified], None, None, None);
         let value: serde_json::Value = serde_json::from_str(&json)
             .map_err(|err| format!("parse repo exposure JSON failed: {err}\n{json}"))?;
         let seam = value["seams"]
@@ -1517,13 +1687,13 @@ mod tests {
         classified.evidence.related_tests[0].relation_reason =
             crate::analysis::test_grip_evidence::RelationReason::HelperOwnerCall;
 
-        let json = render_repo_exposure_json(&[classified.clone()], None, None);
+        let json = render_repo_exposure_json(&[classified.clone()], None, None, None);
         assert!(
             json.contains("\"relation_reason\": \"helper_owner_call\""),
             "JSON missing helper_owner_call relation_reason: {json}"
         );
 
-        let md = render_repo_exposure_md(&[classified], None, None);
+        let md = render_repo_exposure_md(&[classified], None, None, None);
         assert!(
             md.contains("helper_owner_call"),
             "Markdown missing helper_owner_call tag: {md}"

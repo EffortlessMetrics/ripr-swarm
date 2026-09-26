@@ -35,14 +35,23 @@ fn write_pilot_repo_exposure_json(
     config: &RiprConfig,
     classified: &[analysis::ClassifiedSeam],
     limit_info: Option<&analysis::SeamLimitInfo>,
-    ts_guidance: Option<&output::repo_exposure::TsFullRepoGuidance>,
+    preview_guidances: (
+        Option<&output::repo_exposure::TsFullRepoGuidance>,
+        Option<&output::repo_exposure::PythonRepoEvidenceGuidance>,
+    ),
     pilot_budget_truncated: bool,
 ) -> Result<(), String> {
+    let (ts_guidance, py_guidance) = preview_guidances;
     let write_failed = |err: String| format!("write {} failed: {err}", path.display());
     if pilot_budget_truncated {
         return std::fs::write(
             path,
-            output::repo_exposure::render_repo_exposure_json(classified, limit_info, ts_guidance),
+            output::repo_exposure::render_repo_exposure_json(
+                classified,
+                limit_info,
+                ts_guidance,
+                py_guidance,
+            ),
         )
         .map_err(|err| write_failed(err.to_string()));
     }
@@ -62,6 +71,7 @@ fn write_pilot_repo_exposure_json(
         classified,
         limit_info,
         ts_guidance,
+        py_guidance,
         &context,
         &mut writer,
     )
@@ -195,13 +205,15 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     };
 
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
+    let py_guidance =
+        output::render::detect_python_repo_evidence_guidance_pub(&input.root, &classified);
     write_pilot_repo_exposure_json(
         &artifacts.repo_exposure_json,
         &input,
         &config,
         &classified,
         limit_info.as_ref(),
-        ts_guidance.as_ref(),
+        (ts_guidance.as_ref(), py_guidance.as_ref()),
         pilot_budget_truncated,
     )?;
     std::fs::write(
@@ -210,6 +222,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             &classified,
             limit_info.as_ref(),
             ts_guidance.as_ref(),
+            py_guidance.as_ref(),
         ),
     )
     .map_err(|err| {

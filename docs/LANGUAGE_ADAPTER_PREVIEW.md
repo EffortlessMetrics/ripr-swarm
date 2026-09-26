@@ -238,15 +238,27 @@ Rust/Perl seam inventory and do not render preview-language findings, so a
 Python-only or TypeScript-only workspace still shows zero seams in those
 formats — a known limitation, not a clean result. Repo-exposure emits a
 `typescript_diff_first` limitation entry for TS/JS-only workspaces pointing
-the user at diff-scoped analysis; Python-only runs do not currently carry an
-equivalent entry. Python's repo-mode evidence is consumed through the shared
-repo analysis result (`run_repo_analysis` / `check_workspace_repo`): its
-findings, per-language file counts, and `language_runs` partial-run
-disclosure — no renderer reconstructs Python semantics.
+the user at diff-scoped analysis, and the equivalent
+`python_repo_evidence_not_rendered` entry for Python-only workspaces
+naming the shared repo analysis result as the evidence channel, so an empty
+report cannot be misread as clean. Python's repo-mode evidence is consumed
+through the shared repo analysis result (`run_repo_analysis` /
+`check_workspace_repo`): its findings, per-language file counts, and
+`language_runs` partial-run disclosure — no renderer reconstructs Python
+semantics.
+
+Diff mode bounds the Python workspace walk the same way the TypeScript
+adapter does: at most 800 discovered `.py` files
+(`RIPR_PYTHON_MAX_WORKSPACE_FILES`, aligned with the repo-mode
+`RIPR_MAX_REPO_INDEX_FILES` default), a 16 MiB per-file read cap
+(`RIPR_PYTHON_MAX_FILE_READ_BYTES`), and a 64 MiB per-run workspace read
+budget (`RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES`). Files refused by any bound
+and unreadable changed files are named typed limitations on the diff
+result, never silent skips.
 
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |
-| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |
+| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | full | empty (stub); `typescript_diff_first` limitation | seams: none rendered; `python_repo_evidence_not_rendered` limitation |
 | `repo-seams-json` / `repo-seams-md` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |
 | `repo-badge-json` / `repo-badge-shields` | full | full | empty (stub) | seams: none rendered; capped/partial runs never badge-eligible |
 | `agent-seam-packets-json` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |

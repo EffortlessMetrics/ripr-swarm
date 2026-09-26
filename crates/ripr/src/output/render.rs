@@ -76,6 +76,7 @@ pub(crate) fn render_check_with_config(
             let (classified, limit_info) =
                 analysis::inventory_classified_seams_at_with_config(&output.root, config)?;
             let ts_guidance = detect_ts_full_repo_guidance(&output.root, &classified);
+            let py_guidance = detect_python_repo_evidence_guidance(&output.root, &classified);
             let artifact_context =
                 crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
                     output.root.clone(),
@@ -87,6 +88,7 @@ pub(crate) fn render_check_with_config(
                 &classified,
                 limit_info.as_ref(),
                 ts_guidance.as_ref(),
+                py_guidance.as_ref(),
                 &artifact_context,
             )
         }
@@ -104,10 +106,12 @@ pub(crate) fn render_check_with_config(
             let (classified, limit_info) =
                 analysis::inventory_classified_seams_at_with_config(&output.root, config)?;
             let ts_guidance = detect_ts_full_repo_guidance(&output.root, &classified);
+            let py_guidance = detect_python_repo_evidence_guidance(&output.root, &classified);
             Ok(repo_exposure::render_repo_exposure_md(
                 &classified,
                 limit_info.as_ref(),
                 ts_guidance.as_ref(),
+                py_guidance.as_ref(),
             ))
         }
         OutputFormat::RepoSarif => {
@@ -215,6 +219,64 @@ fn detect_ts_full_repo_guidance(
         ts_file_count,
         readiness,
     })
+}
+
+/// Public re-export for CLI callers that render repo-exposure artifacts
+/// directly (mirrors `detect_ts_full_repo_guidance_pub`).
+pub(crate) fn detect_python_repo_evidence_guidance_pub(
+    root: &std::path::Path,
+    classified: &[crate::analysis::ClassifiedSeam],
+) -> Option<repo_exposure::PythonRepoEvidenceGuidance> {
+    detect_python_repo_evidence_guidance(root, classified)
+}
+
+/// Detect whether a Python repo-evidence-not-rendered disclosure should fire.
+///
+/// Returns `Some(PythonRepoEvidenceGuidance)` when ALL of:
+///
+/// 1. The classified seam inventory is empty (no Rust seams, so the report
+///    would otherwise be a silent empty result).
+/// 2. Python files are present in the workspace (detected by path extension
+///    via `workspace_preview_language_files`).
+/// 3. No Rust source files are found at the root (the workspace has no Rust
+///    crate presence that could legitimately produce zero seams).
+///
+/// Conditions mirror the TypeScript `typescript_diff_first` detector: the
+/// disclosure names the render gap (Python repo-mode evidence flows through
+/// the shared repo analysis result, which these Rust-seam-oriented formats
+/// do not render), so a Python-only workspace's empty report cannot be
+/// misread as a clean scan. It never fabricates seams or claims findings the
+/// run did not produce.
+fn detect_python_repo_evidence_guidance(
+    root: &std::path::Path,
+    classified: &[crate::analysis::ClassifiedSeam],
+) -> Option<repo_exposure::PythonRepoEvidenceGuidance> {
+    use crate::domain::LanguageId;
+
+    // Disclosure only fires when the repo scan produced no seams.
+    if !classified.is_empty() {
+        return None;
+    }
+
+    // Count Python files in the workspace.
+    let python_file_count = analysis::workspace_preview_language_files(root)
+        .iter()
+        .filter(|(lang, _)| *lang == LanguageId::Python)
+        .count();
+    if python_file_count == 0 {
+        return None;
+    }
+
+    // Guard: if there are Rust files, the empty-seam result is a legitimate
+    // Rust analysis outcome, not a preview-language render gap. Only fire
+    // when Rust is absent (same additive/no-Rust-regression invariant as the
+    // TypeScript detector).
+    let rust_files = analysis::workspace_rust_files(root);
+    if !rust_files.is_empty() {
+        return None;
+    }
+
+    Some(repo_exposure::PythonRepoEvidenceGuidance { python_file_count })
 }
 
 fn load_suppressions(
@@ -843,6 +905,80 @@ mod tests {
         );
 
         remove_temp_root(&output.root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn python_repo_evidence_guidance_fires_for_python_only_workspace_with_zero_seams()
+    -> Result<(), String> {
+        let root = temp_root("ripr-render-py-guidance")?;
+        std::fs::write(root.join("app.py"), "def run():\n    return 1\n")
+            .map_err(|err| format!("write python file: {err}"))?;
+
+        let guidance = super::detect_python_repo_evidence_guidance(&root, &[]);
+        assert_eq!(
+            guidance.map(|entry| entry.python_file_count),
+            Some(1),
+            "Python-only workspace with zero seams must disclose the render gap"
+        );
+        remove_temp_root(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn python_repo_evidence_guidance_stays_silent_when_rust_source_present() -> Result<(), String> {
+        let root = temp_root("ripr-render-py-guidance-rust")?;
+        std::fs::write(root.join("app.py"), "def run():\n    return 1\n")
+            .map_err(|err| format!("write python file: {err}"))?;
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|err| format!("create src dir: {err}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn seam() {}\n")
+            .map_err(|err| format!("write rust file: {err}"))?;
+
+        let guidance = super::detect_python_repo_evidence_guidance(&root, &[]);
+        assert!(
+            guidance.is_none(),
+            "Rust presence makes a zero-seam report a legitimate Rust outcome, not a render gap"
+        );
+        remove_temp_root(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn python_repo_evidence_guidance_stays_silent_when_seams_exist() -> Result<(), String> {
+        // A workspace whose Rust scan produces a real seam: the zero-seam
+        // precondition does not hold, so the guidance must not fire even
+        // though Python source is present.
+        let root = temp_root("ripr-render-py-guidance-seams")?;
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|err| format!("create temp src dir: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname=\"ripr-render-py-guidance\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+        )
+        .map_err(|err| format!("write temp Cargo.toml: {err}"))?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+        )
+        .map_err(|err| format!("write temp src/lib.rs: {err}"))?;
+        std::fs::write(root.join("app.py"), "def run():\n    return 1\n")
+            .map_err(|err| format!("write python file: {err}"))?;
+
+        let (classified, _limit_info) = crate::analysis::inventory_classified_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+        )?;
+        assert!(
+            !classified.is_empty(),
+            "fixture workspace must produce at least one classified seam"
+        );
+        let guidance = super::detect_python_repo_evidence_guidance(&root, &classified);
+        assert!(
+            guidance.is_none(),
+            "a non-empty seam inventory is not a silent-zero report"
+        );
+        remove_temp_root(&root)?;
         Ok(())
     }
 
