@@ -218,8 +218,7 @@ fn write_repo_exposure_json_document<W: io::Write>(
     //     entries are additive entries in limitations[] that fire when a
     //     preview-language workspace returns zero seams; they do not change
     //     run_status (the Rust scan itself completed normally).
-    let has_limitations =
-        limit_info.is_some() || ts_guidance.is_some() || py_guidance.is_some();
+    let has_limitations = limit_info.is_some() || ts_guidance.is_some() || py_guidance.is_some();
     match limit_info {
         None => {
             writeln!(out, "  \"run_status\": \"complete\",")?;
@@ -1163,7 +1162,8 @@ mod tests {
             total: 10,
             source: SeamLimitSource::Configured,
         };
-        let json = render_repo_exposure_json(&[weakly_gripped_classified()], Some(&info), None, None);
+        let json =
+            render_repo_exposure_json(&[weakly_gripped_classified()], Some(&info), None, None);
         assert!(
             json.contains("\"run_status\": \"seam_limit_applied\""),
             "run_status seam_limit_applied missing in:\n{json}"

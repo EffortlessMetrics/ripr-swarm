@@ -24,10 +24,6 @@ use super::super::{
 };
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 mod bounded_read;
-use bounded_read::{
-    PYTHON_MAX_WORKSPACE_FILES_ENV, PythonDiffWalkLimits, read_workspace_sources_capped,
-    truncate_workspace_files,
-};
 use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
     AnalysisStage,
@@ -43,6 +39,10 @@ use crate::domain::{
 use crate::domain::{
     ExposureClass, Finding, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind,
     ProbeFamily, StaticLimitKind, StopReason, SymbolId,
+};
+use bounded_read::{
+    PYTHON_MAX_WORKSPACE_FILES_ENV, PythonDiffWalkLimits, read_workspace_sources_capped,
+    truncate_workspace_files,
 };
 use rustpython_parser::ast::Expr;
 use std::{

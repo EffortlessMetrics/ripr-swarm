@@ -127,13 +127,13 @@ fn detect_python_test_framework_is_fail_closed_for_empty_root() -> Result<(), St
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
-use super::owners_tests::{extract_owners, extract_tests};
-use super::*;
+use super::super::super::diff::ChangedLine;
 use super::bounded_read::{
     DEFAULT_PYTHON_MAX_FILE_READ_BYTES, DEFAULT_PYTHON_MAX_WORKSPACE_FILES,
     DEFAULT_PYTHON_MAX_WORKSPACE_READ_BYTES,
 };
-use super::super::super::diff::ChangedLine;
+use super::owners_tests::{extract_owners, extract_tests};
+use super::*;
 use std::path::{Path, PathBuf};
 
 fn changed(path: &str) -> ChangedFile {
@@ -4238,11 +4238,8 @@ fn analyze_diff_discloses_unreadable_changed_file() -> Result<(), String> {
         .map_err(|err| format!("write invalid UTF-8 file: {err}"))?;
     let options = repo_options(&root);
     let changed_files = vec![changed("bad.py")];
-    let result = PythonAdapter::analyze_diff_with_limits(
-        &options,
-        &changed_files,
-        generous_walk_limits(),
-    )?;
+    let result =
+        PythonAdapter::analyze_diff_with_limits(&options, &changed_files, generous_walk_limits())?;
     assert_eq!(
         result.limitations.len(),
         1,
@@ -4293,11 +4290,8 @@ fn analyze_diff_small_workspace_is_unaffected_by_default_bounds() -> Result<(), 
             new_side_line: 2,
         }],
     }];
-    let result = PythonAdapter::analyze_diff_with_limits(
-        &options,
-        &changed_files,
-        generous_walk_limits(),
-    )?;
+    let result =
+        PythonAdapter::analyze_diff_with_limits(&options, &changed_files, generous_walk_limits())?;
     assert!(
         result.limitations.is_empty(),
         "small workspace must produce no walk limitations: {:?}",
