@@ -8310,6 +8310,9 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     let test = TypeScriptTest {
         name: "applyDiscount test".to_string(),
@@ -8379,6 +8382,9 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     let test = TypeScriptTest {
         name: "applyDiscount test".to_string(),
@@ -8449,6 +8455,9 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     let test = TypeScriptTest {
         name: "applyDiscount test".to_string(),
@@ -8528,6 +8537,9 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        arity: None,
+        parameters: Vec::new(),
+        source_text: None,
     };
     let test = TypeScriptTest {
         name: "applyDiscount test".to_string(),
