@@ -4420,11 +4420,22 @@ fn analyze_diff_splits_changed_files_into_typescript_and_javascript() -> Result<
 }
 
 /// A `.mts` source file must be discovered, parsed, and analyzed — before
-/// this lane the router dropped `.mts`/`.cts`/`.mjs`/`.cjs` entirely, so
-/// half of a modern ESM/CJS tree was silently unread with no limitation.
+/// the extension-routing lane the router dropped `.mts`/`.cts`/`.mjs`/`.cjs`
+/// entirely, so half of a modern ESM/CJS tree was silently unread with no
+/// limitation.
+///
+/// This is the cross-extension end-to-end discriminator: a real temp
+/// workspace, the IMPORTED source file actually created on disk, and a test
+/// that imports it through the *other* modern suffix (`.mjs` import naming a
+/// `.mts` owner). The oracle asserted is the evidence decision — a Strong
+/// ExactValue related test credited to the owner — not merely a changed-file
+/// count. Removing the new-suffix module stripping in
+/// `strip_typescript_module_extension` turns this finding into
+/// `NoStaticPath` with zero related tests.
 #[test]
-fn analyze_diff_discovers_and_analyzes_mts_sources() -> Result<(), String> {
-    let root = ts_unique_tempdir("mts-analysis")?;
+fn analyze_diff_credits_cross_extension_related_test_oracle_for_mts_sources() -> Result<(), String>
+{
+    let root = ts_unique_tempdir("mts-cross-extension")?;
 
     ts_write_file(
         &root.join("package.json"),
@@ -4434,6 +4445,9 @@ fn analyze_diff_discovers_and_analyzes_mts_sources() -> Result<(), String> {
         &root.join("src/cart.mts"),
         "export function cartTotal(items: number[]): number {\n  return items.reduce((a, b) => a + b, 0);\n}\n",
     )?;
+    // The import names `../src/cart.mjs` while the owner on disk is
+    // `src/cart.mts` — only cross-extension module normalization can
+    // connect them.
     ts_write_file(
         &root.join("tests/cart.test.mts"),
         "import { cartTotal } from '../src/cart.mjs';\ntest('totals items', () => {\n  const result = cartTotal([1, 2]);\n  expect(result).toBe(3);\n});\n",
@@ -4472,17 +4486,200 @@ fn analyze_diff_discovers_and_analyzes_mts_sources() -> Result<(), String> {
         result.changed_files, 1,
         "the .mts change must be counted as analyzed"
     );
-    assert!(
-        !result.findings.is_empty(),
-        "expected at least one finding for the .mts owner; got none"
+    let finding = result
+        .findings
+        .iter()
+        .find(|f| f.probe.location.file.as_path() == Path::new("src/cart.mts"))
+        .ok_or_else(|| {
+            format!(
+                "expected a finding for the .mts owner; got {} finding(s)",
+                result.findings.len()
+            )
+        })?;
+
+    assert_eq!(
+        finding.language,
+        Some(DomainLanguageId::TypeScript),
+        "the .mts finding must be attributed to typescript"
+    );
+    // The evidence decision, not the file count: a `.mjs` import must credit
+    // the `.mts` owner a real oracle-bearing related test.
+    assert_eq!(
+        finding.related_tests.len(),
+        1,
+        "the cross-extension import must credit exactly one related test; got {:?}",
+        finding
+            .related_tests
+            .iter()
+            .map(|t| t.file.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        finding.related_tests[0].oracle_kind,
+        OracleKind::ExactValue,
+        "the cross-extension related test must carry a real extracted oracle"
+    );
+    assert_eq!(
+        finding.related_tests[0].oracle_strength,
+        OracleStrength::Strong,
+        "the `toBe(3)` assertion must classify as a Strong oracle"
     );
     assert!(
-        result
-            .findings
+        !matches!(finding.class, ExposureClass::NoStaticPath),
+        "a credited cross-extension Strong oracle must not fall back to no_static_path"
+    );
+    assert_evidence_contains(finding, "typescript_oracle_expected: 3");
+    Ok(())
+}
+
+/// CommonJS half of the cross-extension seam: a `.cts` owner imported through
+/// a `.cjs` specifier must resolve the same way the ESM half does. This is a
+/// separate control, not a duplicate — it fails independently if only the ESM
+/// suffixes are wired into module normalization.
+#[test]
+fn analyze_diff_credits_cross_extension_related_test_oracle_for_cts_sources() -> Result<(), String>
+{
+    let root = ts_unique_tempdir("cts-cross-extension")?;
+
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"pkg","scripts":{"test":"vitest"},"devDependencies":{"vitest":"^1.0.0"}}"#,
+    )?;
+    ts_write_file(
+        &root.join("src/cart.cts"),
+        "export function cartTotal(items: number[]): number {\n  return items.reduce((a, b) => a + b, 0);\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/cart.test.cts"),
+        "import { cartTotal } from '../src/cart.cjs';\ntest('totals items', () => {\n  const result = cartTotal([1, 2]);\n  expect(result).toBe(3);\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/cart.cts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 1,
+            new_side_line: 1,
+            text: "export function cartTotal(items: number[]): number {".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    let finding = result
+        .findings
+        .iter()
+        .find(|f| f.probe.location.file.as_path() == Path::new("src/cart.cts"))
+        .ok_or_else(|| {
+            format!(
+                "expected a finding for the .cts owner; got {} finding(s)",
+                result.findings.len()
+            )
+        })?;
+
+    assert_eq!(finding.related_tests.len(), 1);
+    assert_eq!(
+        finding.related_tests[0].oracle_strength,
+        OracleStrength::Strong,
+        "the .cjs-imported related test must carry a Strong oracle"
+    );
+    assert!(
+        !matches!(finding.class, ExposureClass::NoStaticPath),
+        "a credited cross-extension Strong oracle must not fall back to no_static_path"
+    );
+    Ok(())
+}
+
+/// Cross-extension resolution must fail closed rather than invent credit: a
+/// `.mjs` test importing a DIFFERENT modern module must not pick up the
+/// `.mts` owner's oracle. Without this, a green "related test exists" result
+/// would be untrustworthy.
+#[test]
+fn analyze_diff_does_not_credit_related_test_from_a_different_modern_module() -> Result<(), String>
+{
+    let root = ts_unique_tempdir("mts-cross-extension-negative")?;
+
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"pkg","scripts":{"test":"vitest"},"devDependencies":{"vitest":"^1.0.0"}}"#,
+    )?;
+    ts_write_file(
+        &root.join("src/cart.mts"),
+        "export function cartTotal(items: number[]): number {\n  return items.reduce((a, b) => a + b, 0);\n}\n",
+    )?;
+    // A different modern module, asserting a different owner entirely.
+    ts_write_file(
+        &root.join("tests/basket.test.mts"),
+        "import { basketTotal } from '../src/basket.mjs';\ntest('totals basket', () => {\n  const result = basketTotal([1, 2]);\n  expect(result).toBe(3);\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/cart.mts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 1,
+            new_side_line: 1,
+            text: "export function cartTotal(items: number[]): number {".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    let finding = result
+        .findings
+        .iter()
+        .find(|f| f.probe.location.file.as_path() == Path::new("src/cart.mts"))
+        .ok_or_else(|| {
+            format!(
+                "expected a finding for the .mts owner; got {} finding(s)",
+                result.findings.len()
+            )
+        })?;
+
+    assert!(
+        finding.related_tests.is_empty(),
+        "an unrelated modern module must not credit a related test to the cart owner; got {:?}",
+        finding
+            .related_tests
             .iter()
-            .any(|f| f.language == Some(DomainLanguageId::TypeScript)),
-        "the .mts finding must be attributed to typescript; findings={:?}",
-        result.findings.len()
+            .map(|t| t.file.clone())
+            .collect::<Vec<_>>()
     );
     Ok(())
 }

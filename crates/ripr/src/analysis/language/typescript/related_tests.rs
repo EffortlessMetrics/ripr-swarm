@@ -1639,3 +1639,140 @@ mod spread_call_boundary_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod module_extension_tests {
+    use super::*;
+
+    /// Every routed TS/JS suffix must strip to the same module identity, so an
+    /// import that names `../src/cart.mjs` still credits a `src/cart.mts`
+    /// owner. Pinned literally (not read back from the suffix list) so
+    /// deleting a suffix from the production list fails this test.
+    #[test]
+    fn strip_typescript_module_extension_covers_every_routed_suffix() {
+        let cases = [
+            ("src/cart.ts", "src/cart"),
+            ("src/cart.tsx", "src/cart"),
+            ("src/cart.js", "src/cart"),
+            ("src/cart.jsx", "src/cart"),
+            ("src/cart.mts", "src/cart"),
+            ("src/cart.cts", "src/cart"),
+            ("src/cart.mjs", "src/cart"),
+            ("src/cart.cjs", "src/cart"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                strip_typescript_module_extension(input),
+                expected,
+                "{input} must normalize to the same module identity as every other routed suffix"
+            );
+        }
+    }
+
+    /// Near-miss and non-routed suffixes must NOT be stripped: an unrouted
+    /// suffix such as `.mtsx` is left alone rather than partially matching, and
+    /// a non-TypeScript module keeps its own identity.
+    #[test]
+    fn strip_typescript_module_extension_leaves_near_miss_and_unrouted_suffixes() {
+        for input in [
+            "src/cart.mtsx",
+            "src/cart.ctss",
+            "src/cart.mjss",
+            "src/cart.rs",
+            "src/cart.py",
+            "src/cart",
+        ] {
+            assert_eq!(
+                strip_typescript_module_extension(input),
+                input,
+                "{input} is not a routed module suffix and must keep its identity"
+            );
+        }
+    }
+
+    /// Declaration-stem stability: adding `.mts`/`.cts` must not change how a
+    /// `.d.*` declaration module is identified. `cart.d.mts` resolves exactly
+    /// like the long-standing `cart.d.ts` case ΓÇö the routed suffix is removed
+    /// and the `.d` stem is preserved rather than rewritten to `cart`.
+    #[test]
+    fn strip_typescript_module_extension_keeps_declaration_stem_behavior() {
+        for (declaration, control) in [
+            ("src/cart.d.mts", "src/cart.d.ts"),
+            ("src/cart.d.cts", "src/cart.d.ts"),
+            ("src/cart.d.mjs", "src/cart.d.js"),
+            ("src/cart.d.cjs", "src/cart.d.js"),
+        ] {
+            assert_eq!(
+                strip_typescript_module_extension(declaration),
+                strip_typescript_module_extension(control),
+                "{declaration} must identify like its {control} control"
+            );
+            assert_eq!(strip_typescript_module_extension(declaration), "src/cart.d");
+        }
+    }
+
+    /// A relative import that names a NEW suffix resolves to the owner's
+    /// module identity. This is the cross-extension seam the whole routed
+    /// surface depends on: without `.mjs`/`.cjs`/`.mts`/`.cts` here, a modern
+    /// import silently fails to match its owner and the related test is lost.
+    #[test]
+    fn normalized_relative_import_module_matches_new_suffix_specifier_to_owner()
+    -> Result<(), String> {
+        for (test_file, source, owner_file) in [
+            ("tests/cart.test.cts", "../src/cart.cjs", "src/cart.cts"),
+            ("tests/cart.test.mts", "../src/cart.mjs", "src/cart.mts"),
+            ("tests/cart.test.ts", "../src/cart.mjs", "src/cart.mts"),
+            ("tests/cart.test.cjs", "../src/cart.mts", "src/cart.cts"),
+        ] {
+            let resolved =
+                normalized_relative_import_module(Path::new(test_file), source, None, None)
+                    .ok_or_else(|| format!("{source} from {test_file} must resolve"))?;
+            // Assert the module identity LITERALLY. Deriving the expectation via
+            // `normalized_module_path` would run both sides of the comparison
+            // through the same stripper, so any *consistent* regression in
+            // `strip_typescript_module_extension` (double-suffix stripping,
+            // directory normalization, `index`-stem handling) would keep this
+            // test green. Every routed specifier here denotes `src/cart`.
+            const EXPECTED: &str = "src/cart";
+            if resolved != EXPECTED {
+                return Err(format!(
+                    "{source} from {test_file} resolved to {resolved}, not the {owner_file} owner module {EXPECTED}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Cross-extension resolution must not over-credit: an import naming a
+    /// DIFFERENT module is not the owner, even when both use modern suffixes.
+    ///
+    /// The discriminating assertion here is `resolved == "src/basket"`. A bare
+    /// "is not the cart owner" inequality would stay green even if the entire
+    /// routed-suffix list were emptied, because then nothing would be stripped
+    /// and the specifier would trivially differ. Pinning the literal means this
+    /// control fails if `.mjs` stripping regresses. The over-credit decision
+    /// itself is pinned end to end by
+    /// `tests::analyze_diff_does_not_credit_related_test_from_a_different_modern_module`.
+    #[test]
+    fn normalized_relative_import_module_rejects_different_new_suffix_owner() -> Result<(), String>
+    {
+        let resolved = normalized_relative_import_module(
+            Path::new("tests/cart.test.mts"),
+            "../src/basket.mjs",
+            None,
+            None,
+        )
+        .ok_or("a relative modern-suffix specifier must still normalize")?;
+        if resolved != "src/basket" {
+            return Err(format!(
+                "../src/basket.mjs must normalize to src/basket, not {resolved}"
+            ));
+        }
+        if resolved == "src/cart" {
+            return Err(format!(
+                "a different modern module must not resolve to the cart owner module {resolved}"
+            ));
+        }
+        Ok(())
+    }
+}
