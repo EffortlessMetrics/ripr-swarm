@@ -7425,7 +7425,10 @@ fn named_limitation_target_unresolved_uses_relation_module_identity() -> Result<
             .evidence
             .iter()
             .any(|line| line == "typescript_limitation: typescript_target_unresolved");
-        assert_eq!(disclosed, expected, "owner {owner_file_name}, import {source}");
+        assert_eq!(
+            disclosed, expected,
+            "owner {owner_file_name}, import {source}"
+        );
     }
     fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     Ok(())
