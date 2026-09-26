@@ -9191,3 +9191,31 @@ metrics = [
   "python_repair_trust_check_verdict",
   "python_repair_verification_check_verdict",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0177"
+name = "TypeScript parse-depth budget and large-stack parse worker"
+spec = "docs/specs/RIPR-SPEC-0177-typescript-parse-depth-budget.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::nesting_estimate_counts_recursive_expression_shapes",
+  "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::nesting_estimate_ignores_lexical_shells",
+  "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::nesting_budget_refuses_over_budget_source_with_typed_reason",
+  "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::nesting_budget_admits_deep_legitimate_source_on_worker_stack",
+  "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::previously_aborting_depth_now_parses_and_classifies",
+  "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::unsupported_syntax_finding_carries_budget_reason",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::parse_error_reason_reports_parser_errors",
+]
+fixtures = [
+  "fixtures/ts_parse_depth_budget",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/parse.rs",
+  "crates/ripr/src/analysis/language/typescript/owners.rs",
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+]
+outputs = [
+]
+metrics = [
+  "typescript_parse_aborts",
+  "typescript_parse_refusal_disclosure_parity",
+]
