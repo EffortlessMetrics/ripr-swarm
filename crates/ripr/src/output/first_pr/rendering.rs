@@ -141,8 +141,8 @@ pub(super) fn start_here_cli_summary(
                 for artifact in also_missing {
                     let label = string_path(artifact, &["label"])
                         .unwrap_or_else(|| "Required artifact".to_string());
-                    let path = string_path(artifact, &["path"])
-                        .unwrap_or_else(|| "unknown".to_string());
+                    let path =
+                        string_path(artifact, &["path"]).unwrap_or_else(|| "unknown".to_string());
                     out.push_str(&format!("Also missing: {label} at `{path}`\n"));
                     if let Some(command) = string_path(artifact, &["regeneration_command"]) {
                         out.push_str(&format!("Then run: `{command}`\n"));
@@ -557,10 +557,7 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
                 .unwrap_or("required artifact");
             let path = artifact.get("path").and_then(Value::as_str).unwrap_or("");
             out.push_str(&format!("- Also missing: {label} at `{path}`\n"));
-            if let Some(command) = artifact
-                .get("regeneration_command")
-                .and_then(Value::as_str)
-            {
+            if let Some(command) = artifact.get("regeneration_command").and_then(Value::as_str) {
                 out.push_str(&format!("- Then run: `{command}`\n"));
                 push_recovery_powershell_variant(out, "- Then run", command);
             }

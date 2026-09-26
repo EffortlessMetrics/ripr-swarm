@@ -404,9 +404,9 @@ fn render_start_here_packet_with_selection(
     // discover it on the next invocation. Other artifact rows are optional
     // until a particular selection needs them.
     if selected["artifact"]["id"] == "repo_exposure"
-        && let Some(ledger) = artifacts.iter().find(|artifact| {
-            artifact["id"] == "gap_ledger" && artifact["status"] == "missing"
-        })
+        && let Some(ledger) = artifacts
+            .iter()
+            .find(|artifact| artifact["id"] == "gap_ledger" && artifact["status"] == "missing")
     {
         selected["also_missing"] = json!([{
             "id": "gap_ledger",
