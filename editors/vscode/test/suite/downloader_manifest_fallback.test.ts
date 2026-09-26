@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { spawnSync } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as https from 'https';
@@ -29,6 +30,56 @@ interface FixtureRequest {
   readonly path: string;
 }
 
+let generatedFixtureTls: { readonly key: Buffer; readonly cert: Buffer } | undefined;
+
+// A one-day self-signed localhost certificate. The committed pair this
+// replaced was the same shape (CN 127.0.0.1, SAN localhost) and was not a
+// credential for any other host. Nothing in the suite pins the certificate
+// bytes; TLS verification is disabled for the suite.
+function fixtureTlsMaterial(): { readonly key: Buffer; readonly cert: Buffer } {
+  if (generatedFixtureTls) {
+    return generatedFixtureTls;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-fixture-tls-'));
+  const keyPath = path.join(dir, 'key.pem');
+  const certPath = path.join(dir, 'cert.pem');
+  try {
+    const result = spawnSync(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-sha256',
+        '-days',
+        '1',
+        '-nodes',
+        '-keyout',
+        keyPath,
+        '-out',
+        certPath,
+        '-subj',
+        '/CN=127.0.0.1',
+        '-addext',
+        'subjectAltName=DNS:localhost,IP:127.0.0.1'
+      ],
+      { stdio: 'pipe' }
+    );
+    if (result.status !== 0) {
+      const detail = result.stderr?.toString().trim() || result.error?.message || 'openssl failed';
+      throw new Error(`fixture TLS identity could not be generated: ${detail}`);
+    }
+    generatedFixtureTls = {
+      key: fs.readFileSync(keyPath),
+      cert: fs.readFileSync(certPath)
+    };
+    return generatedFixtureTls;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 class ManifestFixtureServer {
   readonly requests: FixtureRequest[] = [];
 
@@ -45,8 +96,7 @@ class ManifestFixtureServer {
   }
 
   start(): Promise<void> {
-    const key = fs.readFileSync(path.join(__dirname, '../../../test-fixtures/tls/fixture-server-key.pem'));
-    const cert = fs.readFileSync(path.join(__dirname, '../../../test-fixtures/tls/fixture-server-cert.pem'));
+    const { key, cert } = fixtureTlsMaterial();
     return new Promise((resolve, reject) => {
       const created = https.createServer({ key, cert }, (request, response) => {
         const requestPath = (request.url ?? '/').split('?')[0];
@@ -231,8 +281,8 @@ suite('Downloader Manifest Placement', () => {
   let previousTlsReject: string | undefined;
 
   suiteSetup(() => {
-    // The fixture server uses a committed self-signed certificate; the test
-    // host must accept it for the duration of this suite only.
+    // The fixture server generates a one-day localhost certificate in this
+    // process. The test host must accept it for the duration of this suite only.
     previousTlsReject = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
   });

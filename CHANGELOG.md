@@ -550,6 +550,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- The VS Code download test no longer commits a localhost TLS private key.
+  The suite generates a one-day `127.0.0.1` certificate when it starts.
+  The removed pair was self-signed for that name only
+  ([#4143](https://github.com/EffortlessMetrics/ripr-swarm/issues/4143)).
+
 - `ripr outcome` no longer reports zero movement for check-output snapshots
   whose findings carry no canonical gap id, such as Rust `ripr check --json`.
   It refuses the pair, points Rust users to `ripr check --format
