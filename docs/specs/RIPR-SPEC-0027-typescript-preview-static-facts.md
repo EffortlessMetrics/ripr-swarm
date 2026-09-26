@@ -249,8 +249,9 @@ boundary without changing the guards (#4104 E):
 - **Named constants**: an UPPER_CASE comparison operand resolves through a
   single immutable integer module-level `const` in the owner's own module
   (the recorded owner span first, then the owner file through the workspace
-  root; a declaration inside a nested block is a different binding and
-  neither resolves nor disqualifies the top-level name), and an UPPER_CASE
+  root; a same-name declaration at any non-top-level scope is a shadow the
+  changed read may observe, so resolution fails closed — the operand keeps
+  its name and the file-level fallback never runs), and an UPPER_CASE
   argument resolves through the test body or — via the import record — a
   single such declaration in the owner's own module, mirroring the Rust
   `value_resolution::named_constant` strictness. `let`/`var`, computed

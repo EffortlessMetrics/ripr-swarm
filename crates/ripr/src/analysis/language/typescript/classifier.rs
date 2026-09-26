@@ -752,7 +752,9 @@ fn ts_owner_module_constant_value(
         match scan_owner_module_constant(source, name) {
             OwnerModuleConstant::Resolved(value) => return Some(value),
             // A conflicting or opaque declaration inside the owner's own span
-            // is definitive: do not go looking for a different answer.
+            // is definitive — including a nested same-name shadow, which must
+            // not be rescued by the file-level fallback below (#4213 review
+            // thread PRRT_kwDOSiSx0c6mVW3_).
             OwnerModuleConstant::Unresolvable => return None,
             OwnerModuleConstant::Undeclared => {}
         }
@@ -769,19 +771,26 @@ fn ts_owner_module_constant_value(
 enum OwnerModuleConstant {
     /// Declared exactly once as an immutable integer `const`.
     Resolved(String),
-    /// Declared more than once, shadowed by a `let`/`var`, or declared once
-    /// with a non-integer initializer.
+    /// Declared more than once, shadowed by a `let`/`var`, declared once
+    /// with a non-integer initializer, or matched by a same-name declaration
+    /// at any non-top-level scope — a shadow the changed read may actually
+    /// observe instead of the top-level value (#4213 review thread
+    /// PRRT_kwDOSiSx0c6mVW3_).
     Unresolvable,
     /// Not declared in the scanned text at all.
     Undeclared,
 }
 
 /// Single-pass declaration scan over one module's text. Only MODULE-LEVEL
-/// (top-level) declarations count: the scan tracks quote- and comment-aware
-/// brace depth, so a `const LIMIT` inside a function / class / block body is
-/// a different binding that neither resolves nor disqualifies the
-/// module-level name (#4213 review thread PRRT_kwDOSiSx0c6mUkkL) — only a
-/// top-level `let`/`var` rebind makes the binding ambiguous.
+/// (top-level) declarations can resolve the name: the scan tracks quote- and
+/// comment-aware brace depth, and a same-name declaration whose first code
+/// sits at any non-top-level scope is a shadow that FAILS THE SCAN CLOSED
+/// (#4213 review threads PRRT_kwDOSiSx0c6mUkkL, PRRT_kwDOSiSx0c6mVW3_). The
+/// changed predicate may lexically observe that local binding instead of the
+/// top-level one and the line-based scan cannot prove otherwise, so a
+/// top-level value is never substituted behind a shadow — no file-level
+/// fallback, no witness credit. A top-level `let`/`var` rebind is equally
+/// ambiguous.
 fn scan_owner_module_constant(source: &str, name: &str) -> OwnerModuleConstant {
     let mut declarations = 0usize;
     let mut value: Option<String> = None;
@@ -797,13 +806,18 @@ fn scan_owner_module_constant(source: &str, name: &str) -> OwnerModuleConstant {
         else {
             continue;
         };
-        // Anything not at the module's top level is a nested binding, not
-        // the module constant.
-        if item_depth != 0 {
-            continue;
-        }
         let item = line.trim();
         let item = item.strip_prefix("export ").unwrap_or(item);
+        // A nested line is not the module item; but a same-name declaration
+        // there is a shadow of the module constant, so the scan fails closed
+        // rather than credit a top-level value the changed read may not
+        // observe (#4213 review thread PRRT_kwDOSiSx0c6mVW3_).
+        if item_depth != 0 {
+            if line_declares_binding(item, name, &["const ", "let ", "var "]) {
+                return OwnerModuleConstant::Unresolvable;
+            }
+            continue;
+        }
         if let Some(rest) = item.strip_prefix("const ") {
             let rest = rest.trim_start();
             let after_name = match rest.strip_prefix(name) {
@@ -828,7 +842,7 @@ fn scan_owner_module_constant(source: &str, name: &str) -> OwnerModuleConstant {
         }
         // A `let`/`var` binding of the name at the module's top level makes
         // the module-level binding ambiguous — fail closed.
-        if module_line_rebinds_name(item, name) {
+        if line_declares_binding(item, name, &["let ", "var "]) {
             return OwnerModuleConstant::Unresolvable;
         }
     }
@@ -901,24 +915,19 @@ fn line_first_code_depth(
     first_code_depth
 }
 
-/// `true` when a TOP-LEVEL module item line declares `name` through
-/// `let`/`var` (which would shadow or rebind a `const` of the same name).
-/// Only consulted for lines whose first code sits at brace depth 0 — a
-/// nested `let` is a different binding and never disqualifies the
-/// module-level constant.
-fn module_line_rebinds_name(item: &str, name: &str) -> bool {
-    for keyword in ["let ", "var "] {
-        if let Some(rest) = item.strip_prefix(keyword) {
-            let rest = rest.trim_start();
-            if rest
+/// `true` when the module item line declares `name` through one of
+/// `keywords`, with whole-identifier identity (`LIMIT_X` never matches
+/// `LIMIT`). At brace depth 0 this decides `let`/`var` rebinds of the module
+/// constant; at nested depths it decides same-name shadows, which disqualify
+/// resolution entirely (#4213 review thread PRRT_kwDOSiSx0c6mVW3_).
+fn line_declares_binding(item: &str, name: &str, keywords: &[&str]) -> bool {
+    keywords.iter().any(|keyword| {
+        item.strip_prefix(keyword).is_some_and(|rest| {
+            rest.trim_start()
                 .strip_prefix(name)
                 .is_some_and(|after| !identifier_continues(after))
-            {
-                return true;
-            }
-        }
-    }
-    false
+        })
+    })
 }
 
 /// `true` when the text right after a matched name continues the identifier

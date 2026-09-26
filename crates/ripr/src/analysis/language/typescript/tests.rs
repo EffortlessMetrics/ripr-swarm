@@ -11998,14 +11998,18 @@ fn e4104_nullish_right_fallback_literal_is_never_creditable() -> Result<(), Stri
     Ok(())
 }
 
-// ── #4213 review repair 2 (thread PRRT_kwDOSiSx0c6mUkkL) ────────────────────
+// ── #4213 review repair 2 (threads PRRT_kwDOSiSx0c6mUkkL / VW3) ─────────────
 
-/// A `const LIMIT` declared inside a helper block is a different binding:
-/// the owner-module constant scan resolves only module-level (top-level)
-/// declarations, so the nested declaration leaves the operand unresolved and
-/// the boundary stays fail-closed.
+/// A same-name declaration inside the owner's own span at any non-top-level
+/// scope is a shadow: the changed predicate may lexically read the local
+/// binding instead of the module constant, and the line-based scan cannot
+/// prove otherwise, so resolution FAILS CLOSED — the operand keeps its name,
+/// no file-level fallback runs, and a boundary call carrying the top-level
+/// value cannot witness. The shadow-free control still witnesses.
 #[test]
 fn e4104_nested_owner_module_constant_stays_fail_closed() -> Result<(), String> {
+    // A helper-local `const` alone is not the module constant: the operand
+    // stays unresolved and the boundary call cannot witness.
     let mut owner = boundary_witness_owner();
     owner.source_text = Some(
         concat!(
@@ -12022,23 +12026,88 @@ fn e4104_nested_owner_module_constant_stays_fail_closed() -> Result<(), String> 
         )
         .to_string(),
     );
-    let tests = [exact_value_test(
+    let boundary_100 = [exact_value_test(
         "applyDiscount",
         "applyDiscount(100)",
         "90",
     )];
-    let finding =
-        classify_boundary_line_for_owner(&owner, "    if (total >= DISCOUNT_THRESHOLD) {", &tests)?;
+    let finding = classify_boundary_line_for_owner(
+        &owner,
+        "    if (total >= DISCOUNT_THRESHOLD) {",
+        &boundary_100,
+    )?;
     assert_eq!(
         finding.class,
         ExposureClass::WeaklyExposed,
         "a nested helper declaration is not the module-level constant"
     );
-    // Control: a nested declaration does not disqualify or shadow the
-    // top-level declaration either — the module-level value (150) resolves,
-    // so the boundary input 150 witnesses while 100 stays closed.
-    let mut owner = boundary_witness_owner();
-    owner.source_text = Some(
+
+    // The shadow over-credit shape (thread PRRT_kwDOSiSx0c6mVW3_): a
+    // top-level `export const` beside a block-local `const` of the same
+    // name that the changed predicate actually reads. The boundary input
+    // 100 equals the top-level value, but the changed read observes the
+    // local 50, so the boundary call must NOT witness.
+    let mut shadowed = boundary_witness_owner();
+    shadowed.source_text = Some(
+        concat!(
+            "export const DISCOUNT_THRESHOLD = 100;\n",
+            "\n",
+            "export function applyDiscount(total: number): number {\n",
+            "    if (total > 0) {\n",
+            "        const DISCOUNT_THRESHOLD = 50;\n",
+            "        if (total >= DISCOUNT_THRESHOLD) {\n",
+            "            return total * 0.9;\n",
+            "        }\n",
+            "    }\n",
+            "    return total;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let finding = classify_boundary_line_for_owner(
+        &shadowed,
+        "        if (total >= DISCOUNT_THRESHOLD) {",
+        &boundary_100,
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a block-local shadow of the module constant must block the top-level value's witness"
+    );
+
+    // Control: the same owner WITHOUT the local shadow — the module-level
+    // declaration resolves and the boundary input 100 witnesses.
+    let mut control = boundary_witness_owner();
+    control.source_text = Some(
+        concat!(
+            "export const DISCOUNT_THRESHOLD = 100;\n",
+            "\n",
+            "export function applyDiscount(total: number): number {\n",
+            "    if (total >= DISCOUNT_THRESHOLD) {\n",
+            "        return total * 0.9;\n",
+            "    }\n",
+            "    return total;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let finding = classify_boundary_line_for_owner(
+        &control,
+        "    if (total >= DISCOUNT_THRESHOLD) {",
+        &boundary_100,
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "without the shadow, the module constant resolves and the boundary input witnesses"
+    );
+
+    // Conservative blanket: even a same-name local in a SIBLING function the
+    // changed predicate cannot read keeps the whole resolution closed — the
+    // scan cannot place the shadow, so it never substitutes the top-level
+    // value (fail closed over wrong credit).
+    let mut sibling = boundary_witness_owner();
+    sibling.source_text = Some(
         concat!(
             "export const DISCOUNT_THRESHOLD = 150;\n",
             "\n",
@@ -12055,35 +12124,20 @@ fn e4104_nested_owner_module_constant_stays_fail_closed() -> Result<(), String> 
         )
         .to_string(),
     );
-    let boundary = [exact_value_test(
+    let boundary_150 = [exact_value_test(
         "applyDiscount",
         "applyDiscount(150)",
         "135",
     )];
     let finding = classify_boundary_line_for_owner(
-        &owner,
+        &sibling,
         "    if (total >= DISCOUNT_THRESHOLD) {",
-        &boundary,
-    )?;
-    assert_eq!(
-        finding.class,
-        ExposureClass::Exposed,
-        "the top-level declaration resolves through the nested same-name declaration"
-    );
-    let off_boundary = [exact_value_test(
-        "applyDiscount",
-        "applyDiscount(100)",
-        "135",
-    )];
-    let finding = classify_boundary_line_for_owner(
-        &owner,
-        "    if (total >= DISCOUNT_THRESHOLD) {",
-        &off_boundary,
+        &boundary_150,
     )?;
     assert_eq!(
         finding.class,
         ExposureClass::WeaklyExposed,
-        "the nested helper value (100) must not substitute for the module constant (150)"
+        "a sibling-function same-name declaration fails the whole resolution closed"
     );
     Ok(())
 }
