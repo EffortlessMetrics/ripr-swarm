@@ -7023,7 +7023,9 @@ fn doctor_discloses_missing_verification_tools_but_still_checks_manifest() -> Re
         || doctor_check_status(&report, "tool_cargo") != "advisory"
         || doctor_check_status(&report, "tool_rustc") != "advisory"
     {
-        Err(format!("an installed binary must keep analysis available: {report}"))
+        Err(format!(
+            "an installed binary must keep analysis available: {report}"
+        ))
     } else {
         Ok(())
     };

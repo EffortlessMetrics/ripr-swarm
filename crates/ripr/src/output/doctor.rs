@@ -659,7 +659,8 @@ fn evaluate_doctor_core_with_probe_for_profile(
         let name = format!("tool_{tool}");
         match &rust_scope {
             RustToolchainScope::NotInScope(reason)
-                if RUST_TOOLCHAIN_TOOLS.contains(&tool) && profile == DoctorProfile::Analysis => {
+                if RUST_TOOLCHAIN_TOOLS.contains(&tool) && profile == DoctorProfile::Analysis =>
+            {
                 report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
             }
             _ => {
@@ -1587,7 +1588,9 @@ mod tests {
         for tool in ["tool_cargo", "tool_rustc"] {
             let advisory = check(&report, tool)?;
             if advisory.status != DoctorCheckStatus::Advisory {
-                return Err(format!("{tool} must be advisory for installed analysis: {advisory:?}"));
+                return Err(format!(
+                    "{tool} must be advisory for installed analysis: {advisory:?}"
+                ));
             }
         }
         if report.status != DoctorStatus::Pass {
@@ -1597,11 +1600,15 @@ mod tests {
     }
 
     #[test]
-    fn old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build() -> Result<(), String> {
+    fn old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build() -> Result<(), String>
+    {
         let root = doctor_scope_root(
             "scope-old-compiler",
             &[
-                ("Cargo.toml", "[package]\nname = \"probe\"\nversion = \"0.1.0\"\n"),
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"probe\"\nversion = \"0.1.0\"\n",
+                ),
                 ("src/lib.rs", "pub fn f() {}\n"),
             ],
         )?;
@@ -1634,7 +1641,9 @@ mod tests {
             || analysis.profile != DoctorProfile::Analysis
             || build.profile != DoctorProfile::SourceBuild
         {
-            return Err(format!("wrong capability projection: {analysis:?} {build:?}"));
+            return Err(format!(
+                "wrong capability projection: {analysis:?} {build:?}"
+            ));
         }
         let analysis_json = analysis.render_json()?;
         let build_json = build.render_json()?;
@@ -1643,7 +1652,9 @@ mod tests {
             || doctor_report_result(&analysis).is_err()
             || doctor_report_result(&build).is_ok()
         {
-            return Err(format!("wrong rendered/exit projection: {analysis_json} {build_json}"));
+            return Err(format!(
+                "wrong rendered/exit projection: {analysis_json} {build_json}"
+            ));
         }
         Ok(())
     }
