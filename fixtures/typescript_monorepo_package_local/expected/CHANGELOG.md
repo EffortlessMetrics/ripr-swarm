@@ -274,3 +274,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_monorepo_package_local (4)
+
+Reason:
+RIPR-SPEC-0027 position/arity witness guard #4102: the pkg-a assertion passes the boundary literal 100 in the price position while the changed comparison reads discountPct (argument 2); the assertion cannot observe the changed boundary, so the classification downgrades exposed -> weakly_exposed and gap_state already_observed -> advisory with missing_discriminator discountPct == 100. Package-local selection (RIPR-SPEC-0085) unchanged: same single related test and oracle evidence.
+
+Command:
+`cargo xtask goldens bless typescript_monorepo_package_local --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

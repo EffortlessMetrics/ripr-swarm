@@ -1006,7 +1006,7 @@ fn discovered_files(
 fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     use super::language_routes::PilotLanguageRoutesState;
     use crate::domain::LanguageId;
-    use crate::output::repo_exposure::TsFullRepoGuidance;
+    use crate::output::repo_exposure::{PythonRepoExposureGuidance, TsFullRepoGuidance};
 
     let root = Path::new(".");
     let rust_only = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[]);
@@ -1050,7 +1050,14 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     }
     let python = &required.routes[2];
     assert_eq!(python.command.as_deref(), Some("ripr check --root ."));
-    assert_eq!(python.guidance, None);
+    assert_eq!(
+        python.guidance_category,
+        Some(PythonRepoExposureGuidance::CATEGORY)
+    );
+    assert_eq!(
+        python.guidance.as_deref(),
+        Some(PythonRepoExposureGuidance::REPAIR_ROUTE)
+    );
     let perl = &required.routes[3];
     if LanguageId::Perl.is_available() {
         assert_eq!(perl.language_status(), "preview");
@@ -1075,10 +1082,12 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
 #[test]
 fn pilot_terminal_route_label_has_one_shape_for_every_language() {
     use crate::domain::LanguageId;
+    use crate::output::repo_exposure::{PythonRepoExposureGuidance, TsFullRepoGuidance};
 
-    // Re-walk N10: Python printed `route:` while TypeScript printed
-    // `route (typescript_diff_first):`. The label must not depend on the
-    // language or on whether reused guidance applies.
+    // Re-walk N10: the route label is `route:` for every language. The
+    // guidance category stays in JSON and Markdown, so TypeScript
+    // (`typescript_diff_first`) and Python (`python_diff_first`) print the
+    // same label.
     let artifacts = pilot_artifacts();
     let files = discovered_files(&[
         (LanguageId::TypeScript, "web/c.ts"),
@@ -1092,19 +1101,18 @@ fn pilot_terminal_route_label_has_one_shape_for_every_language() {
         .iter()
         .filter(|route| route.command.is_some())
         .collect();
-    // Subject check: the stimulus holds both a route with reused guidance
-    // (TypeScript) and one without (Python), or the comparison is vacuous.
     assert!(
-        runnable
-            .iter()
-            .any(|route| route.language == LanguageId::TypeScript
-                && route.guidance_category.is_some()),
+        runnable.iter().any(|route| {
+            route.language == LanguageId::TypeScript
+                && route.guidance_category == Some(TsFullRepoGuidance::CATEGORY)
+        }),
         "{routes:?}"
     );
     assert!(
-        runnable
-            .iter()
-            .any(|route| route.language == LanguageId::Python && route.guidance_category.is_none()),
+        runnable.iter().any(|route| {
+            route.language == LanguageId::Python
+                && route.guidance_category == Some(PythonRepoExposureGuidance::CATEGORY)
+        }),
         "{routes:?}"
     );
 

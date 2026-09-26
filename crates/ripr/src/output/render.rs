@@ -76,6 +76,7 @@ pub(crate) fn render_check_with_config(
             let (classified, limit_info) =
                 analysis::inventory_classified_seams_at_with_config(&output.root, config)?;
             let ts_guidance = detect_ts_full_repo_guidance(&output.root, &classified);
+            let python_guidance = detect_python_repo_exposure_guidance(&output.root, &classified);
             let artifact_context =
                 crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
                     output.root.clone(),
@@ -87,6 +88,7 @@ pub(crate) fn render_check_with_config(
                 &classified,
                 limit_info.as_ref(),
                 ts_guidance.as_ref(),
+                python_guidance.as_ref(),
                 &artifact_context,
             )
         }
@@ -104,10 +106,12 @@ pub(crate) fn render_check_with_config(
             let (classified, limit_info) =
                 analysis::inventory_classified_seams_at_with_config(&output.root, config)?;
             let ts_guidance = detect_ts_full_repo_guidance(&output.root, &classified);
+            let python_guidance = detect_python_repo_exposure_guidance(&output.root, &classified);
             Ok(repo_exposure::render_repo_exposure_md(
                 &classified,
                 limit_info.as_ref(),
                 ts_guidance.as_ref(),
+                python_guidance.as_ref(),
             ))
         }
         OutputFormat::RepoSarif => {
@@ -163,6 +167,14 @@ pub(crate) fn detect_ts_full_repo_guidance_pub(
     detect_ts_full_repo_guidance(root, classified)
 }
 
+/// Public re-export for CLI callers that drive the streaming JSON path directly.
+pub(crate) fn detect_python_repo_exposure_guidance_pub(
+    root: &std::path::Path,
+    classified: &[crate::analysis::ClassifiedSeam],
+) -> Option<repo_exposure::PythonRepoExposureGuidance> {
+    detect_python_repo_exposure_guidance(root, classified)
+}
+
 /// Detect whether a TypeScript diff-first guidance disclosure should fire.
 ///
 /// Returns `Some(TsFullRepoGuidance)` when ALL of:
@@ -215,6 +227,36 @@ fn detect_ts_full_repo_guidance(
         ts_file_count,
         readiness,
     })
+}
+
+/// Detect whether a Python diff-first guidance disclosure should fire.
+///
+/// Same fail-closed guards as the TypeScript disclosure: empty seam
+/// inventory, at least one Python file, and no Rust source. A Rust workspace
+/// that happens to contain Python and zero seams keeps the Rust result.
+fn detect_python_repo_exposure_guidance(
+    root: &std::path::Path,
+    classified: &[crate::analysis::ClassifiedSeam],
+) -> Option<repo_exposure::PythonRepoExposureGuidance> {
+    use crate::domain::LanguageId;
+
+    if !classified.is_empty() {
+        return None;
+    }
+
+    let preview_files = analysis::workspace_preview_language_files(root);
+    let python_file_count = preview_files
+        .iter()
+        .filter(|(lang, _)| *lang == LanguageId::Python)
+        .count();
+    if python_file_count == 0 {
+        return None;
+    }
+    if !analysis::workspace_rust_files(root).is_empty() {
+        return None;
+    }
+
+    Some(repo_exposure::PythonRepoExposureGuidance { python_file_count })
 }
 
 fn load_suppressions(
@@ -424,8 +466,65 @@ mod tests {
         assert!(seams_json.contains("\"schema_version\": \"0.1\""));
         assert!(seams_json.contains("over_threshold"));
         assert!(seams_md.contains("over_threshold"));
-
         remove_temp_root(&output.root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn repo_exposure_names_python_diff_first_only_without_rust_files() -> Result<(), String> {
+        let python_only = temp_root("ripr-render-python-only")?;
+        std::fs::create_dir_all(python_only.join("src"))
+            .map_err(|err| format!("create python src: {err}"))?;
+        std::fs::create_dir_all(python_only.join("tests"))
+            .map_err(|err| format!("create python tests: {err}"))?;
+        std::fs::write(python_only.join("src/app.py"), "def run():\n    return 1\n")
+            .map_err(|err| format!("write app.py: {err}"))?;
+        std::fs::write(
+            python_only.join("tests/test_app.py"),
+            "def test_run():\n    assert True\n",
+        )
+        .map_err(|err| format!("write test: {err}"))?;
+
+        let detected = super::detect_python_repo_exposure_guidance(&python_only, &[]);
+        let count = detected
+            .as_ref()
+            .map(|guidance| guidance.python_file_count)
+            .ok_or("python-only workspace must disclose python_diff_first")?;
+        assert!(count >= 1, "expected at least one python file, got {count}");
+
+        let mut output = check_output_with(Vec::new());
+        output.root = python_only.clone();
+        let json = render_check_with_config(
+            &output,
+            &OutputFormat::RepoExposureJson,
+            &RiprConfig::default(),
+        )?;
+        assert!(
+            json.contains("\"category\": \"python_diff_first\""),
+            "{json}"
+        );
+        assert!(
+            json.contains("\"seams\": []") || json.contains("\"seams\":[\n]"),
+            "{json}"
+        );
+        let md = render_check_with_config(
+            &output,
+            &OutputFormat::RepoExposureMd,
+            &RiprConfig::default(),
+        )?;
+        assert!(md.contains("python_diff_first"), "{md}");
+        remove_temp_root(&python_only)?;
+
+        let mixed = temp_root("ripr-render-python-with-rust")?;
+        std::fs::write(mixed.join("lib.rs"), "// rust marker, no behavior\n")
+            .map_err(|err| format!("write lib.rs: {err}"))?;
+        std::fs::write(mixed.join("app.py"), "def run():\n    return 1\n")
+            .map_err(|err| format!("write mixed app.py: {err}"))?;
+        assert!(
+            super::detect_python_repo_exposure_guidance(&mixed, &[]).is_none(),
+            "a workspace that still has Rust files must not get the Python empty-seam disclosure"
+        );
+        remove_temp_root(&mixed)?;
         Ok(())
     }
 
