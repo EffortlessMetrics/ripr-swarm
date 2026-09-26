@@ -195,6 +195,13 @@ pub(crate) fn visit_workspace(root: &Path, max_entries: usize) -> WorkspaceScan 
                     let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
                     out.push(relative);
                 }
+            } else if is_special_non_link_file(&file_type) {
+                // FIFOs, sockets and devices (Unix) are neither directories,
+                // regular files, nor links and cannot carry TypeScript
+                // sources. Counting them as skipped links would disclose a
+                // symlink/junction limitation a workspace without any link
+                // does not have (review #4138): they stay unanalyzed without
+                // claiming link-hidden coverage loss.
             } else {
                 // Reparse points std does not report as symlinks (notably
                 // NTFS junctions on some toolchains) land here: neither dir
@@ -215,6 +222,27 @@ pub(crate) fn visit_workspace(root: &Path, max_entries: usize) -> WorkspaceScan 
         truncated,
         skipped_links,
     }
+}
+
+/// `true` for directory entry types that are neither directories, regular
+/// files, nor links (FIFOs, sockets, character/block devices on Unix). Such
+/// entries cannot contain or stand in for TypeScript sources, so discovery
+/// skips them without counting them toward the `skipped_links` disclosure.
+#[cfg(unix)]
+fn is_special_non_link_file(file_type: &std::fs::FileType) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    file_type.is_fifo()
+        || file_type.is_socket()
+        || file_type.is_char_device()
+        || file_type.is_block_device()
+}
+
+/// Non-Unix platforms expose no FIFO/socket/device entry types through
+/// `std::fs::read_dir`; every non-dir/non-file entry is a reparse point and
+/// stays in the `skipped_links` disclosure.
+#[cfg(not(unix))]
+fn is_special_non_link_file(_file_type: &std::fs::FileType) -> bool {
+    false
 }
 
 #[cfg(test)]
@@ -545,6 +573,38 @@ mod tests {
             scan.files
         );
         let _ = linked;
+    }
+
+    /// A Unix socket is neither dir, file, nor link, so before the
+    /// special-file exclusion it incremented `skipped_links` — a workspace
+    /// with no link at all would have disclosed a link limitation
+    /// (review #4138). The socket must be excluded without counting, and
+    /// real sources stay indexed.
+    #[cfg(unix)]
+    #[test]
+    fn discovery_does_not_count_sockets_as_skipped_links() {
+        let workspace = TempWorkspace::new("socket-skip");
+        workspace.write(
+            "src/sum.ts",
+            "export function sum(a: number, b: number): number {\n  return a + b;\n}\n",
+        );
+        let socket_path = workspace.0.join("agent.sock");
+        let listener = match std::os::unix::net::UnixListener::bind(&socket_path) {
+            Ok(listener) => listener,
+            Err(_) => return, // platform refused; nothing to assert here
+        };
+
+        let scan = visit_workspace(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES);
+        assert_eq!(
+            scan.skipped_links, 0,
+            "a socket is not a link and must not disclose a link limitation"
+        );
+        assert!(
+            scan.files.iter().any(|file| file.ends_with("src/sum.ts")),
+            "the real source must still be indexed: {:?}",
+            scan.files
+        );
+        drop(listener);
     }
 
     #[test]

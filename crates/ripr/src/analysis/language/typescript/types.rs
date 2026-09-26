@@ -14,17 +14,28 @@ pub(crate) struct TypeScriptOwner {
     pub(crate) owner_kind: OwnerKind,
     pub(crate) class_name: Option<String>,
     pub(crate) decorated: bool,
+    /// `true` when the owner declaration is the module's default export
+    /// (`export default function name(...)`, `export default const name = ...`).
+    /// A default import (`import local from './owner'`) binds exactly this
+    /// declaration, so the relation gate may credit a call through `local`
+    /// only when this fact is recorded (#4103 under-credit: a named default
+    /// export imported under a different local name was previously
+    /// unreachable from every relation arm).
+    pub(crate) exported_as_default: bool,
     pub(crate) imports: Vec<TypeScriptImport>,
     /// Method-shape refinement for `OwnerKind::Method` owners: a getter is
     /// invoked by property READS on a receiver, and the constructor runs on
     /// every `new ClassName(...)` — both change which relation needle is
     /// honest for the owner (#4104-B).
     pub(crate) method_kind: TypeScriptMethodKind,
-    /// `true` only when this owner IS the module's default export
-    /// (`export default function fare` / anonymous default). A default
-    /// import (`import ride from './owner'`) then plausibly targets this
-    /// owner regardless of the local binding name (#4104-B).
-    pub(crate) default_export: bool,
+    /// `true` when the owner's CONTAINING CLASS is the module's default
+    /// export (`export default class Cart { ... }`). A class default export
+    /// has no class-level owner entry — only its methods are indexed — so
+    /// each method carries this marker instead, and `exported_as_default`
+    /// stays false for them: a method is not itself the module's default
+    /// export. Constructor matching uses it to credit
+    /// `new <default-import local>(...)` (#4104-B, review #4138).
+    pub(crate) class_default_export: bool,
     /// Parameter facts resolved from the owner signature (issue #4102).
     /// `Some(n)` only when every parameter is a plain binding identifier and
     /// there is no rest parameter; `None` when the list could not be resolved

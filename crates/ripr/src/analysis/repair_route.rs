@@ -674,6 +674,14 @@ fn has_external_language_related_test(entry: &ClassifiedSeam) -> bool {
     })
 }
 
+// One shared inventory, not a private list: #4094 routed `.mts`/`.cts` into the
+// TypeScript adapter, so a modern related test is cross-language evidence here
+// exactly like a `.ts` one. The TS/JS family consumes the routed extension
+// authority from `analysis::language::router`, the same owner the router itself
+// and the agent packet projection read; the remaining bridge languages keep
+// their historical lowercase fold here. See
+// `tests::external_language_test_extensions_cover_bridge_language_families` and
+// `tests::modern_ts_related_tests_keep_the_repair_packet_fail_closed`.
 fn is_external_language_extension(extension: &str) -> bool {
     let extension = extension.to_ascii_lowercase();
     // #4116: the TS/JS family consumes the shared extension authority; the
@@ -953,6 +961,11 @@ mod tests {
         Ok(())
     }
 
+    /// Every routed TypeScript/JavaScript extension, including the modern
+    /// `.mts`/`.cts` suffixes from #4094, must stay visible to the
+    /// fail-closed cross-language gate. `.mts`/`.cts` are the discriminating
+    /// rows: without the shared external-language authority this seam looks
+    /// repair-ready while its only related test is a TypeScript observer.
     #[test]
     fn external_language_test_extensions_cover_bridge_language_families() -> Result<(), String> {
         for extension in [
@@ -973,7 +986,9 @@ mod tests {
             );
         }
 
-        for extension in ["rs", "txt", "mt", "mjsx"] {
+        // Near-miss suffixes stay unknown: admitting routed extensions must not
+        // become broad suffix matching, or an unrelated file would block repair.
+        for extension in ["rs", "txt", "mt", "mjsx", "ctsx"] {
             let mut related_test = external_related_test();
             related_test.file = PathBuf::from(format!("tests/bridge.{extension}"));
             let entry = classified_with(
@@ -988,6 +1003,38 @@ mod tests {
             );
         }
 
+        Ok(())
+    }
+
+    /// End-to-end control for the modern suffixes: a `.mts` related test must
+    /// produce the same fail-closed ineligibility a `.ts` one does, with the
+    /// named reason. #4116/#4120 routed `.mts`/`.cts` through the shared
+    /// extension authority; before that the entry reported repair-ready, which
+    /// is the fail-open this pin guards. `external_language_test_extensions_
+    /// cover_bridge_language_families` pins the extension list itself, so this
+    /// test is the one that fails if the gate stops consulting it.
+    #[test]
+    fn modern_ts_related_tests_keep_the_repair_packet_fail_closed() -> Result<(), String> {
+        for extension in ["ts", "mts", "cts", "tsx"] {
+            let mut related_test = external_related_test();
+            related_test.file = PathBuf::from(format!("tests/bridge.{extension}"));
+            let entry = classified_with(
+                boundary_seam(),
+                SeamGripClass::WeaklyGripped,
+                vec![related_test],
+            );
+
+            let eligibility = repair_packet_eligibility(&entry);
+            assert_eq!(
+                eligibility.ineligibility,
+                Some(RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved),
+                ".{extension} related test must block the packet with the cross-language reason"
+            );
+            assert!(
+                !is_safe_for_repair_packet(&entry),
+                ".{extension} related test must not be repair-ready"
+            );
+        }
         Ok(())
     }
 

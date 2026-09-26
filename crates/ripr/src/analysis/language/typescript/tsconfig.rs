@@ -154,64 +154,88 @@ pub(crate) enum TsAliasMapLoadGap {
     /// Neither `tsconfig.json` nor `jsconfig.json` exists at the root.
     ConfigMissing,
     /// A config file exists but the strict JSON parser rejected it.
+    /// `config` records which file was loaded (`tsconfig.json` or the
+    /// `jsconfig.json` fallback) so the advice names the real file;
     /// `jsonc_comments` records whether comment syntax (which `tsc` accepts
     /// but this strict parser does not) was detected outside string
     /// literals; `detail` carries the bounded parser message.
     ConfigUnparseable {
+        config: &'static str,
         jsonc_comments: bool,
         detail: String,
     },
     /// The config uses `extends`/`references`, which single-hop resolution
-    /// deliberately does not follow.
-    ExtendsUnsupported,
+    /// deliberately does not follow. `config` names the loaded file.
+    ExtendsUnsupported { config: &'static str },
     /// The config parsed but has no `compilerOptions.baseUrl` to anchor
-    /// candidates.
-    IncompleteConfig,
+    /// candidates. `config` names the loaded file.
+    IncompleteConfig { config: &'static str },
     /// The config exists but could not be read (size cap or IO error); the
     /// size-limit case is separately disclosed by the capped-read lane.
-    ReadFailed,
+    /// `config` names the loaded file.
+    ReadFailed { config: &'static str },
 }
 
 impl TsAliasMapLoadGap {
     /// Typed cause phrase for the limitation's `why_not_actionable` text,
     /// paired with a cause-specific recovery hint. The advice never asks
     /// the user to enable the flag here: the flag is already ON whenever a
-    /// gap is produced.
-    pub(crate) fn parts(&self) -> (String, &'static str) {
+    /// gap is produced. Both phrases name the config file that was actually
+    /// loaded (`tsconfig.json` or the `jsconfig.json` fallback), so advice
+    /// for a JavaScript-only project does not point at a file that does not
+    /// exist (review #4138).
+    pub(crate) fn parts(&self) -> (String, String) {
         match self {
             Self::ConfigMissing => (
                 "no tsconfig.json or jsconfig.json exists at the workspace root".to_string(),
-                "add a tsconfig.json with compilerOptions.baseUrl and compilerOptions.paths for credit",
+                "add a tsconfig.json with compilerOptions.baseUrl and compilerOptions.paths for credit"
+                    .to_string(),
             ),
             Self::ConfigUnparseable {
+                config,
                 jsonc_comments: true,
                 detail,
             } => (
                 format!(
-                    "the tsconfig at the workspace root could not be parsed as strict JSON ({detail}); the file contains comment syntax (JSONC), which the strict parser rejects"
+                    "the {config} at the workspace root could not be parsed as strict JSON ({detail}); the file contains comment syntax (JSONC), which the strict parser rejects"
                 ),
-                "rewrite tsconfig.json as strict JSON without comments for credit (tsc itself accepts JSONC; this adapter currently does not)",
+                format!(
+                    "rewrite {config} as strict JSON without comments for credit (tsc itself accepts JSONC; this adapter currently does not)"
+                ),
             ),
             Self::ConfigUnparseable {
+                config,
                 jsonc_comments: false,
                 detail,
             } => (
                 format!(
-                    "the tsconfig at the workspace root could not be parsed as strict JSON ({detail})"
+                    "the {config} at the workspace root could not be parsed as strict JSON ({detail})"
                 ),
-                "fix the tsconfig.json JSON syntax for credit (JSONC comments and trailing commas are not supported)",
+                format!(
+                    "fix the {config} JSON syntax for credit (JSONC comments and trailing commas are not supported)"
+                ),
             ),
-            Self::ExtendsUnsupported => (
-                "the tsconfig at the workspace root uses `extends`/`references`, which single-hop alias resolution deliberately does not follow".to_string(),
-                "inline the extended compilerOptions.paths into tsconfig.json for credit",
+            Self::ExtendsUnsupported { config } => (
+                format!(
+                    "the {config} at the workspace root uses `extends`/`references`, which single-hop alias resolution deliberately does not follow"
+                ),
+                format!(
+                    "inline the extended compilerOptions.paths into {config} for credit"
+                ),
             ),
-            Self::IncompleteConfig => (
-                "the tsconfig at the workspace root parsed but has no compilerOptions.baseUrl to anchor alias candidates".to_string(),
-                "add compilerOptions.baseUrl (and compilerOptions.paths) to tsconfig.json for credit",
+            Self::IncompleteConfig { config } => (
+                format!(
+                    "the {config} at the workspace root parsed but has no compilerOptions.baseUrl to anchor alias candidates"
+                ),
+                format!(
+                    "add compilerOptions.baseUrl (and compilerOptions.paths) to {config} for credit"
+                ),
             ),
-            Self::ReadFailed => (
-                "the tsconfig at the workspace root exists but could not be read".to_string(),
-                "restore read access to the config (check permissions and encoding), then re-run the analysis",
+            Self::ReadFailed { config } => (
+                format!("the {config} at the workspace root exists but could not be read"),
+                format!(
+                    "restore read access to {config} (check permissions and encoding), then re-run the analysis"
+                ),
             ),
         }
     }
@@ -381,7 +405,7 @@ pub(crate) fn load_alias_map_with_read_error(
     Option<(PathBuf, super::bounded_read::CappedReadError)>,
     Option<TsAliasMapLoadGap>,
 ) {
-    for filename in &["tsconfig.json", "jsconfig.json"] {
+    for &filename in &["tsconfig.json", "jsconfig.json"] {
         let path = root.join(filename);
         if !path.is_file() {
             continue;
@@ -397,18 +421,25 @@ pub(crate) fn load_alias_map_with_read_error(
                             jsonc_comments,
                             detail,
                         } => TsAliasMapLoadGap::ConfigUnparseable {
+                            config: filename,
                             jsonc_comments,
                             detail,
                         },
                         TsAliasMapBlocker::ExtendsUnsupported => {
-                            TsAliasMapLoadGap::ExtendsUnsupported
+                            TsAliasMapLoadGap::ExtendsUnsupported { config: filename }
                         }
-                        TsAliasMapBlocker::IncompleteConfig => TsAliasMapLoadGap::IncompleteConfig,
+                        TsAliasMapBlocker::IncompleteConfig => {
+                            TsAliasMapLoadGap::IncompleteConfig { config: filename }
+                        }
                     };
                     (None, None, Some(gap))
                 }
             },
-            Err(err) => (None, Some((path, err)), Some(TsAliasMapLoadGap::ReadFailed)),
+            Err(err) => (
+                None,
+                Some((path, err)),
+                Some(TsAliasMapLoadGap::ReadFailed { config: filename }),
+            ),
         };
     }
     (None, None, Some(TsAliasMapLoadGap::ConfigMissing))
@@ -698,6 +729,92 @@ mod tests {
         let map = load_alias_map(&root).ok_or("should parse")?;
         // Two matching extensions → fail-closed
         assert!(map.resolve("@/owner").is_none());
+        Ok(())
+    }
+
+    /// A lone modern-suffix file must resolve through the alias, and the
+    /// resolved path must be that exact file. Pinned literally so removing a
+    /// suffix from `unique_file_for` fails the assertion.
+    #[test]
+    fn modern_suffixes_resolve_to_their_unique_file() -> Result<(), String> {
+        for (label, relative) in [
+            ("mts", "src/owner.mts"),
+            ("cts", "src/owner.cts"),
+            ("mjs", "src/owner.mjs"),
+            ("cjs", "src/owner.cjs"),
+        ] {
+            let root = temp_dir(label);
+            write(
+                &root,
+                "tsconfig.json",
+                r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+            );
+            write(&root, relative, "export function owner() {}");
+
+            let map = load_alias_map(&root).ok_or("should parse")?;
+            let resolved = map
+                .resolve("@/owner")
+                .ok_or_else(|| format!("{label} alias must resolve"))?;
+            assert_eq!(
+                resolved.to_string_lossy().replace('\\', "/"),
+                relative,
+                "{label} alias must resolve to the exact workspace file"
+            );
+        }
+        Ok(())
+    }
+
+    /// Two-match negative: when BOTH modern suffixes exist for one alias
+    /// base, resolution must fail closed rather than picking a suffix by
+    /// list order. This is the "always-suffix" wrong behavior this control
+    /// rejects — an implementation that always returns the first candidate
+    /// would resolve instead of returning `None`.
+    #[test]
+    fn two_modern_suffix_matches_fail_closed() -> Result<(), String> {
+        for (label, first, second) in [
+            ("mts-cts", "src/owner.mts", "src/owner.cts"),
+            ("mjs-cjs", "src/owner.mjs", "src/owner.cjs"),
+            ("ts-mts", "src/owner.ts", "src/owner.mts"),
+        ] {
+            let root = temp_dir(label);
+            write(
+                &root,
+                "tsconfig.json",
+                r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+            );
+            write(&root, first, "export function owner() {}");
+            write(&root, second, "export function owner() {}");
+
+            let map = load_alias_map(&root).ok_or("should parse")?;
+            assert!(
+                map.resolve("@/owner").is_none(),
+                "{first} and {second} both match @/owner; resolution must fail closed"
+            );
+        }
+        Ok(())
+    }
+
+    /// A near-miss suffix is not an alias candidate: only `owner.mts` exists,
+    /// so the alias resolves to it. A `.mtsx` sibling must NOT create a
+    /// second match and must NOT be substituted for `.mts`.
+    #[test]
+    fn near_miss_suffix_is_not_an_alias_candidate() -> Result<(), String> {
+        let root = temp_dir("near-miss");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        write(&root, "src/owner.mts", "export function owner() {}");
+        write(&root, "src/owner.mtsx", "export function owner() {}");
+
+        let map = load_alias_map(&root).ok_or("should parse")?;
+        let resolved = map.resolve("@/owner").ok_or("should resolve")?;
+        assert_eq!(
+            resolved.to_string_lossy().replace('\\', "/"),
+            "src/owner.mts",
+            "a .mtsx near-miss must not be an alias candidate or resolve the alias"
+        );
         Ok(())
     }
 

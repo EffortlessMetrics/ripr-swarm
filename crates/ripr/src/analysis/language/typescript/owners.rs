@@ -148,10 +148,26 @@ pub(crate) fn owners_from_default_export(
         )],
         _ => Vec::new(),
     };
-    // These owners ARE the module's default export, so a default import of
-    // this module plausibly targets them (relation layer, #4104-B).
-    for owner in &mut owners {
-        owner.default_export = true;
+    // The relation gate may only credit a default import
+    // (`import local from './owner'`) against an owner that IS the module's
+    // default export (#4103 under-credit). Function and arrow owners carved
+    // from `export default <declaration>` are that export. A default
+    // EXPORTED CLASS has no class-level owner entry — `owners_from_class`
+    // yields only its methods — so those methods carry the separate
+    // `class_default_export` marker (constructor matching, #4104-B) while
+    // `exported_as_default` stays false: a method is not itself the
+    // module's default export (review #4138).
+    match decl {
+        ExportDefaultDeclarationKind::ClassDeclaration(_) => {
+            for owner in &mut owners {
+                owner.class_default_export = true;
+            }
+        }
+        _ => {
+            for owner in &mut owners {
+                owner.exported_as_default = true;
+            }
+        }
     }
     owners
 }
@@ -203,9 +219,10 @@ pub(crate) fn owner_from_variable_declarator(
             owner_kind: OwnerKind::ModuleFunction,
             class_name: None,
             decorated: false,
+            exported_as_default: false,
             imports: imports.to_vec(),
             method_kind: TypeScriptMethodKind::Ordinary,
-            default_export: false,
+            class_default_export: false,
             // Non-function initializers carry no resolvable signature facts.
             arity: None,
             parameters: Vec::new(),
@@ -252,9 +269,10 @@ pub(crate) fn owner_from_function(
         owner_kind,
         class_name: None,
         decorated,
+        exported_as_default: false,
         imports: imports.to_vec(),
         method_kind: TypeScriptMethodKind::Ordinary,
-        default_export: false,
+        class_default_export: false,
         arity,
         parameters,
         source_text: Some(source[func.span.start as usize..func.span.end as usize].to_string()),
@@ -279,9 +297,10 @@ pub(crate) fn owner_from_arrow(
         owner_kind: arrow_owner_kind(file, source, name, arrow.span.start, arrow.span.end),
         class_name: None,
         decorated,
+        exported_as_default: false,
         imports: imports.to_vec(),
         method_kind: TypeScriptMethodKind::Ordinary,
-        default_export: false,
+        class_default_export: false,
         arity,
         parameters,
         source_text: Some(source[arrow.span.start as usize..arrow.span.end as usize].to_string()),
@@ -342,6 +361,7 @@ pub(crate) fn owner_from_method(
         },
         class_name: class_name.map(str::to_string),
         decorated: class_decorated || !method.decorators.is_empty(),
+        exported_as_default: false,
         imports: imports.to_vec(),
         method_kind: match method.kind {
             oxc_ast::ast::MethodDefinitionKind::Constructor => TypeScriptMethodKind::Constructor,
@@ -349,7 +369,7 @@ pub(crate) fn owner_from_method(
             oxc_ast::ast::MethodDefinitionKind::Set => TypeScriptMethodKind::Setter,
             oxc_ast::ast::MethodDefinitionKind::Method => TypeScriptMethodKind::Ordinary,
         },
-        default_export: false,
+        class_default_export: false,
         arity,
         parameters,
         source_text: Some(source[method.span.start as usize..method.span.end as usize].to_string()),

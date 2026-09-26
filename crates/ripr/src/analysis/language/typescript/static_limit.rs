@@ -257,6 +257,34 @@ fn relative_import_resolves_to_workspace_file(
         candidates.push(PathBuf::from(format!("{base_str}{ext}")));
         candidates.push(PathBuf::from(format!("{base_str}/index{ext}")));
     }
+    // TypeScript's JS-extension rewrite (moduleResolution node16/bundler):
+    // an ESM-style `./util.js` specifier may resolve to the `util.ts` /
+    // `util.tsx` source (`.mjs` -> `.mts`, `.cjs` -> `.cts`, `.jsx` ->
+    // `.tsx`). Rewritten candidates are APPENDED, never substituted: dotted
+    // module names that are not JS-extension spellings (e.g. `./bar.v2`)
+    // must keep resolving to `bar.v2.ts` by plain extension-append — a
+    // `Path::with_extension`-style replacement would turn `bar.v2` into
+    // `bar.ts` and resolve against an unrelated file (review #4138).
+    if let Some(name) = base
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+    {
+        if let Some((stem, ext)) = name.rsplit_once('.')
+            && !stem.is_empty()
+        {
+            let rewrite_targets: &[&str] = match ext {
+                "js" => &["ts", "tsx"],
+                "jsx" => &["tsx"],
+                "mjs" => &["mts"],
+                "cjs" => &["cts"],
+                _ => &[],
+            };
+            let parent = base.parent().unwrap_or(Path::new(""));
+            for target in rewrite_targets {
+                candidates.push(parent.join(format!("{stem}.{target}")));
+            }
+        }
+    }
     candidates
         .iter()
         .any(|candidate| workspace_root.join(candidate).is_file())
@@ -428,12 +456,12 @@ pub(crate) fn named_limitations_for_alias_unresolved(
             let (cause_text, recovery_hint) = match (alias_map, alias_unavailable) {
                 (Some(map), _) => {
                     let (cause, hint) = map.unresolve_cause_for(&import.source).parts();
-                    (cause.to_string(), hint)
+                    (cause.to_string(), hint.to_string())
                 }
                 (None, Some(gap)) => gap.parts(),
                 (None, None) => {
                     let (cause, hint) = TsAliasUnresolveCause::MapUnavailable.parts();
-                    (cause.to_string(), hint)
+                    (cause.to_string(), hint.to_string())
                 }
             };
             let sample_source = format!("{}:{}", normalized_path(&test.file), test.line);
