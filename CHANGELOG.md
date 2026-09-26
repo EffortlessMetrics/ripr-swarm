@@ -529,6 +529,24 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Local LSP file URIs now treat an empty authority and `localhost` as the
+  same local path. Workspace paths spelled as UNC shares or Windows
+  extended-length/device paths are refused when producing a local file URI,
+  instead of emitting a URI the server cannot read back. Workspaces on those
+  paths remain unsupported by this local-only URI path
+  ([#4060](https://github.com/EffortlessMetrics/ripr-swarm/issues/4060)).
+- TypeScript predicate-boundary evidence no longer credits assertions whose
+  boundary value is in an unread argument or nested expression, whose owner
+  name is shadowed, or whose expected value cannot discriminate the change.
+  These cases may move from `exposed` to a weaker class and regain guidance
+  to add a discriminating test; live boundary assertions retain their credit
+  ([#4102](https://github.com/EffortlessMetrics/ripr-swarm/issues/4102)).
+- TypeScript related-test discovery now recognizes supported optional-chain
+  calls, awaited dynamic imports, named default exports, and re-exports
+  through star or default-as barrels. Findings backed by those relations can
+  gain related-test evidence; a relation alone does not establish a
+  discriminating oracle
+  ([#4103](https://github.com/EffortlessMetrics/ripr-swarm/issues/4103)).
 - `check-file-policy` builds test binaries before it lists `covered_by`
   subjects. A cold compile is no longer charged against the five-minute
   list cap, and a timeout is reported as an instrument failure rather than
