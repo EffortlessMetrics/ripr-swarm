@@ -100,9 +100,9 @@ const CONTRACTS: &[VerificationContract] = &[
         ],
     },
     // The `--gap-ledger` route writes the same review-comments artifact but
-    // renders an `inputs.gap_ledger` disclosure and gap-variant `suppressed[]`
-    // items (`gap_id`, nullable `file`/`line`) that the diff-scoped fixture
-    // above never carries; the generation-time `--check` in
+    // renders an `inputs.gap_ledger` disclosure, eligible gap-record cards,
+    // and gap-variant `suppressed[]` items (`gap_id`, nullable `file`/`line`)
+    // that the diff-scoped fixture above never carries; the generation-time `--check` in
     // `xtask/src/reports/review_comments.rs` shells `ripr review-comments`
     // without `--gap-ledger`, so nothing consumed this shape before this row
     // while the closed published schema rejected it.
@@ -112,7 +112,7 @@ const CONTRACTS: &[VerificationContract] = &[
         fixture_path: "tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json",
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
-        doc_markers: &["inputs", "gap_ledger"],
+        doc_markers: &["inputs", "gap_ledger", "gap_record_anchor", "comments[].gap_id"],
     },
     VerificationContract {
         schema_path: "schemas/ripr/gate-decision.schema.json",
@@ -1321,6 +1321,51 @@ mod tests {
         );
 
         assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_gap_ledger_card_has_its_own_schema_branch() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/review-comments.schema.json"))?;
+        // The fixture carries an eligible card shaped by
+        // output::review_comments::gap_record_recommendation_json, as well as
+        // suppressed records whose anchor can be absent.
+        let packet = read_json(root.join(
+            "tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json",
+        ))?;
+        let check = |value: &Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                value,
+                &schema,
+                &schema,
+                "gap-ledger review comments".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        assert_eq!(packet["summary"]["comments"], 1);
+        assert!(check(&packet).is_empty(), "{:#?}", check(&packet));
+
+        let mut missing_identity = packet.clone();
+        missing_identity["comments"][0]
+            .as_object_mut()
+            .ok_or("missing fixture comment")?
+            .remove("gap_id");
+        assert!(!check(&missing_identity).is_empty());
+
+        let mut wrong_placement = packet.clone();
+        wrong_placement["comments"][0]["placement"]["mode"] =
+            Value::String("exact_seam_line".to_string());
+        assert!(!check(&wrong_placement).is_empty());
+
+        let mut default_packet =
+            read_json(root.join("tests/fixtures/verification/ripr/review-comments.valid.json"))?;
+        assert!(!default_packet["comments"].as_array().ok_or("missing default comments")?.is_empty());
+        default_packet["comments"][0]["placement"]["mode"] =
+            Value::String("gap_record_anchor".to_string());
+        assert!(!check(&default_packet).is_empty());
         Ok(())
     }
 

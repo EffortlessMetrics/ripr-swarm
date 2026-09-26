@@ -2871,6 +2871,14 @@ mod tests {
         assert_eq!(value["suppressed"][0]["reason"], "missing_seam_identity");
         assert_eq!(value["suppressed"][1]["reason"], "not_pr_comment_eligible");
 
+        // The schema fixture must retain the real eligible producer shape;
+        // validating only zero-comment ledgers misses this route's card.
+        let schema_fixture: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json"
+        ))
+        .map_err(|err| format!("parse schema fixture: {err}"))?;
+        assert_eq!(value["comments"][0], schema_fixture["comments"][0]);
+
         let markdown = render_gap_record_review_comments_markdown(
             Path::new("."),
             "main",

@@ -829,8 +829,6 @@
         "kind",
         "grip_class",
         "severity",
-        "owner",
-        "seam",
         "source_location",
         "reason",
         "suggested_test",
@@ -838,6 +836,13 @@
       ],
       "properties": {
         "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "const": "gap_decision_ledger"
+        },
+        "gap_id": {
           "type": "string",
           "minLength": 1
         },
@@ -946,7 +951,39 @@
             "unknown"
           ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["source"],
+            "properties": { "source": { "const": "gap_decision_ledger" } }
+          },
+          "then": {
+            "required": ["gap_id"],
+            "properties": {
+              "placement": {
+                "properties": { "mode": { "const": "gap_record_anchor" } }
+              }
+            }
+          },
+          "else": {
+            "required": ["owner", "seam"],
+            "properties": {
+              "placement": {
+                "properties": {
+                  "mode": {
+                    "enum": [
+                      "exact_seam_line",
+                      "owner_function_changed_line",
+                      "same_file_changed_line"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "seam": {
       "type": "object",
@@ -998,7 +1035,8 @@
           "enum": [
             "exact_seam_line",
             "owner_function_changed_line",
-            "same_file_changed_line"
+            "same_file_changed_line",
+            "gap_record_anchor"
           ]
         }
       }

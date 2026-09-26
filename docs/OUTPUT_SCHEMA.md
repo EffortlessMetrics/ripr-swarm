@@ -7199,7 +7199,7 @@ JSON shape:
     "limitation": "review_comments_gap_ledger_artifact_scope_only",
     "repair_route": "reports/gap-decision-ledger"
   },
-  "limits": {
+  "rendering_limits": {
     "max_inline_comments": 3,
     "max_summary_items": 10
   },
@@ -7212,6 +7212,8 @@ JSON shape:
   "comments": [
     {
       "id": "ripr-review-67fc764ba37d77bd",
+      "source": "gap_decision_ledger",
+      "gap_id": "gap:pr:pricing:threshold-boundary",
       "seam_id": "67fc764ba37d77bd",
       "canonical_gap_id": "gap:67fc764ba37d77bd",
       "dedupe_key": "ripr:67fc764ba37d77bd:src/pricing.rs:88",
@@ -7219,7 +7221,7 @@ JSON shape:
         "path": "src/pricing.rs",
         "line": 88,
         "side": "RIGHT",
-        "mode": "exact_seam_line"
+        "mode": "gap_record_anchor"
       },
       "kind": "predicate_boundary",
       "grip_class": "weakly_gripped",
@@ -7312,7 +7314,12 @@ Field contract:
   items eligible for check annotations or inline review comments.
 - `comments[].id` - stable report-local ID derived from the seam when possible.
 - `comments[].seam_id` - static seam identifier from the existing exposure or
-  agent packet evidence.
+  agent packet evidence. On `--gap-ledger`, the producer-owned seam ID is
+  required for a comment to be eligible.
+- `comments[].source` / `comments[].gap_id` - on `--gap-ledger`, the source is
+  `gap_decision_ledger` and the gap ID identifies the supplied record. These
+  cards do not invent the working-set `owner` or `seam` objects. The published
+  schema validates this distinct card shape.
 - `comments[].canonical_gap_id` - required, nullable stable behavioral-gap
   identity. Working-set cards project it from the canonical analysis domain;
   gap-ledger cards preserve `GapRecord.canonical_gap_id`. The renderer never
@@ -7325,8 +7332,9 @@ Field contract:
   `"owner_function_changed_line"`, or `"same_file_changed_line"`. The last
   names a changed line inside the seam owner's span that owner attribution
   bound to a nested function; a changed line elsewhere in the same file is
-  not a placement. The renderer must prefer summary-only guidance over
-  misleading line placement.
+  not a placement. Gap-ledger cards use `"gap_record_anchor"` for their
+  producer-owned stable anchor. The renderer must prefer summary-only guidance
+  over misleading line placement.
 - `comments[].kind` - seam kind from the existing static evidence.
 - `comments[].grip_class` - seam grip class from the existing static evidence.
 - `comments[].severity` - configured report severity for the recommendation.
