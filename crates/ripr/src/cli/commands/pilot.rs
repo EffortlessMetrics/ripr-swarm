@@ -35,10 +35,13 @@ fn write_pilot_repo_exposure_json(
     config: &RiprConfig,
     classified: &[analysis::ClassifiedSeam],
     limit_info: Option<&analysis::SeamLimitInfo>,
-    ts_guidance: Option<&output::repo_exposure::TsFullRepoGuidance>,
-    py_guidance: Option<&output::repo_exposure::PythonRepoEvidenceGuidance>,
+    preview_guidances: (
+        Option<&output::repo_exposure::TsFullRepoGuidance>,
+        Option<&output::repo_exposure::PythonRepoEvidenceGuidance>,
+    ),
     pilot_budget_truncated: bool,
 ) -> Result<(), String> {
+    let (ts_guidance, py_guidance) = preview_guidances;
     let write_failed = |err: String| format!("write {} failed: {err}", path.display());
     if pilot_budget_truncated {
         return std::fs::write(
@@ -210,8 +213,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         &config,
         &classified,
         limit_info.as_ref(),
-        ts_guidance.as_ref(),
-        py_guidance.as_ref(),
+        (ts_guidance.as_ref(), py_guidance.as_ref()),
         pilot_budget_truncated,
     )?;
     std::fs::write(
