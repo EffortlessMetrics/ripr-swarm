@@ -2,7 +2,7 @@
 
 use super::tsconfig::TsAliasMap;
 use super::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ── Re-export index ───────────────────────────────────────────────────────────
 
@@ -25,6 +25,13 @@ pub(crate) struct ReExportIndex {
     /// key: (intermediate_module_norm, exported_name)
     /// value: (original_name, source_module_norm)
     entries: HashMap<(String, String), (String, String)>,
+    /// `export * from './source'` hops: (intermediate_module, star_source_module).
+    /// A star re-export forwards every named export of the source module under
+    /// its original name, so a test importing `owner.name` from `intermediate`
+    /// reaches the owner when a star hop leads to the owner's module
+    /// (#4103 under-credit: the star barrel was invisible and the emitted
+    /// guidance claimed no test referenced the owner at all).
+    star_edges: HashSet<(String, String)>,
 }
 
 impl ReExportIndex {
@@ -37,6 +44,19 @@ impl ReExportIndex {
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self::default()
+    }
+
+    /// Test-only constructor from raw entries and star edges, so re-export
+    /// resolution can be exercised without a real filesystem.
+    #[cfg(test)]
+    pub(crate) fn from_parts(
+        entries: Vec<((String, String), (String, String))>,
+        star_edges: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            entries: entries.into_iter().collect(),
+            star_edges: star_edges.into_iter().collect(),
+        }
     }
 
     /// Build a re-export index from all non-test source files in the workspace.
@@ -65,6 +85,7 @@ impl ReExportIndex {
         use oxc_parser::Parser;
 
         let mut entries: HashMap<(String, String), (String, String)> = HashMap::new();
+        let mut star_edges: HashSet<(String, String)> = HashSet::new();
         for relative in workspace_files {
             if is_test(relative) {
                 continue;
@@ -77,18 +98,39 @@ impl ReExportIndex {
             // over-budget source is skipped exactly like a parse error.
             let worker_root = workspace_root.to_path_buf();
             let worker_alias = alias_map.cloned();
-            let Ok(file_entries) = parse_on_worker(
+            let Ok(file_facts) = parse_on_worker(
                 relative.as_path(),
                 source.as_str(),
                 move |relative, source, allocator| {
                     let ret = Parser::new(allocator, source, source_type_for(relative)).parse();
                     if !ret.errors.is_empty() {
-                        return Vec::new();
+                        return (Vec::new(), Vec::new());
                     }
                     // intermediate module path (normalized, no extension)
                     let intermediate_module = normalized_module_path(relative);
                     let mut file_entries = Vec::new();
+                    let mut file_star_edges = Vec::new();
                     for stmt in &ret.program.body {
+                        if let Statement::ExportAllDeclaration(export_all) = stmt {
+                            // `export * from './owner'` — record the star hop.
+                            // `export * as ns from './owner'` namespaces the
+                            // module value, so the named-forwarding contract a
+                            // star hop carries does not apply; it stays
+                            // unindexed (fail-closed).
+                            if export_all.exported.is_some() {
+                                continue;
+                            }
+                            let star_source = export_all.source.value.to_string();
+                            if let Some(resolved) = normalized_relative_import_module(
+                                relative,
+                                &star_source,
+                                worker_alias.as_ref(),
+                                Some(worker_root.as_path()),
+                            ) {
+                                file_star_edges.push((intermediate_module.clone(), resolved));
+                            }
+                            continue;
+                        }
                         let Statement::ExportNamedDeclaration(export) = stmt else {
                             continue;
                         };
@@ -125,16 +167,21 @@ impl ReExportIndex {
                             file_entries.push((key, (original_name, resolved.clone())));
                         }
                     }
-                    file_entries
+                    (file_entries, file_star_edges)
                 },
             ) else {
                 continue;
             };
+            let (file_entries, file_star_edges) = file_facts;
             for (key, value) in file_entries {
                 entries.entry(key).or_insert_with(|| value);
             }
+            star_edges.extend(file_star_edges);
         }
-        Self { entries }
+        Self {
+            entries,
+            star_edges,
+        }
     }
 
     /// If `test_file` imports `imported_name` from `intermediate_module` and
@@ -160,12 +207,26 @@ impl ReExportIndex {
         if intermediate_module == owner_module {
             return false;
         }
-        let key = (intermediate_module, imported_name.to_string());
+        let key = (intermediate_module.clone(), imported_name.to_string());
         let Some((original_name, source_module)) = self.entries.get(&key) else {
-            return false;
+            // Star-hop fallback (#4103): `export * from './owner'` forwards
+            // every named export under its original name, so importing
+            // `owner.name` from a barrel that star-exports the owner's module
+            // reaches the owner. The imported name must equal the owner's own
+            // name — a star hop invents no aliases.
+            return imported_name == owner.name
+                && self
+                    .star_edges
+                    .contains(&(intermediate_module, owner_module.clone()));
         };
         // The chain must resolve to the owner's file and the owner's name.
-        source_module == &owner_module && original_name == &owner.name
+        // `export { default as X } from './owner'` records the original name
+        // `default`; it resolves to THIS owner exactly when the owner is the
+        // owner module's default export (#4103 under-credit: that chain was
+        // silently indexed but could never match a named owner).
+        source_module == &owner_module
+            && (original_name == &owner.name
+                || (original_name == "default" && owner.exported_as_default))
     }
 }
 
@@ -361,6 +422,15 @@ pub(crate) fn owner_call_relation(
         import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
             && import_references_owner_call(import, &test.body_text, owner)
     }) {
+        return Some(TypeScriptRelationKind::ImportedOwnerCall);
+    }
+    // Dynamic `const m = await import("./owner")` member access (#4103
+    // under-credit): the import expression produces no static import record,
+    // so the namespace arm above cannot see it. When the test body itself
+    // binds the awaited import to a local and calls the owner through that
+    // local, the resolved specifier anchors the same identity the require()
+    // namespace form already credits.
+    if dynamic_import_member_call(test, owner, alias_map, workspace_root) {
         return Some(TypeScriptRelationKind::ImportedOwnerCall);
     }
     // Single-hop re-export tracing (RIPR-SPEC-0095):
@@ -587,6 +657,97 @@ fn test_mocks_owner_module(
     })
 }
 
+/// `const m = await import("../src/pricing");` followed by an
+/// `m.loyaltyPrice(...)` member call, both inside the test body (#4103
+/// under-credit).
+///
+/// The dynamic import expression produces no static import record, so this
+/// scans the test body directly: every `import("...")` specifier is resolved
+/// like a static import, and when it resolves to the owner's own module the
+/// test must also declare the awaited binding with the simple
+/// `const/let/var X = await import("...")` declarator form and call the owner
+/// through that local. Anything else — `(await import(...)).default`,
+/// `.then(m => ...)` callbacks, destructured dynamic bindings — stays
+/// fail-closed (the binding cannot be attributed this narrowly).
+fn dynamic_import_member_call(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let body = &test.body_text;
+    let owner_module = normalized_module_path(&owner.file);
+    let mut from = 0usize;
+    while let Some(rel) = body[from..].find("import(") {
+        let at = from + rel;
+        from = at + "import(".len();
+        // Not a dynamic import: `myimport(` or a member `x.import(`.
+        if body[..at]
+            .chars()
+            .next_back()
+            .is_some_and(is_javascript_identifier_char)
+        {
+            continue;
+        }
+        if line_prefix_looks_like_comment_or_string(body, at) || inside_block_comment(body, at) {
+            continue;
+        }
+        let Some(specifier) = quoted_literal_after(body, from) else {
+            continue;
+        };
+        let resolves_to_owner =
+            normalized_relative_import_module(&test.file, &specifier, alias_map, workspace_root)
+                .is_some_and(|module| module == owner_module);
+        if !resolves_to_owner {
+            continue;
+        }
+        let Some(binding) = awaited_import_binding_before(body, at) else {
+            continue;
+        };
+        if contains_member_call_name(body, &binding, &owner.name) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The quoted literal (single, double, or backtick) starting at `from`,
+/// allowing whitespace between the paren and the quote (`import( "./x" )`).
+fn quoted_literal_after(body: &str, from: usize) -> Option<String> {
+    let rest = body.get(from..)?.trim_start();
+    let quote = rest.chars().next()?;
+    if !matches!(quote, '"' | '\'' | '`') {
+        return None;
+    }
+    let payload = rest.get(quote.len_utf8()..)?;
+    let end = payload.find(quote)?;
+    Some(payload[..end].to_string())
+}
+
+/// Recover the local binding of `const X = await import(...)` from the text
+/// before the import call. Requires the import call to be the declarator's
+/// whole initializer on its line (optionally wrapped in `await`); a trailing
+/// member access like `.default` fails the scan (fail-closed).
+fn awaited_import_binding_before(body: &str, at: usize) -> Option<String> {
+    let line_start = body[..at].rfind('\n').map_or(0, |offset| offset + 1);
+    let trimmed = body[line_start..at].trim();
+    // The import must actually be awaited: `const m = import(...)` binds a
+    // promise, so a member call through `m` cannot reach the owner.
+    let after_await = trimmed.strip_suffix("await")?.trim_end();
+    let (head, tail) = after_await.rsplit_once('=')?;
+    if !tail.is_empty() {
+        return None;
+    }
+    let head = head.trim_end();
+    let binding = ["const ", "let ", "var "]
+        .into_iter()
+        .find_map(|keyword| head.strip_prefix(keyword))?
+        .trim();
+    // Strip a type annotation: `const m: Pricing = await import(...)`.
+    let name = binding.split(':').next()?.trim();
+    is_safe_javascript_identifier(name).then(|| name.to_string())
+}
+
 fn heuristic_relation(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -654,8 +815,12 @@ fn test_references_owner(
         if import.namespace {
             return contains_member_reference(body, &import.local, &owner.name);
         }
-        import.imported.as_deref() == Some(owner.name.as_str())
-            && !local_identifier_declared_in_test_body(body, &import.local)
+        // Same default-export rule as `import_references_owner_call` (#4103):
+        // a default import binds the owner only when the owner is the
+        // module's default export.
+        import.imported.as_deref().is_some_and(|imported| {
+            imported == owner.name || (imported == "default" && owner.exported_as_default)
+        }) && !local_identifier_declared_in_test_body(body, &import.local)
             && contains_identifier_reference(body, &import.local)
     })
 }
@@ -683,20 +848,29 @@ fn contains_identifier_reference(body_text: &str, identifier: &str) -> bool {
 }
 
 /// `object.property` with identifier boundaries, outside comments and strings.
+/// Plain, optional-chain (`obj?.p`) and non-null (`obj!.p`) accesses all reach
+/// the same member of the same object binding (#4103 under-credit).
 fn contains_member_reference(body_text: &str, object_name: &str, property_name: &str) -> bool {
     if !is_safe_javascript_identifier(object_name) || !is_safe_javascript_identifier(property_name)
     {
         return false;
     }
-    let needle = format!("{object_name}.{property_name}");
-    body_text.match_indices(&needle).any(|(idx, _)| {
-        has_member_call_boundary(body_text, idx)
-            && body_text[idx + needle.len()..]
-                .chars()
-                .next()
-                .is_none_or(|ch| !is_javascript_identifier_char(ch))
-            && !line_prefix_looks_like_comment_or_string(body_text, idx)
-            && !inside_block_comment(body_text, idx)
+    [
+        format!("{object_name}.{property_name}"),
+        format!("{object_name}?.{property_name}"),
+        format!("{object_name}!.{property_name}"),
+    ]
+    .iter()
+    .any(|needle| {
+        body_text.match_indices(needle.as_str()).any(|(idx, _)| {
+            has_member_call_boundary(body_text, idx)
+                && body_text[idx + needle.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !is_javascript_identifier_char(ch))
+                && !line_prefix_looks_like_comment_or_string(body_text, idx)
+                && !inside_block_comment(body_text, idx)
+        })
     })
 }
 
@@ -826,12 +1000,18 @@ fn heuristic_relation_allowed(
 }
 
 pub(crate) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
-    let needle = format!("{call_name}(");
-    body_text.match_indices(&needle).any(|(idx, _)| {
-        has_call_boundary(body_text, idx)
-            && !line_prefix_looks_like_comment_or_string(body_text, idx)
-            && !inside_block_comment(body_text, idx)
-    })
+    // `name(` and the TypeScript optional-call form `name?.(...)` are the same
+    // call of the same binding (#4103 under-credit: the `?.` form was
+    // invisible to every call arm).
+    [format!("{call_name}("), format!("{call_name}?.(")]
+        .iter()
+        .any(|needle| {
+            body_text.match_indices(needle.as_str()).any(|(idx, _)| {
+                has_call_boundary(body_text, idx)
+                    && !line_prefix_looks_like_comment_or_string(body_text, idx)
+                    && !inside_block_comment(body_text, idx)
+            })
+        })
 }
 
 fn has_call_boundary(body_text: &str, idx: usize) -> bool {
@@ -893,8 +1073,13 @@ fn import_references_owner_call(
     if import.namespace {
         return contains_member_call_name(body_text, &import.local, &owner.name);
     }
-    import.imported.as_deref() == Some(owner.name.as_str())
-        && contains_call_name(body_text, &import.local)
+    // A default import (`import local from './owner'`) binds the owner
+    // module's default export (#4103 under-credit): credit a call through the
+    // local when the owner IS that default export. An anonymous default
+    // already matches via `owner.name == "default"`.
+    import.imported.as_deref().is_some_and(|imported| {
+        imported == owner.name || (imported == "default" && owner.exported_as_default)
+    }) && contains_call_name(body_text, &import.local)
         // Shadow guard (#4102): the same test-body declaration guard the
         // alias arm applies — a locally re-declared `local` reaches the
         // shadow, not the owner.
@@ -971,11 +1156,24 @@ fn strip_typescript_module_extension(path: &str) -> String {
 }
 
 fn contains_member_call_name(body_text: &str, object_name: &str, method_name: &str) -> bool {
-    let needle = format!("{object_name}.{method_name}(");
-    body_text.match_indices(&needle).any(|(idx, _)| {
-        has_member_call_boundary(body_text, idx)
-            && !line_prefix_looks_like_comment_or_string(body_text, idx)
-            && !inside_block_comment(body_text, idx)
+    if !is_safe_javascript_identifier(object_name) || !is_safe_javascript_identifier(method_name) {
+        return false;
+    }
+    // Plain, optional-chain (`obj?.m(`) and non-null (`obj!.m(`) member calls
+    // all reach the same member of the same object binding (#4103
+    // under-credit: the punctuated forms were invisible to every member arm).
+    [
+        format!("{object_name}.{method_name}("),
+        format!("{object_name}?.{method_name}("),
+        format!("{object_name}!.{method_name}("),
+    ]
+    .iter()
+    .any(|needle| {
+        body_text.match_indices(needle.as_str()).any(|(idx, _)| {
+            has_member_call_boundary(body_text, idx)
+                && !line_prefix_looks_like_comment_or_string(body_text, idx)
+                && !inside_block_comment(body_text, idx)
+        })
     })
 }
 
@@ -1000,14 +1198,23 @@ fn expect_actual_references_member(
     {
         return false;
     }
-    let reference = format!("{object_name}.{property_name}");
-    expect_actual_slices(body_text).iter().any(|actual| {
-        actual.trim_start().starts_with(&reference)
-            && actual
-                .trim_start()
-                .get(reference.len()..)
-                .and_then(|rest| rest.chars().next())
-                .is_none_or(|ch| !is_javascript_identifier_char(ch))
+    // Same punctuated-access family as `contains_member_reference` (#4103):
+    // `ns.owner`, `ns?.owner`, `ns!.owner` are the same member read.
+    [
+        format!("{object_name}.{property_name}"),
+        format!("{object_name}?.{property_name}"),
+        format!("{object_name}!.{property_name}"),
+    ]
+    .iter()
+    .any(|reference| {
+        expect_actual_slices(body_text).iter().any(|actual| {
+            actual.trim_start().starts_with(reference.as_str())
+                && actual
+                    .trim_start()
+                    .get(reference.len()..)
+                    .and_then(|rest| rest.chars().next())
+                    .is_none_or(|ch| !is_javascript_identifier_char(ch))
+        })
     })
 }
 

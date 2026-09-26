@@ -210,6 +210,7 @@ test.only("discount boundary", () => {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         arity: None,
         parameters: Vec::new(),
         source_text: None,
