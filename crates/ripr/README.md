@@ -2,9 +2,9 @@
 
 **Find changed behavior your tests reach but do not actually check.**
 
-`ripr` gives developers, reviewers, and coding agents one bounded next test to
-write, the command that verifies it, and a before/after receipt—without running
-mutation testing.
+`ripr` turns a changed behavior into one bounded next test when the static
+evidence earns one—or an explicit reason it cannot—plus the verification route
+and before/after receipt, without running mutation testing.
 
 ## Start with one change
 
@@ -32,7 +32,8 @@ evidence or `--format json` for machine-readable output.
 
 ## Repair one gap
 
-Use the guided repository path to select one current work item:
+Use the guided repository path to select one current work item when a
+repair-ready route exists:
 
 ```bash
 ripr pilot --root .
