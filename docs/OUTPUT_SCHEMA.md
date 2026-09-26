@@ -7285,6 +7285,8 @@ Field contract:
   and RIPR analysis mode used to render the report.
 - `inputs.gap_ledger` - optional explicit gap decision ledger used for
   repair-card projection. It is present only when `--gap-ledger` is supplied.
+- `run_receipt` - required on the diff-scoped route; absent on the explicit
+  gap-ledger route, which reports its supplied artifact in `inputs` instead.
 - `analysis_scope` - scoped-input metadata for the renderer path. The default
   diff renderer emits `scope = "diff_scoped_changed_files"`, `run_status =
   "limited_diff_scope"`, changed files, changed owner count, changed production
@@ -7322,12 +7324,17 @@ Field contract:
 - `comments[].placement` - GitHub-compatible changed-line placement. Items
   without safe placement belong in `summary_only[]`.
 - `comments[].placement.mode` - `"exact_seam_line"`,
-  `"owner_function_changed_line"`, or `"same_file_changed_line"`. The last
+  `"owner_function_changed_line"`, or `"same_file_changed_line"` on diff
+  cards; ledger cards use `"gap_record_anchor"`. The last diff mode
   names a changed line inside the seam owner's span that owner attribution
   bound to a nested function; a changed line elsewhere in the same file is
   not a placement. The renderer must prefer summary-only guidance over
   misleading line placement.
 - `comments[].kind` - seam kind from the existing static evidence.
+- `comments[].gap_id` and `comments[].repair_card` - required for a card with
+  `source = "gap_decision_ledger"`; these cards carry a producer-owned
+  `seam_id` and anchor without the diff renderer's `owner` and `seam` objects.
+  Diff cards require `owner` and `seam` instead.
 - `comments[].grip_class` - seam grip class from the existing static evidence.
 - `comments[].severity` - configured report severity for the recommendation.
 - `comments[].source_location` - canonical source coordinate for the seam or

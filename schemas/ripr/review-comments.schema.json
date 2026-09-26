@@ -19,8 +19,7 @@
     "summary_only",
     "suppressed",
     "warnings",
-    "limits_note",
-    "run_receipt"
+    "limits_note"
   ],
   "properties": {
     "schema_version": {
@@ -251,6 +250,15 @@
   "allOf": [
     {
       "if": {
+        "not": {
+          "required": ["inputs"],
+          "properties": { "inputs": { "required": ["gap_ledger"] } }
+        }
+      },
+      "then": { "required": ["run_receipt"] }
+    },
+    {
+      "if": {
         "required": ["analysis_outcome"],
         "properties": {
           "analysis_outcome": {
@@ -299,6 +307,7 @@
     "inputs": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["gap_ledger"],
       "properties": {
         "gap_ledger": {
           "type": "string",
@@ -829,8 +838,6 @@
         "kind",
         "grip_class",
         "severity",
-        "owner",
-        "seam",
         "source_location",
         "reason",
         "suggested_test",
@@ -946,7 +953,29 @@
             "unknown"
           ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["source"],
+            "properties": { "source": { "const": "gap_decision_ledger" } }
+          },
+          "then": { "required": ["gap_id", "repair_card"] },
+          "else": {
+            "required": ["owner", "seam"],
+            "not": {
+              "required": ["placement"],
+              "properties": {
+                "placement": {
+                  "type": "object",
+                  "properties": { "mode": { "const": "gap_record_anchor" } },
+                  "required": ["mode"]
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "seam": {
       "type": "object",
@@ -998,7 +1027,8 @@
           "enum": [
             "exact_seam_line",
             "owner_function_changed_line",
-            "same_file_changed_line"
+            "same_file_changed_line",
+            "gap_record_anchor"
           ]
         }
       }
