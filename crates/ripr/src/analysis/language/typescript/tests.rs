@@ -11940,6 +11940,246 @@ fn e4104_named_constant_value_input_witnesses() -> Result<(), String> {
     Ok(())
 }
 
+// #4213 review repairs (threads PRRT_kwDOSiSx0c6mUkkI / UkkL / UkkO / UnSc):
+// the red/green pairs below pin each repair to its discriminating shape.
+// For every case the PRE-repair code classified the negative shape
+// `exposed` (or armed the wrong witness path) and the positive control
+// `exposed`; the repairs must keep the controls exposed while the
+// over-credit shapes stay on the weak path.
+// ── #4213 review repair 1 (thread PRRT_kwDOSiSx0c6mUkkI) ────────────────────
+
+/// The nullish fallback literal is never a creditable boundary input: for
+/// `name ?? ""` → `name ?? "temp"`, a non-nullish call `pickLabel("temp")`
+/// never evaluates the fallback and behaves identically before and after, so
+/// only the nullish input at the left operand's read position may witness.
+#[test]
+fn e4104_nullish_right_fallback_literal_is_never_creditable() -> Result<(), String> {
+    let mut owner = boundary_witness_owner();
+    owner.name = "pickLabel".to_string();
+    owner.params = vec!["name".to_string()];
+    owner.arity = Some(1);
+    owner.source_text = Some(
+        concat!(
+            "export function pickLabel(name: string | null): string {\n",
+            "    if (name ?? \"temp\") {\n",
+            "        return \"named\";\n",
+            "    }\n",
+            "    return \"anonymous\";\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let fallback_call = [exact_value_test(
+        "pickLabel",
+        "pickLabel(\"temp\")",
+        "\"named\"",
+    )];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "    if (name ?? \"temp\") {", &fallback_call)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "the right fallback literal is not a boundary input: a non-nullish call never evaluates it"
+    );
+    // Control: the nullish input at the left operand's read position still
+    // witnesses — that is the only creditable boundary input.
+    let nullish_call = [exact_value_test(
+        "pickLabel",
+        "pickLabel(null)",
+        "\"named\"",
+    )];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "    if (name ?? \"temp\") {", &nullish_call)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "the nullish input at the left read position still witnesses the nullish boundary"
+    );
+    Ok(())
+}
+
+// ── #4213 review repair 2 (thread PRRT_kwDOSiSx0c6mUkkL) ────────────────────
+
+/// A `const LIMIT` declared inside a helper block is a different binding:
+/// the owner-module constant scan resolves only module-level (top-level)
+/// declarations, so the nested declaration leaves the operand unresolved and
+/// the boundary stays fail-closed.
+#[test]
+fn e4104_nested_owner_module_constant_stays_fail_closed() -> Result<(), String> {
+    let mut owner = boundary_witness_owner();
+    owner.source_text = Some(
+        concat!(
+            "export function helper() {\n",
+            "    const DISCOUNT_THRESHOLD = 100;\n",
+            "}\n",
+            "\n",
+            "export function applyDiscount(total: number): number {\n",
+            "    if (total >= DISCOUNT_THRESHOLD) {\n",
+            "        return total * 0.9;\n",
+            "    }\n",
+            "    return total;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(100)",
+        "90",
+    )];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "    if (total >= DISCOUNT_THRESHOLD) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a nested helper declaration is not the module-level constant"
+    );
+    // Control: a nested declaration does not disqualify or shadow the
+    // top-level declaration either — the module-level value (150) resolves,
+    // so the boundary input 150 witnesses while 100 stays closed.
+    let mut owner = boundary_witness_owner();
+    owner.source_text = Some(
+        concat!(
+            "export const DISCOUNT_THRESHOLD = 150;\n",
+            "\n",
+            "export function helper() {\n",
+            "    const DISCOUNT_THRESHOLD = 100;\n",
+            "}\n",
+            "\n",
+            "export function applyDiscount(total: number): number {\n",
+            "    if (total >= DISCOUNT_THRESHOLD) {\n",
+            "        return total * 0.9;\n",
+            "    }\n",
+            "    return total;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let boundary = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(150)",
+        "135",
+    )];
+    let finding = classify_boundary_line_for_owner(
+        &owner,
+        "    if (total >= DISCOUNT_THRESHOLD) {",
+        &boundary,
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "the top-level declaration resolves through the nested same-name declaration"
+    );
+    let off_boundary = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(100)",
+        "135",
+    )];
+    let finding = classify_boundary_line_for_owner(
+        &owner,
+        "    if (total >= DISCOUNT_THRESHOLD) {",
+        &off_boundary,
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "the nested helper value (100) must not substitute for the module constant (150)"
+    );
+    Ok(())
+}
+
+// ── #4213 review repair 3 (thread PRRT_kwDOSiSx0c6mUkkO) ────────────────────
+
+/// The observed-local resolver binds the assertion's read, not the sole
+/// same-named declaration anywhere in the body: an outer assertion on an
+/// imported `result` is never attributed to a nested helper's
+/// `const result = applyDiscount(100)`, while an assertion inside that same
+/// scope still witnesses through it.
+#[test]
+fn e4104_nested_local_declaration_does_not_bind_outer_assertion() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    // The assertion sits OUTSIDE the helper block, so the helper's nested
+    // `const result` does not bind the observed read — fail closed.
+    let mut outer = exact_value_test("applyDiscount", "result", "90");
+    outer.body_text = concat!(
+        "expect(result).toBe(90);\n",
+        "function helper() {\n",
+        "    const result = applyDiscount(100);\n",
+        "    return result;\n",
+        "}\n",
+        "helper();",
+    )
+    .to_string();
+    outer.assertions[0].line = 1;
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[outer])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "an assertion outside a nested declaration's scope is not attributed to it"
+    );
+    // Control: the assertion INSIDE the helper block observes the helper's
+    // own binding, so the one-hop credit applies unchanged.
+    let mut inner = exact_value_test("applyDiscount", "result", "90");
+    inner.body_text = concat!(
+        "function helper() {\n",
+        "    const result = applyDiscount(100);\n",
+        "    expect(result).toBe(90);\n",
+        "}\n",
+        "helper();",
+    )
+    .to_string();
+    inner.assertions[0].line = 3;
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[inner])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "an assertion inside the declaration's own scope still witnesses through the local"
+    );
+    // Uniqueness control (the finding's import + nested shape): a top-level
+    // declaration alongside the nested one stays ambiguous — fail closed.
+    let mut ambiguous = exact_value_test("applyDiscount", "result", "90");
+    ambiguous.body_text = concat!(
+        "const result = otherImport();\n",
+        "function helper() {\n",
+        "    const result = applyDiscount(100);\n",
+        "}\n",
+        "expect(result).toBe(90);",
+    )
+    .to_string();
+    ambiguous.assertions[0].line = 5;
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[ambiguous])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a repeated declaration across scopes keeps the one-hop credit closed"
+    );
+    Ok(())
+}
+
+// ── #4213 review repair 4 (thread PRRT_kwDOSiSx0c6mUnSc) ────────────────────
+
+/// `nullish` must come from the quote-aware normalization, not a raw
+/// `contains("??")`: in `total >= 100 && "??"` the only coalesce-looking
+/// text is inside a string literal, so the nullish-input witness path stays
+/// disarmed and a `null` argument cannot credit the comparison boundary.
+#[test]
+fn e4104_quoted_nullish_flag_does_not_arm_nullish_witness() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(null)",
+        "90",
+    )];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "  if (total >= 100 && \"??\") {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a `??` inside a string literal is not a nullish boundary: the null argument must not witness"
+    );
+    Ok(())
+}
+
 /// #4117 review of guard 5b (fail-closed branch scan): a parameter
 /// reassignment before the branch `return` invalidates the folded branch
 /// value, so `branch_return_expressions` must give up (`None`) instead of

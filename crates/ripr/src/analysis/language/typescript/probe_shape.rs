@@ -300,8 +300,12 @@ pub(crate) fn typescript_boundary_discriminator_with_shape(
     line_text: &str,
 ) -> Option<(String, bool)> {
     let expression = strip_typescript_control_prefix(line_text);
-    let nullish = expression.contains("??");
-    let expression = normalize_ts_comparison_operands(&expression);
+    // The nullish flag comes from the quote-aware normalization, not a raw
+    // `contains("??")`: a `??` inside a string literal (`total >= 100 &&
+    // "??"`) is not a nullish coalesce, and arming the nullish-input witness
+    // path for it would credit a `null` argument through a boundary that
+    // never reads a nullish side (#4213 thread PRRT_kwDOSiSx0c6mUnSc).
+    let (expression, nullish) = normalize_ts_comparison_operands(&expression);
     for operator in COMPARISON_OPERATORS {
         if let Some(idx) = expression.find(operator) {
             let left_raw = expression.get(..idx)?.trim();
@@ -533,8 +537,12 @@ fn is_yield_comparison_predicate(leading: &str) -> bool {
 /// access and `??` reads as the nullish-coalescing boundary comparison, but
 /// only in code spans — the contents of string / template literals are left
 /// untouched so a quoted `"a ?? b"` can never become a witnessable operand.
-fn normalize_ts_comparison_operands(expression: &str) -> String {
+/// Returns the normalized expression and whether a `??` was seen OUTSIDE
+/// quotes: only a code-span coalesce is a nullish boundary, so a quoted
+/// occurrence (`"??"`) never arms the nullish-input witness path.
+fn normalize_ts_comparison_operands(expression: &str) -> (String, bool) {
     let mut out = String::with_capacity(expression.len());
+    let mut saw_nullish = false;
     let mut quote: Option<char> = None;
     let mut escaped = false;
     let chars: Vec<char> = expression.chars().collect();
@@ -565,6 +573,7 @@ fn normalize_ts_comparison_operands(expression: &str) -> String {
             }
             '?' if chars.get(idx + 1) == Some(&'?') => {
                 out.push_str("==");
+                saw_nullish = true;
                 idx += 2;
             }
             _ => {
@@ -573,7 +582,7 @@ fn normalize_ts_comparison_operands(expression: &str) -> String {
             }
         }
     }
-    out
+    (out, saw_nullish)
 }
 
 fn comparison_operand_before(expression: &str, operator_start: usize) -> Option<String> {

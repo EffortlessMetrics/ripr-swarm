@@ -555,10 +555,10 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
             // call, and its arguments flow through the same witness path.
             if argument_lists.is_empty()
                 && let Some(initializer_arguments) = ts_observed_local_owner_call_arguments(
-                    observed,
+                    candidate.test,
+                    assertion,
                     &owner.name,
                     &owner_receivers,
-                    &candidate.test.body_text,
                 )
             {
                 argument_lists.push(initializer_arguments);
@@ -575,7 +575,24 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
                     alias_map,
                     workspace_root,
                 );
-                let witnessed = if literals.is_empty() {
+                let witnessed = if nullish_boundary {
+                    // #4104-E2 repair (review thread PRRT_kwDOSiSx0c6mUkkI):
+                    // for a nullish-coalescing boundary only the NULLISH
+                    // input — `null` / `undefined` at the LEFT operand's read
+                    // position — can flip the changed fallback. A non-nullish
+                    // call (`pickLabel("temp")`) never evaluates the right
+                    // fallback, so the fallback literal is never creditable
+                    // through the comparison-literal path, and the
+                    // identical-arguments coincidence cannot evaluate it
+                    // either. A literal left operand makes the coalesce
+                    // constant: no runtime input is ever nullish there.
+                    !is_boundary_literal(&effective_left)
+                        && nullish_argument_reaches_read_argument(
+                            &arguments,
+                            &effective_left,
+                            owner,
+                        )
+                } else if literals.is_empty() {
                     call_has_identical_arguments(&arguments, &owner.params)
                         || object_argument_pins_operands_equal(
                             &arguments,
@@ -592,12 +609,7 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
                             &effective_right,
                             owner,
                         )
-                    }) || (nullish_boundary
-                        && nullish_argument_reaches_read_argument(
-                            &arguments,
-                            &effective_left,
-                            owner,
-                        ))
+                    })
                 };
                 if !witnessed {
                     continue;
@@ -630,10 +642,13 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
 }
 
 /// #4104-E2: the nullish boundary input (`null` / `undefined`) at the left
-/// operand's readable position witnesses a nullish-coalescing boundary — the
-/// nullish side is the input that flips the changed fallback, the same role
-/// the boundary literal plays for `total >= 50`. Position and arity guards
-/// are the comparison read-position rules, unchanged.
+/// operand's readable position witnesses a nullish-coalescing boundary —
+/// the nullish side is the only input that flips the changed fallback, so
+/// for a nullish boundary this is the sole witnessing path (#4104-E2 review
+/// repair): the right fallback literal is never creditable, because a
+/// non-nullish call never evaluates it and behaves identically before and
+/// after the change. Position and arity guards are the comparison
+/// read-position rules, unchanged.
 fn nullish_argument_reaches_read_argument(
     arguments: &[String],
     left: &str,
@@ -761,39 +776,60 @@ enum OwnerModuleConstant {
     Undeclared,
 }
 
-/// Single-pass declaration scan over one module's text.
+/// Single-pass declaration scan over one module's text. Only MODULE-LEVEL
+/// (top-level) declarations count: the scan tracks quote- and comment-aware
+/// brace depth, so a `const LIMIT` inside a function / class / block body is
+/// a different binding that neither resolves nor disqualifies the
+/// module-level name (#4213 review thread PRRT_kwDOSiSx0c6mUkkL) — only a
+/// top-level `let`/`var` rebind makes the binding ambiguous.
 fn scan_owner_module_constant(source: &str, name: &str) -> OwnerModuleConstant {
     let mut declarations = 0usize;
     let mut value: Option<String> = None;
     let mut unresolvable = false;
+    let mut depth: i64 = 0;
+    let mut quote: Option<char> = None;
+    let mut in_block_comment = false;
     for line in source.lines() {
-        let item = line.trim().strip_prefix("export ").unwrap_or(line.trim());
-        let Some(rest) = item.strip_prefix("const ") else {
-            // A `let`/`var` binding of the same name makes the module-level
-            // binding ambiguous — fail closed.
-            if module_line_rebinds_name(item, name) {
-                return OwnerModuleConstant::Unresolvable;
-            }
+        // Advance the lexical state across the line; `None` means the line
+        // never reaches code (a string/template or comment continuation).
+        let Some(item_depth) =
+            line_first_code_depth(line, &mut depth, &mut quote, &mut in_block_comment)
+        else {
             continue;
         };
-        let rest = rest.trim_start();
-        let after_name = match rest.strip_prefix(name) {
-            Some(after) if !identifier_continues(after) => after.trim_start(),
-            _ => continue,
-        };
-        let Some((annotation, initializer)) = after_name.split_once('=') else {
-            continue;
-        };
-        let annotation = annotation.trim();
-        if !(annotation.is_empty() || annotation.starts_with(':')) {
+        // Anything not at the module's top level is a nested binding, not
+        // the module constant.
+        if item_depth != 0 {
             continue;
         }
-        let initializer = initializer.trim().trim_end_matches(';').trim();
-        declarations += 1;
-        match numeric_literal_value(initializer) {
-            Some(literal) => value = Some(literal),
-            // A computed or non-integer initializer cannot resolve.
-            None => unresolvable = true,
+        let item = line.trim();
+        let item = item.strip_prefix("export ").unwrap_or(item);
+        if let Some(rest) = item.strip_prefix("const ") {
+            let rest = rest.trim_start();
+            let after_name = match rest.strip_prefix(name) {
+                Some(after) if !identifier_continues(after) => after.trim_start(),
+                _ => continue,
+            };
+            let Some((annotation, initializer)) = after_name.split_once('=') else {
+                continue;
+            };
+            let annotation = annotation.trim();
+            if !(annotation.is_empty() || annotation.starts_with(':')) {
+                continue;
+            }
+            let initializer = initializer.trim().trim_end_matches(';').trim();
+            declarations += 1;
+            match numeric_literal_value(initializer) {
+                Some(literal) => value = Some(literal),
+                // A computed or non-integer initializer cannot resolve.
+                None => unresolvable = true,
+            }
+            continue;
+        }
+        // A `let`/`var` binding of the name at the module's top level makes
+        // the module-level binding ambiguous — fail closed.
+        if module_line_rebinds_name(item, name) {
+            return OwnerModuleConstant::Unresolvable;
         }
     }
     match (declarations, unresolvable) {
@@ -806,8 +842,70 @@ fn scan_owner_module_constant(source: &str, name: &str) -> OwnerModuleConstant {
     }
 }
 
-/// `true` when a module item line declares `name` through `let`/`var`
-/// (which would shadow or rebind a `const` of the same name).
+/// Advance the module scan's quote / comment / brace state across `line` and
+/// return the brace depth at the line's FIRST code character — the depth that
+/// decides whether a leading `const`/`let`/`var` item is module-level.
+/// `None` when the line holds no code at all. String, template, and comment
+/// spans never move the depth or yield a first-code depth, and a line
+/// comment ends the scan; an unbalanced closer clamps at the module's top
+/// level so malformed input degrades toward the pre-existing line semantics
+/// rather than inventing nesting.
+fn line_first_code_depth(
+    line: &str,
+    depth: &mut i64,
+    quote: &mut Option<char>,
+    in_block_comment: &mut bool,
+) -> Option<i64> {
+    let mut escaped = false;
+    let mut first_code_depth: Option<i64> = None;
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if *in_block_comment {
+            if ch == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                *in_block_comment = false;
+            }
+            continue;
+        }
+        if let Some(open) = *quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                *quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '/' if chars.peek() == Some(&'/') => return first_code_depth,
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                *in_block_comment = true;
+            }
+            '"' | '\'' | '`' => *quote = Some(ch),
+            '{' => {
+                first_code_depth.get_or_insert(*depth);
+                *depth += 1;
+            }
+            '}' => {
+                first_code_depth.get_or_insert(*depth);
+                *depth = (*depth - 1).max(0);
+            }
+            ch if !ch.is_whitespace() => {
+                first_code_depth.get_or_insert(*depth);
+            }
+            _ => {}
+        }
+    }
+    first_code_depth
+}
+
+/// `true` when a TOP-LEVEL module item line declares `name` through
+/// `let`/`var` (which would shadow or rebind a `const` of the same name).
+/// Only consulted for lines whose first code sits at brace depth 0 — a
+/// nested `let` is a different binding and never disqualifies the
+/// module-level constant.
 fn module_line_rebinds_name(item: &str, name: &str) -> bool {
     for keyword in ["let ", "var "] {
         if let Some(rest) = item.strip_prefix(keyword) {
@@ -929,15 +1027,21 @@ fn scan_test_body_constant_declarations(body: &str, name: &str) -> (Option<Strin
 /// declaration of the local may exist — a `let` that is later reassigned also
 /// fails closed. All owner-identity rules (shadow guard, receiver resolution)
 /// run inside the reused [`owner_call_arguments`].
+///
+/// Lexical visibility (#4213 review thread PRRT_kwDOSiSx0c6mUkkO): the sole
+/// declaration binds the assertion's read only when the read sits inside the
+/// declaration's own scope, with the SAME scope semantics as the landed
+/// #4117 shadow walk — a top-level declaration binds the whole body, a
+/// declaration inside a nested block binds only that block's interval. An
+/// outer assertion on an imported `result` is therefore never attributed to
+/// a nested helper's same-named `const result = applyDiscount(100)`.
 fn ts_observed_local_owner_call_arguments(
-    observed: &str,
+    test: &TypeScriptTest,
+    assertion: &TypeScriptAssertion,
     owner_name: &str,
     owner_receivers: &[String],
-    test_body: &str,
 ) -> Option<Vec<String>> {
-    fn is_ident_byte(b: u8) -> bool {
-        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
-    }
+    let observed = assertion.observed_expression.as_deref()?;
     let ident = observed.trim();
     let ident_bytes = ident.as_bytes();
     let ident_is_bare = !ident_bytes.is_empty()
@@ -948,10 +1052,24 @@ fn ts_observed_local_owner_call_arguments(
     if !ident_is_bare {
         return None;
     }
-    let (initializer, mutable, value_start) = single_local_initializer(test_body, ident)?;
-    if mutable && later_reassigns_ident(test_body, ident, value_start) {
+    let body_text = test.body_text.as_str();
+    // Scope table and declaration offsets come from the landed #4117 lexical
+    // walk, so the resolver reuses its scope intervals instead of
+    // re-deriving brace scoping.
+    let scan = scan_body_lexical_facts(body_text, ident);
+    let init = single_local_initializer(body_text, ident)?;
+    if init.is_mutable && later_reassigns_ident(body_text, ident, init.value_start) {
         return None;
     }
+    let assertion_uses = assertion_observed_use_offsets(test, assertion, ident, &scan)?;
+    let declaration_scope = innermost_scope_containing(&scan.scopes, init.name_start);
+    if !assertion_uses
+        .iter()
+        .all(|use_offset| declaration_scope_binds(declaration_scope, *use_offset))
+    {
+        return None;
+    }
+    let initializer = init.initializer;
     let stripped = initializer
         .trim()
         .strip_prefix("await ")
@@ -982,17 +1100,81 @@ fn ts_observed_local_owner_call_arguments(
     argument_lists.into_iter().next()
 }
 
-/// Find the single `const`/`let` initializer of `ident` in the body.
-/// Returns `(initializer, is_mutable, value_start)` — the third element is
-/// the byte offset where the initializer's value begins, so a reassignment
-/// scan can start after the declaration's own `=` — or `None` when the name
-/// is not declared exactly once through a single `=`.
-fn single_local_initializer(body: &str, ident: &str) -> Option<(String, bool, usize)> {
-    fn is_ident_byte(b: u8) -> bool {
-        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
+/// The test-body byte offsets where the assertion's observed expression
+/// reads the bare identifier: the whole-word occurrences on the assertion's
+/// own line (`assertion.line` is the 1-based file line recorded at the
+/// assertion call site; `test.line` is the 1-based file line where
+/// `body_text` begins). Comment / string occurrences, member accesses
+/// (`result.value`), and the declarations' own name tokens never count as
+/// reads. `None` when the line cannot be placed in the body or the observed
+/// name does not occur on it (for example a matcher argument wrapped onto a
+/// following line) — the one-hop credit then stays unavailable, which is the
+/// fail-closed direction.
+fn assertion_observed_use_offsets(
+    test: &TypeScriptTest,
+    assertion: &TypeScriptAssertion,
+    ident: &str,
+    scan: &BodyLexicalScan,
+) -> Option<Vec<usize>> {
+    let line_index = assertion.line.checked_sub(test.line)?;
+    let body = test.body_text.as_str();
+    let mut line_start = 0usize;
+    let mut line_text: Option<&str> = None;
+    for (idx, line) in body.split('\n').enumerate() {
+        if idx == line_index {
+            line_text = Some(line);
+            break;
+        }
+        line_start += line.len() + 1;
     }
+    let line_text = line_text?;
+    let mut uses = Vec::new();
+    let mut search_from = 0usize;
+    while let Some(pos) = line_text[search_from..].find(ident) {
+        let abs = line_start + search_from + pos;
+        search_from += pos + ident.len();
+        let after = abs + ident.len();
+        let followed_by_identifier = body
+            .get(after..)
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(is_javascript_identifier_char);
+        if followed_by_identifier
+            || !has_member_call_boundary(body, abs)
+            || line_prefix_looks_like_comment_or_string(body, abs)
+            || inside_block_comment(body, abs)
+            || scan
+                .declarations
+                .iter()
+                .any(|declaration| declaration.name_start == abs)
+        {
+            continue;
+        }
+        uses.push(abs);
+    }
+    (!uses.is_empty()).then_some(uses)
+}
+
+/// The single `const`/`let` initializer of `ident` in the body, or `None`
+/// when the name is not declared exactly once through a single `=`.
+struct SingleLocalInitializer {
+    initializer: String,
+    is_mutable: bool,
+    /// Byte offset where the initializer's value begins, so a reassignment
+    /// scan can start after the declaration's own `=`.
+    value_start: usize,
+    /// Byte offset of the declared name token — the position whose enclosing
+    /// brace scope decides lexical visibility (#4213 thread
+    /// PRRT_kwDOSiSx0c6mUkkO).
+    name_start: usize,
+}
+
+fn single_local_initializer(body: &str, ident: &str) -> Option<SingleLocalInitializer> {
     let body_bytes = body.as_bytes();
-    let mut declarations: Vec<(String, bool, usize)> = Vec::new();
+    let mut declarations: Vec<SingleLocalInitializer> = Vec::new();
     let mut search_from = 0;
     while let Some(pos) = body[search_from..].find(ident) {
         let abs = search_from + pos;
@@ -1040,7 +1222,12 @@ fn single_local_initializer(body: &str, ident: &str) -> Option<(String, bool, us
             .find([';', '\n'])
             .map(|p| rhs_start + p)
             .unwrap_or(body.len());
-        declarations.push((body[rhs_start..rhs_end].to_string(), mutable, rhs_start));
+        declarations.push(SingleLocalInitializer {
+            initializer: body[rhs_start..rhs_end].to_string(),
+            is_mutable: mutable,
+            value_start: rhs_start,
+            name_start: abs,
+        });
     }
     if declarations.len() != 1 {
         return None;
