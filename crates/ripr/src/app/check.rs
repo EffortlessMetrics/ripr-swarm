@@ -596,7 +596,11 @@ mod tests {
 
     impl AnalysisProgressSink for ProgressRecorder {
         fn emit(&self, event: AnalysisProgressEvent) {
-            self.0.lock().unwrap().push(event);
+            let mut events = match self.0.lock() {
+                Ok(events) => events,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            events.push(event);
         }
     }
 
@@ -648,7 +652,10 @@ mod tests {
             )
             .is_err()
         );
-        let events = recorder.0.lock().unwrap();
+        let events = match recorder.0.lock() {
+            Ok(events) => events,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         assert_eq!(
             events.last().map(|event| event.stage),
             Some(AnalysisProgressStage::Failed)
@@ -670,7 +677,7 @@ mod tests {
         struct BrokenSink;
         impl AnalysisProgressSink for BrokenSink {
             fn emit(&self, _: AnalysisProgressEvent) {
-                panic!("instrumentation failure");
+                std::panic::resume_unwind(Box::new("instrumentation failure"));
             }
         }
         let input = sample_diff_input();
