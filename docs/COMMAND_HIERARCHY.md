@@ -4,18 +4,28 @@ This is the current human-facing task map for RIPR. It keeps the public entry
 points distinct while the full typed command and workflow catalog is completed
 under #1613.
 
+Ordinary first value starts with `ripr check`. `doctor` is the diagnostic path
+when analysis cannot start or when the user needs to inspect loaded setup and
+capability state.
+
 | User task | Primary command | Boundary |
 | --- | --- | --- |
-| Diagnose setup | `ripr doctor` | Checks whether the workspace can produce evidence and gives bounded recovery. It is not required before every run. `ripr doctor --json` gives the same checks as JSON; `ripr config validate` checks `ripr.toml` without running probes. |
-| Inspect one change | `ripr check --base origin/main` | Ordinary first value: analyze the selected diff and name the top gap or an honest no-action/limited state. |
+| Inspect one change | `ripr check [--base <base-ref>]` | Ordinary first value: analyze the selected diff and name the top gap or an honest no-action/limited state. When `--base` is omitted, RIPR resolves the repository's default base. |
+| Diagnose setup | `ripr doctor --root .` | Checks loaded repository, configuration, language, and tool state and gives bounded recovery. It is not required before every run and is not the first-value analyzer path. `ripr doctor --json` gives the same checks as JSON; `ripr config validate` checks `ripr.toml` without running probes. |
 | Understand a finding | `ripr explain <finding-id>`, `ripr context --at <finding-id>` | Drill into one finding named by `check`; `context` emits an agent-ready packet. |
 | Adopt RIPR in a repository | `ripr pilot --root .` | Guided repository analysis and materialization. It is broader than the ordinary one-change check. |
 | Repair one named gap | `ripr agent repair --seam-id <id> --phase before`, then `--attempt <repair-attempt-id> --phase after`; for a trust-bound Python attempt, continue with `--attempt <repair-attempt-id> --phase verify` and explicit authorization | RIPR owns the evidence plumbing and bounded verification. A human or external agent owns the focused test edit; execution and static movement remain separate observations. |
-| Compose PR evidence | `ripr first-pr --root . --base origin/main --head HEAD` | Composes existing artifacts into the start-here packet. It does not run analysis or repair a gap. |
+| Compose PR evidence | `ripr first-pr --root . --base <base-ref> --head HEAD` | Composes existing artifacts into the start-here packet. It does not run analysis or repair a gap. Use the repository's actual base ref. |
 | Work in an editor | `ripr lsp --stdio` | Saved-workspace diagnostics sidecar for VS Code and standard LSP clients. |
 | Expose status to an MCP client | `ripr mcp --stdio [--root PATH]` | Read-only workspace status; no analysis, edits, verification, or mutation execution. See [MCP workspace status server](interop/mcp.md). |
 | Adopt advisory CI | `ripr init --ci github` | Writes the non-blocking GitHub workflow. Blocking policy remains a later explicit repository decision. |
 | Inspect advanced commands | `ripr help --all` | Complete reference for policy, reports, compatibility, and operator surfaces. |
+
+For commands that require an explicit base, use the repository's actual base
+reference. `origin/main` is common but not universal. Bare `ripr check` uses the
+shared default-base authority: remote `origin/HEAD`, then verified common
+remote/local fallbacks. An explicit bad `--base` fails rather than silently
+selecting another subject.
 
 ## Repair transaction
 
