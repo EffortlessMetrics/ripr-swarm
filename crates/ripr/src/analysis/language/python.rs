@@ -444,6 +444,19 @@ impl LanguageAdapter for PythonAdapter {
         )
     }
 
+    fn analyze_repo(
+        &self,
+        options: &AnalysisOptions,
+        _oracle_policy: &OraclePolicy,
+    ) -> Result<LanguageRepoResult, String> {
+        // #2109: the shared repo working-set override bounds the run before
+        // any read; an invalid override fails closed as a named error.
+        let working_set_limit = repo::repo_working_set_limit()?;
+        PythonAdapter::analyze_repo_with_limit(&options.root, working_set_limit)
+    }
+}
+
+impl PythonAdapter {
     /// The deterministic diff-mode core of [`LanguageAdapter::analyze_diff`]
     /// with the workspace-walk bounds injected (mirrors
     /// [`PythonAdapter::analyze_repo_with_limit`]: `analyze_diff` resolves
@@ -633,19 +646,6 @@ impl LanguageAdapter for PythonAdapter {
         })
     }
 
-    fn analyze_repo(
-        &self,
-        options: &AnalysisOptions,
-        _oracle_policy: &OraclePolicy,
-    ) -> Result<LanguageRepoResult, String> {
-        // #2109: the shared repo working-set override bounds the run before
-        // any read; an invalid override fails closed as a named error.
-        let working_set_limit = repo::repo_working_set_limit()?;
-        PythonAdapter::analyze_repo_with_limit(&options.root, working_set_limit)
-    }
-}
-
-impl PythonAdapter {
     /// The deterministic repo-mode core of
     /// [`LanguageAdapter::analyze_repo`] with the working-set limit
     /// injected (#2109, #3554 PR C).
