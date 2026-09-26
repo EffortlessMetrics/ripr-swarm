@@ -3456,10 +3456,17 @@ mod tests {
     /// suffix must project no external target at all.
     ///
     /// `external_language_labels_cover_modern_ts_js_extensions` pins the label
-    /// lookup itself; this test pins what the operator actually sees, including
-    /// the fail-closed `repair_packet_ready = false` projection and the named
-    /// reason. Before #4116 the modern suffixes produced no label, so the
-    /// projection silently degraded to a generic block.
+    /// lookup itself; this test pins what the operator actually sees. Before
+    /// #4116 the modern suffixes produced no label, so the projection silently
+    /// degraded to a generic block.
+    ///
+    /// Honesty note on what is decision versus what is a pin: the label and the
+    /// presence-or-absence of a target are **decisions** taken from
+    /// `ts_js_source_kind`, and removing a suffix from that authority makes
+    /// these rows fail. `repair_packet_ready` is a constant in the
+    /// navigation-only projection, not a computed decision, so asserting it here
+    /// is a pin that catches someone flipping that constant — it is not
+    /// independent evidence that the fail-closed behaviour was evaluated.
     #[test]
     fn navigation_only_external_target_labels_modern_ts_js_extensions() -> Result<(), String> {
         for (extension, expected) in [

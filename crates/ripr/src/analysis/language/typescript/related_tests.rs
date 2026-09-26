@@ -1306,10 +1306,16 @@ mod module_extension_tests {
             let resolved =
                 normalized_relative_import_module(Path::new(test_file), source, None, None)
                     .ok_or_else(|| format!("{source} from {test_file} must resolve"))?;
-            let expected = normalized_module_path(Path::new(owner_file));
-            if resolved != expected {
+            // Assert the module identity LITERALLY. Deriving the expectation via
+            // `normalized_module_path` would run both sides of the comparison
+            // through the same stripper, so any *consistent* regression in
+            // `strip_typescript_module_extension` (double-suffix stripping,
+            // directory normalization, `index`-stem handling) would keep this
+            // test green. Every routed specifier here denotes `src/cart`.
+            const EXPECTED: &str = "src/cart";
+            if resolved != EXPECTED {
                 return Err(format!(
-                    "{source} from {test_file} resolved to {resolved}, not the {owner_file} owner module {expected}"
+                    "{source} from {test_file} resolved to {resolved}, not the {owner_file} owner module {EXPECTED}"
                 ));
             }
         }
@@ -1318,6 +1324,14 @@ mod module_extension_tests {
 
     /// Cross-extension resolution must not over-credit: an import naming a
     /// DIFFERENT module is not the owner, even when both use modern suffixes.
+    ///
+    /// The discriminating assertion here is `resolved == "src/basket"`. A bare
+    /// "is not the cart owner" inequality would stay green even if the entire
+    /// routed-suffix list were emptied, because then nothing would be stripped
+    /// and the specifier would trivially differ. Pinning the literal means this
+    /// control fails if `.mjs` stripping regresses. The over-credit decision
+    /// itself is pinned end to end by
+    /// `tests::analyze_diff_does_not_credit_related_test_from_a_different_modern_module`.
     #[test]
     fn normalized_relative_import_module_rejects_different_new_suffix_owner() -> Result<(), String>
     {
@@ -1328,10 +1342,14 @@ mod module_extension_tests {
             None,
         )
         .ok_or("a relative modern-suffix specifier must still normalize")?;
-        let owner = normalized_module_path(Path::new("src/cart.mts"));
-        if resolved == owner {
+        if resolved != "src/basket" {
             return Err(format!(
-                "a different modern module must not resolve to the cart owner module {owner}"
+                "../src/basket.mjs must normalize to src/basket, not {resolved}"
+            ));
+        }
+        if resolved == "src/cart" {
+            return Err(format!(
+                "a different modern module must not resolve to the cart owner module {resolved}"
             ));
         }
         Ok(())

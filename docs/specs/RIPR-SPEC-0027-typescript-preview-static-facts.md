@@ -243,8 +243,9 @@ can show:
 - a fixture corpus pinning at least one example per probe kind above
 - a fixture corpus pinning at least one example per `static_limit_kind`
 - fixtures cover `*.ts`, `*.tsx`, `*.js`, and `*.jsx`; the modern ESM/CJS
-  suffixes are covered by adapter routing, module-identity, and end-to-end
-  `analyze_diff` tests rather than by golden fixtures
+  suffixes (`.mts`, `.cts`, `.mjs`, `.cjs`) are covered by adapter routing and
+  module-identity tests, plus end-to-end `analyze_diff` discovery and
+  oracle-credit tests for `.mts` and `.cts` only — not by golden fixtures
 - a fixture proving `async` `test`/`it` resolves and rejects classify
   correctly
 - a fixture proving snapshots are tagged as weak / static-limited
