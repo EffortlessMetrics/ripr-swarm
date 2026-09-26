@@ -96,6 +96,29 @@ impl ReExportIndex {
                             continue;
                         }
                         let Some(re_source) = &export.source else {
+                            // Owner-file RENAME export (#4104-B):
+                            // `export { computeTotals as totals }` with no
+                            // `from` re-binds the file's OWN local binding
+                            // under `exported_name`. Record the self-hop so
+                            // `import { totals } from './owner-file'`
+                            // resolves back to the original owner name.
+                            for specifier in &export.specifiers {
+                                if specifier.export_kind == ImportOrExportKind::Type {
+                                    continue;
+                                }
+                                let Some(local_name) = module_export_name_text(&specifier.local)
+                                else {
+                                    continue;
+                                };
+                                let exported_name = module_export_name_text(&specifier.exported)
+                                    .unwrap_or_else(|| local_name.clone());
+                                if exported_name == local_name {
+                                    // Plain re-export of the same name needs no index.
+                                    continue;
+                                }
+                                let key = (intermediate_module.clone(), exported_name);
+                                file_entries.push((key, (local_name, intermediate_module.clone())));
+                            }
                             continue;
                         };
                         let source_str = re_source.value.to_string();
@@ -156,9 +179,17 @@ impl ReExportIndex {
             return false;
         };
         let owner_module = normalized_module_path(&owner.file);
-        // Quick check: if the intermediate IS the owner, no re-export hop needed.
+        // The import targets the owner module directly. A plain same-name
+        // import is handled by the other relations; only an owner-file
+        // RENAME export (`export { ownerName as alias }`) needs the index
+        // here, because the test imports `alias`, not the owner name
+        // (#4104-B).
         if intermediate_module == owner_module {
-            return false;
+            let key = (intermediate_module, imported_name.to_string());
+            let Some((original_name, source_module)) = self.entries.get(&key) else {
+                return false;
+            };
+            return source_module == &owner_module && original_name == &owner.name;
         }
         let key = (intermediate_module, imported_name.to_string());
         let Some((original_name, source_module)) = self.entries.get(&key) else {
@@ -359,10 +390,30 @@ pub(crate) fn owner_call_relation(
     }) {
         return Some(TypeScriptRelationKind::ImportedOwnerCall);
     }
+    // Default import bound to a local name (#4104-B): `import ride from
+    // '<owner module>'` + `ride(...)`. The import record stores
+    // `imported: "default"`, which never equals a named owner, so this is
+    // only credited when the owner IS the module's default export
+    // (`owner.default_export`) and the body calls the local binding without
+    // re-declaring it (shadow guard, as for the alias relation).
+    if owner.default_export
+        && test.imports_in_file.iter().any(|import| {
+            !import.namespace
+                && import.imported.as_deref() == Some("default")
+                && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+                && contains_call_name(&test.body_text, &import.local)
+                && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+        })
+    {
+        return Some(TypeScriptRelationKind::ImportedOwnerCall);
+    }
     // Single-hop re-export tracing (RIPR-SPEC-0095):
     // If the test imports a name from an intermediate file that re-exports it
     // from the owner file, credit the test via re_export_chain_followed.
     // Only one hop is followed; deeper chains stay uncredited (fail-closed).
+    // The index also carries the owner file's OWN rename exports
+    // (`export { ownerName as alias }`), so `import { alias } from
+    // './owner-file'` resolves back to the owner name (#4104-B).
     if test.imports_in_file.iter().any(|import| {
         if import.namespace {
             return false; // namespace imports don't map cleanly to a single exported name
@@ -433,14 +484,35 @@ pub(crate) fn receiver_owner_call_relation(
     {
         return false;
     }
+    // Constructor owner (#4104-B): the changed constructor body runs on EVERY
+    // construction, so a test that executes `new ClassName(...)` exercises it
+    // directly — there is no member-call needle for a `constructor` name.
+    if owner.method_kind == TypeScriptMethodKind::Constructor {
+        let Some(class_name) = owner.class_name.as_deref() else {
+            return false;
+        };
+        return contains_new_expression_call(&test.body_text, class_name);
+    }
     let constructor_names =
         constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
-    if constructor_names.is_empty() {
-        return false;
-    }
-    receiver_names_for_constructor_calls(&test.body_text, &constructor_names)
+    let receiver_names = receiver_names_for_constructor_calls(&test.body_text, &constructor_names);
+    if receiver_names
         .iter()
         .any(|receiver| contains_member_call_name(&test.body_text, receiver, &owner.name))
+    {
+        return true;
+    }
+    // Getter owner (#4104-B): a getter is INVOKED by reading the property on
+    // a constructed receiver (`expect(cart.total).toBe(80)` runs the `get
+    // total()` body), so a member READ on the receiver is the honest call
+    // needle. Ordinary methods keep the call-only requirement: a bare
+    // property read does not execute them.
+    if owner.method_kind == TypeScriptMethodKind::Getter {
+        return receiver_names
+            .iter()
+            .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name));
+    }
+    false
 }
 
 pub(crate) fn class_method_owner_call_relation(
@@ -966,6 +1038,62 @@ fn contains_member_call_name(body_text: &str, object_name: &str, method_name: &s
     let needle = format!("{object_name}.{method_name}(");
     body_text.match_indices(&needle).any(|(idx, _)| {
         has_member_call_boundary(body_text, idx)
+            && !line_prefix_looks_like_comment_or_string(body_text, idx)
+            && !inside_block_comment(body_text, idx)
+    })
+}
+
+/// `true` when `body_text` contains an `object.property` MEMBER READ — the
+/// property is not extended into a longer identifier and is not called.
+/// Getter owners are invoked by such reads, so this is their call needle
+/// (#4104-B). `cart.total(` (an actual call) is deliberately NOT a read
+/// match; the call needle covers it.
+pub(crate) fn contains_member_read_name(
+    body_text: &str,
+    object_name: &str,
+    property_name: &str,
+) -> bool {
+    if !is_safe_javascript_identifier(object_name) || !is_safe_javascript_identifier(property_name)
+    {
+        return false;
+    }
+    let needle = format!("{object_name}.{property_name}");
+    body_text.match_indices(&needle).any(|(idx, _)| {
+        has_member_call_boundary(body_text, idx)
+            && !line_prefix_looks_like_comment_or_string(body_text, idx)
+            && !inside_block_comment(body_text, idx)
+            && body_text
+                .get(idx + needle.len()..)
+                .and_then(|rest| rest.chars().next())
+                .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '(')
+    })
+}
+
+/// `true` when `body_text` constructs `class_name` with `new class_name(`.
+/// Boundary-guarded on both sides: `newX(` and `renew Wallet(` do not match,
+/// `new WalletFactory(` does not credit a `Wallet` constructor, and
+/// `new Wallet.Provider(` is a different constructor. Fail-closed on generic
+/// type arguments (`new Wallet<Foo>(`) — a missed relation is honest, a
+/// wrong one is not.
+pub(crate) fn contains_new_expression_call(body_text: &str, class_name: &str) -> bool {
+    if !is_safe_javascript_identifier(class_name) {
+        return false;
+    }
+    let needle = format!("new {class_name}");
+    body_text.match_indices(&needle).any(|(idx, _)| {
+        // The `new` keyword must not be the tail of a longer identifier.
+        let new_starts_clean = idx == 0
+            || body_text[..idx]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch));
+        // The next non-whitespace character must open the argument list.
+        let tail_opens_call = body_text
+            .get(idx + needle.len()..)
+            .and_then(|rest| rest.trim_start().chars().next())
+            .is_some_and(|ch| ch == '(');
+        new_starts_clean
+            && tail_opens_call
             && !line_prefix_looks_like_comment_or_string(body_text, idx)
             && !inside_block_comment(body_text, idx)
     })

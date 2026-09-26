@@ -141,10 +141,14 @@ pub(crate) fn ts_workspace_file_limit() -> usize {
 }
 
 /// Workspace file discovery result: the accepted source files plus whether
-/// the max-visited-files cap tripped (making `files` a partial set).
+/// the max-visited-files cap tripped (making `files` a partial set), and how
+/// many symlink/junction entries were seen but deliberately not followed
+/// (#4104-D: the count feeds a disclosure so link-hidden tests are not
+/// silently invisible).
 pub(crate) struct WorkspaceScan {
     pub(crate) files: Vec<PathBuf>,
     pub(crate) truncated: bool,
+    pub(crate) skipped_links: usize,
 }
 
 pub(crate) fn collect_workspace_typescript_files(root: &Path) -> WorkspaceScan {
@@ -164,6 +168,7 @@ pub(crate) fn visit_workspace(root: &Path, max_entries: usize) -> WorkspaceScan 
     let mut out = Vec::new();
     let mut visited = 0usize;
     let mut truncated = false;
+    let mut skipped_links = 0usize;
     let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -189,6 +194,14 @@ pub(crate) fn visit_workspace(root: &Path, max_entries: usize) -> WorkspaceScan 
                 Ok(file_type) => file_type,
                 Err(_) => continue,
             };
+            if file_type.is_symlink() {
+                // Symlinks and NTFS junctions are NOT followed (fail-closed:
+                // following them risks cycles and outside-root reads), but
+                // the skip is counted so the adapter can disclose that
+                // link-hidden tests/sources were not seen (#4104-D).
+                skipped_links += 1;
+                continue;
+            }
             if file_type.is_dir() {
                 stack.push(path);
             } else if file_type.is_file() {
@@ -197,6 +210,13 @@ pub(crate) fn visit_workspace(root: &Path, max_entries: usize) -> WorkspaceScan 
                     let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
                     out.push(relative);
                 }
+            } else {
+                // Reparse points std does not report as symlinks (notably
+                // NTFS junctions on some toolchains) land here: neither dir
+                // nor file. They are equally unfollowable — count them in
+                // the same disclosure instead of silently dropping the
+                // entry (#4104-D).
+                skipped_links += 1;
             }
         }
         if stop {
@@ -208,6 +228,7 @@ pub(crate) fn visit_workspace(root: &Path, max_entries: usize) -> WorkspaceScan 
     WorkspaceScan {
         files: out,
         truncated,
+        skipped_links,
     }
 }
 
@@ -472,5 +493,72 @@ mod tests {
             ts_workspace_file_limit_from_env(Ok("nope".to_string())).is_err(),
             "non-numeric limit must be rejected"
         );
+    }
+
+    /// Symlink/junction entries are not followed (#4104-D) but are COUNTED so
+    /// the adapter can disclose the skip instead of leaving link-hidden tests
+    /// silently invisible. On Windows, `symlink_dir` requires developer-mode
+    /// or admin privileges; when the platform refuses, the assertion is
+    /// skipped (Linux CI covers the deterministic path).
+    #[test]
+    fn discovery_counts_skipped_links_without_following() {
+        let workspace = TempWorkspace::new("link-skip");
+        workspace.write(
+            "src/sum.ts",
+            "export function sum(a: number, b: number): number {\n  return a + b;\n}\n",
+        );
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../src/sum';\n\ntest('adds', () => {\n  expect(sum(2, 3)).toBe(5);\n});\n",
+        );
+        // A real directory holding a linked test file...
+        workspace.write(
+            "real_tests/linked.test.ts",
+            "import { sum } from '../src/sum';\n\ntest('linked adds', () => {\n  expect(sum(4, 1)).toBe(5);\n});\n",
+        );
+        // ...and a link pointing at it.
+        #[cfg(unix)]
+        let linked = {
+            use std::os::unix::fs::symlink;
+            let target = workspace.0.join("real_tests");
+            let link = workspace.0.join("tests_linked");
+            if symlink(&target, &link).is_err() {
+                return; // platform refused; nothing to assert here
+            }
+            link
+        };
+        #[cfg(windows)]
+        let linked = {
+            use std::os::windows::fs::symlink_dir;
+            let target = workspace.0.join("real_tests");
+            let link = workspace.0.join("tests_linked");
+            if symlink_dir(&target, &link).is_err() {
+                return; // privilege missing; nothing to assert here
+            }
+            link
+        };
+        #[cfg(not(any(unix, windows)))]
+        let linked: std::path::PathBuf = match () {
+            _ => return,
+        };
+
+        let scan = visit_workspace(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES);
+        assert_eq!(scan.skipped_links, 1, "the one link must be counted");
+        assert!(
+            !scan
+                .files
+                .iter()
+                .any(|file| file.starts_with("tests_linked")),
+            "linked files must not be followed into the index: {:?}",
+            scan.files
+        );
+        assert!(
+            scan.files
+                .iter()
+                .any(|file| file.ends_with("tests/sum.test.ts")),
+            "the real test file must still be indexed: {:?}",
+            scan.files
+        );
+        let _ = linked;
     }
 }

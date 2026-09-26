@@ -15,6 +15,30 @@ pub(crate) struct TypeScriptOwner {
     pub(crate) class_name: Option<String>,
     pub(crate) decorated: bool,
     pub(crate) imports: Vec<TypeScriptImport>,
+    /// Method-shape refinement for `OwnerKind::Method` owners: a getter is
+    /// invoked by property READS on a receiver, and the constructor runs on
+    /// every `new ClassName(...)` — both change which relation needle is
+    /// honest for the owner (#4104-B).
+    pub(crate) method_kind: TypeScriptMethodKind,
+    /// `true` only when this owner IS the module's default export
+    /// (`export default function fare` / anonymous default). A default
+    /// import (`import ride from './owner'`) then plausibly targets this
+    /// owner regardless of the local binding name (#4104-B).
+    pub(crate) default_export: bool,
+}
+
+/// Syntactic method-shape refinement recorded during owner extraction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum TypeScriptMethodKind {
+    /// An ordinary callable method — invoked only by member CALLS.
+    #[default]
+    Ordinary,
+    /// `get total()` — invoked by property reads (`cart.total`).
+    Getter,
+    /// `set total(v)` — invoked by property writes (`cart.total = v`).
+    Setter,
+    /// `constructor(...)` — invoked by `new ClassName(...)`.
+    Constructor,
 }
 
 impl TypeScriptOwner {
@@ -95,6 +119,20 @@ pub(crate) struct TypeScriptTestExtractionGap {
     /// or `test/it call in loop/callback/nested body`.
     pub(crate) shape: &'static str,
     /// Source snippet (single-line, bounded) of the unextracted registration.
+    pub(crate) snippet: String,
+}
+
+/// Owner-shaped construct the syntax-first owner extractor does not index
+/// (#4104-A). One per affected changed file (the first detected shape).
+pub(crate) struct TypeScriptOwnerExtractionGap {
+    pub(crate) file: PathBuf,
+    pub(crate) sample_line: usize,
+    /// Detected shape, one of `arrow-function class field`,
+    /// `class method with unsupported key`, `class static block`,
+    /// `accessor auto-accessor`, `enum declaration`, or
+    /// `module/namespace declaration`.
+    pub(crate) shape: &'static str,
+    /// Source snippet (single-line, bounded) of the unextracted owner shape.
     pub(crate) snippet: String,
 }
 
