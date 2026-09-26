@@ -105,16 +105,6 @@ impl CappedReadError {
             ),
         }
     }
-
-    /// Whether this error is a size bound (surfaced as a named limitation)
-    /// rather than a plain IO failure (disclosed through the read-failure
-    /// lane).
-    pub(crate) fn is_size_limit(&self) -> bool {
-        matches!(
-            self,
-            Self::OverFileLimit { .. } | Self::OverWorkspaceBudget { .. }
-        )
-    }
 }
 
 /// Parse a positive byte limit from an env override, failing closed to the
@@ -377,7 +367,6 @@ mod tests {
             return Err(format!("over-limit read must fail, got {outcome:?}"));
         };
         assert_eq!(err, &CappedReadError::OverFileLimit { limit: 50 });
-        assert!(err.is_size_limit());
         assert!(err.reason().contains("file_read_capped"));
         assert!(err.reason().contains("50"));
         assert!(err.reason().contains(PYTHON_MAX_FILE_READ_BYTES_ENV));
@@ -405,7 +394,6 @@ mod tests {
             return Err(format!("decode failure must fail, got {outcome:?}"));
         };
         assert!(matches!(err, CappedReadError::Io(_)), "got {err:?}");
-        assert!(!err.is_size_limit());
         assert!(err.reason().contains("decode"));
         Ok(())
     }
