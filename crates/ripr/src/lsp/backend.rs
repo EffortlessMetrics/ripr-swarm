@@ -963,26 +963,23 @@ impl Backend {
             .cloned()
             .collect::<BTreeSet<_>>();
         uris.extend(plan.current_uris.iter().cloned());
-        let previous_omissions = self
+        let previous_selection = self
             .latest_analysis
             .lock()
             .ok()
-            .and_then(|snapshot| {
-                snapshot.as_ref().and_then(|snapshot| {
-                    snapshot
-                        .delivery_selection
-                        .as_ref()
-                        .map(|selection| selection.document_omissions())
-                })
-            })
+            .and_then(|snapshot| snapshot.as_ref()?.delivery_selection.clone());
+        let previous_omissions = previous_selection
+            .as_ref()
+            .map(|selection| selection.document_omissions())
             .unwrap_or_default();
         for uri in uris {
-            let mut diagnostics = previous_diagnostics.get(&uri).cloned().unwrap_or_default();
-            if !diagnostics.is_empty()
-                && let Some(omission) = previous_omissions.get(uri.as_str())
-            {
-                diagnostics.push(delivery_omission_diagnostic(omission));
-            }
+            let diagnostics = rollback_push_diagnostics(
+                &uri,
+                previous_diagnostics.get(&uri).map(Vec::as_slice).unwrap_or(&[]),
+                previous_selection.as_deref(),
+                previous_omissions.get(uri.as_str()),
+                self.document_quarantine(&uri).is_some(),
+            );
             self.client
                 .publish_diagnostics(uri, diagnostics, None)
                 .await;
@@ -5128,6 +5125,29 @@ fn delivery_omission_diagnostic(
     }
 }
 
+/// Restore the prior *served* publication during transaction rollback. The
+/// stored baseline contains raw diagnostics; publishing it directly would
+/// bypass the prior budget when a newer refresh is cancelled.
+fn rollback_push_diagnostics(
+    uri: &Uri,
+    raw: &[Diagnostic],
+    selection: Option<&crate::lsp::diagnostic_budget::DiagnosticDeliverySelection>,
+    omission: Option<&crate::lsp::diagnostic_budget::DocumentDeliveryOmission>,
+    quarantined: bool,
+) -> Vec<Diagnostic> {
+    if quarantined || raw.is_empty() {
+        return Vec::new();
+    }
+    let mut served = selection.map_or_else(
+        || raw.to_vec(),
+        |selection| selection.diagnostics_for_document(uri.as_str(), raw),
+    );
+    if let Some(omission) = omission {
+        served.push(delivery_omission_diagnostic(omission));
+    }
+    served
+}
+
 /// Disclosure for the budget-error fallback: every diagnostic is published
 /// unfiltered, so no delivery limit was enforced — a partial state that must
 /// be named rather than presented as a normal complete publication.
@@ -7537,6 +7557,16 @@ mod push_budget_disclosure_tests {
         let mut published = selection.diagnostics_for_document(uri.as_str(), &diagnostics);
         published.push(delivery_omission_diagnostic(omission));
         assert_eq!(published.len(), 51);
+        assert_eq!(
+            rollback_push_diagnostics(&uri, &diagnostics, Some(&selection), Some(omission), false),
+            published,
+            "rollback must restore the bounded publication, not 51 raw findings plus a summary"
+        );
+        assert!(
+            rollback_push_diagnostics(&uri, &diagnostics, Some(&selection), Some(omission), true)
+                .is_empty(),
+            "quarantined buffers remain withdrawn on rollback"
+        );
         let limitation = published.last().ok_or("missing limitation")?;
         assert_eq!(
             limitation.code,
@@ -7580,8 +7610,7 @@ mod push_budget_disclosure_tests {
     }
 
     #[test]
-    fn byte_omission_uses_budget_counts_and_profile_filtering_is_not_overflow()
-    -> Result<(), String> {
+    fn byte_omission_excludes_profile_filtered() -> Result<(), String> {
         let uri = push_test_uri()?;
         let diagnostics = vec![
             headline_diagnostic("diag:eligible-a", true),
@@ -7621,6 +7650,53 @@ mod push_budget_disclosure_tests {
             "evidence:filtered",
         );
         assert!(filtered_only.document_omissions().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_budget_reports_document_with_zero_selected() -> Result<(), String> {
+        let first: Uri = "file:///workspace/src/a.rs"
+            .parse()
+            .map_err(|error| format!("parse first URI: {error}"))?;
+        let second: Uri = "file:///workspace/src/b.rs"
+            .parse()
+            .map_err(|error| format!("parse second URI: {error}"))?;
+        let by_uri = BTreeMap::from([
+            (first.clone(), vec![headline_diagnostic("diag:a", true)]),
+            (second.clone(), vec![headline_diagnostic("diag:b", true)]),
+        ]);
+        let selection = crate::lsp::diagnostic_budget::DiagnosticDeliverySelection::evaluate(
+            &by_uri,
+            &crate::lsp::diagnostic_budget::DiagnosticBudget {
+                max_items_per_document: 1,
+                max_items_per_workspace_response: 1,
+                ..Default::default()
+            },
+            "snapshot:workspace",
+            "evidence:workspace",
+        );
+        let omissions = selection.document_omissions();
+        let omission = omissions.get(second.as_str()).ok_or("missing zero-selected omission")?;
+        assert_eq!(
+            (omission.selected_count, omission.omitted_count, omission.total_count),
+            (0, 1, 1)
+        );
+        assert_eq!(omission.scope, "workspace");
+        let mut published = selection.diagnostics_for_document(second.as_str(), &by_uri[&second]);
+        assert!(published.is_empty());
+        published.push(delivery_omission_diagnostic(omission));
+        assert_eq!(published.len(), 1, "omission is visible without a selected finding");
+        assert_eq!(
+            rollback_push_diagnostics(
+                &second,
+                &by_uri[&second],
+                Some(&selection),
+                Some(omission),
+                false
+            ),
+            published,
+            "rollback keeps the one visible limitation for a zero-selected document"
+        );
         Ok(())
     }
 

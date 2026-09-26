@@ -391,7 +391,9 @@ impl DiagnosticDeliverySelection {
                     total_count: 0,
                     count_budget: self.budget.max_items_per_document,
                     byte_budget: self.budget.max_serialized_bytes,
-                    snapshot_profile_budget_identity: result.snapshot_profile_budget_identity.clone(),
+                    snapshot_profile_budget_identity: result
+                        .snapshot_profile_budget_identity
+                        .clone(),
                     complete_evidence_identity: result.complete_evidence_identity.clone(),
                     retrieval_route: result.continuation_or_inspect_route.clone(),
                 }
