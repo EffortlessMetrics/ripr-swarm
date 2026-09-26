@@ -351,7 +351,10 @@ fn trace_file_fact_cache(stats: &FileFactCacheStats) {
     if std::env::var_os(LATENCY_TRACE_ENV).is_none() {
         return;
     }
-    eprintln!("ripr_file_fact_cache_receipt {}", file_fact_cache_receipt(stats));
+    eprintln!(
+        "ripr_file_fact_cache_receipt {}",
+        file_fact_cache_receipt(stats)
+    );
 }
 
 fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {

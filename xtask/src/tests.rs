@@ -46353,11 +46353,13 @@ fn repo_exposure_latency_trace_parses_phase_lines() -> Result<(), String> {
 #[test]
 fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> Result<(), String> {
     let rows: Vec<_> = (0..32)
-        .map(|i| serde_json::json!({
-            "path": format!("src/file_{i}.rs"),
-            "stage": "write",
-            "error": "portable failure"
-        }))
+        .map(|i| {
+            serde_json::json!({
+                "path": format!("src/file_{i}.rs"),
+                "stage": "write",
+                "error": "portable failure"
+            })
+        })
         .collect();
     let receipt = serde_json::json!({
         "schema_version": "0.1", "hits": 2, "misses": 35,
@@ -46365,25 +46367,39 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
         "store_errors": 35, "store_failures": rows,
         "store_failures_dropped": 3
     });
-    let run = repo_exposure_latency_run_from_output("repo-exposure-json", TimedOutput {
-        status: Some(success_exit_status()),
-        stdout: "{}".to_string(),
-        stderr: format!("ripr_file_fact_cache_receipt {receipt}\n"),
-        duration: Duration::from_millis(3),
-        timed_out: false,
-    });
-    let cache = run.file_fact_cache.as_ref().ok_or("missing cache receipt")?;
+    let run = repo_exposure_latency_run_from_output(
+        "repo-exposure-json",
+        TimedOutput {
+            status: Some(success_exit_status()),
+            stdout: "{}".to_string(),
+            stderr: format!("ripr_file_fact_cache_receipt {receipt}\n"),
+            duration: Duration::from_millis(3),
+            timed_out: false,
+        },
+    );
+    let cache = run
+        .file_fact_cache
+        .as_ref()
+        .ok_or("missing cache receipt")?;
     assert_eq!(cache.store_errors, 35);
     assert_eq!(cache.store_failures.len(), 32);
     assert_eq!(cache.store_failures_dropped, 3);
     let report = RepoExposureLatencyReport {
-        status: "pass".to_string(), timeout_ms: 10,
-        binary: "target/debug/ripr".to_string(), runs: vec![run],
+        status: "pass".to_string(),
+        timeout_ms: 10,
+        binary: "target/debug/ripr".to_string(),
+        runs: vec![run],
     };
     let json: Value = serde_json::from_str(&repo_exposure_latency_json(&report))
         .map_err(|err| format!("invalid latency JSON: {err}"))?;
-    assert_eq!(json["runs"][0]["file_fact_cache"]["store_failures"][0]["path"], "src/file_0.rs");
-    assert_eq!(json["runs"][0]["file_fact_cache"]["store_failures_dropped"], 3);
+    assert_eq!(
+        json["runs"][0]["file_fact_cache"]["store_failures"][0]["path"],
+        "src/file_0.rs"
+    );
+    assert_eq!(
+        json["runs"][0]["file_fact_cache"]["store_failures_dropped"],
+        3
+    );
     let markdown = repo_exposure_latency_markdown(&report);
     assert!(markdown.contains("| `src/file_0.rs` | `write` | portable failure |"));
     assert!(markdown.contains("dropped failures: 3"));
@@ -46391,22 +46407,50 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
     let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr("noise\n");
     assert!(cache.is_none());
     assert_eq!(limitation.as_deref(), Some("cache_phase_not_observed"));
-    let invalid = receipt.to_string().replace("src/file_0.rs", "/home/user/file_0.rs");
-    let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(
-        &format!("ripr_file_fact_cache_receipt {invalid}"));
+    let invalid = receipt
+        .to_string()
+        .replace("src/file_0.rs", "/home/user/file_0.rs");
+    let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
+        "ripr_file_fact_cache_receipt {invalid}"
+    ));
     assert!(cache.is_none());
     assert_eq!(limitation.as_deref(), Some("invalid_cache_receipt"));
-    let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(
-        "ripr_file_fact_cache_receipt {broken}\n");
+    let mut control_path = receipt.clone();
+    control_path["store_failures"][0]["path"] = Value::String("src/a\nheading.rs".to_string());
+    let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
+        "ripr_file_fact_cache_receipt {control_path}"
+    ));
+    assert!(cache.is_none());
+    assert_eq!(limitation.as_deref(), Some("invalid_cache_receipt"));
+    let mut dotted_path = receipt.clone();
+    dotted_path["store_failures"][0]["path"] = Value::String("src/foo..rs".to_string());
+    let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
+        "ripr_file_fact_cache_receipt {dotted_path}"
+    ));
+    assert!(cache.is_some());
+    assert!(limitation.is_none());
+    let (cache, limitation) =
+        repo_exposure_file_fact_cache_from_stderr("ripr_file_fact_cache_receipt {broken}\n");
     assert!(cache.is_none());
     assert_eq!(limitation.as_deref(), Some("malformed_cache_receipt"));
-    let timeout = repo_exposure_latency_run_from_output("repo-exposure-json", TimedOutput {
-        status: None, stdout: "partial".to_string(),
-        stderr: format!("ripr_file_fact_cache_receipt {receipt}\n"),
-        duration: Duration::from_millis(10), timed_out: true,
-    });
+    let timeout = repo_exposure_latency_run_from_output(
+        "repo-exposure-json",
+        TimedOutput {
+            status: None,
+            stdout: "partial".to_string(),
+            stderr: format!("ripr_file_fact_cache_receipt {receipt}\n"),
+            duration: Duration::from_millis(10),
+            timed_out: true,
+        },
+    );
     assert_eq!(timeout.status, "timeout");
-    assert_eq!(timeout.file_fact_cache.as_ref().map(|cache| cache.store_errors), Some(35));
+    assert_eq!(
+        timeout
+            .file_fact_cache
+            .as_ref()
+            .map(|cache| cache.store_errors),
+        Some(35)
+    );
     assert!(timeout.file_fact_cache_limitation.is_none());
     Ok(())
 }

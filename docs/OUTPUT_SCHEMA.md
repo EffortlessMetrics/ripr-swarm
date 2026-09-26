@@ -6275,7 +6275,8 @@ Field contract:
   child completed that phase. It includes hits, misses, invalidated files,
   corrupt reads, stores, authoritative `store_errors`, up to 32 portable
   `{path, stage, error}` failure rows, and `store_failures_dropped`. Cold and
-  warm runs retain their own rows. A cache hit that skips the file-fact phase
+  warm runs retain their own rows. Paths containing control characters are
+  refused as nonportable receipt identities. A cache hit that skips the file-fact phase
   does not fabricate zero counters.
 - `runs[].file_fact_cache_limitation` - `null` when the receipt is present;
   otherwise a named unavailable state, including skipped, missing, malformed,

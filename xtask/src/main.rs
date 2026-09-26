@@ -10587,9 +10587,13 @@ fn repo_exposure_file_fact_cache_from_stderr(
             !matches!(row.stage.as_str(), "create_dir" | "encode" | "write")
                 || row.path.is_empty()
                 || row.path.starts_with('/')
-                || row.path.split('/').any(|part| part == "." || part == ".." || part.is_empty())
+                || row
+                    .path
+                    .split('/')
+                    .any(|part| part == "." || part == ".." || part.is_empty())
                 || row.path.contains('\\')
                 || row.path.contains(':')
+                || row.path.chars().any(char::is_control)
         })
     {
         return (None, Some("invalid_cache_receipt".to_string()));
@@ -10761,9 +10765,17 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
                 for row in &cache.store_failures {
                     body.push_str(&format!(
                         "| `{}` | `{}` | {} |\n",
-                        row.path.replace('`', "\\`").replace('|', "\\|"),
+                        row.path
+                            .replace('`', "\\`")
+                            .replace('|', "\\|")
+                            .replace('\n', " ")
+                            .replace('\r', " "),
                         row.stage,
-                        row.error.replace('|', "\\|").replace('`', "\\`").replace('\n', " ").replace('\r', " ")
+                        row.error
+                            .replace('|', "\\|")
+                            .replace('`', "\\`")
+                            .replace('\n', " ")
+                            .replace('\r', " ")
                     ));
                 }
                 body.push('\n');
@@ -10771,7 +10783,9 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
         } else {
             body.push_str(&format!(
                 "Unavailable: `{}`. No zero cache counts are inferred.\n\n",
-                run.file_fact_cache_limitation.as_deref().unwrap_or("unknown")
+                run.file_fact_cache_limitation
+                    .as_deref()
+                    .unwrap_or("unknown")
             ));
         }
     }
