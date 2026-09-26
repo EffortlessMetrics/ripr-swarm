@@ -1,6 +1,6 @@
 ripr static RIPR exposure analysis
 mode: fast
-root: fixtures/typescript_monorepo_package_local/input
+root: fixtures/typescript_witness_dead_expected/input
 
 Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
 
@@ -12,23 +12,23 @@ Analysis outcome: complete_with_findings (analysis complete).
 Start here:
   State: preview_limited
   Safe next action: preview-language evidence is advisory; complete the missing repair-packet fields before acting.
-  File: packages/pkg-a/src/discount.ts:2
+  File: src/discount.ts:2
   Language: typescript
   Language status: preview
   Static exposure: weakly_exposed (warning, confidence 0.40)
   Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
-  Changed behavior: if (discountPct >= 100) {
-  Missing discriminator: Related tests reach `applyDiscount` with a strong oracle, but no strong assertion observes a `applyDiscount(...)` call at the changed predicate boundary `discountPct == 100`; input…
-  Related test: packages/pkg-a/tests/discount.test.ts:4 applies discount within pkg-a
-  Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `discountPct == 100`; no actionable repair packet is emitted until verify, receipt, and…
+  Changed behavior: if (total >= 100) {
+  Missing discriminator: Related tests reach `applyDiscount` with a strong oracle, but no strong assertion observes a `applyDiscount(...)` call at the changed predicate boundary `total == 100`; inputs on o…
+  Related test: tests/discount.test.ts:3 wrong expected
+  Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `total == 100`; no actionable repair packet is emitted until verify, receipt, and edit-…
   Evidence:
     - reach yes: 1 related test(s) found for owner `applyDiscount`
     - infection unknown: TypeScript preview adapter does not yet model infection.
     - 4 more evidence line(s) hidden
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/typescript_monorepo_package_local/input --diff fixtures/typescript_monorepo_package_local/diff.patch --mode fast probe:packages_pkg-a_src_discount.ts:typescript_preview:c4053b5a
-  ripr context --root fixtures/typescript_monorepo_package_local/input --diff fixtures/typescript_monorepo_package_local/diff.patch --mode fast --at probe:packages_pkg-a_src_discount.ts:typescript_preview:c4053b5a
+  ripr explain --root fixtures/typescript_witness_dead_expected/input --diff fixtures/typescript_witness_dead_expected/diff.patch --mode fast probe:src_discount.ts:typescript_preview:a9f257a1
+  ripr context --root fixtures/typescript_witness_dead_expected/input --diff fixtures/typescript_witness_dead_expected/diff.patch --mode fast --at probe:src_discount.ts:typescript_preview:a9f257a1
 
 More:
   Full evidence: rerun with --format human-full
