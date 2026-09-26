@@ -1678,6 +1678,28 @@ fn presentation_text_json(presentation_text: &EvidenceRecordPresentationText) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consumer_evidence_state_preserves_wire_values_and_rejects_unknown_words() {
+        for state in [
+            EvidenceState::Actionable,
+            EvidenceState::AlreadyObserved,
+            EvidenceState::InternalOnly,
+            EvidenceState::StaticLimitation,
+            EvidenceState::Unknown,
+        ] {
+            let encoded = format!("\"{}\"", state.as_str());
+            assert_eq!(
+                serde_json::to_string(&state).ok().as_deref(),
+                Some(encoded.as_str())
+            );
+            assert_eq!(
+                serde_json::from_str::<EvidenceState>(&encoded).ok(),
+                Some(state)
+            );
+        }
+        assert!(serde_json::from_str::<EvidenceState>("\"unsupported\"").is_err());
+    }
     use crate::analysis::classify_seam;
     use crate::analysis::repair_route::{
         RepairRouteState, RepairTargetSelection, repair_route_readiness,

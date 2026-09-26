@@ -36,7 +36,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn consumer_states_keep_the_existing_wire_values_and_reject_unknown_words() {
+    fn consumer_states_keep_the_existing_words_and_actionability_boundary() {
         let cases = [
             (EvidenceState::Actionable, "actionable"),
             (EvidenceState::AlreadyObserved, "already_observed"),
@@ -45,18 +45,8 @@ mod tests {
             (EvidenceState::Unknown, "unknown"),
         ];
         for (state, wire) in cases {
-            let encoded = format!("\"{wire}\"");
             assert_eq!(state.as_str(), wire);
-            assert_eq!(
-                serde_json::to_string(&state).ok().as_deref(),
-                Some(encoded.as_str())
-            );
-            assert_eq!(
-                serde_json::from_str::<EvidenceState>(&encoded).ok(),
-                Some(state)
-            );
         }
-        assert!(serde_json::from_str::<EvidenceState>("\"unsupported\"").is_err());
         assert!(EvidenceState::Actionable.is_actionable());
         assert!(!EvidenceState::Unknown.is_actionable());
         assert!(!EvidenceState::StaticLimitation.is_actionable());
