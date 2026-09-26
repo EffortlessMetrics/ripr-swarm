@@ -36,7 +36,7 @@ pub(crate) enum TargetAssertionShape {
     /// The observed oracle shape stands: the observed call input either hits
     /// the missing-discriminator boundary, or its reachability is not
     /// statically decidable from the available evidence (fail-open is allowed
-    /// only where non-reach cannot be proven).
+    /// only where non-reach cannot be established).
     Observed { shape: String },
     /// The observed call input provably does NOT reach the named boundary.
     /// `shape` carries an explicit boundary placeholder instead of the
@@ -153,8 +153,40 @@ struct StaticCall {
 fn parse_static_call_expression(expr: &str) -> Option<StaticCall> {
     let expr = expr.trim();
     let open = expr.find('(')?;
-    let close = expr.rfind(')')?;
-    if close != expr.len() - 1 || close < open {
+    // Quote- and escape-aware scan for the first `(`'s matching close; the
+    // expression only counts as one static call when that close is the final
+    // character (rejects compounds like `login('a') + login('b')` and
+    // `login('ab')('c')`).
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut matching_close = None;
+    for (i, ch) in expr[open..].char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' | '`' => quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    matching_close = Some(open + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = matching_close?;
+    if close != expr.len() - 1 {
         return None;
     }
     let callee = expr[..open].trim();
@@ -331,7 +363,9 @@ fn parse_plain_string_literal(raw: &str) -> Option<String> {
         return None;
     }
     let inner = &raw[1..raw.len() - 1];
-    if inner.contains('\\') {
+    // Escapes and an inner matching quote make the static length and
+    // byte-for-byte equality unreliable, so they fail open instead.
+    if inner.contains('\\') || inner.contains(quote) {
         return None;
     }
     Some(inner.to_string())
@@ -376,7 +410,9 @@ fn static_argument_reaches_boundary(
         let StaticLiteral::Int(boundary) = comparison.boundary else {
             return None;
         };
-        let length = text.chars().count() as i64;
+        // JavaScript `String.prototype.length` counts UTF-16 code units, not
+        // Unicode scalar values; the two differ outside the BMP (e.g. emoji).
+        let length = text.encode_utf16().count() as i64;
         return Some(apply_static_comparison(comparison.op, length, boundary));
     }
     match &comparison.boundary {
@@ -1293,5 +1329,51 @@ mod tests {
             Some("applyDiscount"),
         );
         assert!(matches!(non_literal, TargetAssertionShape::Observed { .. }));
+    }
+
+    #[test]
+    fn compound_expression_is_not_one_static_call() {
+        // `login('a') + login('b')` and `login('ab')('c')` must not parse as a
+        // single static call, or reachability would be judged on fabricated
+        // arguments (review: reject compounds before static reachability).
+        for expr in ["login('a') + login('b')", "login('ab')('c')"] {
+            assert!(
+                parse_static_call_expression(expr).is_none(),
+                "compound expression must be refused: {expr}"
+            );
+        }
+    }
+
+    #[test]
+    fn string_literal_with_inner_matching_quote_is_undecided() {
+        // `login('ab' + 'c')`: the argument is not a plain string literal, so
+        // its length must not be judged statically.
+        let shape = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "login('ab' + 'c')",
+            Some("user.length == 3"),
+            Some("login"),
+        );
+        assert!(
+            matches!(shape, TargetAssertionShape::Observed { .. }),
+            "non-literal argument must stay undecided: {shape:?}"
+        );
+    }
+
+    #[test]
+    fn string_length_uses_utf16_code_units() {
+        // JavaScript `String.prototype.length` counts UTF-16 code units: an
+        // astral character (e.g. emoji) counts as 2, so `login('a😀')` has
+        // length 3 and hits a `user.length == 3` boundary.
+        let shape = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "login('a😀')",
+            Some("user.length == 3"),
+            Some("login"),
+        );
+        assert!(
+            matches!(shape, TargetAssertionShape::Observed { .. }),
+            "UTF-16 length 3 must reach the boundary: {shape:?}"
+        );
     }
 }
