@@ -975,7 +975,10 @@ impl Backend {
         for uri in uris {
             let diagnostics = rollback_push_diagnostics(
                 &uri,
-                previous_diagnostics.get(&uri).map(Vec::as_slice).unwrap_or(&[]),
+                previous_diagnostics
+                    .get(&uri)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
                 previous_selection.as_deref(),
                 previous_omissions.get(uri.as_str()),
                 self.document_quarantine(&uri).is_some(),
@@ -7575,11 +7578,17 @@ mod push_budget_disclosure_tests {
             ))
         );
         assert_eq!(
-            limitation.data.as_ref().and_then(|data| data.get("omitted_count")),
+            limitation
+                .data
+                .as_ref()
+                .and_then(|data| data.get("omitted_count")),
             Some(&serde_json::json!(1))
         );
         assert_eq!(
-            limitation.data.as_ref().and_then(|data| data.get("retrieval_route")),
+            limitation
+                .data
+                .as_ref()
+                .and_then(|data| data.get("retrieval_route")),
             Some(&serde_json::json!("ripr/listActionableItems"))
         );
         assert!(
@@ -7676,16 +7685,26 @@ mod push_budget_disclosure_tests {
             "evidence:workspace",
         );
         let omissions = selection.document_omissions();
-        let omission = omissions.get(second.as_str()).ok_or("missing zero-selected omission")?;
+        let omission = omissions
+            .get(second.as_str())
+            .ok_or("missing zero-selected omission")?;
         assert_eq!(
-            (omission.selected_count, omission.omitted_count, omission.total_count),
+            (
+                omission.selected_count,
+                omission.omitted_count,
+                omission.total_count
+            ),
             (0, 1, 1)
         );
         assert_eq!(omission.scope, "workspace");
         let mut published = selection.diagnostics_for_document(second.as_str(), &by_uri[&second]);
         assert!(published.is_empty());
         published.push(delivery_omission_diagnostic(omission));
-        assert_eq!(published.len(), 1, "omission is visible without a selected finding");
+        assert_eq!(
+            published.len(),
+            1,
+            "omission is visible without a selected finding"
+        );
         assert_eq!(
             rollback_push_diagnostics(
                 &second,

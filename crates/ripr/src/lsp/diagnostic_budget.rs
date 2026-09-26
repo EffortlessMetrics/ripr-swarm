@@ -372,7 +372,8 @@ impl DiagnosticDeliverySelection {
             result,
             document_by_canonical_id,
             ..
-        } = &self.outcome else {
+        } = &self.outcome
+        else {
             return BTreeMap::new();
         };
         let mut by_document = BTreeMap::new();
@@ -383,21 +384,22 @@ impl DiagnosticDeliverySelection {
             let Some(document) = document_by_canonical_id.get(&item.canonical_id) else {
                 continue;
             };
-            let entry = by_document.entry(document.clone()).or_insert_with(|| {
-                DocumentDeliveryOmission {
-                    scope: "document",
-                    selected_count: 0,
-                    omitted_count: 0,
-                    total_count: 0,
-                    count_budget: self.budget.max_items_per_document,
-                    byte_budget: self.budget.max_serialized_bytes,
-                    snapshot_profile_budget_identity: result
-                        .snapshot_profile_budget_identity
-                        .clone(),
-                    complete_evidence_identity: result.complete_evidence_identity.clone(),
-                    retrieval_route: result.continuation_or_inspect_route.clone(),
-                }
-            });
+            let entry =
+                by_document
+                    .entry(document.clone())
+                    .or_insert_with(|| DocumentDeliveryOmission {
+                        scope: "document",
+                        selected_count: 0,
+                        omitted_count: 0,
+                        total_count: 0,
+                        count_budget: self.budget.max_items_per_document,
+                        byte_budget: self.budget.max_serialized_bytes,
+                        snapshot_profile_budget_identity: result
+                            .snapshot_profile_budget_identity
+                            .clone(),
+                        complete_evidence_identity: result.complete_evidence_identity.clone(),
+                        retrieval_route: result.continuation_or_inspect_route.clone(),
+                    });
             entry.omitted_count += 1;
             if item.reason != OmittedDiagnosticReason::DocumentItemLimit {
                 entry.scope = "workspace";
