@@ -34,7 +34,7 @@ GitHub Actions, and agent paths, including honest no-action and limited results.
 - [Contributing](../CONTRIBUTING.md) — development setup and validation.
 - [Scoped PR contract](SCOPED_PR_CONTRACT.md) — keep one coherent change and evidence denominator.
 - [PR automation](PR_AUTOMATION.md) — repository review and integration mechanics.
-- [Agent context](agent-context/README.md) — repository map, review invariants, and validation guidance.
+- Agent context: [repository map](agent-context/repo-map.md), [review invariants](agent-context/review-invariants.md), and [validation](agent-context/validation.md).
 - [Source-of-truth doctrine](source-of-truth/README.md) — proposals, specs, ADRs, plans, policy, proof, and closeout.
 - [Spec/proposal system](SPEC_PROPOSAL_SYSTEM.md) — how proposals become reviewed specifications and implementation work.
 - [Documentation system](DOCUMENTATION.md) — document roles and maintenance rules.
