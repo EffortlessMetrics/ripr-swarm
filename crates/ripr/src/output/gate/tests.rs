@@ -1387,8 +1387,7 @@ fn gate_closed_gap_is_not_misreported_as_configured_off() -> Result<(), String> 
     record["policy_state"] = Value::from("not_policy_targeted");
     record["repairability"] = Value::from("no_action");
     record["projection_eligibility"]["gate_candidate"]["eligible"] = Value::Bool(false);
-    record["projection_eligibility"]["gate_candidate"]["reason"] =
-        Value::from("already_observed");
+    record["projection_eligibility"]["gate_candidate"]["reason"] = Value::from("already_observed");
     record["safe_gate_predicate"]["policy_target_enabled"] = Value::Bool(false);
     let gap_ledger = write_temp_json(&dir, "gap-ledger.json", &ledger.to_string())?;
     let input = GateEvaluateInput {
@@ -1415,13 +1414,17 @@ fn gate_closed_gap_is_not_misreported_as_configured_off() -> Result<(), String> 
     };
 
     let report = build_gate_decision_report(&input)?;
-    assert!(report.config_errors.is_empty(), "{:?}", report.config_errors);
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
     assert_eq!(report.status, "pass");
     assert_eq!(report.summary.not_applicable, 1);
     assert_eq!(report.summary.suppressed, 0);
     let rendered = render_gate_decision_json(&report)?;
-    let value: Value = serde_json::from_str(&rendered)
-        .map_err(|err| format!("parse gate decision: {err}"))?;
+    let value: Value =
+        serde_json::from_str(&rendered).map_err(|err| format!("parse gate decision: {err}"))?;
     let decision = &value["decisions"][0];
     assert_eq!(decision["decision"], "not_applicable");
     assert_eq!(decision["evidence"]["configured_off"], false);
