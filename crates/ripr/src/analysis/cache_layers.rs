@@ -43,9 +43,11 @@ mod tests {
         let unique: BTreeSet<_> = names.iter().copied().collect();
         assert_eq!(names.len(), unique.len());
         assert!(names.iter().all(|name| {
-            !name.is_empty() && !name.starts_with('.') && name.bytes().all(|byte| {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
-            })
+            !name.is_empty()
+                && !name.starts_with('.')
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
         }));
     }
 
