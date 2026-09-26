@@ -26,8 +26,20 @@ Proposal:
 Spec:
 ADR:
 Plan item:
-Active goal:
-Issue:
+Governing issue or accepted claim:
+Acceptance delta (one sentence):
+
+## Candidate Relationships
+
+Candidate branch / head SHA (update when published):
+Stack parent or prerequisite PR (if any):
+Replaces or supersedes PR (if any):
+Acceptance retained from a replaced candidate (if any):
+Losing candidate disposition once replacement is accepted (if any):
+
+Name a stack or replacement explicitly. Shared files or a shared parent issue
+alone do not establish that two PRs are duplicates. If the relationship is
+unknown, record it as needing reconciliation before disposing of either PR.
 
 ## Scope
 
