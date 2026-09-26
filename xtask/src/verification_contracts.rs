@@ -490,14 +490,24 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         }
         let schema_path = format!("schemas/ripr/{name}.schema.json");
         if !published_schemas.contains(&schema_path) {
-            violations.push(format!("{schema_path} has an authority but is not published"));
+            violations.push(format!(
+                "{schema_path} has an authority but is not published"
+            ));
             continue;
         }
         let schema = read_json(root.join(&schema_path))?;
-        let pinned = schema.pointer("/properties/schema_version/const").and_then(Value::as_str);
+        let pinned = schema
+            .pointer("/properties/schema_version/const")
+            .and_then(Value::as_str);
         let source = read_text(root.join(source_path))?;
         if let Some(violation) = version_mismatch(
-            &schema_path, pinned, source_path, &source, prefix, *occurrences, &version_doc,
+            &schema_path,
+            pinned,
+            source_path,
+            &source,
+            prefix,
+            *occurrences,
+            &version_doc,
         ) {
             violations.push(violation);
         }
@@ -1260,26 +1270,30 @@ mod tests {
         assert!(check(Some("0.1"), source, doc).is_none());
         assert!(check(Some("0.2"), source, doc).is_some());
         assert!(check(Some("0.1"), "const VERSION: &str = \"0.2\";", doc).is_some());
-        assert!(check(
-            Some("0.1"),
-            source,
-            "| `schemas/ripr/example.schema.json` | `0.2` | producer |"
-        )
-        .is_some());
+        assert!(
+            check(
+                Some("0.1"),
+                source,
+                "| `schemas/ripr/example.schema.json` | `0.2` | producer |"
+            )
+            .is_some()
+        );
         assert!(check(Some("0.1"), source, "").is_some());
         assert!(check(Some("0.1"), source, &format!("{doc}\n{doc}")).is_some());
         assert!(check(None, source, doc).is_some());
         assert!(check(Some("0.1"), &format!("{source}\n{source}"), doc).is_some());
-        assert!(version_mismatch(
-            path,
-            Some("0.1"),
-            source_path,
-            &format!("{source}\nconst VERSION: &str = \"0.2\";"),
-            prefix,
-            2,
-            doc,
-        )
-        .is_some());
+        assert!(
+            version_mismatch(
+                path,
+                Some("0.1"),
+                source_path,
+                &format!("{source}\nconst VERSION: &str = \"0.2\";"),
+                prefix,
+                2,
+                doc,
+            )
+            .is_some()
+        );
     }
 
     #[test]
