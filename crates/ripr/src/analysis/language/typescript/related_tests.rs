@@ -1085,6 +1085,8 @@ fn direct_owner_call_has_declaration_anchor(
                 None => false,
             }
     }) || owner_name_destructured_from_owner_source(test, owner, alias_map, workspace_root)
+}
+
 /// `const m = await import("../src/pricing");` followed by an
 /// `m.loyaltyPrice(...)` member call, both inside the test body (#4103
 /// under-credit).
