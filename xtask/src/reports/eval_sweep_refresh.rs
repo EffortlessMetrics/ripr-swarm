@@ -980,7 +980,7 @@ fn corpus_selection_state(corpus: Option<&CorpusCounts>) -> &'static str {
 /// working set. Vendor classification precedes generated/test so a vendored
 /// generated file is counted once, as vendored.
 fn count_corpus(dir: &Path) -> CorpusCounts {
-    count_corpus_with_read_dir(dir, std::fs::read_dir)
+    count_corpus_with_read_dir(dir, |path| std::fs::read_dir(path))
 }
 
 /// Keep the production directory reader as the default; injecting its exact
