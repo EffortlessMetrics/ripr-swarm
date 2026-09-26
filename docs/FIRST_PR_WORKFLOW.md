@@ -100,12 +100,13 @@ ripr reports gap-ledger \
 
 For scoped Python or TypeScript repair-routing cards, the public first-PR front
 door can take the same saved check JSON directly and materialize the derived
-ledger before it selects the top repair:
+ledger before it selects the top repair. Set `<base-ref>` to the repository's
+actual PR base; `origin/main` is common but not universal:
 
 ```bash
 ripr first-pr \
   --root . \
-  --base origin/main \
+  --base <base-ref> \
   --head HEAD \
   --check-output target/ripr/reports/check.json
 ```
@@ -168,7 +169,7 @@ could not use. When the cards are missing it stops with `missing_artifact`;
 when they are unreadable, incomplete, or were built for another root, base, or
 head it stops with the matching blocked state. Either way the next command is
 the seam-level
-`ripr review-comments --root . --base origin/main --head HEAD --out target/ripr/review/comments.json`.
+`ripr review-comments --root . --base <base-ref> --head HEAD --out target/ripr/review/comments.json`.
 On a fresh checkout that makes three regeneration steps before the start:
 repo exposure, gap ledger, then review cards. Each run names the next one.
 Only current cards that carry no repair start, or cards rendered from the gap
