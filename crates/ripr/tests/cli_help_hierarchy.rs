@@ -5,12 +5,10 @@
 //! `src/cli/help/overview.rs` passes even when a route disappears from the
 //! default screen, because that one file holds the default overview, the
 //! exhaustive reference, and prose; only the rendered output is the public
-//! contract. All rendered and doc surfaces are matched after whitespace
-//! normalization, so a benign column realignment or line reflow does not break
-//! the guard while the roles stay correct — the token sequence, not the
-//! spacing, is the contract. The doc asserts pin the same canonical role
-//! vocabulary in the three human-facing docs so README, Quickstart, and the
-//! hierarchy page cannot drift away from the help the binary actually prints.
+//! contract. Rendered help is matched after whitespace normalization, so
+//! column realignment and line reflow do not break the guard. Documentation
+//! checks bind tasks to commands, first-run examples, and navigation rather
+//! than requiring the README to repeat the help's explanatory sentences.
 
 use std::process::Command;
 
@@ -277,39 +275,157 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
     Ok(())
 }
 
-/// The hierarchy page, the README, and the Quickstart must keep the same role
-/// vocabulary the rendered help prints. Whitespace is normalized so a reflow
-/// does not break the pin; rewording a role does.
+/// Validate the command cell of each task row, not mentions elsewhere in the
+/// document. The result prose can change without changing the command's job.
+fn assert_doc_command_routes(doc: &str) -> Result<(), String> {
+    for (task, expected) in [
+        ("Inspect one change", "ripr check"),
+        ("Explore the repository", "ripr pilot --root ."),
+        ("Repair a selected Rust gap", "ripr agent repair"),
+        ("Resume a repair", "ripr agent status --root ."),
+        ("Compose PR evidence", "ripr first-pr"),
+        ("Add advisory CI", "ripr init --ci github"),
+        ("Diagnose setup", "ripr doctor"),
+    ] {
+        let mut matches = doc.lines().filter_map(|line| {
+            let mut cells = line.trim().strip_prefix('|')?.split('|');
+            let role = cells.next()?.trim();
+            let command = cells.next()?.trim();
+            let result = cells.next()?.trim();
+            (role == task && !result.is_empty()).then_some(command)
+        });
+        let cell = matches
+            .next()
+            .ok_or_else(|| format!("command guide lost task row `{task}`"))?;
+        if matches.next().is_some() {
+            return Err(format!("command guide has duplicate task rows for `{task}`"));
+        }
+        let correct_command = cell
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .any(|span| normalized(span) == expected);
+        if !correct_command {
+            return Err(format!("task `{task}` must route to `{expected}`"));
+        }
+    }
+    Ok(())
+}
+
+fn first_bash_block(doc: &str) -> Result<String, String> {
+    let (_, after) = doc
+        .split_once("```bash")
+        .ok_or_else(|| "document has no Bash example".to_string())?;
+    let (body, _) = after
+        .split_once("```")
+        .ok_or_else(|| "Bash example has no closing fence".to_string())?;
+    Ok(normalized(body))
+}
+
+fn doc_section(doc: &str, heading: &str) -> Result<String, String> {
+    let lf = doc.replace("\r\n", "\n");
+    let marker = format!("\n{heading}\n");
+    let (_, after) = lf
+        .split_once(&marker)
+        .ok_or_else(|| format!("document lost linked section `{heading}`"))?;
+    after
+        .split("\n## ")
+        .next()
+        .map(str::to_string)
+        .ok_or_else(|| format!("document has no content for `{heading}`"))
+}
+
+/// Keep task ownership and executable entry points aligned without pinning
+/// editorial prose. The six rendered-help tests above remain unchanged.
 #[test]
 fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
-    let hierarchy = normalized(COMMAND_HIERARCHY_DOC);
-    for needle in [
-        "Ordinary first value: analyze the selected diff and name the top gap",
-        "Guided repository analysis and materialization.",
-        "Repair one named gap",
-        "Composes existing artifacts into the start-here packet. It does not run analysis or repair a gap.",
-    ] {
-        assert_contains("docs/COMMAND_HIERARCHY.md", &hierarchy, needle)?;
+    assert_doc_command_routes(COMMAND_HIERARCHY_DOC)?;
+    if first_bash_block(ROOT_README)? != "cargo install ripr ripr check" {
+        return Err("README first run must install ripr and inspect a change".to_string());
     }
-
-    let readme = normalized(ROOT_README);
-    for needle in [
-        "`ripr check` is the ordinary first-value command",
-        "use the dedicated two-phase transaction",
-        "`ripr pilot --root .` remains the guided repository-adoption workflow.",
-        "composes existing artifacts into PR-facing evidence; it is not the analyzer or repair driver.",
+    for target in [
+        "docs/QUICKSTART.md#cli-first-hour",
+        "docs/QUICKSTART.md#agent-or-reviewer-first-hour",
+        "docs/QUICKSTART.md#vs-code-first-hour",
+        "docs/QUICKSTART.md#ci-first-hour",
+        "docs/COMMAND_HIERARCHY.md",
     ] {
-        assert_contains("README.md", &readme, needle)?;
+        assert_contains("README task navigation", ROOT_README, target)?;
     }
-
-    let quickstart = normalized(QUICKSTART_DOC);
-    for needle in [
-        "`check` is ordinary first value, `pilot` is guided repo adoption, `agent repair` is the repair transaction, and `first-pr` composes PR evidence.",
-        "use the primary repair command",
-        "When resuming, ask RIPR where you are.",
-        "or a warning listing the choices when it would have to guess: ```bash ripr agent status --root .",
+    for (heading, command) in [
+        ("## CLI First Hour", "ripr check"),
+        ("## CI First Hour", "ripr init --ci github"),
+        ("## Agent Or Reviewer First Hour", "ripr pilot --root ."),
     ] {
-        assert_contains("docs/QUICKSTART.md", &quickstart, needle)?;
+        let section = doc_section(QUICKSTART_DOC, heading)?;
+        if first_bash_block(&section)? != command {
+            return Err(format!("Quickstart `{heading}` must start with `{command}`"));
+        }
+    }
+    let repair = doc_section(QUICKSTART_DOC, "## Agent Or Reviewer First Hour")?;
+    for target in [
+        "--phase before",
+        "--attempt",
+        "--phase after",
+        "ripr agent status --root .",
+        "REPAIR_ATTEMPT.md#governed-python-sequence",
+    ] {
+        assert_contains("Quickstart repair continuation", &repair, target)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn doc_routes_allow_editorial_rewording_and_table_spacing() -> Result<(), String> {
+    let reworded = COMMAND_HIERARCHY_DOC
+        .replace(
+            "Static findings, or an explicit no-action or limited result.",
+            "Findings for the selected change, with any limits disclosed.",
+        )
+        .replace("| Inspect one change |", "|   Inspect one change   |")
+        .replace("`ripr check`", "`ripr   check`")
+        .replace('\n', "\r\n");
+    assert_doc_command_routes(&reworded)?;
+    if first_bash_block("```bash\r\nripr   check\r\n```\r\n")? != "ripr check" {
+        return Err("first-run matching must allow whitespace changes".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn doc_routes_reject_missing_wrong_and_duplicate_tasks() -> Result<(), String> {
+    let missing = COMMAND_HIERARCHY_DOC
+        .lines()
+        .filter(|line| !line.starts_with("| Inspect one change |"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let wrong = COMMAND_HIERARCHY_DOC.replace(
+        "| Inspect one change | `ripr check` |",
+        "| Inspect one change | `ripr pilot` |",
+    );
+    let duplicate = format!(
+        "{COMMAND_HIERARCHY_DOC}\n| Inspect one change | `ripr check` | Duplicate. |\n"
+    );
+    for (case, changed) in [("missing", missing), ("wrong", wrong), ("duplicate", duplicate)] {
+        if assert_doc_command_routes(&changed).is_ok() {
+            return Err(format!("doc route guard accepted the {case} task mutation"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), String> {
+    let changed = "```bash\nripr pilot\n```\nLater:\n```bash\nripr check\n```\n";
+    if first_bash_block(changed)? == "ripr check" {
+        return Err("a later command must not hide a wrong first-run route".to_string());
+    }
+    let cli = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    let wrong = cli.replacen("ripr check", "ripr pilot", 1);
+    if first_bash_block(&wrong)? == "ripr check" {
+        return Err(
+            "the CLI section credited a later check instead of its first command".to_string(),
+        );
     }
     Ok(())
 }
