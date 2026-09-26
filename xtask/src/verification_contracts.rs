@@ -1330,47 +1330,77 @@ mod tests {
         let schema = read_json(root.join("schemas/ripr/review-comments.schema.json"))?;
         let mut packet =
             read_json(root.join("tests/fixtures/verification/ripr/review-comments.valid.json"))?;
-        packet["inputs"] = serde_json::json!({"gap_ledger": "target/ripr/reports/gap-decision-ledger.json"});
-        packet.as_object_mut().ok_or("fixture is not an object")?.remove("run_receipt");
+        packet["inputs"] =
+            serde_json::json!({"gap_ledger": "target/ripr/reports/gap-decision-ledger.json"});
+        packet
+            .as_object_mut()
+            .ok_or("fixture is not an object")?
+            .remove("run_receipt");
         packet["summary_only"] = serde_json::json!([]);
         packet["summary"]["summary_only"] = serde_json::json!(0);
         packet["suppressed"] = serde_json::json!([{
             "gap_id": "gap:missing-anchor", "file": null, "line": null,
             "reason": "missing_anchor", "message": "No anchor"
         }]);
-        let card = packet["comments"][0].as_object_mut().ok_or("missing card")?;
+        let card = packet["comments"][0]
+            .as_object_mut()
+            .ok_or("missing card")?;
         card.remove("owner");
         card.remove("seam");
         card.insert("source".into(), serde_json::json!("gap_decision_ledger"));
         card.insert("gap_id".into(), serde_json::json!("gap:fixture"));
-        card.insert("repair_card".into(), serde_json::json!({
-            "source_artifact": "target/ripr/reports/gap-decision-ledger.json"
-        }));
+        card.insert(
+            "repair_card".into(),
+            serde_json::json!({
+                "source_artifact": "target/ripr/reports/gap-decision-ledger.json"
+            }),
+        );
         card.get_mut("placement").ok_or("missing placement")?["mode"] =
             serde_json::json!("gap_record_anchor");
 
         let violations = |value: &Value| {
             let mut errors = Vec::new();
-            validate_value_against_schema(value, &schema, &schema, "review comments".into(), &mut errors);
+            validate_value_against_schema(
+                value,
+                &schema,
+                &schema,
+                "review comments".into(),
+                &mut errors,
+            );
             errors
         };
         assert!(violations(&packet).is_empty(), "{:?}", violations(&packet));
 
         let mut missing_identity = packet.clone();
-        missing_identity["comments"][0].as_object_mut().ok_or("missing card")?.remove("gap_id");
+        missing_identity["comments"][0]
+            .as_object_mut()
+            .ok_or("missing card")?
+            .remove("gap_id");
         assert!(!violations(&missing_identity).is_empty());
 
         let mut diff_packet = packet.clone();
-        diff_packet.as_object_mut().ok_or("missing packet")?.remove("inputs");
-        assert!(!violations(&diff_packet).is_empty(), "diff route must retain run_receipt");
+        diff_packet
+            .as_object_mut()
+            .ok_or("missing packet")?
+            .remove("inputs");
+        assert!(
+            !violations(&diff_packet).is_empty(),
+            "diff route must retain run_receipt"
+        );
 
         let diff_fixture =
             read_json(root.join("tests/fixtures/verification/ripr/review-comments.valid.json"))?;
         diff_packet["run_receipt"] = diff_fixture["run_receipt"].clone();
-        diff_packet["comments"][0].as_object_mut().ok_or("missing card")?.remove("source");
+        diff_packet["comments"][0]
+            .as_object_mut()
+            .ok_or("missing card")?
+            .remove("source");
         diff_packet["comments"][0]["owner"] = diff_fixture["comments"][0]["owner"].clone();
         diff_packet["comments"][0]["seam"] = diff_fixture["comments"][0]["seam"].clone();
-        assert!(!violations(&diff_packet).is_empty(), "diff cards cannot use gap placement");
+        assert!(
+            !violations(&diff_packet).is_empty(),
+            "diff cards cannot use gap placement"
+        );
         Ok(())
     }
 
