@@ -489,15 +489,15 @@ pub(crate) fn named_limitations_for_alias_unresolved(
 /// Check whether an import source (relative path) resolves to the same module
 /// path as the owner file, given the test file's location.
 ///
-/// Unlike `import_source_matches_owner` in `related_tests.rs`, this helper is
-/// a pure string computation — it does not need to be in the same module.
+/// Use the relation owner's module identity for this disclosure too. The
+/// unresolved-owner route is relative-only: alias-map resolution belongs to
+/// the relation path and is deliberately not inferred here.
 fn import_source_matches_owner_text(
     import: &TypeScriptImport,
     test_file: &Path,
     owner: &TypeScriptOwner,
 ) -> bool {
-    normalized_relative_import_module_standalone(test_file, &import.source)
-        .is_some_and(|module| module == normalized_module_path_standalone(&owner.file))
+    super::related_tests::import_source_matches_owner(import, test_file, owner, None, None)
 }
 
 fn import_references_owner_by_name(
@@ -511,41 +511,6 @@ fn import_references_owner_by_name(
         import.imported.as_deref() == Some(owner.name.as_str())
             && contains_call_name(body_text, &import.local)
     }
-}
-
-fn normalized_relative_import_module_standalone(test_file: &Path, source: &str) -> Option<String> {
-    if !source.starts_with("./") && !source.starts_with("../") {
-        return None;
-    }
-    let mut parts = normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")))
-        .split('/')
-        .filter(|part| !part.is_empty() && *part != ".")
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    let normalized_source = source.replace('\\', "/");
-    for part in normalized_source.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            _ => parts.push(part.to_string()),
-        }
-    }
-    Some(strip_ts_extension(&parts.join("/")))
-}
-
-fn normalized_module_path_standalone(path: &Path) -> String {
-    strip_ts_extension(&normalized_path(path))
-}
-
-fn strip_ts_extension(path: &str) -> String {
-    for suffix in [".tsx", ".mts", ".cts", ".ts", ".jsx", ".mjs", ".cjs", ".js"] {
-        if let Some(stripped) = path.strip_suffix(suffix) {
-            return stripped.to_string();
-        }
-    }
-    path.to_string()
 }
 
 fn contains_member_call_name(body_text: &str, object_name: &str, method_name: &str) -> bool {

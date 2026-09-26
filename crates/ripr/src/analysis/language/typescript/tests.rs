@@ -7359,6 +7359,78 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
     Ok(())
 }
 
+/// Exercise the unresolved-owner import arm through classify_change, with no
+/// bare owner-name call that could hide a broken module-identity comparison.
+#[test]
+fn named_limitation_target_unresolved_uses_relation_module_identity() -> Result<(), String> {
+    use std::fs;
+    let root = std::env::temp_dir().join(format!(
+        "ripr-target-module-identity-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let owner_pkg = root.join("packages/pkg-a");
+    let test_pkg = root.join("packages/pkg-b");
+    fs::create_dir_all(&owner_pkg).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&test_pkg).map_err(|error| error.to_string())?;
+    fs::write(owner_pkg.join("package.json"), "{}").map_err(|error| error.to_string())?;
+    fs::write(test_pkg.join("package.json"), "{}").map_err(|error| error.to_string())?;
+
+    let test_file = test_pkg.join("tests/discount.test.mts");
+    let test = TypeScriptTest {
+        name: "alias-only discount test".to_string(),
+        local_name: "alias-only discount test".to_string(),
+        describe_names: Vec::new(),
+        file: test_file,
+        line: 3,
+        body_text: "discountAlias(100, 20);".to_string(),
+        assertions: Vec::new(),
+        mocks_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../../pkg-a/src/discount.mjs".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "discountAlias".to_string(),
+            namespace: false,
+        }],
+    };
+
+    for (owner_file_name, source, expected) in [
+        ("discount.ts", "../../pkg-a/src/discount.ts", true),
+        ("discount.tsx", "../../pkg-a/src/discount.tsx", true),
+        ("discount.mts", "../../pkg-a/src/discount.mjs", true),
+        ("discount.cts", "../../pkg-a/src/discount.cjs", true),
+        ("discount.js", "../../pkg-a/src/discount.js", true),
+        ("discount.jsx", "../../pkg-a/src/discount.jsx", true),
+        ("discount.mjs", "../../pkg-a/src/discount.mjs", true),
+        ("discount.cjs", "../../pkg-a/src/discount.cjs", true),
+        ("discount.mts", "../../pkg-a/src/different.mjs", false),
+        ("discount.mts", "@pkg-a/discount", false),
+    ] {
+        let owner_file = owner_pkg.join("src").join(owner_file_name);
+        let owner = test_owner("applyDiscount", &owner_file.to_string_lossy());
+        let mut case = test.clone();
+        case.imports_in_file[0].source = source.to_string();
+        let finding = classify_change(
+            &owner_file,
+            2,
+            "    if (discountPct >= 100) {",
+            &[owner.clone()],
+            &[case],
+            Some(&root),
+            &ReExportIndex::empty(),
+            None,
+        )
+        .ok_or_else(|| format!("expected a finding for {source}"))?;
+        let disclosed = finding
+            .evidence
+            .iter()
+            .any(|line| line == "typescript_limitation: typescript_target_unresolved");
+        assert_eq!(disclosed, expected, "owner {owner_file_name}, import {source}");
+    }
+    fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 /// `typescript_target_unresolved` must NOT be emitted when all tests are in
 /// the same package (single-package workspace without a package.json hierarchy
 /// does not trigger cross-package detection).
