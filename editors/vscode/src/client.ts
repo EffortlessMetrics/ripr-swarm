@@ -279,6 +279,7 @@ export type RiprClientLifecycleWait = (
 ) => Promise<void>;
 
 export class RiprClientLifecycleTimeoutError extends Error {
+  readonly kind = 'timedOut' as const;
   constructor(description: string, budgetMs: number) {
     super(
       `${description} did not settle within ${budgetMs}ms; refusing an unsafe ripr lifecycle transition.`
@@ -286,6 +287,11 @@ export class RiprClientLifecycleTimeoutError extends Error {
     this.name = 'RiprClientLifecycleTimeoutError';
   }
 }
+
+/** A completed controller stop. Timeout and client-stop failures reject instead. */
+export type RiprClientStopResult = {
+  kind: 'alreadyStopped' | 'cancelled' | 'startupFailed' | 'stopped' | 'replaced';
+};
 
 export interface RiprClientRuntime {
   getConfig(resource?: vscode.Uri): RiprConfig;
@@ -361,7 +367,7 @@ const defaultRuntime: RiprClientRuntime = {
 export class RiprClientController {
   private client: RiprLanguageClient | undefined;
   private server: ResolvedServer | undefined;
-  private readonly notificationDisposables: vscode.Disposable[] = [];
+  private readonly notificationDisposables = new Map<RiprLanguageClient, vscode.Disposable[]>();
   private receivedTypedAnalysisStatus = false;
   private typedAnalysisStatusState: RiprAnalysisStatusPayload['state'] | undefined;
   private readonly dirtyRiprDocuments = new Set<string>();
@@ -604,10 +610,10 @@ export class RiprClientController {
     );
     this.client = client;
     client.setTrace(traceFromConfig(config.traceServer));
-    this.notificationDisposables.push(
+    this.notificationDisposables.set(client, [
       client.onNotification('ripr/analysisStatus', (params) => this.handleAnalysisStatus(params)),
       client.onNotification('window/logMessage', (params) => this.handleServerLog(params))
-    );
+    ]);
     try {
       await client.start();
       // Re-apply the configured trace level after the handshake (#2082
@@ -622,13 +628,17 @@ export class RiprClientController {
       // instead of returning early against stale state. Only clear this.client
       // if it still points at OUR client — a replacement start() may have
       // already installed a different one (the restart race, #2123).
+      try {
+        await client.stop();
+      } catch (stopError) {
+        // A failed cleanup may still own a process. Keep its client visible
+        // for an explicit stop retry, and report both failed transitions.
+        throw new AggregateError([error, stopError], 'ripr startup and cleanup both failed');
+      }
       if (this.client === client) {
         this.client = undefined;
       }
-      while (this.notificationDisposables.length > 0) {
-        this.notificationDisposables.pop()?.dispose();
-      }
-      await client.stop().catch(() => undefined);
+      this.disposeNotifications(client);
       throw error;
     }
     // If stop() ran during `await this.client.start()`, the generation no
@@ -761,9 +771,18 @@ export class RiprClientController {
     return this.client !== undefined;
   }
 
-  async stop(): Promise<void> {
+  private disposeNotifications(client: RiprLanguageClient): void {
+    const registrations = this.notificationDisposables.get(client);
+    this.notificationDisposables.delete(client);
+    for (const registration of registrations ?? []) {
+      registration.dispose();
+    }
+  }
+
+  async stop(): Promise<RiprClientStopResult> {
     const client = this.client;
     const starting = this.startingPromise;
+    let startupFailed = false;
     // Bump the generation so any in-flight startOnce() detects that stop()
     // ran during its async setup window. The captured start is awaited before
     // the client is cleared or stopped, so a stop during startup cannot lose
@@ -773,7 +792,7 @@ export class RiprClientController {
     if (starting) {
       const waitForLifecycle = this.runtime.waitForLifecycle ?? waitForLifecyclePromise;
       await waitForLifecycle(
-        starting.catch(() => undefined),
+        starting.catch(() => { startupFailed = true; }),
         DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS,
         'ripr server startup'
       );
@@ -784,24 +803,26 @@ export class RiprClientController {
     if (this.startingPromise === starting) {
       this.startingPromise = undefined;
     }
-    if (client && this.client === client) {
+    if (this.client !== client) {
+      return { kind: this.client ? 'replaced' : startupFailed ? 'startupFailed' : 'cancelled' };
+    }
+    if (client) {
       await client.stop();
       this.client = undefined;
+      this.disposeNotifications(client);
     }
     this.server = undefined;
     this.receivedTypedAnalysisStatus = false;
     this.typedAnalysisStatusState = undefined;
     this.firstUsefulAction = undefined;
     this.dirtyRiprDocuments.clear();
-    while (this.notificationDisposables.length > 0) {
-      this.notificationDisposables.pop()?.dispose();
-    }
     this.updateStatus({
       kind: 'stopped',
       summary: 'ripr server has stopped.',
       detail: 'Run ripr: Restart Server to start analysis again.',
       nextStep: 'Run ripr: Restart Server.'
     });
+    return { kind: client ? 'stopped' : startupFailed ? 'startupFailed' : starting ? 'cancelled' : 'alreadyStopped' };
   }
 
   markWorkspaceStale(document: vscode.TextDocument): void {

@@ -159,6 +159,99 @@ suite('Workspace Trust Transition', () => {
 });
 
 suite('RiprClientController Lifecycle', () => {
+  test('stop reports its terminal state and disposes only captured session listeners', async () => {
+    const startGate = deferred();
+    const entered = deferred();
+    const disposed: number[] = [];
+    let created = 0;
+    const runtime = trustedRuntime(() => {
+      const id = ++created;
+      return {
+        onNotification: () => ({ dispose: () => { disposed.push(id); } }),
+        sendRequest: async () => undefined,
+        setTrace: () => undefined,
+        start: async () => {
+          if (id === 1) {
+            entered.resolve();
+            await startGate.promise;
+          }
+        },
+        stop: async () => undefined
+      };
+    });
+    const controller = new RiprClientController({} as vscode.ExtensionContext, outputChannel([]), runtime);
+    assert.strictEqual((await controller.stop()).kind, 'alreadyStopped');
+    const first = controller.start();
+    await entered.promise;
+    const stopping = controller.stop();
+    startGate.resolve();
+    await first;
+    assert.strictEqual((await stopping).kind, 'stopped');
+    assert.deepStrictEqual(disposed, [1, 1]);
+    assert.strictEqual((await controller.stop()).kind, 'alreadyStopped');
+    assert.deepStrictEqual(disposed, [1, 1]);
+  });
+
+  test('rejected startup disposes its listeners once before a fresh session starts', async () => {
+    const firstEntered = deferred();
+    const rejectFirst = deferred();
+    const disposed: number[] = [];
+    let created = 0;
+    const runtime = trustedRuntime(() => {
+      const id = ++created;
+      return {
+        onNotification: () => ({ dispose: () => { disposed.push(id); } }),
+        sendRequest: async () => undefined,
+        setTrace: () => undefined,
+        start: async () => {
+          if (id === 1) {
+            firstEntered.resolve();
+            await rejectFirst.promise;
+            throw new Error('sentinel first startup rejection');
+          }
+        },
+        stop: async () => undefined
+      };
+    });
+    const controller = new RiprClientController({} as vscode.ExtensionContext, outputChannel([]), runtime);
+    const first = controller.start();
+    void first.catch(() => undefined);
+    await firstEntered.promise;
+    rejectFirst.resolve();
+    await assert.rejects(first, /sentinel first startup rejection/);
+    assert.deepStrictEqual(disposed, [1, 1]);
+    await controller.start();
+    assert.strictEqual(controller.isRunning(), true);
+    assert.deepStrictEqual(disposed, [1, 1]);
+    assert.strictEqual((await controller.stop()).kind, 'stopped');
+    assert.deepStrictEqual(disposed, [1, 1, 2, 2]);
+  });
+
+  test('failed startup cleanup retains the client for a stop retry', async () => {
+    let stopCalls = 0;
+    let disposed = 0;
+    const runtime = trustedRuntime(() => ({
+      onNotification: () => ({ dispose: () => { disposed++; } }),
+      sendRequest: async () => undefined,
+      setTrace: () => undefined,
+      start: async () => { throw new Error('startup sentinel'); },
+      stop: async () => {
+        if (++stopCalls === 1) {
+          throw new Error('cleanup sentinel');
+        }
+      }
+    }));
+    const controller = new RiprClientController({} as vscode.ExtensionContext, outputChannel([]), runtime);
+    await assert.rejects(controller.start(), (error: unknown) =>
+      error instanceof AggregateError && error.errors.length === 2
+    );
+    assert.strictEqual(controller.isRunning(), true);
+    assert.strictEqual(disposed, 0);
+    assert.strictEqual((await controller.stop()).kind, 'stopped');
+    assert.strictEqual(stopCalls, 2);
+    assert.strictEqual(disposed, 2);
+  });
+
   test('direct stop waits for a paused client start before calling client.stop', async () => {
     const startGate = deferred();
     const startEntered = deferred();

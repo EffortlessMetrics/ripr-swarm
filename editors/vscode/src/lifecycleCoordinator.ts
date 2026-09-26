@@ -1,6 +1,6 @@
 export interface LifecycleController {
   start(): Promise<void>;
-  stop(): Promise<void>;
+  stop(): Promise<unknown>;
 }
 
 export type LifecycleStartController = Pick<LifecycleController, 'start'>;
