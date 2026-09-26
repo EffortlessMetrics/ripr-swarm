@@ -857,6 +857,8 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
     let (classified, limit_info) =
         crate::analysis::inventory_classified_seams_at_with_config(root, &config)?;
     let ts_guidance = crate::output::render::detect_ts_full_repo_guidance_pub(root, &classified);
+    let py_guidance =
+        crate::output::render::detect_python_repo_evidence_guidance_pub(root, &classified);
     let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
         root.to_path_buf(),
         "ready".to_string(),
@@ -886,6 +888,7 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
             &classified,
             limit_info.as_ref(),
             ts_guidance.as_ref(),
+            py_guidance.as_ref(),
             &context,
             &mut writer,
         )
