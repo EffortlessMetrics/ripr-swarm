@@ -6997,14 +6997,21 @@ fn doctor_passes_typescript_root_without_rust_toolchain() -> Result<(), String> 
 }
 
 /// Discriminating negative for the two tests above: under the same PATH, a
-/// Rust root still fails on the missing toolchain, and Rust sources without
-/// a Cargo.toml still fail the Cargo.toml check.
+/// An installed binary can analyze a Rust root without a project toolchain;
+/// source-build still fails, and a missing Cargo.toml remains a root error.
 #[test]
 #[cfg(unix)]
 fn doctor_distinguishes_installed_analysis_from_source_build_and_missing_manifest()
 -> Result<(), String> {
     let workspace = unique_temp_workspace("doctor-rust-no-toolchain");
     let path = doctor_path_without_rust_toolchain(&workspace)?;
+    let git_init = std::process::Command::new("git")
+        .args(["init", "--quiet", &workspace.display().to_string()])
+        .status()
+        .map_err(|error| format!("initialize doctor workspace: {error}"))?;
+    if !git_init.success() {
+        return Err(format!("initialize doctor workspace returned {git_init}"));
+    }
 
     let with_manifest = workspace.join("with-manifest");
     std::fs::create_dir_all(with_manifest.join("src"))
