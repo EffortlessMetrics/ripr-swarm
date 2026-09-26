@@ -112,7 +112,12 @@ const CONTRACTS: &[VerificationContract] = &[
         fixture_path: "tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json",
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
-        doc_markers: &["inputs", "gap_ledger", "gap_record_anchor", "comments[].gap_id"],
+        doc_markers: &[
+            "inputs",
+            "gap_ledger",
+            "gap_record_anchor",
+            "comments[].gap_id",
+        ],
     },
     VerificationContract {
         schema_path: "schemas/ripr/gate-decision.schema.json",
@@ -1331,9 +1336,9 @@ mod tests {
         // The fixture carries an eligible card shaped by
         // output::review_comments::gap_record_recommendation_json, as well as
         // suppressed records whose anchor can be absent.
-        let packet = read_json(root.join(
-            "tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json",
-        ))?;
+        let packet = read_json(
+            root.join("tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json"),
+        )?;
         let check = |value: &Value| {
             let mut violations = Vec::new();
             validate_value_against_schema(
@@ -1362,7 +1367,12 @@ mod tests {
 
         let mut default_packet =
             read_json(root.join("tests/fixtures/verification/ripr/review-comments.valid.json"))?;
-        assert!(!default_packet["comments"].as_array().ok_or("missing default comments")?.is_empty());
+        assert!(
+            !default_packet["comments"]
+                .as_array()
+                .ok_or("missing default comments")?
+                .is_empty()
+        );
         default_packet["comments"][0]["placement"]["mode"] =
             Value::String("gap_record_anchor".to_string());
         assert!(!check(&default_packet).is_empty());
