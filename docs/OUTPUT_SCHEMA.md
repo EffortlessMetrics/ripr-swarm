@@ -16378,7 +16378,8 @@ schema version**, `phase: "apply"`, and an `apply` block: `patch_sha256`,
 `changed_paths`, `cage_status`, `repository_head_after`, and `current`. The
 prepare record has `phase: "prepare"` and no `apply` block. Both carry the
 seam and repository head; driver binary digest/version; config profile; input
-packet and before-snapshot digests; trust selection and target identity;
+packet and before-snapshot digests; trust selection,
+`selection_manifest_path` (string), and target identity;
 allowed/forbidden edit surface; explicit authorization; and non-claims. The
 apply record additionally binds the durable attempt ID and retained binding
 artifact digest. A recorded edit-cage verdict is neither verification nor
@@ -16416,7 +16417,8 @@ That typed execution response is a process observation with
 `kind|...` registry entry. `python-repair-trust check-verification` emits a
 schema-`0.1` `python_repair_verification_check_report` with spec, manifest,
 receipt input, count, per-receipt record/attempt and execution/movement/
-rollback summaries, violations, verdict, and claim boundary. The report
+rollback summaries, `unrelated_regressed` and `unrelated_improved` booleans
+per receipt, violations, verdict, and claim boundary. The report
 checks receipt structure; it does not promote draft evidence to an accepted
 repair.
 
