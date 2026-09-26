@@ -1,186 +1,206 @@
 # Release Copy Checklist
 
-Public release copy is its own surface. A clean release-prep PR can still ship
-with a release page that describes the *publishing process* instead of the
-shipped product, a marketplace listing that uses internal vocabulary, or a
-README badge that overstates current install state. This checklist captures the
-v0.5.0 lessons so the next release does not drift back.
+Public copy is part of the product. A release can be technically correct and
+still fail users by leading with metadata, documenting the publishing process,
+conflating build prerequisites with target-repository requirements, or teaching
+a command weaker than the one the product actually emits.
 
-Run through it before:
+Run this checklist before finalizing:
 
-- finalizing the GitHub Release notes,
-- triggering `publish-extension.yml`,
-- the manual `cargo publish`.
+- the root or crate README;
+- the Quickstart or editor first-use path;
+- the GitHub Release body;
+- crates.io, VS Marketplace, or Open VSX metadata;
+- generated CI instructions; and
+- any install, upgrade, or known-limitations copy.
 
-If a row fails, fix the copy or the artifact before publishing. Recovery
-narrative goes in [CHANGELOG.md](../CHANGELOG.md) and [RELEASE.md](RELEASE.md),
-not in the public release body.
+Fix the copy or the artifact before publication. Release recovery and operator
+history belong in [CHANGELOG.md](../CHANGELOG.md) and
+[Release](RELEASE.md), not in the public product opener.
+
+## Front-door structure
+
+The first screen must answer these questions in order:
+
+1. **What does ripr do for me?**
+2. **What is the first useful command or editor action?**
+3. **What result should I expect—even when no repair is available?**
+4. **What does ripr not claim?**
+5. **Where do I go deeper?**
+
+Check all of the following:
+
+- [ ] The opener uses plain language before internal terms.
+- [ ] One runnable path appears before prerequisites, compatibility matrices,
+      architecture, mission/vision prose, or a large badge block.
+- [ ] The first result is described as one selected action **or** an honest
+      no-action/limited state. Zero findings is not presented as a clean bill
+      of health.
+- [ ] The trust boundary appears near the first workflow: static evidence is
+      not runtime mutation proof, correctness, or test-adequacy proof.
+- [ ] The model, terminology, support tiers, compatibility details, and
+      reference mechanics follow through progressive disclosure.
+- [ ] The first screen is not a metadata wall. Keep badges to one compact line
+      or move product/status badges below the first useful workflow.
+- [ ] Internal terms such as `seam`, `discriminator`, `oracle`, `grip`, and
+      `canonical gap` are introduced only after a plain-language description
+      and a link to [Terminology](TERMINOLOGY.md).
+
+## Installation and toolchain truth
+
+Keep these three facts separate:
+
+```text
+RIPR build/install toolchain
+repository analysis availability
+repository project-verification toolchain
+```
+
+- [ ] Rust 1.95+ is described as RIPR's **build/install-from-source MSRV**.
+- [ ] The copy does not imply that every repository analyzed by an already-built
+      binary must itself use Rust 1.95+.
+- [ ] Project verification is described as using the target repository's own
+      selected toolchain and as independently available, failing, or limited.
+- [ ] The normal VS Code path does not tell users to install or rebuild ripr
+      when the extension supplies the server.
+- [ ] `cargo install ripr` is true at publication time. A named version exists
+      on crates.io before the copy says it does.
+- [ ] `cargo install --path crates/ripr` is development/fallback guidance, not
+      the required public first-run path.
+- [ ] `doctor` is described as diagnostics, not as a substitute for the first
+      useful analysis command.
+
+## Commands, roots, and base refs
+
+- [ ] Public examples use the repository's actual base ref or a placeholder
+      such as `<base-ref>`. They do not teach `origin/main` as universal.
+- [ ] Where a command resolves the default base automatically, the docs say so
+      instead of requiring a hand-written ref.
+- [ ] Product-generated commands preserve the repository selected when they
+      were rendered. Copy must not use `cd` as a permanent workaround for a
+      producer-owned wrong-root defect.
+- [ ] Root, before/after artifacts, verification subject, and receipt refer to
+      the same repository and comparable revisions.
+- [ ] A composition command such as `first-pr` is not presented as the first
+      analyzer action.
+- [ ] Display commands, JSON fields, help, Quickstart, generated CI, and editor
+      actions describe the same current command surface.
+- [ ] A command shown as paste-ready has been executed in the claimed shell and
+      path context, including native PowerShell where relevant.
+- [ ] Failure, stale, partial, unavailable, wrong-root, and zero-subject states
+      remain explicit; prose does not strengthen them to success.
 
 ## GitHub Release body
 
-- [ ] The body describes the **shipped release** — what users get and what
-      changed since the last public version.
-- [ ] The body does **not** describe the publishing process, retry attempts,
-      mid-publish failures, or recovery commands. Those belong in
-      [CHANGELOG.md](../CHANGELOG.md) under the version's `Release recovery`
-      section and in [RELEASE.md](RELEASE.md) under `Recovery`.
-- [ ] First paragraph says what the user gets in plain language before any
-      internal terms (seam, discriminator, oracle, grip, canonical gap,
-      front panel, evidence record). The
-      [Terminology bridge](TERMINOLOGY.md) is the mapping the rest of the
-      product follows.
-- [ ] Runtime mutation language (`killed`, `survived`, `adequate`) appears
-      only if real runtime data is part of this release. Static evidence
-      stays inside the conservative classifications listed in
-      [Terminology bridge](TERMINOLOGY.md).
-- [ ] Positioning copy matches the canonical doctrine: `ripr` is **static
-      mutation-exposure analysis**, catches the same class of signal
-      mutation testing catches but earlier and cheaper, does not run
-      mutants, and treats mutation testing as the runtime backstop. The
-      release body must not frame `ripr` and mutation testing as parallel
-      evidence lanes or as detecting different signals.
-- [ ] Preview-language copy distinguishes packaging from authority: preview
-      adapters may ship in the normal binary, but TypeScript/JavaScript/Python
-      evidence remains opt-in, visibly preview/advisory, non-gating, and not a
-      Rust parity or runtime-proof claim.
-- [ ] Any release-note counts are labeled with their basis. Lane 1
-      finding-alignment counts are static advisory audit evidence, not public
-      badge totals, coverage, runtime mutation outcomes, or test-adequacy
-      claims.
+- [ ] The first paragraph describes the shipped user outcome, not the release
+      transaction, retries, branch choreography, or recovery commands.
+- [ ] The body says what changed since the last public version.
+- [ ] Static evidence remains in the conservative vocabulary documented by
+      [Terminology](TERMINOLOGY.md).
+- [ ] The body does not use runtime mutation words such as `killed` or
+      `survived` unless real runtime data is part of the release.
+- [ ] Positioning remains consistent: ripr is static mutation-exposure
+      analysis, catches the mutation-testing class of signal earlier and more
+      cheaply, does not run mutants, and keeps mutation testing as the runtime
+      backstop.
+- [ ] Counts name their basis and denominator. Static audit counts are not
+      public badge totals, coverage, runtime outcomes, or test-adequacy rates.
+- [ ] Every selected defer appears as an exact public non-claim. Required work
+      is not converted into a defer merely because the release notes can
+      describe it.
+- [ ] The final body is re-read on the exact integrated source head after the
+      history-preserving join.
 
-## VS Marketplace and Open VSX
+## Preview-language copy
 
-- [ ] `editors/vscode/package.json` `displayName` is user-readable and
-      consistent with the README opener. The current target is
-      `ripr: Static Mutation Exposure`.
-- [ ] `editors/vscode/package.json` `description` is plain-language
-      marketplace copy and does not lead with internal vocabulary.
-- [ ] `editors/vscode/README.md` opener says what the extension does for the
-      user before any internal terms. Marketplace renders Markdown but does
-      not resolve relative links, so the terminology bridge link is the
-      absolute GitHub URL.
-- [ ] VSIX **package metadata is checked before publish**: rebuild the VSIX
-      after any copy change so the marketplace artifact carries the new
-      title and description, not a stale build attached to an earlier tag.
-- [ ] Marketplace title and description are reviewed by reading them in the
-      VS Marketplace and Open VSX listing previews, not only in
-      `package.json`.
+- [ ] Packaging is separated from authority: an adapter may ship in the normal
+      binary while its findings remain preview/advisory.
+- [ ] TypeScript/JavaScript copy names the actual routed extensions:
+      `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`.
+- [ ] Any narrower downstream repair, rerun, packet, or repo-mode surface is
+      named precisely rather than hidden behind the broad adapter statement.
+- [ ] Python's scoped repair route does not promote all Python static facts.
+- [ ] Preview evidence is not described as Rust parity, gate authority,
+      runtime execution, or support promotion.
+- [ ] A zero-seam repo-scoped view over a preview-only repository is described
+      as a renderer limitation, not a clean result.
 
-## Crate metadata and README
+## README, crate, and marketplace metadata
 
-- [ ] `crates/ripr/Cargo.toml` `description` reads as user-facing marketplace
-      copy on crates.io, not internal model language.
-- [ ] Root `README.md` first screen leads with plain language; the RIPR
-      acronym and model description appear below the fold with a link to
-      [Terminology bridge](TERMINOLOGY.md).
-- [ ] README badges disclose their **freshness model**:
-      - Live badges (e.g. Open VSX downloads, codecov, crates.io version)
-        may use live Shields routes.
-      - Manual badges (e.g. VS Marketplace install count) must carry a
-        hidden HTML comment naming the source and last-checked date.
-      - Pending badges (services that are not live yet) must say "pending"
-        in the badge label or be hidden until the service exists.
-      - Publisher-metric badges must say so in the comment near the badge
-        so a future maintainer does not replace them with a live route.
+- [ ] Root `README.md` and `crates/ripr/README.md` share the same plain-language
+      value proposition and trust boundary.
+- [ ] `crates/ripr/Cargo.toml` description is user-facing crates.io copy.
+- [ ] `editors/vscode/package.json` title and description are user-facing and
+      match the README opener.
+- [ ] `editors/vscode/README.md` opens with the editor user job and uses
+      absolute GitHub links where marketplace rendering cannot resolve relative
+      paths.
+- [ ] Marketplace copy is reviewed in the actual VS Marketplace and Open VSX
+      previews, not only in repository files.
+- [ ] A VSIX is rebuilt after package metadata or extension README changes.
 
-## Install instructions
+## Badges and freshness
 
-- [ ] Install commands in the README, `editors/vscode/README.md`, and
-      [Quickstart](QUICKSTART.md) are true at publish time:
-      - The named version is reachable from crates.io / VS Marketplace /
-        Open VSX **now**, not after a delayed propagation step.
-      - `cargo install ripr` resolves to the version this release is
-        documenting (or the docs explicitly say `--version X.Y.Z`).
-      - The fallback `cargo install --path crates/ripr` is documented as
-        a fallback, not the required first-run path.
-- [ ] The bundled-server / cached-server / GitHub Release download chain
-      documented in [Editor extension](EDITOR_EXTENSION.md) matches the
-      assets actually attached to this release.
-
-## Public vocabulary
-
-- [ ] Public release copy says what users get before any internal terms
-      appear. The user-facing column in the
-      [Terminology bridge](TERMINOLOGY.md) is the canonical phrasing for
-      first-hour surfaces.
-- [ ] Internal vocabulary (seams, discriminators, oracle strength, grip,
-      canonical gap, evidence record, front panel, assistant-loop health)
-      stays inside specs, `docs/OUTPUT_SCHEMA.md`, metrics, fixtures,
-      `docs/IMPLEMENTATION_CAMPAIGNS.md`, and `CHANGELOG.md` entries that
-      describe internal contracts.
-- [ ] Section headings in the GitHub Release body, generated CI summary,
-      and CLI help follow the reviewer-friendly wording landed in
-      `#727` / `#729` / `#730`.
+- [ ] Live badges use live, authoritative endpoints.
+- [ ] Manual badges carry a nearby hidden comment naming the source and
+      last-checked date.
+- [ ] Pending services are hidden or visibly labelled pending.
+- [ ] Repository-wide ripr badges retain their exact meaning: generated counts
+      of unresolved actionable static repair gaps, not coverage, runtime
+      mutation outcomes, all seams, or all code without tests.
+- [ ] Diff-scoped evidence stays in PR summaries and retained CI artifacts,
+      not a repository-wide public badge.
 
 ## Release assets and dependent channels
 
-- [ ] GitHub Release contains the full asset surface documented in
-      [RELEASE.md](RELEASE.md): VSIX, server manifest, per-target server
-      archives, and checksums.
-- [ ] Server archive checksums match the entries in the server manifest.
-- [ ] Dependent publish channels (marketplaces, crates.io) are only
-      triggered after the GitHub Release asset set is verified. The
-      publish workflows download assets from the Release; if the Release
-      is incomplete, dependent publishes will inherit the gap.
-- [ ] The `publish-extension.yml` run is gated on the post-fix VSIX, not on
-      the pre-fix VSIX that may still be attached to the original tag.
+- [ ] The GitHub Release contains the asset set documented in
+      [Release](RELEASE.md): VSIX, server manifest, per-target archives, and
+      checksums.
+- [ ] Archive checksums match the server manifest.
+- [ ] The documented bundled/cached/downloaded server chain matches the actual
+      extension package and release assets.
+- [ ] Dependent channels are triggered only after the GitHub Release asset set
+      is verified.
+- [ ] The marketplace workflow consumes the final rebuilt VSIX, not an earlier
+      artifact attached to the same release train.
+- [ ] Public source, release tags, registries, and marketplaces remain source
+      repository authority; swarm rehearsal is not described as publication.
 
-## When something slips
+## Automated guards
 
-If a slip is caught before the dependent publish, fix the copy or rebuild
-the artifact and retry. Do **not** rewrite the GitHub Release body to
-describe the retry; that is publishing process narrative.
+Run the public-copy and documentation checks on the exact candidate surface:
 
-If a slip is caught after the dependent publish:
+```bash
+cargo xtask check-product-copy
+cargo xtask check-doc-index
+cargo xtask check-doc-artifacts
+cargo xtask check-static-language
+cargo xtask check-command-catalog
+cargo xtask check-output-contracts
+cargo xtask markdown-links
+```
 
-1. Open a focused fix PR on `main`.
-2. Land the fix, follow the fix-forward recovery in
-   [RELEASE.md → Recovery](RELEASE.md#recovery).
-3. Document the recovery in `CHANGELOG.md` under the version's
-   `Release recovery` section.
-4. Leave the GitHub Release tag in place. Update the body **only** to
-   reflect the now-shipped product, not the recovery story.
-5. Add an `INSTALLATION_VERIFICATION.md`-style smoke artifact when the
-   user-visible behavior changed.
+`check-product-copy` scans the principal public surfaces, including root and
+crate READMEs, Quickstart, editor copy, release docs, and marketplace metadata.
+It rejects unbridged internal vocabulary. A file is bridged when it explains the
+user job first and links to [Terminology](TERMINOLOGY.md) before relying on the
+internal model.
 
-## Automated guard
+Automated scans are necessary but insufficient. Execute the first-use and
+install commands they describe. Text search cannot establish shell behavior,
+artifact identity, source-root binding, marketplace packaging, or public asset
+availability.
 
-`cargo xtask check-product-copy` runs a lightweight scan over the public
-surfaces this checklist names (root `README.md`, `crates/ripr/README.md`,
-`docs/QUICKSTART.md`, `docs/EDITOR_EXTENSION.md`,
-`editors/vscode/README.md`, `editors/vscode/package.json`,
-`docs/RELEASE.md`, `docs/RELEASE_MARKETPLACE.md`, this checklist) and flags
-unbridged use of internal terms (`test oracle`, `discriminator`,
-`seam-native`, `grip`, `evidence spine`, `canonical gap`,
-`no-actionable-seam`, `front panel`, `report packet`).
+## When copy or packaging slips
 
-A file is "bridged" if it links to [TERMINOLOGY.md](TERMINOLOGY.md). The
-rule is **not** "never use these terms" — it is "public copy explains the
-user job first or links to the terminology bridge before using internal
-terms." Specs, output schema, fixtures, metrics, implementation
-campaigns, and CHANGELOG entries are allowlisted as internal surfaces and
-are not scanned.
+Before dependent publication:
 
-The current baseline is clean. A `cargo test -p xtask product_copy` unit
-test asserts the baseline and catches regressions; if a new public file
-or a new copy edit reintroduces unbridged internal vocabulary, that test
-fails and `cargo xtask check-product-copy` reports the location and a
-suggested user-facing replacement.
+1. fix the copy or artifact;
+2. rebuild the affected package;
+3. rerun the exact public-copy and package checks; and
+4. verify the final user-visible surface.
 
-The guard is **not** wired into `cargo xtask check-pr` yet; running the
-command is an advisory step during release prep. Promote it to a gate
-only after a release cycle confirms it stays low-noise.
-
-## Origin
-
-This checklist captures the v0.5.0 release lessons:
-
-- The original release body described the publishing-recovery sequence
-  before describing the shipped product.
-- A pre-fix VSIX was on track to be published to VS Marketplace with the
-  stale `Rust Test-Oracle Gaps` title until the storefront audit in
-  `#727` and the rebuild was scheduled.
-- README install count was first wired to a live VS Marketplace Shields
-  route that the marketplace does not reliably serve.
-
-Future releases run this checklist before each public surface is touched.
+After dependent publication, use the fix-forward procedure in
+[Release → Recovery](RELEASE.md#recovery). Keep retry and recovery history in
+the changelog/operator record. The public release body should continue to
+describe the product users can now obtain, not the internal recovery sequence.
