@@ -10478,6 +10478,36 @@ fn spec_0027_nested_block_shadow_still_rejects_call_in_scope() -> Result<(), Str
     Ok(())
 }
 
+/// #4117 review (TDZ): a `const applyDiscount` declaration binds its WHOLE
+/// block, so a same-block call placed BEFORE the declaration still executes
+/// the shadow — it can never reach the imported owner (the binding is in the
+/// temporal dead zone at that point, so the call throws). Crediting the
+/// owner-call relation for it is an over-credit; the guard must reject the
+/// relation and the boundary witness fail-closed.
+#[test]
+fn spec_0027_same_block_call_before_const_declaration_still_shadowed() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let mut test = exact_value_test("applyDiscount", "applyDiscount(100)", "42");
+    test.body_text = concat!(
+        "const run = () => applyDiscount(100);\n",
+        "const applyDiscount = () => 42;\n",
+        "expect(run()).toBe(42);",
+    )
+    .to_string();
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::NoStaticPath,
+        "a same-block call before the const declaration still executes the shadow (TDZ)"
+    );
+    assert!(
+        finding.related_tests.is_empty(),
+        "the pre-declaration same-block call must not credit owner-call relations: {:?}",
+        finding.related_tests
+    );
+    Ok(())
+}
+
 // ── F5-9: a test is related to an owner only when it references the owner ────
 
 /// Owners from the F5-9 re-walk shape: `discountedTotal` (tested) and a new

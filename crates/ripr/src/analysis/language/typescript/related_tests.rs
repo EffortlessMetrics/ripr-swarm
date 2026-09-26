@@ -1028,16 +1028,12 @@ fn expect_actual_slices(body_text: &str) -> Vec<&str> {
 /// A local declaration of the shadow-checked identifier found by the lexical
 /// scope walk in `local_identifier_declared_in_test_body`.
 struct BodyDeclaration {
-    offset: usize,
     /// Byte offset of the declared name token, so the walk does not count the
     /// declaration's own binding as a use of the identifier.
     name_start: usize,
     /// Enclosing block scope (index into the walk's scope table); `None` is
     /// the test body's top level, which shadows every use in the body.
     scope: Option<usize>,
-    /// `function` declarations hoist within their block, so they shadow uses
-    /// regardless of textual order; `const`/`let`/`var` do not.
-    hoisted: bool,
 }
 
 /// Lexical states for the shadow-check walk.
@@ -1061,9 +1057,15 @@ enum BodyScanState {
 /// (template interpolations resume code tracking, and a multi-line comment
 /// counts as a statement break for the line-start check); regex literals are
 /// not modeled. Uses reuse the module's reference predicates: no member
-/// access (`x.owner`), no object-literal key. `function` declarations shadow
-/// every use in their block because they hoist; `const`/`let`/`var` shadow
-/// uses from the declaration onward.
+/// access (`x.owner`), no object-literal key. Every declaration kind shadows
+/// each use lexically inside its recorded scope regardless of textual order
+/// (#4117 review TDZ fix): `function` declarations hoist within their block,
+/// `var` hoists to the enclosing function, and `const`/`let` bind their whole
+/// block — a same-block use before the declaration sits in the temporal dead
+/// zone and can never reach an outer owner. Known conservatism: a nested-block
+/// `var` is recorded at its own block rather than the enclosing function, so
+/// a same-function use outside that block stays unshadowed (over-credit
+/// direction, retained under the cross-block interval rules).
 pub(crate) fn local_identifier_declared_in_test_body(body_text: &str, identifier: &str) -> bool {
     // Scope table: (open-brace offset, close-brace offset; `usize::MAX` while
     // the scope is still open). Entries are kept after closing so a nested
@@ -1149,10 +1151,8 @@ pub(crate) fn local_identifier_declared_in_test_body(body_text: &str, identifier
                                     idx + keyword.len() + relative
                                 });
                             declarations.push(BodyDeclaration {
-                                offset: idx,
                                 name_start,
                                 scope: open_scopes.last().copied(),
-                                hoisted: line.starts_with("function "),
                             });
                         }
                     }
@@ -1219,15 +1219,22 @@ pub(crate) fn local_identifier_declared_in_test_body(body_text: &str, identifier
         }
     }
     uses.iter().any(|use_offset| {
-        declarations.iter().any(|declaration| {
-            let in_scope = match declaration.scope {
+        declarations
+            .iter()
+            .any(|declaration| match declaration.scope {
+                // Top-level declarations shadow every use in the body.
                 None => true,
+                // Otherwise the declaration shadows a use exactly when the use is
+                // lexically inside the declaration's own scope: same-block
+                // position is irrelevant (`function` hoists; `var` hoists to the
+                // enclosing function; `const`/`let` bind block-wide, so a
+                // pre-declaration same-block use sits in the temporal dead zone
+                // and can never reach an outer binding), while a use outside the
+                // recorded block still reaches the owner.
                 Some(frame) => scopes
                     .get(frame)
                     .is_some_and(|(start, end)| *start <= *use_offset && *use_offset < *end),
-            };
-            in_scope && (declaration.hoisted || *use_offset >= declaration.offset)
-        })
+            })
     })
 }
 
