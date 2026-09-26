@@ -553,7 +553,7 @@ fn published_version_rows(
     };
     for line in section.lines() {
         let cells = line.split('|').map(str::trim).collect::<Vec<_>>();
-        if cells.len() < 4 || !cells[1].starts_with('`') || !cells[1].contains(RIPR_SCHEMA_PREFIX) {
+        if cells.len() < 4 || !cells[1].contains(RIPR_SCHEMA_PREFIX) {
             continue;
         }
         let Some(path) = cells[1]
@@ -1329,6 +1329,13 @@ mod tests {
             errors.len(),
             2,
             "doc and code drift must each fail: {errors:?}"
+        );
+        errors.clear();
+        published_version_rows(&format!("{doc}| {path} | `0.2` |\n"), &mut errors);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("malformed published schema path"))
         );
     }
 
