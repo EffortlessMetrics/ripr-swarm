@@ -10764,18 +10764,10 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
                 body.push_str("| Path | Stage | Error |\n| --- | --- | --- |\n");
                 for row in &cache.store_failures {
                     body.push_str(&format!(
-                        "| `{}` | `{}` | {} |\n",
-                        row.path
-                            .replace('`', "\\`")
-                            .replace('|', "\\|")
-                            .replace('\n', " ")
-                            .replace('\r', " "),
+                        "| {} | {} | {} |\n",
+                        latency_markdown_cell(&row.path),
                         row.stage,
-                        row.error
-                            .replace('|', "\\|")
-                            .replace('`', "\\`")
-                            .replace('\n', " ")
-                            .replace('\r', " ")
+                        latency_markdown_cell(&row.error)
                     ));
                 }
                 body.push('\n');
@@ -10796,6 +10788,23 @@ cache collection, cache load, cold compute, cache store, or rendering before \
 changing cache behavior.\n",
     );
     body
+}
+
+fn latency_markdown_cell(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '`' => escaped.push_str("&#96;"),
+            '\\' => escaped.push_str("&#92;"),
+            '|' => escaped.push_str("\\|"),
+            control if control.is_control() => escaped.push(' '),
+            other => escaped.push(other),
+        }
+    }
+    escaped
 }
 
 /// Run the agent seam packet renderer and write

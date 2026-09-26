@@ -46401,7 +46401,7 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
         3
     );
     let markdown = repo_exposure_latency_markdown(&report);
-    assert!(markdown.contains("| `src/file_0.rs` | `write` | portable failure |"));
+    assert!(markdown.contains("| src/file_0.rs | write | portable failure |"));
     assert!(markdown.contains("dropped failures: 3"));
 
     let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr("noise\n");
@@ -46409,7 +46409,7 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
     assert_eq!(limitation.as_deref(), Some("cache_phase_not_observed"));
     let invalid = receipt
         .to_string()
-        .replace("src/file_0.rs", "/home/user/file_0.rs");
+        .replace("src/file_0.rs", "/outside/file_0.rs");
     let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
         "ripr_file_fact_cache_receipt {invalid}"
     ));
@@ -46452,6 +46452,8 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
         Some(35)
     );
     assert!(timeout.file_fact_cache_limitation.is_none());
+    let escaped = super::latency_markdown_cell("a`|<script>&\\\nline");
+    assert_eq!(escaped, "a&#96;\\|&lt;script&gt;&amp;&#92; line");
     Ok(())
 }
 
