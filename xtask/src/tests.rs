@@ -46371,6 +46371,10 @@ fn repo_exposure_latency_report_json_and_markdown_are_structured() -> Result<(),
                     duration_ms: 29_998,
                 },
             ],
+            file_fact_cache: None,
+            file_fact_cache_limitation: Some(
+                "cache_phase_not_completed_or_telemetry_unavailable".to_string(),
+            ),
         },
         RepoExposureLatencyRun {
             format: "repo-exposure-md".to_string(),
@@ -46380,6 +46384,8 @@ fn repo_exposure_latency_report_json_and_markdown_are_structured() -> Result<(),
             stdout_bytes: 0,
             stderr_bytes: 0,
             trace: Vec::new(),
+            file_fact_cache: None,
+            file_fact_cache_limitation: Some("not_started".to_string()),
         },
     ];
     let report = RepoExposureLatencyReport {
@@ -46392,7 +46398,7 @@ fn repo_exposure_latency_report_json_and_markdown_are_structured() -> Result<(),
     let json = repo_exposure_latency_json(&report);
     let value: Value =
         serde_json::from_str(&json).map_err(|err| format!("latency JSON should parse: {err}"))?;
-    assert_eq!(value["schema_version"], "0.1");
+    assert_eq!(value["schema_version"], "0.2");
     assert_eq!(value["report"], "repo-exposure-latency");
     assert_eq!(value["status"], "warn");
     assert_eq!(value["runs"][0]["trace"][0]["phase"], "cache_load");
@@ -46438,6 +46444,10 @@ fn repo_exposure_latency_report_json_records_exit_codes() -> Result<(), String> 
             stdout_bytes: 4,
             stderr_bytes: 9,
             trace: Vec::new(),
+            file_fact_cache: None,
+            file_fact_cache_limitation: Some(
+                "cache_phase_not_completed_or_telemetry_unavailable".to_string(),
+            ),
         }],
     };
 
@@ -46585,6 +46595,102 @@ fn repo_exposure_latency_run_from_output_maps_status_and_trace() -> Result<(), S
 }
 
 #[test]
+fn repo_exposure_latency_projects_typed_cache_failures_and_preserves_timeout_rows()
+-> Result<(), String> {
+    let payload = serde_json::json!({
+        "schema_version": "0.1", "hits": 1, "misses": 2, "invalidated": 1,
+        "corrupt_ignored": 0, "stores": 1, "store_errors": 2,
+        "store_failures": [
+            {"path": "src/a.rs", "stage": "create_dir", "error": "permission denied"},
+            {"path": "src/b.rs", "stage": "write", "error": "disk full"}
+        ],
+        "store_failures_dropped": 0
+    });
+    let stderr = format!("ripr_repo_exposure_file_fact_cache {payload}\n");
+    let run = repo_exposure_latency_run_from_output(
+        "repo-exposure-json",
+        TimedOutput {
+            status: None,
+            stdout: "partial".to_string(),
+            stderr,
+            duration: Duration::from_secs(1),
+            timed_out: true,
+        },
+    );
+    let cache = run
+        .file_fact_cache
+        .as_ref()
+        .ok_or("completed cache telemetry was lost on timeout")?;
+    assert_eq!(cache.store_errors, 2);
+    assert_eq!(cache.store_failures.len(), 2);
+    assert_eq!(cache.store_failures[0].path, "src/a.rs");
+    let report = RepoExposureLatencyReport {
+        status: "warn".to_string(),
+        timeout_ms: 1_000,
+        binary: "target/debug/ripr".to_string(),
+        runs: vec![run],
+    };
+    let json: Value = serde_json::from_str(&repo_exposure_latency_json(&report))
+        .map_err(|err| format!("invalid latency JSON: {err}"))?;
+    assert_eq!(
+        json["runs"][0]["file_fact_cache"]["store_failures"][1]["stage"],
+        "write"
+    );
+    assert!(
+        repo_exposure_latency_markdown(&report).contains("| `src/b.rs` | `write` | disk full |")
+    );
+    Ok(())
+}
+
+#[test]
+fn repo_exposure_latency_rejects_absent_malformed_and_host_path_cache_telemetry() {
+    assert_eq!(
+        repo_exposure_file_fact_cache("").1.as_deref(),
+        Some("cache_phase_not_completed_or_telemetry_unavailable")
+    );
+    assert_eq!(
+        repo_exposure_file_fact_cache("ripr_repo_exposure_file_fact_cache {}\n")
+            .1
+            .as_deref(),
+        Some("malformed_cache_telemetry")
+    );
+    let payload = serde_json::json!({
+        "schema_version": "0.1", "hits": 0, "misses": 1, "invalidated": 0,
+        "corrupt_ignored": 0, "stores": 0, "store_errors": 1,
+        "store_failures": [{"path": "C:/private/a.rs", "stage": "write", "error": "failure"}],
+        "store_failures_dropped": 0
+    });
+    assert_eq!(
+        repo_exposure_file_fact_cache(&format!("ripr_repo_exposure_file_fact_cache {payload}\n"))
+            .1
+            .as_deref(),
+        Some("invalid_cache_telemetry")
+    );
+}
+
+#[test]
+fn repo_exposure_latency_preserves_producer_failure_cap_and_overflow() -> Result<(), String> {
+    let rows = (0..32)
+        .map(|index| serde_json::json!({
+            "path": format!("src/{index}.rs"), "stage": "write", "error": "disk full"
+        }))
+        .collect::<Vec<_>>();
+    let payload = serde_json::json!({
+        "schema_version": "0.1", "hits": 0, "misses": 35, "invalidated": 0,
+        "corrupt_ignored": 0, "stores": 0, "store_errors": 35,
+        "store_failures": rows, "store_failures_dropped": 3
+    });
+    let (stats, limitation) =
+        repo_exposure_file_fact_cache(&format!("ripr_repo_exposure_file_fact_cache {payload}\n"));
+    assert_eq!(limitation, None);
+    let stats = stats.ok_or("valid bounded telemetry was discarded")?;
+    assert_eq!(stats.store_failures.len(), 32);
+    assert_eq!(stats.store_failures_dropped, 3);
+    assert_eq!(stats.store_failures[31].path, "src/31.rs");
+    Ok(())
+}
+
+#[test]
 fn repo_exposure_latency_status_and_empty_trace_markdown_are_stable() {
     let pass = latency_run_with_status("repo-exposure-json", "pass");
     let fail = latency_run_with_status("repo-exposure-json", "fail");
@@ -46624,6 +46730,10 @@ fn latency_run_with_status(format: &str, status: &str) -> RepoExposureLatencyRun
         stdout_bytes: 0,
         stderr_bytes: 0,
         trace: Vec::new(),
+        file_fact_cache: None,
+        file_fact_cache_limitation: Some(
+            "cache_phase_not_completed_or_telemetry_unavailable".to_string(),
+        ),
     }
 }
 

@@ -10395,6 +10395,30 @@ struct RepoExposureLatencyRun {
     stdout_bytes: usize,
     stderr_bytes: usize,
     trace: Vec<RepoExposureLatencyTrace>,
+    file_fact_cache: Option<RepoExposureFileFactCache>,
+    file_fact_cache_limitation: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepoExposureFileFactCache {
+    schema_version: String,
+    hits: usize,
+    misses: usize,
+    invalidated: usize,
+    corrupt_ignored: usize,
+    stores: usize,
+    store_errors: usize,
+    store_failures: Vec<RepoExposureStoreFailure>,
+    store_failures_dropped: usize,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepoExposureStoreFailure {
+    path: String,
+    stage: String,
+    error: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -10460,6 +10484,8 @@ where
             stdout_bytes: 0,
             stderr_bytes: 0,
             trace: Vec::new(),
+            file_fact_cache: None,
+            file_fact_cache_limitation: Some("not_started".to_string()),
         });
     }
 
@@ -10521,6 +10547,8 @@ fn repo_exposure_latency_run_from_output(
     } else {
         "fail"
     };
+    let (file_fact_cache, file_fact_cache_limitation) =
+        repo_exposure_file_fact_cache(&output.stderr);
     RepoExposureLatencyRun {
         format: format.to_string(),
         status: status.to_string(),
@@ -10529,7 +10557,48 @@ fn repo_exposure_latency_run_from_output(
         stdout_bytes: output.stdout.len(),
         stderr_bytes: output.stderr.len(),
         trace: repo_exposure_latency_trace(&output.stderr),
+        file_fact_cache,
+        file_fact_cache_limitation,
     }
+}
+
+fn repo_exposure_file_fact_cache(
+    stderr: &str,
+) -> (Option<RepoExposureFileFactCache>, Option<String>) {
+    let mut rows = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix("ripr_repo_exposure_file_fact_cache "));
+    let Some(row) = rows.next() else {
+        return (
+            None,
+            Some("cache_phase_not_completed_or_telemetry_unavailable".to_string()),
+        );
+    };
+    if rows.next().is_some() {
+        return (None, Some("duplicate_cache_telemetry".to_string()));
+    }
+    let Ok(stats) = serde_json::from_str::<RepoExposureFileFactCache>(row) else {
+        return (None, Some("malformed_cache_telemetry".to_string()));
+    };
+    if stats.schema_version != "0.1"
+        || stats.store_failures.len() > 32
+        || stats
+            .store_failures
+            .len()
+            .checked_add(stats.store_failures_dropped)
+            != Some(stats.store_errors)
+        || stats.store_failures.iter().any(|failure| {
+            failure.path.is_empty()
+                || failure.path.starts_with('/')
+                || failure.path.contains('\\')
+                || failure.path.contains(':')
+                || failure.path.split('/').any(|part| part == "..")
+                || !matches!(failure.stage.as_str(), "create_dir" | "encode" | "write")
+        })
+    {
+        return (None, Some("invalid_cache_telemetry".to_string()));
+    }
+    (Some(stats), None)
 }
 
 fn repo_exposure_latency_status(runs: &[RepoExposureLatencyRun]) -> String {
@@ -10574,7 +10643,7 @@ fn repo_exposure_latency_trace(stderr: &str) -> Vec<RepoExposureLatencyTrace> {
 fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
     let mut body = String::new();
     body.push_str("{\n");
-    body.push_str("  \"schema_version\": \"0.1\",\n");
+    body.push_str("  \"schema_version\": \"0.2\",\n");
     body.push_str("  \"tool\": \"ripr\",\n");
     body.push_str("  \"report\": \"repo-exposure-latency\",\n");
     body.push_str(&format!(
@@ -10619,7 +10688,12 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
                 trace.duration_ms
             ));
         }
-        body.push_str("]\n");
+        body.push_str("],\n");
+        body.push_str("      \"file_fact_cache\": ");
+        body.push_str(&serde_json::json!(run.file_fact_cache).to_string());
+        body.push_str(",\n      \"file_fact_cache_limitation\": ");
+        body.push_str(&serde_json::json!(run.file_fact_cache_limitation).to_string());
+        body.push('\n');
         body.push_str("    }");
     }
     body.push_str("\n  ]\n");
@@ -10669,6 +10743,42 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
                 ));
             }
             body.push('\n');
+        }
+    }
+    body.push_str("\n## File Fact Cache\n\n");
+    for run in &report.runs {
+        body.push_str(&format!("### `{}`\n\n", run.format));
+        if let Some(stats) = &run.file_fact_cache {
+            body.push_str(&format!(
+                "Hits: {}; misses: {}; invalidated: {}; corrupt ignored: {}; stores: {}; store errors: {}; retained failures: {}; dropped failures: {}.\n\n",
+                stats.hits,
+                stats.misses,
+                stats.invalidated,
+                stats.corrupt_ignored,
+                stats.stores,
+                stats.store_errors,
+                stats.store_failures.len(),
+                stats.store_failures_dropped
+            ));
+            if !stats.store_failures.is_empty() {
+                body.push_str("| Path | Stage | Error |\n| --- | --- | --- |\n");
+                for failure in &stats.store_failures {
+                    body.push_str(&format!(
+                        "| `{}` | `{}` | {} |\n",
+                        audit_markdown_cell(&failure.path),
+                        audit_markdown_cell(&failure.stage),
+                        audit_markdown_cell(&failure.error)
+                    ));
+                }
+                body.push('\n');
+            }
+        } else {
+            body.push_str(&format!(
+                "Unavailable: `{}`.\n\n",
+                run.file_fact_cache_limitation
+                    .as_deref()
+                    .unwrap_or("unspecified")
+            ));
         }
     }
     body.push_str("\n## Next Step\n\n");

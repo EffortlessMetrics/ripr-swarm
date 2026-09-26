@@ -6213,7 +6213,7 @@ schemas.
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "tool": "ripr",
   "report": "repo-exposure-latency",
   "status": "warn",
@@ -6227,6 +6227,18 @@ schemas.
       "exit_code": 1,
       "stdout_bytes": 0,
       "stderr_bytes": 152,
+      "file_fact_cache": {
+        "schema_version": "0.1",
+        "hits": 134,
+        "misses": 0,
+        "invalidated": 0,
+        "corrupt_ignored": 0,
+        "stores": 0,
+        "store_errors": 0,
+        "store_failures": [],
+        "store_failures_dropped": 0
+      },
+      "file_fact_cache_limitation": null,
       "trace": [
         {
           "phase": "collect_workspace_state",
@@ -6251,7 +6263,7 @@ schemas.
 
 Field contract:
 
-- `schema_version` - currently `"0.1"` for the diagnostic report.
+- `schema_version` - currently `"0.2"` for the diagnostic report.
 - `status` - `pass` when every attempted format completes successfully, `warn`
   when a format times out or a later format is skipped after timeout, and
   `fail` when a format exits unsuccessfully before timeout.
@@ -6269,6 +6281,17 @@ Field contract:
   The `file_fact_cache` status is a compact counter label such as
   `hits_134_misses_0_corrupt_0_store_errors_0`; it describes parser/file-fact
   cache reuse only, not rendered output caching.
+- `runs[].file_fact_cache` - typed counters (`hits`, `misses`, `invalidated`,
+  `corrupt_ignored`, `stores`, `store_errors`), up to 32 producer-ordered
+  `store_failures[]` rows (`path`, `stage`, `error`), and
+  `store_failures_dropped`. A completed zero-work cache-hit path has zero
+  counters. The aggregate `store_errors` equals retained plus dropped rows.
+  Paths are repository-relative and slash-normalized. This telemetry is
+  diagnostic and does not change classifications or public artifact identity.
+- `runs[].file_fact_cache_limitation` - `null` when typed cache telemetry was
+  observed; otherwise a named missing, malformed, duplicate, or invalid
+  telemetry state. Timeout after cache telemetry retains completed rows;
+  timeout before the cache phase reports unavailable rather than zero.
 
 ## Targeted-Test Outcome Report
 

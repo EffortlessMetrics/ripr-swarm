@@ -199,6 +199,7 @@ pub(crate) fn inventory_classified_seams_at_with_config(
         match cache.load_classified_seams_with_fallback(&key) {
             CacheLoad::Hit((cached, cached_limit_info, lexical_fallback_files)) => {
                 trace_latency_phase("cache_load", "hit", cache_started.elapsed());
+                trace_file_fact_cache(&FileFactCacheStats::zero_work());
                 trace_latency_phase("total", "cache_hit", total_started.elapsed());
                 if let Some(disclosure) =
                     rust_index::lexical_fallback_disclosure_for_files(&lexical_fallback_files)
@@ -251,6 +252,7 @@ pub(crate) fn inventory_classified_seams_at_with_config(
     match cache.load_classified_seams_with_fallback(&key) {
         CacheLoad::Hit((cached, cached_limit_info, lexical_fallback_files)) => {
             trace_latency_phase("cache_load", "hit", cache_started.elapsed());
+            trace_file_fact_cache(&FileFactCacheStats::zero_work());
             trace_latency_phase("total", "cache_hit", total_started.elapsed());
             if let Some(disclosure) =
                 rust_index::lexical_fallback_disclosure_for_files(&lexical_fallback_files)
@@ -619,6 +621,7 @@ fn inventory_compact_classified_seams_from_state_with_config(
         &cached.file_fact_cache.status_label(),
         build_started.elapsed(),
     );
+    trace_file_fact_cache(&cached.file_fact_cache);
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
     let seams = inventory_seams_from_index(&production_files, &cached.index);
@@ -635,6 +638,33 @@ fn inventory_compact_classified_seams_from_state_with_config(
         });
     }
     Ok((classified, lexical_fallback_files))
+}
+
+/// A machine-readable diagnostic emitted only for the latency harness. Keep
+/// this separate from the public repo-exposure artifact and its identity.
+fn trace_file_fact_cache(stats: &FileFactCacheStats) {
+    if std::env::var_os(LATENCY_TRACE_ENV).is_none() {
+        return;
+    }
+    let failures = stats.store_failures.iter().map(|row| {
+        serde_json::json!({
+            "path": row.path.to_string_lossy().replace('\\', "/"),
+            "stage": row.stage,
+            "error": row.error,
+        })
+    }).collect::<Vec<_>>();
+    let value = serde_json::json!({
+        "schema_version": "0.1",
+        "hits": stats.hits,
+        "misses": stats.misses,
+        "invalidated": stats.invalidated_files.len(),
+        "corrupt_ignored": stats.corrupt_ignored,
+        "stores": stats.stores,
+        "store_errors": stats.store_errors,
+        "store_failures": failures,
+        "store_failures_dropped": stats.store_failures_dropped,
+    });
+    eprintln!("ripr_repo_exposure_file_fact_cache {value}");
 }
 
 type ClassifiedSeamInventory = (Vec<ClassifiedSeam>, Option<SeamLimitInfo>, Vec<PathBuf>);
@@ -665,6 +695,7 @@ fn inventory_classified_seams_from_state_with_config(
         build_started.elapsed(),
     );
     let policy_started = Instant::now();
+    trace_file_fact_cache(&cached.file_fact_cache);
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
     trace_latency_phase("apply_oracle_policy", "ok", policy_started.elapsed());
