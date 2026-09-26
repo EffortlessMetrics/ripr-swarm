@@ -221,9 +221,9 @@ pub(crate) struct CappedWorkspaceSources {
 /// byte budget.
 ///
 /// - Files over the per-file cap each produce an `OverFileLimit` entry.
-/// - The first file that does not fit the remaining aggregate budget produces
-///   a single `OverWorkspaceBudget` entry; subsequent files are skipped
-///   silently because that one entry already discloses the bound.
+/// - Every file that does not fit the remaining aggregate budget produces
+///   its own `OverWorkspaceBudget` entry, so the adapter's limitation loop
+///   can name each refused path instead of disclosing only the first.
 /// - Plain IO failures are returned in `io_failures` for the adapter's
 ///   read-failure disclosure lane; they never produce a read-limit entry.
 pub(crate) fn read_workspace_sources_capped(
@@ -235,7 +235,6 @@ pub(crate) fn read_workspace_sources_capped(
     let mut sources = HashMap::new();
     let mut limits = Vec::new();
     let mut io_failures = Vec::new();
-    let mut budget_reported = false;
     let mut consumed = 0u64;
     for relative in files {
         let mut remaining = workspace_budget.saturating_sub(consumed);
@@ -252,10 +251,7 @@ pub(crate) fn read_workspace_sources_capped(
                     limits.push((relative.clone(), err));
                 }
                 CappedReadError::OverWorkspaceBudget { .. } => {
-                    if !budget_reported {
-                        limits.push((relative.clone(), err));
-                        budget_reported = true;
-                    }
+                    limits.push((relative.clone(), err));
                 }
                 CappedReadError::Io(message) => {
                     io_failures.push((relative.clone(), message));
@@ -272,6 +268,11 @@ pub(crate) fn read_workspace_sources_capped(
 
 /// Bounded read mirroring `edit_cage.rs` and the TypeScript adapter:
 /// metadata check → regular-file open → `take(limit + 1)` → reject on excess.
+///
+/// The read itself is clamped to the remaining aggregate budget (plus one
+/// sentinel byte): the metadata length was checked above, but the file can
+/// grow between that check and this read, and an unclamped read would cache
+/// an over-budget source as a success.
 fn read_source_capped(
     path: &Path,
     file_limit: u64,
@@ -299,11 +300,21 @@ fn read_source_capped(
     let file = std::fs::File::open(path)
         .map_err(|err| CappedReadError::Io(format!("open {}: {err}", path.display())))?;
     let mut bytes = Vec::new();
-    file.take(file_limit.saturating_add(1))
+    let read_limit = budget
+        .as_ref()
+        .map_or(file_limit, |remaining| file_limit.min(**remaining));
+    file.take(read_limit.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|err| CappedReadError::Io(format!("read {}: {err}", path.display())))?;
     if bytes.len() as u64 > file_limit {
         return Err(CappedReadError::OverFileLimit { limit: file_limit });
+    }
+    let over_budget_read = budget
+        .as_ref()
+        .is_some_and(|remaining| bytes.len() as u64 > **remaining);
+    if over_budget_read {
+        let remaining = budget.as_ref().map(|remaining| **remaining).unwrap_or(0);
+        return Err(CappedReadError::OverWorkspaceBudget { remaining });
     }
     let text = String::from_utf8(bytes)
         .map_err(|err| CappedReadError::Io(format!("decode {}: {err}", path.display())))?;
@@ -441,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn capped_workspace_read_reports_budget_exhaustion_once() {
+    fn capped_workspace_read_reports_every_budget_refusal() {
         let dir = TempDir::new("workspace-budget");
         dir.write("a.py", &[b'a'; 60]);
         dir.write("b.py", &[b'b'; 60]);
@@ -453,14 +464,20 @@ mod tests {
         ];
         let outcome = read_workspace_sources_capped(&dir.0, &files, 1024, 100);
         assert_eq!(outcome.sources.len(), 1);
-        assert_eq!(outcome.limits.len(), 1, "budget exhaustion reported once");
+        assert_eq!(
+            outcome.limits.len(),
+            2,
+            "every refused file is named, not just the first"
+        );
+        assert_eq!(outcome.limits[0].0, PathBuf::from("b.py"));
+        assert_eq!(outcome.limits[1].0, PathBuf::from("c.py"));
         assert!(
-            matches!(
-                outcome.limits[0].1,
-                CappedReadError::OverWorkspaceBudget { .. }
-            ),
-            "expected budget error, got {:?}",
-            outcome.limits[0].1
+            outcome
+                .limits
+                .iter()
+                .all(|(_, err)| matches!(err, CappedReadError::OverWorkspaceBudget { .. })),
+            "expected budget errors, got {:?}",
+            outcome.limits
         );
     }
 
