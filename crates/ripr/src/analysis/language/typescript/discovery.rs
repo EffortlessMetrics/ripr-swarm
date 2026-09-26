@@ -82,13 +82,12 @@ fn has_directory_component(path: &Path, names: &[&str]) -> bool {
     })
 }
 
-/// Directory prune authority for the workspace walk.
-///
-/// Single table owned by `config::typescript` (`TYPESCRIPT_EXCLUDED_DIRS`),
-/// shared with the diff loop's pre-count refusal (#3743): the walk must prune
-/// exactly the trees the diff loop refuses, otherwise the denominator counts
-/// files no facts can back, or facts exist for files the denominator hides.
-/// `*.generated.*` files are additionally skipped at the file level below.
+// Directory prune authority for the workspace walk: a single table owned by
+// `config::typescript` (`TYPESCRIPT_EXCLUDED_DIRS`), shared with the diff
+// loop's pre-count refusal (#3743). The walk must prune exactly the trees
+// the diff loop refuses, otherwise the denominator counts files no facts
+// can back, or facts exist for files the denominator hides.
+// `*.generated.*` files are additionally skipped at the file level below.
 
 /// Env override for [`DEFAULT_TS_MAX_WORKSPACE_FILES`].
 pub(crate) const TS_MAX_WORKSPACE_FILES_ENV: &str = "RIPR_TS_MAX_WORKSPACE_FILES";
@@ -492,7 +491,8 @@ mod tests {
         ] {
             assert!(
                 scan.files.iter().any(|path| path == Path::new(expected)),
-                "expected near-miss {expected} in {scan.files:?}",
+                "expected near-miss {expected} in {:?}",
+                scan.files
             );
         }
         for excluded in [
@@ -510,7 +510,8 @@ mod tests {
         ] {
             assert!(
                 !scan.files.iter().any(|path| path == Path::new(excluded)),
-                "did not expect {excluded} in {scan.files:?}",
+                "did not expect {excluded} in {:?}",
+                scan.files
             );
         }
     }

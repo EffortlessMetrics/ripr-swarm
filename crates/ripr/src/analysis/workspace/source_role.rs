@@ -304,6 +304,7 @@ mod tests {
             "src/__tests__/Header.tsx",
             "cypress/e2e/checkout.cy.ts",
             "src/cart_test.ts",
+            "src/cart.test.mts",
             "spec/requestContractSpec.js",
         ] {
             assert!(
@@ -321,7 +322,6 @@ mod tests {
             "src/cart.ts",
             "src/contest.ts",
             "test-utils/helper.ts",
-            "src/cart.test.mts",
             "src/latest/feature.ts",
             "spec/helpers/setup.js",
             "src/specification.ts",
