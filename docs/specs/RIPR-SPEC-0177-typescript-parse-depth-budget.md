@@ -26,6 +26,7 @@ Support-tier impact:
   is produced by a pre-parse nesting budget instead of an oxc parser error,
   and moves the oxc parse off the caller's stack. No new support claim is
   introduced.
+  [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
 Policy impact:
 
