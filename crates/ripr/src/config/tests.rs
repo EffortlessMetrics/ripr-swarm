@@ -68,7 +68,10 @@ fn semantic_config_diagnostic_locates_oracle_and_admits_unavailable_fallback() {
 
     let diagnostic = parse_config_diagnostic("[analysis]\nunknown = true\n")
         .expect_err("structural error retains the native parser message");
-    assert_eq!(diagnostic.location_status, ConfigLocationStatus::Unavailable);
+    assert_eq!(
+        diagnostic.location_status,
+        ConfigLocationStatus::Unavailable
+    );
     assert!(diagnostic.message.contains("invalid ripr.toml:"));
 }
 

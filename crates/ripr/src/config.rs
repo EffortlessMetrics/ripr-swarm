@@ -323,9 +323,10 @@ impl RiprConfig {
         let mut config = RiprConfig::default();
         if let Some(analysis) = raw.analysis {
             if let Some(mode) = analysis.mode {
-                config.analysis.mode = Some(parse_mode_value(mode.get_ref()).map_err(|message| {
-                    ConfigDiagnostic::at_value(message, "analysis.mode", mode.span(), text)
-                })?);
+                config.analysis.mode =
+                    Some(parse_mode_value(mode.get_ref()).map_err(|message| {
+                        ConfigDiagnostic::at_value(message, "analysis.mode", mode.span(), text)
+                    })?);
             }
             config.analysis.include_unchanged_tests = analysis.include_unchanged_tests;
             if let Some(targets) = analysis.production_like_targets {
@@ -355,8 +356,8 @@ impl RiprConfig {
                     })?;
             }
             if let Some(strength) = oracles.mock_expectation_strength {
-                config.oracles.mock_expectation_strength = parse_oracle_strength(strength.get_ref())
-                    .map_err(|message| {
+                config.oracles.mock_expectation_strength =
+                    parse_oracle_strength(strength.get_ref()).map_err(|message| {
                         ConfigDiagnostic::at_value(
                             message,
                             "oracles.mock_expectation_strength",

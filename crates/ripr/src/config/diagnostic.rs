@@ -57,25 +57,27 @@ impl ConfigDiagnostic {
     }
 
     pub(super) fn at_value(message: String, path: &str, span: Range<usize>, text: &str) -> Self {
-        let location = (span.start <= span.end && text.get(span.clone()).is_some()).then(|| {
-            ConfigLocation {
+        let location =
+            (span.start <= span.end && text.get(span.clone()).is_some()).then(|| ConfigLocation {
                 start: position(text, span.start),
                 end: position(text, span.end),
-            }
-        });
+            });
         let invalid_value = text.get(span).and_then(|value| {
-            (value.len() <= 100 && !value.chars().any(char::is_control))
-                .then(|| value.to_owned())
+            (value.len() <= 100 && !value.chars().any(char::is_control)).then(|| value.to_owned())
         });
         let expected_values = match path {
             "analysis.mode" => vec!["instant", "draft", "fast", "deep", "ready"],
-            "oracles.snapshot_strength" | "oracles.mock_expectation_strength"
+            "oracles.snapshot_strength"
+            | "oracles.mock_expectation_strength"
             | "oracles.broad_error_strength" => {
                 vec!["strong", "medium", "weak", "smoke", "none", "unknown"]
             }
-            "severity.findings.exposed" | "severity.findings.weakly_exposed"
-            | "severity.findings.reachable_unrevealed" | "severity.findings.no_static_path"
-            | "severity.findings.infection_unknown" | "severity.findings.propagation_unknown"
+            "severity.findings.exposed"
+            | "severity.findings.weakly_exposed"
+            | "severity.findings.reachable_unrevealed"
+            | "severity.findings.no_static_path"
+            | "severity.findings.infection_unknown"
+            | "severity.findings.propagation_unknown"
             | "severity.findings.static_unknown" => vec!["info", "warning", "note"],
             path if path.starts_with("severity.seams.") => vec!["off", "info", "warning", "note"],
             _ => Vec::new(),
@@ -106,6 +108,12 @@ impl From<String> for ConfigDiagnostic {
 fn position(text: &str, offset: usize) -> ConfigPosition {
     let prefix = &text[..offset];
     let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
-    let column = prefix.rsplit('\n').next().unwrap_or_default().chars().count() + 1;
+    let column = prefix
+        .rsplit('\n')
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .count()
+        + 1;
     ConfigPosition { line, column }
 }
