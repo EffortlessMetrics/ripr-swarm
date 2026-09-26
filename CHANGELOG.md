@@ -529,6 +529,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Gate decisions for an already-observed gap from the gap ledger now say
+  `not_applicable` and name the closed state, instead of claiming the gap was
+  configured off or suppressed. Explicitly disabled policy targets still
+  report `suppressed` ([#3903](https://github.com/EffortlessMetrics/ripr-swarm/issues/3903)).
+
 - `check-file-policy` builds test binaries before it lists `covered_by`
   subjects. A cold compile is no longer charged against the five-minute
   list cap, and a timeout is reported as an instrument failure rather than

@@ -3593,6 +3593,62 @@ const GAP_LEDGER_BLOCKING_JSON: &str = r#"{
       ]
     }"#;
 
+#[test]
+fn closed_gap_ledger_record_is_not_described_as_configured_off() -> Result<(), String> {
+    let mut value: Value = serde_json::from_str(GAP_LEDGER_BLOCKING_JSON)
+        .map_err(|error| format!("gate fixture should parse: {error}"))?;
+    let record = &mut value["gap_records"][0];
+    record["kind"] = json!("NoActionAlreadyObserved");
+    record["gap_state"] = json!("already_observed");
+    record["policy_state"] = json!("not_policy_targeted");
+    record["projection_eligibility"]["gate_candidate"]["eligible"] = json!(false);
+    record["projection_eligibility"]["gate_candidate"]["reason"] = json!("already_observed");
+    record
+        .as_object_mut()
+        .ok_or_else(|| "fixture record must be an object".to_string())?
+        .remove("safe_gate_predicate");
+
+    let dir = temp_dir("gate-closed-gap-label")?;
+    let ledger = write_temp_json(&dir, "gap-ledger.json", &value.to_string())?;
+    let mut input = fixture_input(GateMode::Acknowledgeable)?;
+    input.root = dir.clone();
+    input.pr_guidance = None;
+    input.gap_ledger = Some(
+        ledger
+            .strip_prefix(&dir)
+            .map_err(|error| error.to_string())?
+            .to_path_buf(),
+    );
+    let report = build_gate_decision_report(&input)?;
+    let decision = report
+        .decisions
+        .first()
+        .ok_or_else(|| "closed-gap fixture produced no decision".to_string())?;
+    assert_eq!(report.summary.blocking, 0);
+    assert_eq!(decision.decision, "not_applicable");
+    assert!(!decision.evidence.configured_off);
+    assert!(!decision.evidence.suppressed);
+    assert!(decision.gate_reason.contains("already_observed"));
+    let rendered_json: Value = serde_json::from_str(&render_gate_decision_json(&report)?)
+        .map_err(|error| format!("gate decision JSON should parse: {error}"))?;
+    assert_eq!(rendered_json["decisions"][0]["decision"], "not_applicable");
+    assert_eq!(rendered_json["decisions"][0]["evidence"]["configured_off"], false);
+    let markdown = render_gate_decision_markdown(&report);
+    assert!(markdown.contains("already_observed"));
+    assert!(!markdown.contains("configured-hidden"));
+
+    // An explicit disabled policy target remains distinguishable from a
+    // closed gap, even when both are non-blocking.
+    value["gap_records"][0]["safe_gate_predicate"] =
+        json!({"policy_target_enabled": false});
+    write_temp_json(&dir, "gap-ledger.json", &value.to_string())?;
+    let disabled = build_gate_decision_report(&input)?;
+    assert_eq!(disabled.decisions[0].decision, "suppressed");
+    assert!(disabled.decisions[0].evidence.configured_off);
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
 fn legacy_gap_ledger_json() -> Result<String, String> {
     let mut value: Value = serde_json::from_str(GAP_LEDGER_BLOCKING_JSON)
         .map_err(|err| format!("complete fixture should parse: {err}"))?;
