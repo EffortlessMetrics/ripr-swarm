@@ -68,7 +68,12 @@ pub(super) fn code_action_response(
         .context
         .diagnostics
         .iter()
-        .find(|d| is_ripr_diagnostic(d) && !is_seam_diagnostic(d) && !is_gap_diagnostic(d))
+        .find(|d| {
+            is_ripr_diagnostic(d)
+                && !is_seam_diagnostic(d)
+                && !is_gap_diagnostic(d)
+                && !is_delivery_limitation(d)
+        })
     {
         actions.push(copy_context_action(
             INSPECT_FINDING_CONTEXT_TITLE,
@@ -2165,6 +2170,14 @@ fn is_ripr_diagnostic(diagnostic: &Diagnostic) -> bool {
     diagnostic.source.as_deref() == Some("ripr")
 }
 
+fn is_delivery_limitation(diagnostic: &Diagnostic) -> bool {
+    matches!(
+        diagnostic.code.as_ref(),
+        Some(tower_lsp_server::ls_types::NumberOrString::String(code))
+            if code == super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE
+    )
+}
+
 fn is_seam_diagnostic(diagnostic: &Diagnostic) -> bool {
     diagnostic
         .data
@@ -2359,6 +2372,44 @@ mod tests {
                 "{language} {path}"
             );
         }
+    }
+
+    #[test]
+    fn delivery_omission_has_no_finding_context_action() -> Result<(), String> {
+        let limitation = Diagnostic {
+            source: Some("ripr".to_string()),
+            code: Some(tower_lsp_server::ls_types::NumberOrString::String(
+                super::super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE.to_string(),
+            )),
+            data: Some(serde_json::json!({"kind": "delivery_limitation"})),
+            ..Default::default()
+        };
+        let params = code_action_params(vec![limitation])?;
+        let mut features = ClientFeatureProfile::unsupported();
+        features.ripr_editor = Some(super::super::client_features::RiprEditorClientCapabilities {
+            version: "test".to_string(),
+            commands: vec![COPY_CONTEXT_COMMAND.to_string()],
+            guarded_test_edit: false,
+        });
+        let actions = code_action_response(&params, None, &features);
+        assert_eq!(action_titles(&actions), vec![REFRESH_ANALYSIS_TITLE]);
+
+        let ordinary = Diagnostic {
+            source: Some("ripr".to_string()),
+            data: Some(serde_json::json!({"finding_id": "finding:control"})),
+            ..Default::default()
+        };
+        let ordinary_actions = code_action_response(
+            &code_action_params(vec![ordinary])?,
+            None,
+            &features,
+        );
+        assert_eq!(
+            action_titles(&ordinary_actions),
+            vec![INSPECT_FINDING_CONTEXT_TITLE, REFRESH_ANALYSIS_TITLE],
+            "the client can execute the copy command for an ordinary finding"
+        );
+        Ok(())
     }
 
     #[test]
