@@ -6213,7 +6213,7 @@ schemas.
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "tool": "ripr",
   "report": "repo-exposure-latency",
   "status": "warn",
@@ -6227,6 +6227,8 @@ schemas.
       "exit_code": 1,
       "stdout_bytes": 0,
       "stderr_bytes": 152,
+      "file_fact_cache": null,
+      "file_fact_cache_limitation": "cache_phase_not_observed",
       "trace": [
         {
           "phase": "collect_workspace_state",
@@ -6251,7 +6253,7 @@ schemas.
 
 Field contract:
 
-- `schema_version` - currently `"0.1"` for the diagnostic report.
+- `schema_version` - currently `"0.2"` for the diagnostic report.
 - `status` - `pass` when every attempted format completes successfully, `warn`
   when a format times out or a later format is skipped after timeout, and
   `fail` when a format exits unsuccessfully before timeout.
@@ -6269,6 +6271,17 @@ Field contract:
   The `file_fact_cache` status is a compact counter label such as
   `hits_134_misses_0_corrupt_0_store_errors_0`; it describes parser/file-fact
   cache reuse only, not rendered output caching.
+- `runs[].file_fact_cache` - the typed, bounded cache-phase receipt when the
+  child completed that phase. It includes hits, misses, invalidated files,
+  corrupt reads, stores, authoritative `store_errors`, up to 32 portable
+  `{path, stage, error}` failure rows, and `store_failures_dropped`. Cold and
+  warm runs retain their own rows. A cache hit that skips the file-fact phase
+  does not fabricate zero counters.
+- `runs[].file_fact_cache_limitation` - `null` when the receipt is present;
+  otherwise a named unavailable state, including skipped, missing, malformed,
+  duplicate, or invalid cache receipts. Completed rows survive a later timeout.
+  The Markdown sibling derives its cache table and limitation from these same
+  typed run fields.
 
 ## Targeted-Test Outcome Report
 

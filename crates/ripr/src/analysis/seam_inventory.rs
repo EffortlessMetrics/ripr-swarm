@@ -345,6 +345,40 @@ fn trace_latency_phase(phase: &str, status: &str, duration: Duration) {
     }
 }
 
+/// A bounded, typed diagnostic channel for the latency runner. The ordinary
+/// human phase label cannot represent failure identities or overflow.
+fn trace_file_fact_cache(stats: &FileFactCacheStats) {
+    if std::env::var_os(LATENCY_TRACE_ENV).is_none() {
+        return;
+    }
+    eprintln!("ripr_file_fact_cache_receipt {}", file_fact_cache_receipt(stats));
+}
+
+fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
+    let rows: Vec<_> = stats
+        .store_failures
+        .iter()
+        .map(|failure| {
+            serde_json::json!({
+                "path": failure.path.to_string_lossy().replace('\\', "/"),
+                "stage": failure.stage,
+                "error": failure.error,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "schema_version": "0.1",
+        "hits": stats.hits,
+        "misses": stats.misses,
+        "invalidated": stats.invalidated_files.len(),
+        "corrupt_ignored": stats.corrupt_ignored,
+        "stores": stats.stores,
+        "store_errors": stats.store_errors,
+        "store_failures": rows,
+        "store_failures_dropped": stats.store_failures_dropped,
+    })
+}
+
 fn cache_store_status_label(reason: &str) -> String {
     let mut label = String::from("ignored_");
     for ch in reason.chars() {
@@ -664,6 +698,7 @@ fn inventory_classified_seams_from_state_with_config(
         &cached.file_fact_cache.status_label(),
         build_started.elapsed(),
     );
+    trace_file_fact_cache(&cached.file_fact_cache);
     let policy_started = Instant::now();
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
@@ -1786,6 +1821,23 @@ fn expected_sink_for(kind: SeamKind) -> ExpectedSink {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
+
+    #[test]
+    fn cache_receipt_retains_producer_order_and_portable_failure_rows() {
+        let mut stats = FileFactCacheStats::zero_work();
+        stats.record_store_failure(
+            PathBuf::from("src/foo..rs"),
+            super::super::seam_cache::FileFactStoreError {
+                stage: super::super::seam_cache::FileFactStoreStage::Write,
+                message: "portable failure".to_string(),
+            },
+        );
+        let value = file_fact_cache_receipt(&stats);
+        assert_eq!(value["store_errors"], 1);
+        assert_eq!(value["store_failures"][0]["path"], "src/foo..rs");
+        assert_eq!(value["store_failures"][0]["stage"], "write");
+        assert_eq!(value["store_failures_dropped"], 0);
+    }
 
     #[test]
     fn only_custom_harness_targets_receive_file_wide_evidence_role() -> Result<(), String> {
