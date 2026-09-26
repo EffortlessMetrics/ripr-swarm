@@ -113,7 +113,7 @@ sequence.
 ## VS Code First Hour
 
 Install [EffortlessMetrics.ripr](https://marketplace.visualstudio.com/items?itemName=EffortlessMetrics.ripr)
-from VS Code Marketplace or [Open VSX](https://open-vsx.org/extension/EffortlessMetrics.ripr),
+from VS Code Marketplace or [Open VSX](https://open-vsx.org/extension/EffortlessMetrics/ripr),
 then open a Rust/Cargo workspace. The released extension normally resolves a
 matching native server without `cargo install ripr`.
 
