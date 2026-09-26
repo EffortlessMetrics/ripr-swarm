@@ -1327,11 +1327,7 @@ mod tests {
             std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
             std::fs::write(root.join(format!("index.{extension}")), "export {};\n")
                 .map_err(|err| format!("write source: {err}"))?;
-            assert_eq!(
-                detect_languages(&root),
-                vec![expected],
-                ".{extension} root"
-            );
+            assert_eq!(detect_languages(&root), vec![expected], ".{extension} root");
             std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         }
 
