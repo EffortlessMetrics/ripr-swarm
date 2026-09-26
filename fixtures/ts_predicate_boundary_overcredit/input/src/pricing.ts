@@ -3,3 +3,4 @@ export function applyDiscount(total: number): number {
         return 0.9;
     }
     return 1;
+}
