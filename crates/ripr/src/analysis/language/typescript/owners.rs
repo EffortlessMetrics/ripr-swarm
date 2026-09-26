@@ -117,7 +117,7 @@ pub(crate) fn owners_from_default_export(
     source: &str,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
-    match decl {
+    let mut owners = match decl {
         ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
             let name = func
                 .id
@@ -147,7 +147,16 @@ pub(crate) fn owners_from_default_export(
             imports,
         )],
         _ => Vec::new(),
+    };
+    // Every owner carved out of an `export default <declaration>` IS the
+    // module's default export. The relation gate may only credit a default
+    // import (`import local from './owner'`) against such an owner
+    // (#4103 under-credit); a module whose default export is some OTHER
+    // declaration keeps `exported_as_default == false` for this owner.
+    for owner in &mut owners {
+        owner.exported_as_default = true;
     }
+    owners
 }
 
 pub(crate) fn owners_from_variable_declaration(
@@ -197,6 +206,7 @@ pub(crate) fn owner_from_variable_declarator(
             owner_kind: OwnerKind::ModuleFunction,
             class_name: None,
             decorated: false,
+            exported_as_default: false,
             imports: imports.to_vec(),
             // Non-function initializers carry no resolvable signature facts:
             // no fixed positional signature the boundary witness could
@@ -246,6 +256,7 @@ pub(crate) fn owner_from_function(
         owner_kind,
         class_name: None,
         decorated,
+        exported_as_default: false,
         imports: imports.to_vec(),
         params,
         arity,
@@ -271,6 +282,7 @@ pub(crate) fn owner_from_arrow(
         owner_kind: arrow_owner_kind(file, source, name, arrow.span.start, arrow.span.end),
         class_name: None,
         decorated,
+        exported_as_default: false,
         imports: imports.to_vec(),
         params,
         arity,
@@ -332,6 +344,7 @@ pub(crate) fn owner_from_method(
         },
         class_name: class_name.map(str::to_string),
         decorated: class_decorated || !method.decorators.is_empty(),
+        exported_as_default: false,
         imports: imports.to_vec(),
         params,
         arity,

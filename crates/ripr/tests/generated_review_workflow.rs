@@ -1340,6 +1340,219 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// #4089: the generated annotation step must keep path and message bytes.
+/// The old `@tsv` | `read` loop stored jq's transport escapes, so a later
+/// GitHub workflow-command decode could not recover a backslash, tab, or
+/// line break.
+#[cfg(unix)]
+#[test]
+fn generated_annotation_script_preserves_path_and_message_bytes() -> Result<(), Box<dyn Error>> {
+    let tools = run_sh(
+        "command -v bash >/dev/null && command -v jq >/dev/null",
+        std::env::temp_dir().as_path(),
+    )?;
+    if !tools.status.success() {
+        eprintln!(
+            "skipping generated_annotation_script_preserves_path_and_message_bytes: bash or jq missing"
+        );
+        return Ok(());
+    }
+
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-annotation-bytes-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root)?;
+    let output = run_ripr_init(&root)?;
+    if !output.status.success() {
+        let _ = fs::remove_dir_all(&root);
+        return Err(format!(
+            "ripr init failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+    let script = annotation_run_script(&workflow)?;
+
+    let path_backslash = "src\\app.py";
+    let path_newline = "src/a\nb.py";
+    let reason_mixed = "line one\nline\ttwo\\nkept";
+    let repair = "cargo test -- --exact";
+    fs::create_dir_all(root.join("target/ripr/review"))?;
+    fs::write(
+        root.join("target/ripr/review/comments.json"),
+        format!(
+            r#"{{
+  "comments": [
+    {{
+      "placement": {{"path": {path}, "line": 12}},
+      "reason": {reason},
+      "llm_guidance": {{"repair_command": {repair_json}}}
+    }},
+    {{
+      "placement": {{"path": {backslash}, "line": 4}},
+      "reason": "plain",
+      "llm_guidance": {{"repair_command": ""}}
+    }},
+    {{
+      "placement": {{"path": {newline}, "line": 7}},
+      "reason": {mixed},
+      "llm_guidance": {{"repair_command": "null"}}
+    }},
+    {{
+      "placement": {{"path": "src/absent.py", "line": 1}},
+      "reason": "no repair field",
+      "llm_guidance": {{"repair_command": null}}
+    }}
+  ]
+}}"#,
+            path = json_string("src/app.py"),
+            reason = json_string("Result::Err, 100%"),
+            repair_json = json_string(repair),
+            backslash = json_string(path_backslash),
+            newline = json_string(path_newline),
+            mixed = json_string(reason_mixed),
+        ),
+    )?;
+
+    let ran = run_sh(&script, &root)?;
+    let stdout = String::from_utf8_lossy(&ran.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&ran.stderr).to_string();
+    if !ran.status.success() {
+        let _ = fs::remove_dir_all(&root);
+        return Err(format!("annotation script failed\nstderr: {stderr}\nstdout: {stdout}").into());
+    }
+    let mut warnings = Vec::new();
+    for line in stdout.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        warnings.push(parse_warning(line.trim())?);
+    }
+    let _ = fs::remove_dir_all(&root);
+
+    let ordinary = warnings
+        .iter()
+        .find(|row| row.0 == "src/app.py")
+        .ok_or("missing ordinary annotation")?;
+    assert_eq!(ordinary.1, "12");
+    assert_eq!(ordinary.2, "RIPR targeted test guidance");
+    assert_eq!(
+        ordinary.3,
+        format!("Result::Err, 100% Start the repair: {repair}")
+    );
+
+    let slashed = warnings
+        .iter()
+        .find(|row| row.0 == path_backslash)
+        .ok_or("backslash path was rewritten")?;
+    assert_eq!(slashed.1, "4");
+    assert_eq!(slashed.3, "plain");
+
+    let broken = warnings
+        .iter()
+        .find(|row| row.0 == path_newline)
+        .ok_or("newline path was rewritten")?;
+    assert_eq!(broken.1, "7");
+    assert_eq!(broken.3, reason_mixed);
+
+    let absent = warnings
+        .iter()
+        .find(|row| row.0 == "src/absent.py")
+        .ok_or("null repair command dropped the row")?;
+    assert_eq!(absent.3, "no repair field");
+    assert!(!absent.3.contains("Start the repair"));
+    Ok(())
+}
+
+fn annotation_run_script(workflow: &str) -> Result<String, String> {
+    let marker = "- name: Emit RIPR PR guidance annotations";
+    let start = workflow.find(marker).ok_or("missing annotation step")?;
+    let rest = &workflow[start..];
+    let run_marker = "\n        run: |\n";
+    let run_at = rest.find(run_marker).ok_or("missing annotation run")?;
+    let body = &rest[run_at + run_marker.len()..];
+    let end = body
+        .find("\n      - name:")
+        .ok_or("annotation step does not end")?;
+    let script = body[..end].trim_end();
+    if !script.contains("def escape_data:") || script.contains("@tsv") {
+        return Err("annotation script is not the jq encoder".to_string());
+    }
+    Ok(script.to_string())
+}
+
+fn json_string(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn decode_github(value: &str) -> Result<String, String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).unwrap_or("");
+            if let Ok(byte) = u8::from_str_radix(hex, 16)
+                && matches!(byte, b'%' | b'\r' | b'\n' | b':' | b',')
+            {
+                out.push(byte);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8(out).map_err(|err| format!("annotation is not utf-8: {err}"))
+}
+
+fn parse_warning(line: &str) -> Result<(String, String, String, String), String> {
+    let rest = line
+        .strip_prefix("::warning ")
+        .ok_or_else(|| format!("not a warning: {line}"))?;
+    let (props, message) = rest
+        .split_once("::")
+        .ok_or_else(|| format!("no message separator: {line}"))?;
+    let mut file = None;
+    let mut line_no = None;
+    let mut title = None;
+    for part in props.split(',') {
+        let (key, value) = part
+            .split_once('=')
+            .ok_or_else(|| format!("bad property: {part}"))?;
+        let decoded = decode_github(value)?;
+        match key {
+            "file" => file = Some(decoded),
+            "line" => line_no = Some(decoded),
+            "title" => title = Some(decoded),
+            other => return Err(format!("unexpected property {other}")),
+        }
+    }
+    Ok((
+        file.ok_or("missing file")?,
+        line_no.ok_or("missing line")?,
+        title.ok_or("missing title")?,
+        decode_github(message)?,
+    ))
+}
+
 /// One spawn site for the built-binary `ripr init` invocations below
 /// (process-policy bound).
 fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
@@ -1353,8 +1566,8 @@ fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn
 /// One spawn site for executing extracted capture-step shell (process-policy
 /// bound). GitHub Actions runs a `run:` step without `shell:` as `bash -e`
 /// on ubuntu-latest, so the helper mirrors that invocation instead of a
-/// bare `sh -c`, which would not enable errexit. Unix-only like its single
-/// caller, so Windows builds never see a dead helper.
+/// bare `sh -c`, which would not enable errexit. Unix-only, so Windows
+/// builds never see a dead helper.
 #[cfg(unix)]
 fn run_sh(script: &str, cwd: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
     Ok(Command::new("bash")

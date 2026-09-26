@@ -1288,40 +1288,25 @@ jobs:
         if: always() && hashFiles('target/ripr/review/comments.json') != ''
         continue-on-error: true
         run: |
-          escape_github_message() {
-            local value="$1"
-            value="${value//'%'/'%25'}"
-            value="${value//$'\r'/'%0D'}"
-            value="${value//$'\n'/'%0A'}"
-            printf '%s' "$value"
-          }
-
-          escape_github_property() {
-            local value="$1"
-            value="${value//'%'/'%25'}"
-            value="${value//$'\r'/'%0D'}"
-            value="${value//$'\n'/'%0A'}"
-            value="${value//':'/'%3A'}"
-            value="${value//','/'%2C'}"
-            printf '%s' "$value"
-          }
-
-          # An annotation names the repair start only for a card past the
-          # repair-packet flip. The brief command it used to show redirects
-          # into this runner's absolute checkout path, which does not exist
-          # on the machine that reads the annotation.
-          jq -r '.comments[]? | select(.placement.path and .placement.line) | [.placement.path, (.placement.line | tostring), (.reason // "RIPR targeted test guidance"), (.llm_guidance.repair_command // "")] | @tsv' target/ripr/review/comments.json \
-            | while IFS="$(printf '\t')" read -r path line reason repair_start; do
-                message="$reason"
-                if [ -n "$repair_start" ] && [ "$repair_start" != "null" ]; then
-                  message="$message Start the repair: $repair_start"
-                fi
-                annotation_path="$(escape_github_property "$path")"
-                annotation_line="$(escape_github_property "$line")"
-                annotation_title="$(escape_github_property "RIPR targeted test guidance")"
-                message="$(escape_github_message "$message")"
-                echo "::warning file=$annotation_path,line=$annotation_line,title=$annotation_title::$message"
-              done
+          # Encode the workflow command in jq. Routing the fields through a
+          # TSV round-trip rewrites backslash, tab, CR, and LF into transport
+          # text before GitHub's encoder can see the original bytes (#4089). An annotation names the repair start only when
+          # that field is present. Literal "null" stays absent. The brief
+          # command is not interpolated: it points at this runner's checkout.
+          jq -r '
+            def escape_data:
+              gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
+            def escape_property:
+              escape_data | gsub(":"; "%3A") | gsub(","; "%2C");
+            .comments[]?
+            | select(.placement.path and .placement.line)
+            | (.llm_guidance.repair_command // "") as $repair_start
+            | ((.reason // "RIPR targeted test guidance")
+                + (if $repair_start != "" and $repair_start != "null"
+                   then " Start the repair: " + $repair_start
+                   else "" end)) as $message
+            | "::warning file=\(.placement.path | escape_property),line=\(.placement.line | tostring | escape_property),title=RIPR targeted test guidance::\($message | escape_data)"
+          ' target/ripr/review/comments.json
 
       - name: Add RIPR advisory summary
         if: always()

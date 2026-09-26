@@ -542,6 +542,92 @@ mod tests {
         Ok(())
     }
 
+    /// A lone modern-suffix file must resolve through the alias, and the
+    /// resolved path must be that exact file. Pinned literally so removing a
+    /// suffix from `unique_file_for` fails the assertion.
+    #[test]
+    fn modern_suffixes_resolve_to_their_unique_file() -> Result<(), String> {
+        for (label, relative) in [
+            ("mts", "src/owner.mts"),
+            ("cts", "src/owner.cts"),
+            ("mjs", "src/owner.mjs"),
+            ("cjs", "src/owner.cjs"),
+        ] {
+            let root = temp_dir(label);
+            write(
+                &root,
+                "tsconfig.json",
+                r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+            );
+            write(&root, relative, "export function owner() {}");
+
+            let map = load_alias_map(&root).ok_or("should parse")?;
+            let resolved = map
+                .resolve("@/owner")
+                .ok_or_else(|| format!("{label} alias must resolve"))?;
+            assert_eq!(
+                resolved.to_string_lossy().replace('\\', "/"),
+                relative,
+                "{label} alias must resolve to the exact workspace file"
+            );
+        }
+        Ok(())
+    }
+
+    /// Two-match negative: when BOTH modern suffixes exist for one alias
+    /// base, resolution must fail closed rather than picking a suffix by
+    /// list order. This is the "always-suffix" wrong behavior this control
+    /// rejects — an implementation that always returns the first candidate
+    /// would resolve instead of returning `None`.
+    #[test]
+    fn two_modern_suffix_matches_fail_closed() -> Result<(), String> {
+        for (label, first, second) in [
+            ("mts-cts", "src/owner.mts", "src/owner.cts"),
+            ("mjs-cjs", "src/owner.mjs", "src/owner.cjs"),
+            ("ts-mts", "src/owner.ts", "src/owner.mts"),
+        ] {
+            let root = temp_dir(label);
+            write(
+                &root,
+                "tsconfig.json",
+                r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+            );
+            write(&root, first, "export function owner() {}");
+            write(&root, second, "export function owner() {}");
+
+            let map = load_alias_map(&root).ok_or("should parse")?;
+            assert!(
+                map.resolve("@/owner").is_none(),
+                "{first} and {second} both match @/owner; resolution must fail closed"
+            );
+        }
+        Ok(())
+    }
+
+    /// A near-miss suffix is not an alias candidate: only `owner.mts` exists,
+    /// so the alias resolves to it. A `.mtsx` sibling must NOT create a
+    /// second match and must NOT be substituted for `.mts`.
+    #[test]
+    fn near_miss_suffix_is_not_an_alias_candidate() -> Result<(), String> {
+        let root = temp_dir("near-miss");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        write(&root, "src/owner.mts", "export function owner() {}");
+        write(&root, "src/owner.mtsx", "export function owner() {}");
+
+        let map = load_alias_map(&root).ok_or("should parse")?;
+        let resolved = map.resolve("@/owner").ok_or("should resolve")?;
+        assert_eq!(
+            resolved.to_string_lossy().replace('\\', "/"),
+            "src/owner.mts",
+            "a .mtsx near-miss must not be an alias candidate or resolve the alias"
+        );
+        Ok(())
+    }
+
     #[test]
     fn no_matching_file_returns_none() -> Result<(), String> {
         let root = temp_dir("no-file");

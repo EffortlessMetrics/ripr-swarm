@@ -529,6 +529,22 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr init --ci github` encodes PR guidance annotations inside jq. The
+  previous TSV round-trip rewrote backslash, tab, CR, and LF before GitHub
+  workflow-command escaping, so a path or message could display transport
+  text instead of the comment bytes
+  ([#4089](https://github.com/EffortlessMetrics/ripr-swarm/issues/4089)).
+- TypeScript and JavaScript diff analysis no longer counts vendored, built,
+  or generated files it does not inspect. `node_modules`, `dist`, `build`,
+  `out`, `coverage`, `.next`, `.cache`, `vendor`, `__generated__`, and
+  `*.generated.*` are refused before the changed-file tally, and the
+  workspace walk prunes the same directories so they cannot back findings.
+  Near-misses such as `src/build.ts` and `generated.ts` stay ordinary
+  source. A repair packet may name a Jest/Vitest, Node, Cypress, Jasmine,
+  or `__tests__` test path as its edit target when the TypeScript adapter
+  is compiled; a production file still cannot
+  ([#3743](https://github.com/EffortlessMetrics/ripr-swarm/issues/3743)).
+
 - Gate baselines now treat canonical gap identity as the normal authority and
   disclose every legacy fallback match. `ripr baseline create` refuses
   `path:line:static_class` fallback identity as primary authority for new

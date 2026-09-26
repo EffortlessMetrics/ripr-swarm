@@ -78,8 +78,11 @@ relative path ONLY when ALL of:
 3. The matched value array has exactly one entry.
 4. The value template has at most one `*`.
 5. After substituting the captured `*`, the candidate path resolves to
-   EXACTLY ONE existing workspace file (`.ts`/`.tsx`/`.js`/`.jsx`).
-   Zero or >1 matches → `None`.
+   EXACTLY ONE existing workspace file (`.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/`.mjs`/`.cjs`).
+   Zero or >1 matches → `None`. Ambiguity is never broken by suffix
+   preference: two existing candidates for one alias (`src/owner.mts` and
+   `src/owner.cts`) resolve to `None`, and a near-miss suffix that is not a
+   routed source extension is not a candidate.
 
 ### 3. Resolver threading
 

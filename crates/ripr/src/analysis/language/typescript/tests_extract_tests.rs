@@ -213,6 +213,7 @@ test.only("discount boundary", () => {
         class_name: None,
         decorated: false,
         params: Vec::new(),
+        exported_as_default: false,
         arity: None,
         source_text: None,
         imports: Vec::new(),
