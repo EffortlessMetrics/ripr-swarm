@@ -268,21 +268,19 @@ fn relative_import_resolves_to_workspace_file(
     if let Some(name) = base
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
+        && let Some((stem, ext)) = name.rsplit_once('.')
+        && !stem.is_empty()
     {
-        if let Some((stem, ext)) = name.rsplit_once('.')
-            && !stem.is_empty()
-        {
-            let rewrite_targets: &[&str] = match ext {
-                "js" => &["ts", "tsx"],
-                "jsx" => &["tsx"],
-                "mjs" => &["mts"],
-                "cjs" => &["cts"],
-                _ => &[],
-            };
-            let parent = base.parent().unwrap_or(Path::new(""));
-            for target in rewrite_targets {
-                candidates.push(parent.join(format!("{stem}.{target}")));
-            }
+        let rewrite_targets: &[&str] = match ext {
+            "js" => &["ts", "tsx"],
+            "jsx" => &["tsx"],
+            "mjs" => &["mts"],
+            "cjs" => &["cts"],
+            _ => &[],
+        };
+        let parent = base.parent().unwrap_or(Path::new(""));
+        for target in rewrite_targets {
+            candidates.push(parent.join(format!("{stem}.{target}")));
         }
     }
     candidates

@@ -11931,7 +11931,7 @@ fn member_read_needle_boundary_guards() {
 /// constructor matching while `exported_as_default` stays false. A named
 /// class carries neither.
 #[test]
-fn default_exported_class_methods_carry_class_marker_not_default_flag() {
+fn default_exported_class_methods_carry_class_marker_not_default_flag() -> Result<(), String> {
     let owners = extract_owners(
         Path::new("src/cart.ts"),
         "export default class Cart {\n  balance: number;\n\n  constructor(start: number) {\n    this.balance = start;\n  }\n\n  get total(): number {\n    return this.balance;\n  }\n}\n",
@@ -11939,7 +11939,7 @@ fn default_exported_class_methods_carry_class_marker_not_default_flag() {
     let constructor = owners
         .iter()
         .find(|owner| owner.method_kind == TypeScriptMethodKind::Constructor)
-        .expect("constructor owner extracted");
+        .ok_or("constructor owner extracted")?;
     assert!(
         !constructor.exported_as_default,
         "a method is not the module's default export"
@@ -11951,7 +11951,7 @@ fn default_exported_class_methods_carry_class_marker_not_default_flag() {
     let getter = owners
         .iter()
         .find(|owner| owner.method_kind == TypeScriptMethodKind::Getter)
-        .expect("getter owner extracted");
+        .ok_or("getter owner extracted")?;
     assert!(!getter.exported_as_default);
     assert!(getter.class_default_export);
 
@@ -11962,9 +11962,10 @@ fn default_exported_class_methods_carry_class_marker_not_default_flag() {
     let step = named
         .iter()
         .find(|owner| owner.name == "step")
-        .expect("method owner extracted");
+        .ok_or("method owner extracted")?;
     assert!(!step.exported_as_default);
     assert!(!step.class_default_export);
+    Ok(())
 }
 
 /// Default-import alias: `import CartAlias from './cart'` + `new
