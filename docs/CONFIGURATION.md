@@ -722,11 +722,14 @@ Analysis formats, diff-scoped:
 | `github` | `--format github` | GitHub Actions annotations. |
 | `sarif` | `--format sarif` | SARIF consumers, including GitHub code scanning. |
 
-Badge formats, diff-scoped, for README status: `badge-json`, `badge-shields`,
-`badge-plus-json`, `badge-plus-shields`.
+Badge formats, diff-scoped, for PR and CI artifacts only: `badge-json`,
+`badge-shields`, `badge-plus-json`, `badge-plus-shields`. These are not public
+README, crate-page, or store headline authority.
 
-Badge formats, repo-scoped, rendered from the gap ledger: `repo-badge-json`,
-`repo-badge-shields`, `repo-badge-plus-json`, `repo-badge-plus-shields`.
+Badge formats, repo-scoped, for public baseline status: `repo-badge-json`,
+`repo-badge-shields`, `repo-badge-plus-json`, `repo-badge-plus-shields`. They
+use canonical actionable gaps by default, or explicit gap-decision-ledger
+projection targets when `--gap-ledger` is supplied.
 
 Repo-scope formats, rendered against the full repo baseline rather than a diff:
 `repo-seams-json`, `repo-seams-md`, `repo-exposure-json`,
