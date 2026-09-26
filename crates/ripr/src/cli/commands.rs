@@ -4077,16 +4077,16 @@ mod tests {
         // not complete: the CLI must return the read error (exit 2 at the
         // process boundary) instead of writing a `blocked` report and
         // exiting 0.
-        let missing = unique_command_test_dir("ts-limitations-missing")
-            .join("definitely-missing-check.json");
+        let missing =
+            unique_command_test_dir("ts-limitations-missing").join("definitely-missing-check.json");
         let result = reports(&args(&[
             "ts-limitations",
             "--check-output",
             &missing.display().to_string(),
         ]));
-        let err = result
-            .err()
-            .ok_or_else(|| "unreadable check output must fail closed, not exit cleanly".to_string())?;
+        let err = result.err().ok_or_else(|| {
+            "unreadable check output must fail closed, not exit cleanly".to_string()
+        })?;
         assert!(
             err.contains("read check output") && err.contains("failed"),
             "error must name the unreadable input, got: {err}"
