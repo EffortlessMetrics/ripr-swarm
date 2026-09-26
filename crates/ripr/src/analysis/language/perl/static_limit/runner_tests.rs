@@ -163,8 +163,14 @@ fn perl_static_limit_other_boundaries_still_cap_sink_observation() -> Result<(),
 #[test]
 fn perl_static_limit_missing_runner_never_clears_another_boundary_cap() -> Result<(), String> {
     for kinds in [
-        [BoundaryKind::DynamicDispatch, BoundaryKind::MissingTestRunner],
-        [BoundaryKind::MissingTestRunner, BoundaryKind::DynamicDispatch],
+        [
+            BoundaryKind::DynamicDispatch,
+            BoundaryKind::MissingTestRunner,
+        ],
+        [
+            BoundaryKind::MissingTestRunner,
+            BoundaryKind::DynamicDispatch,
+        ],
     ] {
         let mut packet = isolated_packet()?;
         for kind in kinds {
