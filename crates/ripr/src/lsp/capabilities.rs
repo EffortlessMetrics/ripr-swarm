@@ -53,10 +53,15 @@ pub(super) fn initialize_result_for_client(
             // Saved-workspace sync, stated explicitly rather than as the
             // bare `Full` shorthand so the two halves the client actually
             // depends on are pinned: `didSave` without `includeText` (the
-            // server reads persisted bytes and its own retained buffer, never
-            // client text) and incremental `contentChanges` that
-            // `DocumentStore::change` applies under the negotiated position
-            // encoding.
+            // client is never required to send saved text — the server seeds
+            // saved-content identity from the persisted bytes at open, and on
+            // save hashes the `didSave` text when the client supplies it and
+            // its own retained buffer otherwise) and incremental
+            // `contentChanges` that `DocumentStore::change` applies under the
+            // negotiated position encoding. Client-sent text is therefore an
+            // optional input the server cannot check against the file rather
+            // than an authority it defers to: the identity a refresh commits
+            // is always re-read from the persisted bytes.
             text_document_sync: Some(TextDocumentSyncCapability::Options(
                 TextDocumentSyncOptions {
                     open_close: Some(true),
@@ -335,7 +340,10 @@ mod tests {
             return Err("expected explicit save options".to_string());
         };
         if save.include_text != Some(false) {
-            return Err("didSave text must remain optional for saved-workspace authority".into());
+            return Err(
+                "didSave text must stay optional: the client must not depend on sending it"
+                    .to_string(),
+            );
         }
         Ok(())
     }

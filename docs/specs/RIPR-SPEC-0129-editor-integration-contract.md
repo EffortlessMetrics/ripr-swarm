@@ -115,7 +115,12 @@ workspace folders, and the complete current server-executed
 is the bare `Full`/`Incremental` shorthand or an options object that keeps
 open/close, applies the advertised change kind, disables `willSave`, and
 delivers `didSave`; an options object requiring `includeText` is rejected,
-because client-sent text is not saved-workspace authority.
+because the server never requires the client to send saved text: it seeds
+saved-content identity from the persisted bytes it reads, and on save hashes
+the `didSave` text when supplied and its own retained buffer otherwise. The
+analyzed identity a refresh commits is always re-read from the persisted
+bytes, so client-sent text is an optional input the server cannot check against
+the file rather than an authority it defers to.
 `codeAction/resolve` and work-done progress remain optional because their
 absence has an existing client fallback. A response must carry JSON-RPC 2.0,
 the active request id, no method, and exactly one of `result` or a structurally
@@ -291,7 +296,10 @@ does not advertise fails the parity tests.
   workspace-folder support. The incremental consumer is pinned by
   `state.rs` offset tests and the fail-closed
   `InvalidIncrementalChange` quarantine, including that a save over a
-  disowned buffer records no saved-content identity. The remaining
+  disowned buffer records no saved-content identity and no dedup-ledger
+  entry while still advancing the workspace revision and scheduling
+  re-analysis from the persisted file, and that the withdrawal disclosure
+  names a recovery route the reason can actually deliver. The remaining
   deeper semantics are owned by the linked child issues (#1626 positions,
   RIPR-SPEC-0139 workspace roots), not re-specified here.
 - `tests.rs::framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save`

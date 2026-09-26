@@ -7212,9 +7212,15 @@ async fn did_save_without_text_falls_back_to_document_store_content() -> Result<
 /// server could not apply, that buffer is not the client's buffer, so a
 /// text-less save must publish no saved-content identity at all: recording the
 /// frozen digest would let a refresh analyze stale content as the saved
-/// workspace, and would advance the revision on a no-op. The quarantine must
-/// also survive the save, because no digest can restore line identity the
-/// server does not have.
+/// workspace. The quarantine must also survive the save, because no digest can
+/// restore line identity the server does not have.
+///
+/// The revision still advances and the refresh still runs. Saving really did
+/// change the persisted file, this save is the only automatic re-analysis
+/// trigger for a saved source file, and the extension shows the user that
+/// analysis is queued after save. The refresh re-reads the saved bytes from
+/// disk, so withholding the digest is a line-identity decision and must not
+/// become a persisted-content decision as well.
 #[tokio::test]
 async fn did_save_without_text_records_no_identity_after_an_invalid_incremental_change()
 -> Result<(), String> {
@@ -7238,7 +7244,7 @@ async fn did_save_without_text_records_no_identity_after_an_invalid_incremental_
         })
         .await;
     let baseline = backend.workspace_revision();
-    let saved_before = {
+    let (saved_before, frozen_digest) = {
         let documents = backend
             .documents
             .lock()
@@ -7256,7 +7262,7 @@ async fn did_save_without_text_records_no_identity_after_an_invalid_incremental_
                     .to_string(),
             );
         }
-        saved_before
+        (saved_before, state.buffer_digest())
     };
 
     // A UTF-16 range past the end of the line cannot be applied.
@@ -7307,13 +7313,32 @@ async fn did_save_without_text_records_no_identity_after_an_invalid_incremental_
             "a text-less save over a disowned buffer must record no saved digest".to_string(),
         );
     }
+    if state.saved_digest.as_deref() == Some(frozen_digest.as_str()) {
+        return Err(
+            "the frozen buffer digest must never become the document's saved identity".to_string(),
+        );
+    }
     drop(documents);
-    if backend.workspace_revision() != baseline {
+    if backend.workspace_revision() != baseline + 1 {
         return Err(format!(
-            "a text-less save over a disowned buffer must not advance the workspace revision: \
-             expected {baseline}, got {}",
+            "a text-less save over a disowned buffer must still schedule re-analysis of the \
+             persisted file: expected revision {}, got {}",
+            baseline + 1,
             backend.workspace_revision()
         ));
+    }
+    // Withheld identity also means no dedup-ledger entry: a later save that
+    // legitimately reaches the same content must not be deduplicated against a
+    // digest this save was never allowed to record.
+    let ledger_has_entry = {
+        let digests = backend
+            .saved_content_digests
+            .lock()
+            .map_err(|_poison| "dedup ledger unavailable".to_string())?;
+        digests.contains_key(&uri)
+    };
+    if ledger_has_entry {
+        return Err("a save over a disowned buffer must not write the dedup ledger".to_string());
     }
     Ok(())
 }

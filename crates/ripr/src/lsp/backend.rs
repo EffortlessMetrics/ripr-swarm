@@ -2347,6 +2347,12 @@ impl Backend {
     /// content as if it were the saved workspace, while the quarantine still
     /// withholds line-local diagnostics. Buffer authority returns only when a
     /// range-less replacement or `didOpen` supplies complete current text.
+    ///
+    /// The refusal is duplicated in `DocumentStore::save` so the store itself
+    /// is fail-closed; withholding the arguments here is what additionally
+    /// keeps the dedup ledger and the `didSave` disclosure consistent with the
+    /// refusal. Withholding them is not a reason to skip the refresh: the
+    /// caller still schedules it, because the persisted file changed.
     fn save_document(
         &self,
         uri: &Uri,
@@ -4088,14 +4094,31 @@ impl LanguageServer for Backend {
             // The server disowned this buffer after an uninterpretable
             // incremental change, so neither the retained text nor any
             // client-sent text can establish what was just saved. Publish no
-            // identity, schedule no refresh, and keep the withdrawal.
+            // identity, write no dedup-ledger entry, and keep the withdrawal.
+            //
+            // The save is still a real change to the persisted workspace, and
+            // this save is the only automatic re-analysis trigger for a saved
+            // source file: `didChange` deliberately schedules no refresh, and
+            // `workspace/didChangeWatchedFiles` covers configuration, manifests
+            // and lockfiles only. The extension shows "analysis queued after
+            // save" and waits for this refresh, so the revision must advance
+            // and the refresh must be scheduled (#4088 review B1). Those two
+            // are a *persisted-content* fact and are independent of the
+            // line-identity fact: the refresh re-reads the saved bytes from
+            // disk, so it can never serve the frozen buffer, and the sticky
+            // reason keeps line-local diagnostics withdrawn regardless.
             self.handle_document_quarantine_transition(&uri, transition)
                 .await;
             self.client
                 .log_message(
                     MessageType::WARNING,
-                    "ripr didSave recorded no saved-content identity: this document's buffer authority was lost to an incremental change that could not be applied; a full document synchronization or reopen re-establishes it",
+                    "ripr didSave recorded no saved-content identity: this document's buffer authority was lost to an incremental change that could not be applied; re-analysis is scheduled from the persisted file, line-local diagnostics stay withdrawn, and a full document synchronization or reopen re-establishes buffer authority",
                 )
+                .await;
+            self.advance_workspace_revision();
+            // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
+            // Diff-scoped findings are complete; seams run on explicit refresh only.
+            self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidSave)
                 .await;
             return;
         }
@@ -5153,13 +5176,15 @@ fn quarantined_document_result_id(base: &str) -> String {
 }
 
 /// Disclosure emitted once per quarantine episode when a dirty document's
-/// line-local diagnostics are withdrawn (#1970).
+/// line-local diagnostics are withdrawn (#1970). The recovery route comes from
+/// the reason, because a wrong actionable route is worse than a missing one.
 fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReason) -> String {
     format!(
-        "ripr: line-local diagnostics withdrawn for {}: {} ({}); save the file to analyze the new saved state",
+        "ripr: line-local diagnostics withdrawn for {}: {} ({}); {}",
         path.display(),
         reason.description(),
         reason.as_str(),
+        reason.recovery_route(),
     )
 }
 
@@ -8791,6 +8816,41 @@ mod quarantine_message_tests {
         assert!(message.contains("/workspace/src/lib.rs"));
         assert!(message.contains("buffer_diverges_from_analyzed_saved_content"));
         assert!(message.contains("save the file"));
+    }
+
+    /// A disowned buffer is a different failure from a dirty buffer: the
+    /// sticky reason survives every save, so "save the file" would name the one
+    /// action that cannot recover it. The disclosure must name the routes that
+    /// do.
+    #[test]
+    fn quarantine_withdrawal_log_message_names_a_recoverable_route_for_a_disowned_buffer() {
+        let message = quarantine_withdrawal_log_message(
+            Path::new("/workspace/src/lib.rs"),
+            DocumentStalenessReason::InvalidIncrementalChange,
+        );
+        assert!(message.contains("invalid_incremental_change"));
+        assert!(message.contains("full document synchronization or reopen"));
+        assert!(
+            !message.contains("save the file to analyze"),
+            "a disowned buffer must not be told to save the file as the recovery route: {message}"
+        );
+    }
+
+    /// The remaining reason is digest-computed, so an explicit save really is
+    /// the action that advances analysis for it.
+    #[test]
+    fn quarantine_withdrawal_log_message_names_the_save_route_for_every_digest_computed_reason() {
+        for reason in [
+            DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent,
+            DocumentStalenessReason::NoAnalyzedSavedContent,
+        ] {
+            let message =
+                quarantine_withdrawal_log_message(Path::new("/workspace/src/lib.rs"), reason);
+            assert!(
+                message.contains("save the file to analyze the new saved state"),
+                "{reason:?} must keep the save route: {message}"
+            );
+        }
     }
 
     #[test]

@@ -938,6 +938,20 @@ impl DocumentStalenessReason {
     pub(super) fn is_unknown_buffer_authority(self) -> bool {
         matches!(self, Self::InvalidIncrementalChange)
     }
+
+    /// The action that actually restores service for this reason. Kept beside
+    /// `description`/`as_str` so the recovery route is owned by the reason
+    /// rather than hard-coded in a renderer: naming "save the file" for a
+    /// disowned buffer would advertise an action that cannot recover it,
+    /// which is a wrong actionable signal rather than a missing one.
+    pub(super) fn recovery_route(self) -> &'static str {
+        if self.is_unknown_buffer_authority() {
+            "a full document synchronization or reopen re-establishes the buffer and restores \
+             service; saving the file alone cannot"
+        } else {
+            "save the file to analyze the new saved state"
+        }
+    }
 }
 
 /// Quarantine marker for one open document. While present, line-local
@@ -1057,7 +1071,9 @@ impl DocumentState {
     /// derived from any digest, so a later save or committed refresh must not
     /// clear it and present a buffer the server never learned. Only a
     /// range-less replacement or `didOpen` re-establishes authority, and both
-    /// call [`DocumentState::clear_unknown_buffer_authority`] first.
+    /// reach it through [`DocumentState::adopt_authoritative_text`], which ends
+    /// the sticky episode and continues it as the digest-computed reason for
+    /// the newly supplied text.
     pub(super) fn refresh_quarantine(&mut self) -> QuarantineTransition {
         if self
             .quarantine
@@ -1381,10 +1397,13 @@ impl DocumentStore {
     /// included it. The quarantine recomputation may lift the withdrawal
     /// when the buffer matches the analyzed saved content again.
     ///
-    /// A disowned buffer stays disowned across the save, because
-    /// `refresh_quarantine` never clears a sticky reason. The caller must
-    /// also not publish a digest derived from that buffer as the saved-workspace
-    /// analysis input; see [`DocumentState::is_buffer_authority_unknown`].
+    /// While the server has disowned the buffer, this store fails closed on
+    /// its own: it adopts neither a saved digest nor client text, because both
+    /// would assert content the server never learned through a sanctioned
+    /// path. `refresh_quarantine` then keeps the sticky reason, so the
+    /// withdrawal survives the save. The caller must also skip the
+    /// dedup-ledger write and its saved-content disclosure for such a save;
+    /// see [`DocumentState::is_buffer_authority_unknown`].
     pub(super) fn save(
         &mut self,
         uri: &Uri,
@@ -1394,11 +1413,16 @@ impl DocumentStore {
         let Some(state) = self.documents.get_mut(uri) else {
             return QuarantineTransition::Unchanged;
         };
-        if let Some(digest) = saved_digest {
-            state.saved_digest = Some(digest);
-        }
-        if let Some(text) = text {
-            state.text = text;
+        // Enforced here rather than only at the caller so a future caller
+        // cannot silently reinstate a stale saved-content identity by
+        // forgetting to pre-null the digest.
+        if !state.is_buffer_authority_unknown() {
+            if let Some(digest) = saved_digest {
+                state.saved_digest = Some(digest);
+            }
+            if let Some(text) = text {
+                state.text = text;
+            }
         }
         state.refresh_quarantine()
     }
@@ -1871,13 +1895,22 @@ mod tests {
     /// (the advertised `includeText: false` contract) must then record no
     /// saved-content identity and must not lift the withdrawal, because the
     /// digest would otherwise come from retained text the server disowned.
+    ///
+    /// The fixture deliberately separates the two identities the assertion
+    /// compares. Seeding the recorded save identity to the frozen buffer's own
+    /// digest would make the assertion hold for any implementation, because
+    /// recording the frozen digest would write back the value already there.
+    /// The distinct shape below is also the realistic disowned document: an
+    /// unsaved buffer against a different last recorded save.
     #[test]
     fn save_after_invalid_incremental_change_records_no_saved_digest() -> Result<(), String> {
         let uri = test_uri("file:///workspace/src/lib.rs")?;
         let mut store = DocumentStore::default();
-        store
-            .documents
-            .insert(uri.clone(), clean_document_state(&uri, "a🎉b"));
+        let mut disowned = clean_document_state(&uri, "fn last_recorded_save() {}");
+        // The open buffer the server will disown: a dirty edit over the
+        // content the last recorded save identified.
+        disowned.text = "a🎉b".to_string();
+        store.documents.insert(uri.clone(), disowned);
         if store.change(
             did_change(&uri, 2, vec![change_range((0, 2), (0, 3), "X")]),
             &PositionEncodingKind::UTF16,
@@ -1885,20 +1918,32 @@ mod tests {
         {
             return Err("the invalid change must enter quarantine first".to_string());
         }
-        let (saved_before, analyzed_before) = {
+        let (saved_before, frozen_digest) = {
             let before = store
                 .state_for_uri(&uri)
                 .ok_or_else(|| "missing document state".to_string())?;
-            (
-                before.saved_digest.clone(),
-                before.analyzed_saved_digest.clone(),
-            )
+            // Fixture-drift guard: a text-less save derives its digest from
+            // the retained buffer, so that digest must differ from the
+            // recorded identity or this control proves nothing.
+            if Some(before.buffer_digest()) == before.saved_digest {
+                return Err(
+                    "fixture drift: the frozen buffer must differ from the recorded save identity"
+                        .to_string(),
+                );
+            }
+            (before.saved_digest.clone(), before.buffer_digest())
         };
 
-        // params.text is None: the server falls back to its own retained
-        // buffer, which is exactly the text it disowned.
-        let frozen_digest = digest_of("a🎉b");
-        if store.save(&uri, Some(frozen_digest), None) != QuarantineTransition::Unchanged {
+        // The frozen buffer digest is exactly what a text-less `didSave` would
+        // derive. Client text is passed as well, deliberately: the caller
+        // pre-nulls both arguments, so only passing them here exercises the
+        // store's own refusal instead of the caller's.
+        if store.save(
+            &uri,
+            Some(frozen_digest.clone()),
+            Some("client text".to_string()),
+        ) != QuarantineTransition::Unchanged
+        {
             return Err("a save over a disowned buffer must not lift the withdrawal".to_string());
         }
         let Some(state) = store.state_for_uri(&uri) else {
@@ -1915,8 +1960,11 @@ mod tests {
         if state.saved_digest != saved_before {
             return Err("a save over a disowned buffer must record no saved digest".to_string());
         }
-        if state.analyzed_saved_digest != analyzed_before {
-            return Err("a save over a disowned buffer must not advance analyzed identity".into());
+        if state.saved_digest.as_deref() == Some(frozen_digest.as_str()) {
+            return Err("the frozen buffer digest must never become the saved identity".into());
+        }
+        if state.buffer_digest() != frozen_digest {
+            return Err("a save must not replace a disowned buffer with client text".to_string());
         }
         Ok(())
     }

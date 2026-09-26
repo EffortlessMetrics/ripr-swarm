@@ -489,10 +489,14 @@ function supportedTextDocumentSyncKind(value: unknown): boolean {
 
 /**
  * `didSave` must be delivered, and the client must not depend on the server
- * requiring the saved text: `ripr` advertises `includeText: false` and
- * derives the saved-content identity from persisted bytes plus its own
- * retained buffer, because client-sent text is not saved-workspace authority.
- * An `includeText: false` object therefore satisfies this contract.
+ * requiring the saved text: `ripr` advertises `includeText: false` and derives
+ * saved-content identity from the persisted bytes it can read, using the
+ * `didSave` text the client supplies when it is present and its own retained
+ * buffer otherwise. Client-sent text is therefore an optional input the server
+ * cannot check against the file, not an authority it defers to — the analyzed
+ * identity every refresh commits is re-read from the persisted bytes — so
+ * requiring it is not part of the contract in either direction. An
+ * `includeText: false` object satisfies this contract.
  */
 function supportedTextDocumentSyncSave(value: unknown): boolean {
   if (value === true || value === false) {
