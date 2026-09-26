@@ -106,7 +106,11 @@ mod tests {
 
     impl AnalysisProgressSink for Recorder {
         fn emit(&self, event: AnalysisProgressEvent) {
-            self.0.lock().unwrap().push(event);
+            let mut events = match self.0.lock() {
+                Ok(events) => events,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            events.push(event);
         }
     }
 
@@ -119,19 +123,12 @@ mod tests {
             progress.emit(AnalysisProgressStage::LoadingInput);
             assert!(token.cancel(AnalysisAbortKind::Cancelled));
         });
-        let stages = recorder
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|event| event.stage)
-            .collect::<Vec<_>>();
-        assert_eq!(
-            stages,
-            [
-                AnalysisProgressStage::LoadingInput,
-                AnalysisProgressStage::Cancelled
-            ]
-        );
+        let events = match recorder.0.lock() {
+            Ok(events) => events,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].stage, AnalysisProgressStage::LoadingInput);
+        assert_eq!(events[1].stage, AnalysisProgressStage::Cancelled);
     }
 }
