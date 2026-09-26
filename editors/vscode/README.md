@@ -17,8 +17,9 @@ advisory, not runtime mutation results.
 ## Install and First Run
 
 Install `EffortlessMetrics.ripr` and open a Rust/Cargo workspace. The released
-extension normally downloads and caches its matching native server; installing
-Rust or running `cargo install ripr` is not a mandatory editor setup step.
+extension normally downloads and caches its matching native server, so you do
+not need to build that server with `cargo install ripr`. Workspace analysis and
+test execution still need their own tooling on the workspace host.
 
 Open Problems and hover a diagnostic labeled `ripr`. Inspect the changed
 behavior, the missing case or assertion, and the related test. Use the available

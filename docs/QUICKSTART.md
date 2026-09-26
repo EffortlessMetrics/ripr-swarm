@@ -24,7 +24,8 @@ This guide describes **0.11 development**, including `--worktree`, bounded
 `Start here:` output, and durable repair attempts. Those instructions are not a
 claim that the published package has these features. For a released install,
 use the [versioned README](https://github.com/EffortlessMetrics/ripr/blob/v0.10.0/README.md)
-and that binary's help.
+and that binary's help. The 0.10 CLI defaults to `origin/main`; use `--base REF`
+with another existing branch or commit when needed.
 
 To use this guide's development features, run the following from the root of a
 `ripr-swarm` checkout, then return to the repository you want to analyze:
@@ -197,7 +198,8 @@ PR-facing packet. It does not run analysis or repair the code. See
 
 | Symptom | Next step |
 | --- | --- |
-| Installation or repository setup fails. | Run `ripr doctor`; use the reported recovery step. `ripr doctor --json` provides machine-readable checks. |
+| Cargo installation fails. | Check the first Cargo error and `rustc --version` (Rust 1.95 or newer). Fix the reported build or download problem before retrying. |
+| ripr is installed, but repository setup fails. | Run `ripr doctor` and follow its recovery step. `ripr doctor --json` provides machine-readable checks. |
 | `check` sees no change after an edit. | In a development build, use `--worktree` for staged and unstaged edits. Otherwise inspect a committed change using your installed version's supported options. |
 | The wrong base is selected. | Use `--base REF` with an existing reference in this repository. |
 | Configuration is rejected. | Run `ripr config validate` and fix the named setting. Configuration is optional, but an invalid file is not ignored. |

@@ -61,7 +61,8 @@ it does not run mutants or prove that a test would fail.
 ## The first useful run
 
 Install the published CLI, then run it in a Rust repository on a branch with
-committed changes:
+committed changes. The 0.10 release uses `origin/main` as its default base;
+use `--base REF` to choose another existing branch or commit:
 
 ```bash
 cargo install ripr
