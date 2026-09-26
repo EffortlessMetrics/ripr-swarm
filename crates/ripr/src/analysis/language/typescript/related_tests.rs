@@ -2,7 +2,7 @@
 
 use super::tsconfig::TsAliasMap;
 use super::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ── Re-export index ───────────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ pub(crate) struct ReExportIndex {
     /// reaches the owner when a star hop leads to the owner's module
     /// (#4103 under-credit: the star barrel was invisible and the emitted
     /// guidance claimed no test referenced the owner at all).
-    star_edges: Vec<(String, String)>,
+    star_edges: HashSet<(String, String)>,
 }
 
 impl ReExportIndex {
@@ -55,7 +55,7 @@ impl ReExportIndex {
     ) -> Self {
         Self {
             entries: entries.into_iter().collect(),
-            star_edges,
+            star_edges: star_edges.into_iter().collect(),
         }
     }
 
@@ -85,7 +85,7 @@ impl ReExportIndex {
         use oxc_parser::Parser;
 
         let mut entries: HashMap<(String, String), (String, String)> = HashMap::new();
-        let mut star_edges: Vec<(String, String)> = Vec::new();
+        let mut star_edges: HashSet<(String, String)> = HashSet::new();
         for relative in workspace_files {
             if is_test(relative) {
                 continue;
@@ -176,11 +176,7 @@ impl ReExportIndex {
             for (key, value) in file_entries {
                 entries.entry(key).or_insert_with(|| value);
             }
-            for edge in file_star_edges {
-                if !star_edges.contains(&edge) {
-                    star_edges.push(edge);
-                }
-            }
+            star_edges.extend(file_star_edges);
         }
         Self {
             entries,
@@ -218,14 +214,10 @@ impl ReExportIndex {
             // `owner.name` from a barrel that star-exports the owner's module
             // reaches the owner. The imported name must equal the owner's own
             // name — a star hop invents no aliases.
-            return self
-                .star_edges
-                .iter()
-                .any(|(star_intermediate, star_source)| {
-                    star_intermediate == &intermediate_module
-                        && star_source == &owner_module
-                        && imported_name == owner.name
-                });
+            return imported_name == owner.name
+                && self
+                    .star_edges
+                    .contains(&(intermediate_module, owner_module.clone()));
         };
         // The chain must resolve to the owner's file and the owner's name.
         // `export { default as X } from './owner'` records the original name
@@ -715,9 +707,10 @@ fn dynamic_import_member_call(
     false
 }
 
-/// The quoted literal (single, double, or backtick) starting at `from`.
+/// The quoted literal (single, double, or backtick) starting at `from`,
+/// allowing whitespace between the paren and the quote (`import( "./x" )`).
 fn quoted_literal_after(body: &str, from: usize) -> Option<String> {
-    let rest = body.get(from..)?;
+    let rest = body.get(from..)?.trim_start();
     let quote = rest.chars().next()?;
     if !matches!(quote, '"' | '\'' | '`') {
         return None;

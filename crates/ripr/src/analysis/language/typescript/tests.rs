@@ -10394,6 +10394,29 @@ describe("pricing", () => {
 }
 
 #[test]
+fn undercredit_4103_dynamic_import_spaced_specifier_is_credited() {
+    let owner = test_owner("loyaltyPrice", "src/pricing.ts");
+    let tests = extract_tests(
+        Path::new("tests/pricing.test.ts"),
+        r#"it("loyal customers", async () => {
+    const m = await import( "../src/pricing" );
+    expect(m.loyaltyPrice(1000, 5)).toBe(950);
+});
+"#,
+    );
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert_eq!(
+        candidates.len(),
+        1,
+        "spaced dynamic import specifier must credit"
+    );
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::ImportedOwnerCall
+    );
+}
+
+#[test]
 fn undercredit_4103_dynamic_import_other_module_is_not_credited() {
     let owner = test_owner("loyaltyPrice", "src/pricing.ts");
     let tests = extract_tests(
