@@ -497,7 +497,9 @@ fn candidate_from_gap_record(record: &GapRecord) -> GateCandidate {
                 .safe_gate_predicate
                 .as_ref()
                 .is_some_and(|predicate| predicate.suppressed),
-        configured_off: record.policy_state == "not_policy_targeted",
+        // `not_policy_targeted` also describes already-observed/no-action
+        // records. The ledger has no explicit configured-off fact to carry.
+        configured_off: false,
         suppression_reason: (record.policy_state == "suppressed").then(|| "suppressed".to_string()),
         summary_reason: None,
         gap_ledger_gate_candidate: gate_candidate,
@@ -864,6 +866,10 @@ fn gate_reason(
         }
         if candidate.source == "gap_decision_ledger" {
             if !candidate.gap_ledger_gate_candidate {
+                if candidate.gap_state.as_deref() == Some("already_observed") {
+                    return "gap decision ledger record is already observed; no action required"
+                        .to_string();
+                }
                 return format!(
                     "gap decision ledger record is not gate-candidate eligible: {}",
                     candidate
