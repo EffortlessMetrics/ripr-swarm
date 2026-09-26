@@ -479,8 +479,9 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
             continue;
         };
         let filename = rel_str.strip_prefix(RIPR_SCHEMA_PREFIX).unwrap_or(rel_str);
-        let source_version = if let Some((_, source_path, constant)) =
-            VERSION_SOURCES.iter().find(|(name, _, _)| *name == filename)
+        let source_version = if let Some((_, source_path, constant)) = VERSION_SOURCES
+            .iter()
+            .find(|(name, _, _)| *name == filename)
         {
             let source = read_text(root.join(source_path))?;
             Some((
@@ -509,7 +510,9 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
     for (filename, _, _) in VERSION_SOURCES {
         let path = format!("{RIPR_SCHEMA_PREFIX}{filename}");
         if !seen_rows.contains(path.as_str()) {
-            violations.push(format!("version source mapping names missing schema {path}"));
+            violations.push(format!(
+                "version source mapping names missing schema {path}"
+            ));
         }
     }
 
@@ -539,9 +542,10 @@ fn published_version_rows(
     violations: &mut Vec<String>,
 ) -> std::collections::BTreeMap<String, Vec<String>> {
     let mut rows = std::collections::BTreeMap::<String, Vec<String>>::new();
-    let Some(section) = doc.split_once("### Published ripr JSON Schemas").map(|(_, rest)| {
-        rest.split("\n## ").next().unwrap_or(rest)
-    }) else {
+    let Some(section) = doc
+        .split_once("### Published ripr JSON Schemas")
+        .map(|(_, rest)| rest.split("\n## ").next().unwrap_or(rest))
+    else {
         violations.push(format!(
             "{OUTPUT_SCHEMA_DOC} is missing the published schema version table"
         ));
@@ -552,21 +556,29 @@ fn published_version_rows(
         if cells.len() < 4 || !cells[1].starts_with('`') || !cells[1].contains(RIPR_SCHEMA_PREFIX) {
             continue;
         }
-        let Some(path) = cells[1].strip_prefix('`').and_then(|cell| cell.strip_suffix('`')) else {
+        let Some(path) = cells[1]
+            .strip_prefix('`')
+            .and_then(|cell| cell.strip_suffix('`'))
+        else {
             violations.push(format!(
                 "{OUTPUT_SCHEMA_DOC} has malformed published schema path: {}",
                 cells[1]
             ));
             continue;
         };
-        let Some(version) = cells[2].strip_prefix('`').and_then(|cell| cell.strip_suffix('`')) else {
+        let Some(version) = cells[2]
+            .strip_prefix('`')
+            .and_then(|cell| cell.strip_suffix('`'))
+        else {
             violations.push(format!(
                 "{OUTPUT_SCHEMA_DOC} has malformed version for {path}: {}",
                 cells[2]
             ));
             continue;
         };
-        rows.entry(path.to_string()).or_default().push(version.to_string());
+        rows.entry(path.to_string())
+            .or_default()
+            .push(version.to_string());
     }
     rows
 }
