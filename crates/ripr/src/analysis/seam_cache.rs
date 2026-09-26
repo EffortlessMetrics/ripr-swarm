@@ -74,7 +74,7 @@ macro_rules! cache_layers {
         }
 
         /// Direct children of the cache root owned by ripr.
-        pub const CACHE_LAYER_NAMES: &[&str] = &[$($name),+];
+        pub const CACHE_LAYER_NAMES: &[&str] = &[$(CacheLayer::$variant.name()),+];
     };
 }
 
