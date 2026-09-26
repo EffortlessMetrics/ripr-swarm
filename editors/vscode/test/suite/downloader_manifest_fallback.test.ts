@@ -1,5 +1,4 @@
 import * as assert from 'assert';
-import { spawnSync } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as https from 'https';
@@ -36,48 +35,41 @@ let generatedFixtureTls: { readonly key: Buffer; readonly cert: Buffer } | undef
 // replaced was the same shape (CN 127.0.0.1, SAN localhost) and was not a
 // credential for any other host. Nothing in the suite pins the certificate
 // bytes; TLS verification is disabled for the suite.
-function fixtureTlsMaterial(): { readonly key: Buffer; readonly cert: Buffer } {
+function fixtureTlsMaterial(): Promise<{ readonly key: Buffer; readonly cert: Buffer }> {
   if (generatedFixtureTls) {
-    return generatedFixtureTls;
+    return Promise.resolve(generatedFixtureTls);
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-fixture-tls-'));
   const keyPath = path.join(dir, 'key.pem');
   const certPath = path.join(dir, 'cert.pem');
-  try {
-    const result = spawnSync(
-      'openssl',
-      [
-        'req',
-        '-x509',
-        '-newkey',
-        'rsa:2048',
-        '-sha256',
-        '-days',
-        '1',
-        '-nodes',
-        '-keyout',
-        keyPath,
-        '-out',
-        certPath,
-        '-subj',
-        '/CN=127.0.0.1',
-        '-addext',
-        'subjectAltName=DNS:localhost,IP:127.0.0.1'
-      ],
-      { stdio: 'pipe' }
-    );
-    if (result.status !== 0) {
-      const detail = result.stderr?.toString().trim() || result.error?.message || 'openssl failed';
-      throw new Error(`fixture TLS identity could not be generated: ${detail}`);
-    }
-    generatedFixtureTls = {
-      key: fs.readFileSync(keyPath),
-      cert: fs.readFileSync(certPath)
-    };
-    return generatedFixtureTls;
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  return run('openssl', [
+    'req',
+    '-x509',
+    '-newkey',
+    'rsa:2048',
+    '-sha256',
+    '-days',
+    '1',
+    '-nodes',
+    '-keyout',
+    keyPath,
+    '-out',
+    certPath,
+    '-subj',
+    '/CN=127.0.0.1',
+    '-addext',
+    'subjectAltName=DNS:localhost,IP:127.0.0.1'
+  ])
+    .then(() => {
+      generatedFixtureTls = {
+        key: fs.readFileSync(keyPath),
+        cert: fs.readFileSync(certPath)
+      };
+      return generatedFixtureTls;
+    })
+    .finally(() => {
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
 }
 
 class ManifestFixtureServer {
@@ -95,8 +87,8 @@ class ManifestFixtureServer {
     return `https://127.0.0.1:${this.port}`;
   }
 
-  start(): Promise<void> {
-    const { key, cert } = fixtureTlsMaterial();
+  async start(): Promise<void> {
+    const { key, cert } = await fixtureTlsMaterial();
     return new Promise((resolve, reject) => {
       const created = https.createServer({ key, cert }, (request, response) => {
         const requestPath = (request.url ?? '/').split('?')[0];
