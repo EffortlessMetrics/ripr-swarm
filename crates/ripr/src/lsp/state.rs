@@ -1175,9 +1175,7 @@ fn apply_document_content_changes(
     Ok(())
 }
 
-fn invalidate_incremental_document_state(
-    state: &mut DocumentState,
-) -> QuarantineTransition {
+fn invalidate_incremental_document_state(state: &mut DocumentState) -> QuarantineTransition {
     let was_quarantined = state.quarantine.is_some();
     let was_disclosed = state
         .quarantine
@@ -1293,11 +1291,7 @@ impl DocumentStore {
     /// an encoding and mutate retained text: the client may already have
     /// applied the change, so line identity is unknown until synchronization
     /// authority is re-established.
-    pub(super) fn invalidate_change(
-        &mut self,
-        uri: &Uri,
-        version: i32,
-    ) -> QuarantineTransition {
+    pub(super) fn invalidate_change(&mut self, uri: &Uri, version: i32) -> QuarantineTransition {
         let Some(state) = self.state_for_uri_mut(uri) else {
             return QuarantineTransition::Unchanged;
         };
@@ -1926,7 +1920,8 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_position_encoding_invalidates_without_mutating_retained_text() -> Result<(), String> {
+    fn unavailable_position_encoding_invalidates_without_mutating_retained_text()
+    -> Result<(), String> {
         let uri = test_uri("file:///workspace/src/lib.rs")?;
         let mut store = DocumentStore::default();
         store
@@ -1944,7 +1939,9 @@ mod tests {
             return Err("uninterpretable didChange must still advance the observed version".into());
         }
         if state.text != "aéb" {
-            return Err("uninterpretable didChange must not guess an encoding or mutate text".into());
+            return Err(
+                "uninterpretable didChange must not guess an encoding or mutate text".into(),
+            );
         }
         if state.quarantine.as_ref().map(|q| q.reason)
             != Some(DocumentStalenessReason::InvalidIncrementalChange)
