@@ -2521,6 +2521,13 @@ fn explicit_external_observer_target(test: &RelatedTestGrip) -> bool {
         && matches!(test.oracle_strength, crate::domain::OracleStrength::Strong)
 }
 
+/// Published label for a related test written in an external language.
+///
+/// Consumes the routed TypeScript/JavaScript extension authority from
+/// `analysis::language::router`, the same owner the repair route's fail-closed
+/// cross-language gate reads, so a `.mts`/`.cts` observer is labeled
+/// `typescript` here and blocks the packet in `analysis::repair_route` for the
+/// same reason.
 fn external_language_for_related_test(test: &RelatedTestGrip) -> Option<&'static str> {
     let extension = test
         .file
@@ -3263,6 +3270,38 @@ mod tests {
         }
     }
 
+    /// A configured TypeScript-bridge observer with a Strong exact-value
+    /// oracle: the shape that projects a navigation-only external target.
+    fn external_observer_test() -> RelatedTestGrip {
+        RelatedTestGrip {
+            test_name: "blob copies resizable buffers".to_string(),
+            file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
+            line: 41,
+            test_target: None,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            evidence_summary: "configured TypeScript bridge exact value observer".to_string(),
+            relation_reason: RelationReason::DirectOwnerCall,
+            relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+        }
+    }
+
+    fn external_entry(test: RelatedTestGrip) -> ClassifiedSeam {
+        let seam = RepoSeam::new(
+            "src/jsc/Blob.rs",
+            "Blob::from_js_without_defer_gc",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "array_buffer.shared || array_buffer.resizable",
+            RequiredDiscriminator::BoundaryValue {
+                description: "array_buffer.shared || array_buffer.resizable".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        classified_with(seam, SeamGripClass::Ungripped, vec![test])
+    }
+
     fn weakly_gripped_classified() -> ClassifiedSeam {
         let seam = boundary_seam();
         let evidence = TestGripEvidence {
@@ -3407,6 +3446,62 @@ mod tests {
             return Err(format!(
                 "expected headline_eligible=false for opaque: {json}"
             ));
+        }
+        Ok(())
+    }
+
+    /// The projection side of the routed extension authority: a `.mts`/`.cts`
+    /// observer must reach the agent brief as a navigation-only external target
+    /// labeled `typescript`, exactly like the `.ts` control, and a near-miss
+    /// suffix must project no external target at all.
+    ///
+    /// `external_language_labels_cover_modern_ts_js_extensions` pins the label
+    /// lookup itself; this test pins what the operator actually sees, including
+    /// the fail-closed `repair_packet_ready = false` projection and the named
+    /// reason. Before #4116 the modern suffixes produced no label, so the
+    /// projection silently degraded to a generic block.
+    #[test]
+    fn navigation_only_external_target_labels_modern_ts_js_extensions() -> Result<(), String> {
+        for (extension, expected) in [
+            ("ts", "typescript"),
+            ("mts", "typescript"),
+            ("cts", "typescript"),
+            ("mjs", "javascript"),
+            ("cjs", "javascript"),
+        ] {
+            let mut test = external_observer_test();
+            test.file = PathBuf::from(format!("test/js/web/fetch/blob.test.{extension}"));
+            let target = navigation_only_external_target_for(&external_entry(test))
+                .ok_or_else(|| format!(".{extension} observer must project a navigation target"))?;
+            if target.language != expected {
+                return Err(format!(
+                    ".{extension} observer must publish language {expected}; got {}",
+                    target.language
+                ));
+            }
+            if !target.reason.contains(expected) {
+                return Err(format!(
+                    ".{extension} reason must name {expected}: {}",
+                    target.reason
+                ));
+            }
+            if target.repair_packet_ready {
+                return Err(format!(
+                    ".{extension} navigation-only external evidence must not be repair-ready"
+                ));
+            }
+        }
+
+        // Fail closed: an unknown near-miss suffix publishes no label, so no
+        // navigation-only external target is invented.
+        for extension in ["mtsx", "ctsx", "mjsx"] {
+            let mut test = external_observer_test();
+            test.file = PathBuf::from(format!("test/js/web/fetch/blob.test.{extension}"));
+            if navigation_only_external_target_for(&external_entry(test)).is_some() {
+                return Err(format!(
+                    ".{extension} is a near-miss suffix and must not project an external label"
+                ));
+            }
         }
         Ok(())
     }
@@ -5419,29 +5514,7 @@ mod tests {
 
     #[test]
     fn targeted_test_brief_surfaces_external_observer_as_navigation_only() -> Result<(), String> {
-        let seam = RepoSeam::new(
-            "src/jsc/Blob.rs",
-            "Blob::from_js_without_defer_gc",
-            SeamKind::PredicateBoundary,
-            42,
-            88,
-            "array_buffer.shared || array_buffer.resizable",
-            RequiredDiscriminator::BoundaryValue {
-                description: "array_buffer.shared || array_buffer.resizable".to_string(),
-            },
-            ExpectedSink::ReturnValue,
-        );
-        let external_target = RelatedTestGrip {
-            test_name: "blob copies resizable buffers".to_string(),
-            file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
-            line: 41,
-            test_target: None,
-            oracle_kind: OracleKind::ExactValue,
-            oracle_strength: OracleStrength::Strong,
-            evidence_summary: "configured TypeScript bridge exact value observer".to_string(),
-            relation_reason: RelationReason::DirectOwnerCall,
-            relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
-        };
+        let external_target = external_observer_test();
         assert!(explicit_external_observer_target(&external_target));
         let mut unconfigured_external_target = external_target.clone();
         unconfigured_external_target.evidence_summary =
@@ -5449,7 +5522,7 @@ mod tests {
         assert!(!explicit_external_observer_target(
             &unconfigured_external_target
         ));
-        let entry = classified_with(seam, SeamGripClass::Ungripped, vec![external_target]);
+        let entry = external_entry(external_target);
         let brief = targeted_test_brief_for_classified_seam(&entry);
 
         for needle in [

@@ -34,7 +34,8 @@ The TypeScript preview adapter is enabled by repo configuration:
 enabled = ["rust", "typescript"]
 ```
 
-When enabled, it routes `*.ts`, `*.tsx`, `*.js`, and `*.jsx` files. It emits
+When enabled, it routes `*.ts`, `*.tsx`, `*.mts`, `*.cts`, `*.js`, `*.jsx`,
+`*.mjs`, and `*.cjs` files. It emits
 the same RIPR fact families as the Rust adapter. TypeScript files are labeled
 `language = "typescript"` and JavaScript files are labeled
 `language = "javascript"`; both use `language_status = "preview"`.
@@ -108,7 +109,10 @@ Test discovery:
 - top-level `expect(...)` calls when paired with a `test`/`it` block
 - exported test files matched by configured patterns (default:
   `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`, and the
-  corresponding `.js`/`.jsx` variants)
+  corresponding `.js`/`.jsx` variants). Every routed source extension
+  participates, so the modern ESM/CJS suffixes `.mts`, `.cts`, `.mjs`, and
+  `.cjs` are test files by the same `.test`/`.spec` convention rather than
+  an unrouted gap.
 
 Assertions / oracles the adapter must recognise:
 
@@ -238,7 +242,9 @@ can show:
 - a fixture corpus pinning at least one example per oracle kind above
 - a fixture corpus pinning at least one example per probe kind above
 - a fixture corpus pinning at least one example per `static_limit_kind`
-- fixtures cover `*.ts`, `*.tsx`, `*.js`, and `*.jsx`
+- fixtures cover `*.ts`, `*.tsx`, `*.js`, and `*.jsx`; the modern ESM/CJS
+  suffixes are covered by adapter routing, module-identity, and end-to-end
+  `analyze_diff` tests rather than by golden fixtures
 - a fixture proving `async` `test`/`it` resolves and rejects classify
   correctly
 - a fixture proving snapshots are tagged as weak / static-limited
