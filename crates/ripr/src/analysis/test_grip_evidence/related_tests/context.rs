@@ -59,13 +59,16 @@ impl NameModuleCandidateIndex {
             // Sub-byte-trigram names have no safe indexed key.
             return (0..test_count).collect();
         }
-        query
-            .as_bytes()
-            .windows(3)
-            .filter_map(|window| self.name_trigrams.get(&[window[0], window[1], window[2]]))
-            .min_by_key(|indices| indices.len())
-            .cloned()
-            .unwrap_or_default()
+        let mut rarest: Option<&Vec<usize>> = None;
+        for window in query.as_bytes().windows(3) {
+            let Some(indices) = self.name_trigrams.get(&[window[0], window[1], window[2]]) else {
+                return Vec::new();
+            };
+            if rarest.is_none_or(|prior| indices.len() < prior.len()) {
+                rarest = Some(indices);
+            }
+        }
+        rarest.cloned().unwrap_or_default()
     }
 
     fn module_candidates(&self, owner_module: &str) -> Vec<usize> {
@@ -429,6 +432,7 @@ mod candidate_index_tests {
         assert_eq!(index.name_candidates("target", 4097), [4096]);
         assert_eq!(index.module_candidates("target/owner"), [4096]);
         assert!(index.name_candidates("absent", 4097).is_empty());
+        assert!(index.name_candidates("target_absent", 4097).is_empty());
     }
 }
 
