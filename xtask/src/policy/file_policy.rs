@@ -71,18 +71,19 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
 fn validate_test_covered_by(path: &str, commands: &[(usize, String)]) -> Result<(), String> {
     let mut built = BTreeSet::new();
     validate_test_covered_by_with(path, commands, |args| {
-        let build_args = build_args_before_list(args);
-        let build_key = build_args.join("\u{1f}");
-        if built.insert(build_key) {
-            let build = capture_output_with_timeout(
-                "cargo",
-                &build_args,
-                &[],
-                TEST_COVERED_BY_BUILD_TIMEOUT,
-                "test-valued covered_by build",
-            )?;
-            if build.timed_out || !build.status.is_some_and(|status| status.success()) {
-                return Ok(enumeration_result(build, TEST_COVERED_BY_BUILD_TIMEOUT));
+        if let Some(build_args) = build_args_before_list(args) {
+            let build_key = build_args.join("\u{1f}");
+            if built.insert(build_key) {
+                let build = capture_output_with_timeout(
+                    "cargo",
+                    &build_args,
+                    &[],
+                    TEST_COVERED_BY_BUILD_TIMEOUT,
+                    "test-valued covered_by build",
+                )?;
+                if build.timed_out || !build.status.is_some_and(|status| status.success()) {
+                    return Ok(enumeration_result(build, TEST_COVERED_BY_BUILD_TIMEOUT));
+                }
             }
         }
         let output = capture_output_with_timeout(
@@ -96,18 +97,22 @@ fn validate_test_covered_by(path: &str, commands: &[(usize, String)]) -> Result<
     })
 }
 
-/// `cargo test … -- --list` compiles and then lists. The build is the cold
-/// part; listing an already-built binary is the enumeration.
-fn build_args_before_list(args: &[String]) -> Vec<String> {
+/// Build args for `cargo test … --no-run`, or `None` when Cargo rejects
+/// that combination. `cargo test --doc --no-run` is an error, so a
+/// documentation-test pointer keeps the list command as its only spawn.
+fn build_args_before_list(args: &[String]) -> Option<Vec<String>> {
     let mut build_args = Vec::new();
     for arg in args {
         if arg == "--" {
             break;
         }
+        if arg == "--doc" {
+            return None;
+        }
         build_args.push(arg.clone());
     }
     build_args.push("--no-run".to_string());
-    build_args
+    Some(build_args)
 }
 
 fn enumeration_result(output: TimedOutput, timeout: Duration) -> (bool, String, String) {
@@ -361,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn test_covered_by_build_args_stop_before_the_list_harness() {
+    fn test_covered_by_build_args_stop_before_the_list_harness() -> Result<(), String> {
         let args = [
             "test",
             "-p",
@@ -373,16 +378,33 @@ mod tests {
             "terse",
         ]
         .map(str::to_string);
-        assert_eq!(
-            build_args_before_list(&args),
-            vec![
-                "test".to_string(),
-                "-p".to_string(),
-                "xtask".to_string(),
-                "some_filter".to_string(),
-                "--no-run".to_string(),
-            ]
-        );
+        let build = build_args_before_list(&args)
+            .ok_or("ordinary cargo test lost its separate build step")?;
+        let expected = ["test", "-p", "xtask", "some_filter", "--no-run"].map(str::to_string);
+        if build == expected {
+            Ok(())
+        } else {
+            Err(format!("build args drifted: {build:?}"))
+        }
+    }
+
+    #[test]
+    fn test_covered_by_doc_tests_do_not_append_no_run() -> Result<(), String> {
+        let args = [
+            "test",
+            "--workspace",
+            "--doc",
+            "--",
+            "--list",
+            "--format",
+            "terse",
+        ]
+        .map(str::to_string);
+        if build_args_before_list(&args).is_none() {
+            Ok(())
+        } else {
+            Err("cargo test --doc must not be combined with --no-run".to_string())
+        }
     }
 
     #[test]
