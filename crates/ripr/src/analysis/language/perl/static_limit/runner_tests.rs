@@ -4,7 +4,9 @@
 //! isolate runner availability from semantic evidence without modifying the
 //! byte-pinned migration corpus or claiming ingestion/runner execution proof.
 
-use super::super::{Confidence, DynamicBoundaryFact, PacketStatus, packet_to_findings};
+use super::super::{
+    Confidence, DynamicBoundaryFact, LimitationFact, PacketStatus, packet_to_findings,
+};
 use super::*;
 use crate::domain::{ExposureClass, Finding, LanguageStatus};
 
@@ -248,7 +250,7 @@ fn perl_static_limit_missing_runner_respects_scope() -> Result<(), String> {
 fn perl_missing_runner_limitation_discloses_unverified_observation() -> Result<(), String> {
     let mut packet = isolated_packet()?;
     assert_eq!(finding(&packet)?.class, ExposureClass::Exposed);
-    assert_eq!(projection(&packet)?.missing_test_runner, false);
+    assert!(!projection(&packet)?.missing_test_runner);
     let baseline = finding(&packet)?;
     assert!(
         baseline
@@ -257,15 +259,33 @@ fn perl_missing_runner_limitation_discloses_unverified_observation() -> Result<(
             .is_some_and(|step| step.starts_with("No test change needed"))
     );
 
-    // Reuse the packet's own limitation shape and scope, varying only its code.
-    let original: PerlFactPacket = serde_json::from_str(REAL_PRODUCER_PACKET)
-        .map_err(|error| format!("decode pinned producer packet: {error}"))?;
-    let mut limitation = original
-        .limitations
-        .into_iter()
-        .next()
-        .ok_or_else(|| "control packet needs a producer limitation".to_string())?;
-    limitation.kind = "missing_test_runner".to_string();
+    // A limitation scoped to unrelated evidence must not affect this finding.
+    let limitation = LimitationFact {
+        limitation_id: "limitation:test-runner".to_string(),
+        kind: "missing_test_runner".to_string(),
+        message: "test runner is missing".to_string(),
+        evidence_refs: vec!["unrelated:missing-runner-control".to_string()],
+    };
+    let mut unrelated = packet.clone();
+    unrelated.limitations.push(limitation.clone());
+    assert_eq!(projection(&unrelated)?, Projection::default());
+    let unrelated_finding = finding(&unrelated)?;
+    assert_eq!(unrelated_finding.class, ExposureClass::Exposed);
+    assert!(
+        unrelated_finding
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|step| step.starts_with("No test change needed"))
+    );
+    assert!(
+        !unrelated_finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("perl_missing_test_runner:"))
+    );
+
+    // An empty evidence scope is producer-global, and must disclose the runner.
+    let mut limitation = limitation;
     limitation.evidence_refs.clear();
     packet.limitations.push(limitation);
 
