@@ -90,10 +90,12 @@ fn server_path_text(path: &Path) -> String {
 fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
     let result = initialize_result();
 
-    assert_eq!(
-        result.capabilities.text_document_sync,
-        Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL))
-    );
+    let Some(TextDocumentSyncCapability::Options(sync)) = result.capabilities.text_document_sync
+    else {
+        return Err("expected explicit textDocumentSync options".to_string());
+    };
+    assert_eq!(sync.open_close, Some(true));
+    assert_eq!(sync.change, Some(TextDocumentSyncKind::INCREMENTAL));
     assert_eq!(
         result.capabilities.hover_provider,
         Some(HoverProviderCapability::Simple(true))
@@ -7277,14 +7279,17 @@ fn document_store_tracks_open_change_and_close() -> Result<(), String> {
     assert_eq!(opened.version, Some(1));
     assert_eq!(opened.text, "fn old() {}");
 
-    store.change(DidChangeTextDocumentParams {
-        text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 2),
-        content_changes: vec![TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text: "fn new() {}".to_string(),
-        }],
-    });
+    store.change(
+        DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 2),
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "fn new() {}".to_string(),
+            }],
+        },
+        &PositionEncodingKind::UTF16,
+    );
 
     let Some(changed) = store.documents.get(&uri) else {
         return Err("expected changed document".to_string());
@@ -7305,14 +7310,17 @@ fn document_store_creates_document_from_full_change_when_missing() -> Result<(),
     let uri = test_uri("file:///workspace/src/lib.rs")?;
     let mut store = DocumentStore::default();
 
-    store.change(DidChangeTextDocumentParams {
-        text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 7),
-        content_changes: vec![TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text: "fn discovered() {}".to_string(),
-        }],
-    });
+    store.change(
+        DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 7),
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "fn discovered() {}".to_string(),
+            }],
+        },
+        &PositionEncodingKind::UTF16,
+    );
 
     let Some(document) = store.documents.get(&uri) else {
         return Err("expected document from full change".to_string());
@@ -7959,6 +7967,11 @@ fn initialize_surfaces_poisoned_client_features_store_as_a_session_failure() -> 
             ))
             .await
             .map_err(|err| format!("initialize failed: {err}"))?;
+        if backend.selected_position_encoding_for_test().is_some() {
+            return Err(
+                "poisoned immutable client profile must not guess a position encoding".to_string(),
+            );
+        }
 
         // The store failure must surface through the blocking-failure
         // channel instead of leaving the pre-initialize profile beside

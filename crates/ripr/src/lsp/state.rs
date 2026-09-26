@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use tower_lsp_server::ls_types::{
     Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    Uri, WorkspaceFolder,
+    Position, PositionEncodingKind, TextDocumentContentChangeEvent, Uri, WorkspaceFolder,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -894,6 +894,11 @@ pub(super) enum DocumentStalenessReason {
     /// snapshot analyzed, so saved-state line identity no longer matches
     /// the client's buffer.
     BufferDivergesFromAnalyzedSavedContent,
+    /// An incremental change could not be applied to the retained buffer
+    /// under the negotiated position encoding. The retained text is no
+    /// longer authoritative for line identity, so diagnostics stay
+    /// quarantined until a later full replacement/open re-establishes it.
+    InvalidIncrementalChange,
     /// No refresh has analyzed this document's saved content in the current
     /// session, so there is no analyzed baseline to serve against.
     NoAnalyzedSavedContent,
@@ -905,6 +910,7 @@ impl DocumentStalenessReason {
             Self::BufferDivergesFromAnalyzedSavedContent => {
                 "buffer_diverges_from_analyzed_saved_content"
             }
+            Self::InvalidIncrementalChange => "invalid_incremental_change",
             Self::NoAnalyzedSavedContent => "no_analyzed_saved_content",
         }
     }
@@ -913,6 +919,9 @@ impl DocumentStalenessReason {
         match self {
             Self::BufferDivergesFromAnalyzedSavedContent => {
                 "the open buffer diverges from the last analyzed saved content"
+            }
+            Self::InvalidIncrementalChange => {
+                "an incremental document change could not be applied under the negotiated position encoding"
             }
             Self::NoAnalyzedSavedContent => {
                 "the document's saved content has not been analyzed in this session"
@@ -1049,6 +1058,140 @@ impl DocumentState {
     }
 }
 
+/// Convert one LSP position to a UTF-8 byte offset in the retained buffer.
+///
+/// LSP incremental ranges are expressed in the session's negotiated position
+/// encoding, while Rust string edits require UTF-8 byte boundaries. Lines are
+/// split on LF and a CR immediately before LF is excluded from the line's
+/// character span, matching the protocol's CRLF semantics.
+fn document_position_byte_offset(
+    text: &str,
+    position: Position,
+    encoding: &PositionEncodingKind,
+) -> Option<usize> {
+    let target_line = usize::try_from(position.line).ok()?;
+    let target_units = usize::try_from(position.character).ok()?;
+
+    let mut line_start = 0usize;
+    for _ in 0..target_line {
+        let newline = text.get(line_start..)?.find('\n')?;
+        line_start = line_start.checked_add(newline)?.checked_add(1)?;
+    }
+
+    let remainder = text.get(line_start..)?;
+    let raw_line_end = remainder.find('\n').unwrap_or(remainder.len());
+    let raw_line = remainder.get(..raw_line_end)?;
+    let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+
+    let relative = if *encoding == PositionEncodingKind::UTF8 {
+        if target_units > line.len() || !line.is_char_boundary(target_units) {
+            return None;
+        }
+        target_units
+    } else if *encoding == PositionEncodingKind::UTF32 {
+        encoded_units_to_byte_offset(line, target_units, |character| {
+            let _ = character;
+            1
+        })?
+    } else {
+        // UTF-16 is both the protocol default and the preferred negotiated
+        // encoding. Unknown future encodings fail through the UTF-16 path
+        // rather than silently treating code units as UTF-8 bytes.
+        encoded_units_to_byte_offset(line, target_units, |character| character.len_utf16())?
+    };
+    line_start.checked_add(relative)
+}
+
+fn encoded_units_to_byte_offset(
+    line: &str,
+    target_units: usize,
+    units_for: impl Fn(char) -> usize,
+) -> Option<usize> {
+    let mut units = 0usize;
+    for (byte_index, character) in line.char_indices() {
+        if units == target_units {
+            return Some(byte_index);
+        }
+        units = units.checked_add(units_for(character))?;
+        if units > target_units {
+            // The requested position lands inside a multi-unit character
+            // (for example, between the UTF-16 surrogates of an emoji).
+            return None;
+        }
+    }
+    (units == target_units).then_some(line.len())
+}
+
+fn apply_document_content_change(
+    text: &mut String,
+    change: TextDocumentContentChangeEvent,
+    encoding: &PositionEncodingKind,
+) -> Result<(), ()> {
+    let Some(range) = change.range else {
+        *text = change.text;
+        return Ok(());
+    };
+    let Some(start) = document_position_byte_offset(text, range.start, encoding) else {
+        return Err(());
+    };
+    let Some(end) = document_position_byte_offset(text, range.end, encoding) else {
+        return Err(());
+    };
+    if start > end {
+        return Err(());
+    }
+    text.replace_range(start..end, &change.text);
+    Ok(())
+}
+
+/// Apply an LSP change list in wire order. A range-less change is a full
+/// replacement; later range changes are evaluated against that replacement,
+/// as required by the incremental synchronization contract.
+///
+/// The common zero/one-change path edits the retained buffer without copying
+/// the whole document. Multi-change notifications use a candidate buffer so a
+/// malformed later range cannot partially commit earlier changes from the
+/// same notification.
+fn apply_document_content_changes(
+    text: &mut String,
+    changes: Vec<TextDocumentContentChangeEvent>,
+    encoding: &PositionEncodingKind,
+) -> Result<(), ()> {
+    let mut changes = changes.into_iter();
+    let Some(first) = changes.next() else {
+        return Ok(());
+    };
+    let Some(second) = changes.next() else {
+        return apply_document_content_change(text, first, encoding);
+    };
+
+    let mut candidate = text.clone();
+    apply_document_content_change(&mut candidate, first, encoding)?;
+    apply_document_content_change(&mut candidate, second, encoding)?;
+    for change in changes {
+        apply_document_content_change(&mut candidate, change, encoding)?;
+    }
+    *text = candidate;
+    Ok(())
+}
+
+fn invalidate_incremental_document_state(state: &mut DocumentState) -> QuarantineTransition {
+    let was_quarantined = state.quarantine.is_some();
+    let was_disclosed = state
+        .quarantine
+        .as_ref()
+        .is_some_and(|quarantine| quarantine.withdrawal_disclosed);
+    state.quarantine = Some(DocumentQuarantine {
+        reason: DocumentStalenessReason::InvalidIncrementalChange,
+        withdrawal_disclosed: was_disclosed,
+    });
+    if was_quarantined {
+        QuarantineTransition::Unchanged
+    } else {
+        QuarantineTransition::Entered
+    }
+}
+
 #[derive(Default)]
 pub(super) struct DocumentStore {
     pub(super) documents: BTreeMap<Uri, DocumentState>,
@@ -1067,28 +1210,93 @@ impl DocumentStore {
         transition
     }
 
-    pub(super) fn change(&mut self, params: DidChangeTextDocumentParams) -> QuarantineTransition {
+    pub(super) fn change(
+        &mut self,
+        params: DidChangeTextDocumentParams,
+        position_encoding: &PositionEncodingKind,
+    ) -> QuarantineTransition {
         let uri = params.text_document.uri;
         let version = Some(params.text_document.version);
-        let text = params
-            .content_changes
-            .into_iter()
-            .last()
-            .map(|change| change.text);
+        let changes = params.content_changes;
+
         if let Some(state) = self.documents.get_mut(&uri) {
             state.version = version;
-            if let Some(text) = text {
-                state.text = text;
+
+            // Once one incremental range was rejected, the retained buffer is
+            // no longer an authority for later range-relative edits: the
+            // client may have applied the rejected notification. Stay
+            // quarantined until a range-less replacement re-establishes the
+            // complete current buffer, then apply only changes after that
+            // replacement.
+            if state.quarantine.as_ref().is_some_and(|quarantine| {
+                quarantine.reason == DocumentStalenessReason::InvalidIncrementalChange
+            }) {
+                let Some(last_full_replacement) =
+                    changes.iter().rposition(|change| change.range.is_none())
+                else {
+                    return QuarantineTransition::Unchanged;
+                };
+                let mut recovered = changes[last_full_replacement].text.clone();
+                if apply_document_content_changes(
+                    &mut recovered,
+                    changes
+                        .into_iter()
+                        .skip(last_full_replacement + 1)
+                        .collect(),
+                    position_encoding,
+                )
+                .is_err()
+                {
+                    return QuarantineTransition::Unchanged;
+                }
+                state.text = recovered;
+                return state.refresh_quarantine();
+            }
+
+            if apply_document_content_changes(&mut state.text, changes, position_encoding).is_err()
+            {
+                return invalidate_incremental_document_state(state);
             }
             return state.refresh_quarantine();
         }
-        let Some(text) = text else {
+
+        // didChange is valid only for an open document. Preserve the legacy
+        // recovery for a range-less full replacement, but never invent a
+        // base buffer for an incremental range when didOpen state is absent.
+        let Some(last_full_replacement) = changes.iter().rposition(|change| change.range.is_none())
+        else {
             return QuarantineTransition::Unchanged;
         };
+        let mut text = changes[last_full_replacement].text.clone();
+        if apply_document_content_changes(
+            &mut text,
+            changes
+                .into_iter()
+                .skip(last_full_replacement + 1)
+                .collect(),
+            position_encoding,
+        )
+        .is_err()
+        {
+            return QuarantineTransition::Unchanged;
+        }
         let mut state = DocumentState::new(uri.clone(), version, text);
         let transition = state.refresh_quarantine();
         self.documents.insert(uri, state);
         transition
+    }
+
+    /// Fail closed when a didChange notification cannot be interpreted under
+    /// the session's negotiated position encoding. The server must not guess
+    /// an encoding and mutate retained text: the client may already have
+    /// applied the change, so line identity is unknown until synchronization
+    /// authority is re-established.
+    pub(super) fn invalidate_change(&mut self, uri: &Uri, version: i32) -> QuarantineTransition {
+        let Some(state) = self.state_for_uri_mut(uri) else {
+            return QuarantineTransition::Unchanged;
+        };
+        state.version = Some(version);
+        invalidate_incremental_document_state(state)
     }
 
     /// Record a save: the didSave digest is the new saved-content identity
@@ -1498,6 +1706,360 @@ mod tests {
         })();
         let _ = std::fs::remove_dir_all(&dir);
         result
+    }
+
+    #[test]
+    fn incremental_content_changes_apply_in_wire_order_for_utf16() -> Result<(), String> {
+        let mut text = "a🎉b\r\nsecond\n".to_string();
+        let changes = vec![
+            TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 0,
+                        character: 1,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 3,
+                    },
+                }),
+                range_length: None,
+                text: "é".to_string(),
+            },
+            TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 1,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 1,
+                        character: 6,
+                    },
+                }),
+                range_length: None,
+                text: "next".to_string(),
+            },
+        ];
+        apply_document_content_changes(&mut text, changes, &PositionEncodingKind::UTF16)
+            .map_err(|()| "incremental UTF-16 change unexpectedly failed".to_string())?;
+        if text != "aéb\r\nnext\n" {
+            return Err(format!("unexpected incremental result: {text:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn incremental_positions_follow_the_negotiated_encoding() -> Result<(), String> {
+        for (encoding, start, end) in [
+            (PositionEncodingKind::UTF8, 1, 3),
+            (PositionEncodingKind::UTF16, 1, 2),
+            (PositionEncodingKind::UTF32, 1, 2),
+        ] {
+            let mut text = "aéb".to_string();
+            apply_document_content_changes(
+                &mut text,
+                vec![TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range {
+                        start: Position {
+                            line: 0,
+                            character: start,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: end,
+                        },
+                    }),
+                    range_length: None,
+                    text: "X".to_string(),
+                }],
+                &encoding,
+            )
+            .map_err(|()| format!("change failed for encoding {encoding:?}"))?;
+            if text != "aXb" {
+                return Err(format!("wrong result for encoding {encoding:?}: {text:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn incremental_change_rejects_mid_character_and_reversed_ranges() {
+        let mut mid_surrogate = "a🎉b".to_string();
+        let original = mid_surrogate.clone();
+        let result = apply_document_content_changes(
+            &mut mid_surrogate,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 0,
+                        character: 2,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 3,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(result.is_err());
+        assert_eq!(mid_surrogate, original);
+
+        let mut reversed = "abcd".to_string();
+        let result = apply_document_content_changes(
+            &mut reversed,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 0,
+                        character: 3,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 1,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(result.is_err());
+        assert_eq!(reversed, "abcd");
+    }
+
+    #[test]
+    fn incremental_change_list_is_transactional_on_late_rejection() {
+        let mut text = "abcd".to_string();
+        let result = apply_document_content_changes(
+            &mut text,
+            vec![
+                TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range {
+                        start: Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 1,
+                        },
+                    }),
+                    range_length: None,
+                    text: "A".to_string(),
+                },
+                TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range {
+                        start: Position {
+                            line: 9,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 9,
+                            character: 0,
+                        },
+                    }),
+                    range_length: None,
+                    text: "X".to_string(),
+                },
+            ],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(result.is_err());
+        assert_eq!(text, "abcd");
+    }
+
+    #[test]
+    fn invalid_incremental_change_enters_fail_closed_quarantine() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        store
+            .documents
+            .insert(uri.clone(), clean_document_state(&uri, "a🎉b"));
+        let transition = store.change(
+            DidChangeTextDocumentParams {
+                text_document: tower_lsp_server::ls_types::VersionedTextDocumentIdentifier {
+                    uri: uri.clone(),
+                    version: 2,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range {
+                        start: Position {
+                            line: 0,
+                            character: 2,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 3,
+                        },
+                    }),
+                    range_length: None,
+                    text: "X".to_string(),
+                }],
+            },
+            &PositionEncodingKind::UTF16,
+        );
+        if transition != QuarantineTransition::Entered {
+            return Err("an invalid incremental change must enter quarantine".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing document state".to_string());
+        };
+        if state.quarantine.as_ref().map(|q| q.reason)
+            != Some(DocumentStalenessReason::InvalidIncrementalChange)
+        {
+            return Err("invalid incremental change must name its quarantine reason".to_string());
+        }
+        if state.text != "a🎉b" {
+            return Err("a rejected incremental change must not corrupt retained text".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_position_encoding_invalidates_without_mutating_retained_text()
+    -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        store
+            .documents
+            .insert(uri.clone(), clean_document_state(&uri, "aéb"));
+
+        let transition = store.invalidate_change(&uri, 2);
+        if transition != QuarantineTransition::Entered {
+            return Err("uninterpretable didChange must enter quarantine".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing document state".to_string());
+        };
+        if state.version != Some(2) {
+            return Err("uninterpretable didChange must still advance the observed version".into());
+        }
+        if state.text != "aéb" {
+            return Err(
+                "uninterpretable didChange must not guess an encoding or mutate text".into(),
+            );
+        }
+        if state.quarantine.as_ref().map(|q| q.reason)
+            != Some(DocumentStalenessReason::InvalidIncrementalChange)
+        {
+            return Err("uninterpretable didChange must use invalid-change quarantine".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_incremental_state_requires_full_replacement_to_recover() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        let mut state = clean_document_state(&uri, "abcd");
+        state.quarantine = Some(DocumentQuarantine {
+            reason: DocumentStalenessReason::InvalidIncrementalChange,
+            withdrawal_disclosed: true,
+        });
+        store.documents.insert(uri.clone(), state);
+
+        let range_only = store.change(
+            DidChangeTextDocumentParams {
+                text_document: tower_lsp_server::ls_types::VersionedTextDocumentIdentifier {
+                    uri: uri.clone(),
+                    version: 3,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range {
+                        start: Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 1,
+                        },
+                    }),
+                    range_length: None,
+                    text: "X".to_string(),
+                }],
+            },
+            &PositionEncodingKind::UTF16,
+        );
+        if range_only != QuarantineTransition::Unchanged {
+            return Err("range-only edit must not recover unknown buffer authority".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing document state".to_string());
+        };
+        if state.text != "abcd"
+            || state.quarantine.as_ref().map(|q| q.reason)
+                != Some(DocumentStalenessReason::InvalidIncrementalChange)
+        {
+            return Err("range-only edit must preserve invalid-change quarantine".to_string());
+        }
+
+        let recovered = store.change(
+            DidChangeTextDocumentParams {
+                text_document: tower_lsp_server::ls_types::VersionedTextDocumentIdentifier {
+                    uri: uri.clone(),
+                    version: 4,
+                },
+                content_changes: vec![
+                    TextDocumentContentChangeEvent {
+                        range: None,
+                        range_length: None,
+                        text: "wxyz".to_string(),
+                    },
+                    TextDocumentContentChangeEvent {
+                        range: Some(tower_lsp_server::ls_types::Range {
+                            start: Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 1,
+                            },
+                        }),
+                        range_length: None,
+                        text: "W".to_string(),
+                    },
+                ],
+            },
+            &PositionEncodingKind::UTF16,
+        );
+        if recovered != QuarantineTransition::Unchanged {
+            // The document remains quarantined because the recovered buffer
+            // still differs from the analyzed saved digest. What changes is
+            // the reason: buffer authority is known again.
+            return Err("recovery must continue the existing quarantine episode".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing recovered document state".to_string());
+        };
+        if state.text != "Wxyz" {
+            return Err(format!(
+                "full replacement did not recover buffer: {:?}",
+                state.text
+            ));
+        }
+        if state.quarantine.as_ref().map(|q| q.reason)
+            != Some(DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)
+        {
+            return Err(
+                "full replacement must restore ordinary dirty-buffer quarantine".to_string(),
+            );
+        }
+        if !state
+            .quarantine
+            .as_ref()
+            .is_some_and(|quarantine| quarantine.withdrawal_disclosed)
+        {
+            return Err(
+                "recovery inside one quarantine episode must retain disclosure state".into(),
+            );
+        }
+        Ok(())
     }
 
     #[test]

@@ -93,11 +93,11 @@ use tower_lsp_server::ls_types::{
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentDiagnosticParams,
     DocumentDiagnosticReport, DocumentDiagnosticReportResult, ExecuteCommandParams, FileEvent,
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
-    LogTraceParams, MessageType, Registration, RelatedFullDocumentDiagnosticReport,
-    RelatedUnchangedDocumentDiagnosticReport, TraceValue, UnchangedDocumentDiagnosticReport, Uri,
-    WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
-    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
-    WorkspaceUnchangedDocumentDiagnosticReport,
+    LogTraceParams, MessageType, PositionEncodingKind, Registration,
+    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport, TraceValue,
+    UnchangedDocumentDiagnosticReport, Uri, WorkspaceDiagnosticParams, WorkspaceDiagnosticReport,
+    WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
+    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -2075,6 +2075,22 @@ impl Backend {
             .unwrap_or(serde_json::Value::Null)
     }
 
+    /// Position encoding negotiated once at initialize. If the immutable
+    /// profile store is unavailable, return no encoding: after negotiation,
+    /// guessing UTF-16 could reinterpret UTF-8/UTF-32 incremental ranges and
+    /// corrupt retained buffer identity.
+    fn selected_position_encoding(&self) -> Option<PositionEncodingKind> {
+        self.client_features
+            .lock()
+            .ok()
+            .map(|features| features.selected_position_encoding.clone())
+    }
+
+    #[cfg(test)]
+    pub(super) fn selected_position_encoding_for_test(&self) -> Option<PositionEncodingKind> {
+        self.selected_position_encoding()
+    }
+
     /// Poison the profile store so tests can exercise the fail-closed
     /// surfacing at `initialize` (#1987 review). A std::sync::Mutex is
     /// poisoned only when a guard holder unwinds, so this helper triggers a
@@ -2310,10 +2326,14 @@ impl Backend {
         params: DidChangeTextDocumentParams,
     ) -> Option<(Uri, QuarantineTransition)> {
         let uri = params.text_document.uri.clone();
-        self.documents
-            .lock()
-            .ok()
-            .map(|mut documents| (uri, documents.change(params)))
+        let version = params.text_document.version;
+        let position_encoding = self.selected_position_encoding();
+        let mut documents = self.documents.lock().ok()?;
+        let transition = match position_encoding {
+            Some(position_encoding) => documents.change(params, &position_encoding),
+            None => documents.invalidate_change(&uri, version),
+        };
+        Some((uri, transition))
     }
 
     fn save_document(
