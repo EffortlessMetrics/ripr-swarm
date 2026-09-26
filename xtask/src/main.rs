@@ -13287,7 +13287,9 @@ fn check_output_contracts() -> Result<(), String> {
             }
             "kind" => {
                 let producer = match value.as_str() {
-                    "python_repair_driver_binding" => "crates/ripr/src/app/python_repair_binding.rs",
+                    "python_repair_driver_binding" => {
+                        "crates/ripr/src/app/python_repair_binding.rs"
+                    }
                     "python_repair_verification_receipt" => {
                         "crates/ripr/src/app/python_repair_verification.rs"
                     }
