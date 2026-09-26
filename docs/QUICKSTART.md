@@ -1,102 +1,226 @@
 # Quickstart
 
-Use this guide to get useful RIPR feedback in the first hour without learning
-the full report topology. Pick one path, get one repairable Rust gap or a clear
-no-action state, and keep the receipt.
-
-RIPR finds changed Rust code where the nearby tests may not actually catch
-the changed behavior. The static, draft-time question it answers is:
-
-```text
-For the behavior changed in this diff, do the current tests include an
-assertion or check that would catch the changed behavior?
-```
-
-It does not edit source, generate tests, run mutation testing, or prove test
-adequacy. The normal first-hour loop is:
-
-```text
-inspect one change
--> select one named gap
--> start the repair transaction
--> write one focused test outside RIPR
--> finish the transaction
--> keep the advisory receipt
-```
-
-RIPR calls these locations "seams" in JSON, specs, and reports. First-hour docs
-use plain language first; [Terminology](TERMINOLOGY.md) bridges to the internal
-model when you need it.
-
-The [public command hierarchy](COMMAND_HIERARCHY.md) keeps the first-hour roles
-distinct: `check` is ordinary first value, `pilot` is guided repo adoption,
-`agent repair` is the repair transaction, and `first-pr` composes PR evidence.
-
-Each repair's before phase prints the exact `--attempt` command needed after
-the test edit. Retain it: the repair-attempt ID identifies the prepared
-transaction and differs from the seam ID used to select the gap.
-[Repair attempt identity](REPAIR_ATTEMPT.md) documents continuation and recovery.
-
-The Rust gap-repair loop is `usable alpha`. Its package, editor, bounded packet,
-and before/after transaction paths are proved when RIPR emits a complete route;
-the governed real-repository corpus does not yet establish how often ordinary
-changes yield such a route or complete successfully. Treat a no-action or
-limited result as evidence, not as a failed product promise or a clean bill of
-health.
-
-## Choose Your Path
-
-Most adopters should choose one of these first-hour paths:
-
-| Path | Use when | Start with | First success |
-| --- | --- | --- | --- |
-| CLI first | You want one local before/after proof. | `ripr check` | Top Rust gap or an honest no-action/limited state, followed by one bounded repair attempt. |
-| PR first | You want reviewers to see advisory evidence in GitHub. | `ripr init --ci github` | Non-blocking summary, repair card, artifact packet. |
-| Editor or agent first | You are repairing while coding, or handing work to an LLM. | VS Code `ripr: Show Status` or `ripr agent repair --seam-id <id> --phase before` | Current gap, related test, edit cage, verify route, and receipt. |
-
-For TypeScript, JavaScript, or broader Python static-fact evaluation, first read
-[Language adapter preview workflow](LANGUAGE_ADAPTER_PREVIEW.md). Preview
-language evidence is syntax-first, visibly preview/advisory, and not a default
-gate input. Python findings report `Language status: preview`. Within that
-preview, the scoped Python repair-routing loop is `usable alpha` for selected
-pytest/unittest repair cards, packets, verify commands, and receipts: a repair
-card appears only for a `weakly_exposed` finding whose related test reaches the
-change and for which ripr names the missing discriminator, a test location, and
-a verify command. `exposed`, `no_static_path`, heuristic-only, and
-static-limited findings get no card, and `ripr pilot` then reports
-`repair cards: 0`. The loop remains advisory and does not run imports, execute
-tests, or generate tests by default.
-
-`ripr.toml` is optional. `ripr init` materializes repo-local policy when a team
-wants to review, version, and tune it. It is not activation, and it is not
-required for first value.
-
-## VS Code First Hour
-
-Use this path when you want saved-workspace feedback while writing or reviewing
-Rust.
-
-1. Install `EffortlessMetrics.ripr` from VS Code Marketplace or Open VSX.
-2. Open a Rust/Cargo workspace.
-3. Check the `ripr` status bar item or run `ripr: Show Status`.
-4. Open the Problems panel, hover a RIPR diagnostic, and inspect the gap.
-5. Use `ripr: Start Current Repair` or the focused-test actions to copy the
-   repair packet, open the related test, and copy the verify command.
-
-The current editor command is the contextual shell for the same bounded
-before/edit/after idea. The explicit CLI/agent equivalent is:
+Run `ripr check` in a Git repository with a committed change:
 
 ```bash
-ripr agent repair --root . --seam-id <id> --phase before
-# edit one focused test outside RIPR
+ripr check
+```
+
+A useful first result is not necessarily a finding. It is one bounded answer:
+
+- one changed behavior whose current test check appears too weak;
+- one safe next action; or
+- an explicit no-action or limited state when ripr cannot justify repair advice.
+
+A no-action result is not a clean bill of health. It means the current static
+evidence did not earn a bounded repair route. Use `--format human-full` for the
+complete evidence or `--format json` for machine-readable output.
+
+`ripr.toml` is optional. The zero-config path is the intended first interface.
+
+The public command roles are deliberately separate:
+
+```text
+check         analyze one current change
+pilot         guide repository adoption and select one work item
+agent repair  retain one before/edit/after transaction
+first-pr      compose existing artifacts for reviewers
+```
+
+See [Command hierarchy](COMMAND_HIERARCHY.md) for the full contract.
+
+## Choose a first-hour path
+
+| Path | Start with | First useful result |
+| --- | --- | --- |
+| CLI | `ripr check` | One selected gap or an honest no-action/limited state. |
+| VS Code | Install `EffortlessMetrics.ripr`; run **ripr: Show Status** | Saved-workspace diagnostics, hover evidence, and bounded actions. |
+| GitHub Actions | `ripr init --ci github` | Advisory PR summary and retained artifacts. |
+| Coding agent | `ripr pilot --root .` | One repo-scoped work item and the exact before command. |
+| MCP client | `ripr mcp --stdio` | Read-only workspace status. |
+
+Public docs use plain language first. Specs and machine output use terms such as
+*seam*, *discriminator*, *oracle*, and *canonical gap*; the
+[Terminology bridge](TERMINOLOGY.md) maps those terms to the user job.
+
+## Install
+
+### CLI
+
+```bash
+cargo install ripr
+```
+
+Installing from crates.io builds ripr locally and requires **Rust 1.95 or
+newer** with the Rust 2024 edition toolchain.
+
+That is RIPR's build MSRV, not a minimum compiler version for the repository
+being analyzed. An already-built ripr binary can statically inspect a
+repository that pins an older Rust toolchain. Project verification commands
+still use the repository's own selected toolchain and can succeed, fail, or be
+unavailable independently of static analysis.
+
+For development from this checkout:
+
+```bash
+cargo install --path crates/ripr
+```
+
+### VS Code
+
+Install `EffortlessMetrics.ripr` from VS Marketplace or Open VSX. The extension
+resolves its server from the configured path, bundled or cached assets,
+verified GitHub Release assets, or `PATH`. A separate `cargo install ripr` is
+not required for the normal editor path.
+
+### Repository requirements
+
+- Git must be available on `PATH`.
+- Analysis must target a Git repository.
+- Committed history is the default input. Add `--worktree` to include staged
+  and unstaged edits.
+- `ripr check` resolves the remote default branch (`origin/HEAD`) and then
+  common remote/local fallbacks. Pass `--base <ref>` when you need an explicit
+  comparison.
+
+## CLI first hour
+
+### 1. Analyze one change
+
+```bash
+ripr check
+```
+
+For uncommitted work:
+
+```bash
+ripr check --worktree
+```
+
+For an explicit base:
+
+```bash
+ripr check --base <base-ref>
+```
+
+The default human output shows one bounded `Start here:` state. It either names
+the top supported gap, reports no current action, or names the limitation that
+prevents safe guidance.
+
+Use the other projections only when needed:
+
+```bash
+ripr check --format human-full
+ripr check --format json > target/ripr/check.json
+```
+
+### 2. Select one repo-scoped repair
+
+```bash
+ripr pilot --root .
+```
+
+`pilot` is the guided repository-adoption path. It prints the work item it
+recommends and the exact `ripr agent repair` before command. It also retains the
+selected IDs and packet under `target/ripr/pilot/`.
+
+The seam ID used by `agent repair` is repo-scoped. Probe IDs printed by
+`ripr check` are diff-scoped and are used by commands such as `explain` and
+`context`; the two identifiers are not interchangeable.
+
+### 3. Retain the before state
+
+```bash
+ripr agent repair --root . --seam-id <seam-id> --phase before
+```
+
+The before phase validates currentness, writes the pre-edit evidence, and
+prints the exact `--attempt` command for the after phase. Keep that command.
+The repair-attempt ID identifies the prepared transaction.
+
+### 4. Edit one focused test
+
+Make the smallest coherent test or fixture change outside RIPR. Respect the
+packet's allowed edit surface, forbidden files, stop conditions, and named
+limitations. RIPR does not generate or apply the test edit.
+
+### 5. Finish the same transaction
+
+```bash
 ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
-Normal editor install should not require `cargo install ripr`. The extension
-resolves the server from `ripr.server.path`, bundled or cached assets, verified
-GitHub Release download, or PATH.
+The after phase writes the post-edit static evidence and a receipt. Static
+movement and executed project verification remain separate facts. For a
+trust-bound Python attempt, a third, separately authorized `--phase verify`
+can run the packet's verification route; see
+[Repair attempt identity](REPAIR_ATTEMPT.md) and
+[Command hierarchy](COMMAND_HIERARCHY.md#repair-transaction).
 
-If no diagnostics appear, start with the status path:
+Keep one selected repository root throughout the transaction. The root,
+before/after artifacts, selected work item, verification subject, and receipt
+must all describe the same repository and comparable revisions.
+
+### 6. Compose reviewer-facing evidence
+
+After the analyzer and repair artifacts exist:
+
+```bash
+ripr first-pr --root . --base <base-ref> --head HEAD
+```
+
+Use the repository's actual base ref. `origin/main` is common but not
+universal. `first-pr` composes existing artifacts into
+`target/ripr/reports/start-here.{json,md}`; it does not analyze the change or
+strengthen the evidence.
+
+### Optional low-level control path
+
+The ordinary two-phase repair flow hides most artifact plumbing. The underlying
+commands remain useful for debugging and contract checks:
+
+```bash
+ripr check --root . --mode draft --format repo-exposure-json \
+  > target/ripr/pilot/after.repo-exposure.json
+
+ripr outcome \
+  --before target/ripr/pilot/repo-exposure.json \
+  --after target/ripr/pilot/after.repo-exposure.json
+```
+
+To evaluate an explicit local policy decision, keep the same base identity
+through each producer:
+
+```bash
+mkdir -p target/ripr
+ripr check --base <base-ref> --format json > target/ripr/check.json
+ripr review-comments \
+  --base <base-ref> \
+  --head HEAD \
+  --check-output target/ripr/check.json
+ripr gate evaluate \
+  --pr-guidance target/ripr/review/comments.json \
+  --mode acknowledgeable
+```
+
+`ripr check` itself is advisory and does not block. `gate evaluate` exits
+non-zero only under the explicitly selected gate policy. See
+[Calibrated gate policy](CALIBRATED_GATE_POLICY.md).
+
+## VS Code first hour
+
+1. Install `EffortlessMetrics.ripr`.
+2. Open one repository or workspace.
+3. Run **ripr: Show Status**.
+4. Save the changed file.
+5. Open the Problems panel and hover a RIPR diagnostic.
+6. Use the bounded actions to inspect the related test, copy a repair route, or
+   start the current repair.
+
+The editor analyzes saved workspace state. Unsaved-buffer overlays are not the
+normal authority. Save or refresh before acting on evidence that may be stale.
+
+If diagnostics do not appear, use:
 
 ```text
 ripr: Show Status
@@ -104,257 +228,113 @@ ripr: Show Output
 ripr: Restart Server
 ```
 
-The editor analyzes the saved workspace. Unsaved-buffer overlays are not enabled
-by default. Save the file or refresh analysis before trusting a stale diagnostic.
+A missing, ambiguous, stale, untrusted, or removed workspace root must not be
+replaced by the language-server process working directory.
 
-Deep links: [Editor evidence workflow](EDITOR_EVIDENCE_WORKFLOW.md),
-[Editor extension](EDITOR_EXTENSION.md), [Server provisioning](SERVER_PROVISIONING.md).
+Deep links:
+[Editor extension](EDITOR_EXTENSION.md),
+[Editor evidence workflow](EDITOR_EVIDENCE_WORKFLOW.md), and
+[Server provisioning](SERVER_PROVISIONING.md).
 
-## CI First Hour
+## CI first hour
 
-Use this path when you want PR-visible advisory evidence without asking every
-reviewer to download raw artifacts.
-
-Generate the GitHub workflow:
+Generate the advisory GitHub workflow:
 
 ```bash
 ripr init --ci github
 ```
 
-Or copy the workflow from
-[CI strategy](CI.md#copyable-ripr-advisory-workflow) when adopting from the
-GitHub UI. Most of that document is this repository's own CI policy; the
-copyable recipe and the artifact packet it produces are in the section that
-link opens.
-
-The generated workflow is advisory by default. On a PR, read the job summary
-first. It should show the first-run status, top repairable gap or no-action
-state, repair route, verify command, artifact links, and gate-authority
-boundary. The uploaded packet keeps the detailed pilot, workflow, agent,
-report, and review artifacts.
+On a pull request, read the job summary before downloading artifacts. The
+summary should name the first-run state, selected gap or limitation, safe next
+action, artifact links, and gate-authority boundary. The uploaded packet keeps
+the full machine evidence.
 
 Do not make generated CI blocking until the repository has reviewed its first
-advisory baseline and explicitly opted into a policy gate.
+advisory baseline and explicitly adopted a gate policy.
 
-Deep links: [CI strategy](CI.md), [PR review guidance](PR_REVIEW_GUIDANCE.md),
+See [CI strategy](CI.md), [PR review guidance](PR_REVIEW_GUIDANCE.md), and
 [Blocking readiness](BLOCKING_READINESS.md).
 
-## CLI First Hour
+## Preview languages
 
-Use this path when you want the reproducible local proof loop.
+TypeScript, JavaScript, and Python findings remain preview/advisory. They do not
+become Rust-parity evidence merely because their adapters ship in the normal
+binary.
 
-Install:
+The TypeScript-family adapter recognizes:
 
-```bash
-cargo install ripr
+```text
+.ts  .tsx  .mts  .cts  .js  .jsx  .mjs  .cjs
 ```
 
-From this repository, use:
+Modern module extensions are first-class diff-analysis inputs. Some downstream
+repair and targeted-rerun surfaces can still under-emit for `.mts`, `.cts`,
+`.mjs`, and `.cjs`; an absent packet or rerun route is therefore not evidence
+that the file was ignored or that the change is safe.
 
-```bash
-cargo install --path crates/ripr
+Python static facts are preview. A scoped repair route is `usable alpha` only
+for selected pytest/unittest findings that carry every required fact: current
+owner, related test, missing boundary/value/effect, test location, verify
+command, and bounded edit surface. Other findings remain inspect-only or
+limited.
+
+Read [Language adapter preview](LANGUAGE_ADAPTER_PREVIEW.md) and
+[Support tiers](status/SUPPORT_TIERS.md) before adopting preview evidence as
+policy.
+
+## Doctor and troubleshooting
+
+Use `ripr doctor --root .` to inspect:
+
+- repository and configuration discovery;
+- enabled and unavailable language adapters;
+- Git and relevant tool state;
+- cache and first-use artifact state; and
+- exact recovery for missing prerequisites.
+
+`doctor` is a diagnostic command, not the first-value analysis path. Keep these
+capabilities separate:
+
+```text
+run an already-built ripr binary
+statically analyze the repository
+run the repository's project verification
+build or install ripr from source
 ```
 
-Inspect the current change:
+RIPR's Rust 1.95 build MSRV belongs only to the last capability. A repository's
+own toolchain governs its project verification; it does not determine whether
+static analysis by an already-built binary is conceptually available.
 
-```bash
-ripr check
-```
+Common evidence states:
 
-`check` diffs committed history against this repository's own default branch
-(`origin/HEAD`, then `origin/main`, `origin/master`, `main`, `master`); pass
-`--base <ref>` for a different base. To include uncommitted edits, add
-`--worktree`.
+- **missing artifact** — regenerate it through the named producer;
+- **stale evidence** — rerun against the current root and revisions;
+- **wrong root** — stop rather than copying artifacts between repositories;
+- **malformed artifact** — reject it and regenerate;
+- **preview limitation** — inspect the named static boundary; do not invent a
+  repair target; and
+- **failed verification** — retain the failure; do not issue a successful
+  receipt.
 
-After a short summary header, the bounded human output shows one `Start here:`
-state. It either names
-the top repair-ready gap, reports an honest no-action state, or names the
-limitation that prevents current guidance. Use `--format human-full` for the
-complete evidence and `--format json` for machine data.
+## Trust boundary
 
-For a repair-ready gap, start the ordinary repair transaction:
+RIPR is static mutation-exposure analysis. It does not run mutants, edit
+production code, generate whole tests, replace coverage, or prove correctness
+or test adequacy.
 
-```bash
-ripr agent repair --root . --seam-id <id> --phase before
-```
+The Rust repair transaction is `usable alpha`: package, editor, bounded packet,
+and before/after paths exist when RIPR emits a complete route, while governed
+real-repository route yield and ordinary-user success are still being measured.
+Preview language evidence remains advisory. A skipped, partial, stale,
+wrong-subject, zero-subject, or unavailable required result is not a pass.
 
-`--seam-id` takes a repo-scoped seam ID, which is a different identifier from
-the probe IDs `ripr check` prints. Run `ripr pilot --root .` to get one: it
-prints the seam it recommends and the ready-to-run `ripr agent repair` command
-for it.
+## Next references
 
-Make one focused test edit outside RIPR, then finish:
-
-```bash
-ripr agent repair --root . --attempt <repair-attempt-id> --phase after
-```
-
-The before phase writes the pre-edit snapshot and repair packet. The after phase
-writes the post-edit snapshot, persists static verification JSON, and emits a
-receipt. RIPR does not author or apply the test edit. For a trust-bound Python
-attempt, a third, separately authorized `--phase verify` runs the verify route;
-see [Command hierarchy](COMMAND_HIERARCHY.md#repair-transaction).
-
-For guided repository adoption and materialized pilot reports, use:
-
-```bash
-ripr pilot --root .
-```
-
-`pilot` is broader than the ordinary one-change check. If it reports a partial
-result, use the retry command it prints rather than guessing at cache or timeout
-settings.
-
-For explicit low-level before/after comparison, the underlying commands remain
-available:
-
-```bash
-ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json
-ripr outcome \
-  --before target/ripr/pilot/repo-exposure.json \
-  --after target/ripr/pilot/after.repo-exposure.json
-```
-
-Those commands are useful for control and debugging; they are not required
-plumbing for the ordinary two-phase repair path.
-
-To compose PR-facing evidence from existing artifacts, use:
-
-```bash
-ripr first-pr --root . --base origin/main --head HEAD
-```
-
-It writes `target/ripr/reports/start-here.{json,md}` and does not add analyzer
-truth or repair a gap. Inside this repo, `cargo xtask first-pr` is a
-compatibility wrapper over the same public command.
-
-`check` itself never blocks. To try a local blocking decision on the current
-change before adopting one in CI:
-
-```bash
-mkdir -p target/ripr
-ripr check --base origin/main --format json > target/ripr/check.json
-ripr review-comments --base origin/main --head HEAD --check-output target/ripr/check.json
-ripr gate evaluate --pr-guidance target/ripr/review/comments.json --mode acknowledgeable
-```
-
-`review-comments` requires an explicit `--base` and matches it against the base
-recorded in `check`'s output, so pass the same ref to both commands. Substitute
-the ref your repository actually uses: `origin/main` is the common case, not a
-default that exists everywhere.
-
-`gate evaluate` exits non-zero when the decision is `blocked` or
-`config_error`. The full CI
-input set and modes are in [Calibrated gate policy](CALIBRATED_GATE_POLICY.md).
-
-Read the front door with the same vocabulary across CLI, editor, and PR
-surfaces:
-
-- `start here`: open `target/ripr/reports/start-here.md` first when it exists.
-- `safe next action`: repair one named gap, regenerate missing evidence, or
-  stop on no-action.
-- `missing artifact`, `stale evidence`, `wrong root`, and `malformed artifact`:
-  fail closed before repair work.
-- `preview-limited evidence`: syntax-first and advisory, with static limits
-  before repair language.
-- `verify command`, `receipt command`, and `receipt path`: the static movement
-  proof rail, not runtime adequacy or gate approval.
-
-When a surface boundary is unclear, use the ownership table in
-[First successful PR workflow](FIRST_PR_WORKFLOW.md#surface-ownership). It
-names which surface owns start-here, generated CI, editor handoff, agent
-packets, badges, PR evidence, and gate authority.
-
-## Agent Or Reviewer First Hour
-
-Use this path when a human or external coding agent needs a deterministic work
-packet for one focused test.
-
-When a current finding supplies a seam ID, use the primary repair command:
-
-```bash
-ripr agent repair --root . --seam-id <seam_id> --phase before
-# edit one focused test outside RIPR
-ripr agent repair --root . --attempt <repair-attempt-id> --phase after
-```
-
-When resuming, ask RIPR where you are. `agent status` prints the waiting
-attempt's `--attempt ... --phase after` command, `ripr pilot` when no seam is
-known yet, or a warning listing the choices when it would have to guess:
-
-```bash
-ripr agent status --root .
-```
-
-For explicit low-level control, `ripr agent start`, `brief`, `packet`, `verify`,
-`receipt`, and `review-summary` remain available. For example:
-
-```bash
-ripr agent start --root . --seam-id <seam_id> --out target/ripr/workflow
-```
-
-The generated `target/ripr/workflow/commands.md` exposes the task, context,
-repair route, verification command, stop conditions, and receipt path.
-
-The repair, status, and workflow commands read or write artifacts. They do not
-edit source files, generate tests, call an LLM API, run mutation testing,
-refresh LSP state, or enable CI blocking.
-
-See [LLM operator guide](LLM_OPERATOR_GUIDE.md).
-
-## Troubleshooting
-
-| Symptom | First check |
-| --- | --- |
-| VS Code shows no RIPR state, or shows no focused test gap. | Run `ripr: Show Status`, then `ripr: Show Output`. Confirm a Rust/Cargo workspace is open and saved. |
-| VS Code cannot start the server. | Check [Server provisioning](SERVER_PROVISIONING.md) for configured path, bundled or cached assets, GitHub Release download, and PATH fallback. |
-| Diagnostics look stale. | Save the workspace file or run `Refresh Analysis - Saved Workspace Check`. |
-| CI has no top recommendation. | Open the advisory job summary, then inspect the uploaded report packet. |
-| Agent status says artifacts are missing. | Run the `next_command` printed by `ripr agent status`. |
-| Local CLI behavior is surprising. | Run `ripr doctor` (or `ripr doctor --json`), then `ripr config validate` to check `ripr.toml`. Inspect the analysis cache with `ripr cache status`; preview a reset with `ripr cache clear --dry-run`, then reset with `ripr cache clear --force`. See [Configuration](CONFIGURATION.md). |
-| `check` reports no changed scope after an edit. | The edit is not committed. Commit it or rerun with `--worktree`. |
-
-## Known Limits
-
-RIPR reports static exposure evidence. It should not be read as runtime proof.
-
-It does not:
-
-- run mutants;
-- report `killed` or `survived` outside supplied runtime calibration reports;
-- prove test adequacy;
-- generate tests;
-- edit source files;
-- replace coverage or execution-backed mutation testing;
-- analyze unsaved editor buffers by default;
-- make generated CI blocking by default.
-
-Static classifications stay conservative: `exposed`, `weakly_exposed`,
-`reachable_unrevealed`, `no_static_path`, `infection_unknown`,
-`propagation_unknown`, and `static_unknown`.
-
-When runtime mutation data already exists, import it as advisory calibration
-data through [runtime calibration](TARGETED_TEST_WORKFLOW.md#runtime-calibration).
-Runtime vocabulary belongs in that calibration report, not in ordinary static
-RIPR findings.
-
-## Next Docs
-
-- [Public command hierarchy](COMMAND_HIERARCHY.md) for the stable task roles.
-- [Terminology](TERMINOLOGY.md) for the bridge between plain wording and the
-  internal model (seam, discriminator, grip, canonical gap, etc.).
-- [First successful PR workflow](FIRST_PR_WORKFLOW.md) for the one-PR path from
-  a repairable Rust gap to a focused proof and receipt.
-- [Targeted test workflow](TARGETED_TEST_WORKFLOW.md) for the deeper
-  before/after evidence and optional calibration loop.
-- [Editor extension](EDITOR_EXTENSION.md) for VS Code install, commands, and
-  saved-workspace refresh behavior.
-- [CI strategy](CI.md#copyable-ripr-advisory-workflow) for the generated
-  advisory workflow and artifact packet.
-- [LLM operator guide](LLM_OPERATOR_GUIDE.md) for the source-edit-free agent
-  loop.
-- [Configuration](CONFIGURATION.md) for `ripr.toml`, modes, severities, and
-  editor settings.
-- [Language adapter preview workflow](LANGUAGE_ADAPTER_PREVIEW.md) for opt-in
-  TypeScript, JavaScript, and Python evidence.
-- [Output schema](OUTPUT_SCHEMA.md) for JSON contracts.
+- [Terminology](TERMINOLOGY.md)
+- [Static exposure model](STATIC_EXPOSURE_MODEL.md)
+- [Targeted test workflow](TARGETED_TEST_WORKFLOW.md)
+- [First successful PR workflow](FIRST_PR_WORKFLOW.md)
+- [Output schema](OUTPUT_SCHEMA.md)
+- [Support tiers](status/SUPPORT_TIERS.md)
+- [Documentation index](README.md)
