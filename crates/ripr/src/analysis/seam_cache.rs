@@ -59,6 +59,58 @@ use crate::config::{
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+// The producer's layer names are also the only names cache maintenance may
+// inspect or remove. Defining both the typed names and inventory here makes a
+// newly added producer layer visible to the CLI and xtask in the same change.
+macro_rules! cache_layers {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        #[derive(Clone, Copy)]
+        enum CacheLayer { $($variant),+ }
+
+        impl CacheLayer {
+            const fn name(self) -> &'static str {
+                match self { $(Self::$variant => $name),+ }
+            }
+        }
+
+        /// Direct children of the cache root owned by ripr.
+        pub const CACHE_LAYER_NAMES: &[&str] = &[$($name),+];
+    };
+}
+
+cache_layers! {
+    SeamFacts => "repo-seam-facts",
+    SeamFactsSharded => "repo-seam-facts-sharded",
+    CompactClassifiedSeams => "repo-compact-classified-seams",
+    CompactClassifiedSeamsSharded => "repo-compact-classified-seams-sharded",
+    CorpusFingerprint => "repo-corpus-fingerprint",
+    FileFacts => "repo-file-facts",
+    SeamCounts => "repo-seam-counts",
+}
+
+#[derive(Clone, Copy)]
+enum ClassifiedCacheFamily {
+    SeamFacts,
+    CompactClassifiedSeams,
+}
+
+impl ClassifiedCacheFamily {
+    const fn layers(self) -> (CacheLayer, CacheLayer) {
+        match self {
+            Self::SeamFacts => (CacheLayer::SeamFacts, CacheLayer::SeamFactsSharded),
+            Self::CompactClassifiedSeams => (
+                CacheLayer::CompactClassifiedSeams,
+                CacheLayer::CompactClassifiedSeamsSharded,
+            ),
+        }
+    }
+}
+
+/// The product cache layer inventory, shared with cache maintenance in xtask.
+pub fn cache_layer_names() -> &'static [&'static str] {
+    CACHE_LAYER_NAMES
+}
+
 /// On-disk representation of seam-limit metadata embedded in the cache envelope.
 /// Mirrors `SeamLimitInfo` but lives in the cache module to avoid a circular dep.
 /// `#[serde(default)]` ensures old cache entries without this field deserialize
@@ -917,7 +969,7 @@ impl RepoCorpusFingerprintCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         Self {
             dir: cache_base_dir(workspace_root)
-                .join("repo-corpus-fingerprint")
+                .join(CacheLayer::CorpusFingerprint.name())
                 .join(CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION),
         }
     }
@@ -1022,7 +1074,7 @@ pub(crate) struct CacheStoreStatus {
 impl RepoSeamFactCache {
     /// Construct a cache rooted at the workspace's `target/ripr/cache/...`.
     pub(crate) fn at(workspace_root: &Path) -> Self {
-        Self::at_named(workspace_root, "repo-seam-facts", CACHE_SCHEMA_VERSION)
+        Self::at_named(workspace_root, ClassifiedCacheFamily::SeamFacts, CACHE_SCHEMA_VERSION)
     }
 
     /// Construct the separate compact-classified cache used by repo badge
@@ -1031,17 +1083,18 @@ impl RepoSeamFactCache {
     pub(crate) fn at_compact_classified(workspace_root: &Path) -> Self {
         Self::at_named(
             workspace_root,
-            "repo-compact-classified-seams",
+            ClassifiedCacheFamily::CompactClassifiedSeams,
             COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
         )
     }
 
-    fn at_named(workspace_root: &Path, cache_name: &str, schema_version: &str) -> Self {
+    fn at_named(workspace_root: &Path, family: ClassifiedCacheFamily, schema_version: &str) -> Self {
         let cache_root = cache_base_dir(workspace_root);
+        let (layer, sharded_layer) = family.layers();
         Self {
-            dir: cache_root.join(cache_name).join(schema_version),
+            dir: cache_root.join(layer.name()).join(schema_version),
             sharded_dir: cache_root
-                .join(format!("{cache_name}-sharded"))
+                .join(sharded_layer.name())
                 .join(schema_version)
                 .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
         }
@@ -1502,7 +1555,7 @@ impl RepoFileFactCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         Self {
             dir: cache_base_dir(workspace_root)
-                .join("repo-file-facts")
+                .join(CacheLayer::FileFacts.name())
                 .join(FILE_FACT_CACHE_SCHEMA_VERSION),
         }
     }
@@ -1599,7 +1652,7 @@ impl RepoSeamCountCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         Self {
             dir: cache_base_dir(workspace_root)
-                .join("repo-seam-counts")
+                .join(CacheLayer::SeamCounts.name())
                 .join(COUNT_CACHE_SCHEMA_VERSION),
         }
     }
@@ -2971,6 +3024,42 @@ mod tests {
     use crate::analysis::test_grip_evidence::TestGripEvidence;
     use crate::domain::{Confidence, StageEvidence, StageState};
     use std::path::PathBuf;
+
+    #[test]
+    fn producer_directories_match_the_maintenance_inventory() {
+        let root = Path::new("/workspace");
+        let base = cache_base_dir(root);
+        let full = RepoSeamFactCache::at(root);
+        let compact = RepoSeamFactCache::at_compact_classified(root);
+        let corpus = RepoCorpusFingerprintCache::at(root);
+        let files = RepoFileFactCache::at(root);
+        let counts = RepoSeamCountCache::at(root);
+        let produced = [
+            &full.dir,
+            &full.sharded_dir,
+            &compact.dir,
+            &compact.sharded_dir,
+            &corpus.dir,
+            &files.dir,
+            &counts.dir,
+        ];
+        let actual: BTreeSet<_> = produced
+            .into_iter()
+            .map(|path| {
+                path.strip_prefix(&base)
+                    .expect("producer stays under cache root")
+                    .components()
+                    .next()
+                    .expect("producer has a layer")
+                    .as_os_str()
+                    .to_str()
+                    .expect("layer is UTF-8")
+            })
+            .collect();
+        let expected: BTreeSet<_> = cache_layer_names().iter().copied().collect();
+        assert_eq!(actual, expected, "every produced layer must be maintainable");
+        assert_eq!(expected.len(), cache_layer_names().len(), "duplicate layer name");
+    }
 
     /// Cache-bump pin: composed source roles change every cached
     /// derivation that embeds them (#3533), and trial evidence parity
