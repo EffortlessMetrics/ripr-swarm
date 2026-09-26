@@ -79,7 +79,7 @@ pub(crate) use static_limit::*;
 pub(crate) use tests_extract::*;
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;
-pub(crate) use tsconfig::{TsAliasMap, load_alias_map_with_read_error};
+pub(crate) use tsconfig::{TsAliasMap, TsAliasUnresolveCause, load_alias_map_with_read_error};
 pub(crate) use types::*;
 
 /// TypeScript / JavaScript preview adapter.
@@ -448,6 +448,27 @@ impl LanguageAdapter for TypeScriptAdapter {
                 .with_path(relative)?
                 .with_affected_items(1)?
                 .with_detail(err.reason())?,
+            );
+        }
+        // An absolute (or non-normal) compilerOptions.baseUrl cannot be
+        // anchored to the workspace root by single-hop resolution. The map
+        // fail-closes every lookup; disclose the named limitation so the
+        // missing alias resolution is not silent.
+        if alias_map_ref.is_some_and(TsAliasMap::base_url_absolute) {
+            limitations.push(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisStage::LanguageAdapter,
+                    AnalysisRecovery::new(
+                        AnalysisRecoveryKind::Retry,
+                        "Change compilerOptions.baseUrl to a workspace-relative path, then re-run the analysis.",
+                    )?,
+                )
+                .with_path("tsconfig.json")?
+                .with_affected_items(1)?
+                .with_detail(
+                    "typescript_base_url_absolute_unsupported: compilerOptions.baseUrl is absolute; single-hop resolution only supports workspace-relative baseUrl",
+                )?,
             );
         }
         if workspace_scan.truncated {

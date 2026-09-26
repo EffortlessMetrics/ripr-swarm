@@ -731,11 +731,15 @@ fn ledger_source_path(path: &Path) -> Result<String, String> {
 
 fn typescript_limitations(args: &[String]) -> Result<(), String> {
     let options = parse_typescript_limitations_options(args)?;
+    // An unreadable check output means the command could not complete:
+    // surface the read failure (exit 2 per docs/EXIT_CODES.md) instead of
+    // writing a `blocked` report and exiting 0 as if the run succeeded.
+    let check_output_json = read_optional_text_for_report("check output", &options.check_output)?;
     let input = output::typescript_limitations::TypeScriptLimitationLeaderboardInput {
         root: options.root,
         generated_at: typescript_limitations_generated_at()?,
         check_output_path: output::baseline_delta::display_path(&options.check_output),
-        check_output_json: read_optional_text_for_report("check output", &options.check_output),
+        check_output_json: Ok(check_output_json),
     };
     let report =
         output::typescript_limitations::build_typescript_limitation_leaderboard_report(input);
@@ -752,14 +756,16 @@ fn typescript_limitations(args: &[String]) -> Result<(), String> {
 
 fn typescript_false_actionable(args: &[String]) -> Result<(), String> {
     let options = parse_typescript_false_actionable_options(args)?;
+    // An unreadable corpus means the command could not complete: surface the
+    // read failure (exit 2 per docs/EXIT_CODES.md) instead of writing a
+    // `blocked` report and exiting 0 as if the run succeeded.
+    let corpus_json =
+        read_optional_text_for_report("TypeScript false-actionable audit corpus", &options.corpus)?;
     let input = output::typescript_false_actionable::TypeScriptFalseActionableAuditInput {
         root: options.root,
         generated_at: typescript_false_actionable_generated_at()?,
         corpus_path: output::baseline_delta::display_path(&options.corpus),
-        corpus_json: read_optional_text_for_report(
-            "TypeScript false-actionable audit corpus",
-            &options.corpus,
-        ),
+        corpus_json: Ok(corpus_json),
     };
     let report =
         output::typescript_false_actionable::build_typescript_false_actionable_audit_report(input);
@@ -4066,6 +4072,29 @@ mod tests {
     }
 
     #[test]
+    fn reports_ts_limitations_fails_closed_on_unreadable_check_output() -> Result<(), String> {
+        // Per docs/EXIT_CODES.md an unreadable input means the command could
+        // not complete: the CLI must return the read error (exit 2 at the
+        // process boundary) instead of writing a `blocked` report and
+        // exiting 0.
+        let missing =
+            unique_command_test_dir("ts-limitations-missing").join("definitely-missing-check.json");
+        let result = reports(&args(&[
+            "ts-limitations",
+            "--check-output",
+            &missing.display().to_string(),
+        ]));
+        let err = result.err().ok_or_else(|| {
+            "unreadable check output must fail closed, not exit cleanly".to_string()
+        })?;
+        assert!(
+            err.contains("read check output") && err.contains("failed"),
+            "error must name the unreadable input, got: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn reports_ts_false_actionable_requires_corpus_input() {
         assert_eq!(
             reports(&args(&["ts-false-actionable"])),
@@ -4121,6 +4150,29 @@ mod tests {
 
         std::fs::remove_dir_all(&dir)
             .map_err(|err| format!("remove TypeScript false-actionable dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn reports_ts_false_actionable_fails_closed_on_unreadable_corpus() -> Result<(), String> {
+        // Per docs/EXIT_CODES.md an unreadable input means the command could
+        // not complete: the CLI must return the read error (exit 2 at the
+        // process boundary) instead of writing a `blocked` report and
+        // exiting 0.
+        let missing = unique_command_test_dir("ts-false-actionable-missing")
+            .join("definitely-missing-corpus.json");
+        let result = reports(&args(&[
+            "ts-false-actionable",
+            "--corpus",
+            &missing.display().to_string(),
+        ]));
+        let err = result
+            .err()
+            .ok_or_else(|| "unreadable corpus must fail closed, not exit cleanly".to_string())?;
+        assert!(
+            err.contains("read TypeScript false-actionable audit corpus") && err.contains("failed"),
+            "error must name the unreadable input, got: {err}"
+        );
         Ok(())
     }
 

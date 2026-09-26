@@ -894,7 +894,13 @@ The evidence-first fields are additive in schema `0.2`:
     runner evidence; no verify command can be derived; strong fail-closed case),
     `typescript_test_runner_unresolved` (neither framework nor runner could be
     resolved to a bounded verify command; emitted when `verify_command_for_discovery`
-    returns `None`; fail-closed per RIPR-SPEC-0085 §"Fail-closed").
+    returns `None`; fail-closed per RIPR-SPEC-0085 §"Fail-closed"),
+    `typescript_test_runner_ambiguous` (two or more distinct framework signals
+    matched, e.g. `jest` + `vitest` devDeps; the reported runner is the first
+    match by fixed priority, so confidence is capped at `medium`),
+    `typescript_package_manifest_read_capped` (a `package.json` was found but
+    exceeded the capped read limit, so its manifest evidence could not be
+    inspected; fail-closed, no root and no fabricated values).
     When `typescript_package_root_unresolved` is present, no
     `typescript_package_root` line is emitted (fail-closed per RIPR-SPEC-0085).
   - `typescript_verify_command: <cmd>` — evidence-backed verify command for the
