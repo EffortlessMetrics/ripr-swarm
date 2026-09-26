@@ -56,11 +56,11 @@ membership, or completion of the issue's remaining acceptance. Distinct accepted
 slices of one parent issue may have distinct candidates. Different paths do not
 make two implementations of the same slice independent.
 
-When a replacement becomes the accepted winner, disposition the losing PR or
-branch in the same reconciliation pass: close it, park it with a named reason,
-or narrow it to acceptance the winner did not cover. Record the winner and
-preserved residual in the issue or PR. An absent or ambiguous relationship
-requires reconciliation; do not infer safe parallelism or supersession from
+When a replacement becomes the accepted winner, record a disposition for the
+losing PR or branch in the same reconciliation pass: close it, park it with a
+named reason, or narrow it to acceptance the winner did not cover. Record the
+winner and preserved residual in the issue or PR. An absent or ambiguous
+relationship requires reconciliation; do not infer safe parallelism or supersession from
 changed paths. An unrelated move of `main` does not change candidate ownership.
 
 ---

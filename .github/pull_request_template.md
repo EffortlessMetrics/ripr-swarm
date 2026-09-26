@@ -31,15 +31,16 @@ Acceptance delta (one sentence):
 
 ## Candidate Relationships
 
-Candidate branch / head SHA (update when published):
+Candidate branch (GitHub PR head is authoritative after publication):
 Stack parent or prerequisite PR (if any):
-Replaces or supersedes PR (if any):
+Proposed replacement of PR (if any; not yet accepted):
 Acceptance retained from a replaced candidate (if any):
-Losing candidate disposition once replacement is accepted (if any):
+Accepted winner and losing candidate disposition (when decided):
 
-Name a stack or replacement explicitly. Shared files or a shared parent issue
-alone do not establish that two PRs are duplicates. If the relationship is
-unknown, record it as needing reconciliation before disposing of either PR.
+Name a stack or proposed replacement explicitly. A proposed replacement does
+not make its predecessor superseded. Shared files or a shared parent issue
+alone do not establish duplication. If the relationship is unknown, record it
+as needing reconciliation before disposing of either PR.
 
 ## Scope
 
