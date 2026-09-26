@@ -432,9 +432,14 @@ fn loaders_pin_canonical_side_prefixes_against_ambient_diff_config() -> io::Resu
             );
         }
 
-        // `diff.noprefix` outranks `diff.mnemonicPrefix`, so a leaked setting
-        // would silently mask the next leg instead of failing it. Each leg
-        // owns the hostile config for its own assertions only.
+        // Each leg owns the hostile config for its own assertions only. The
+        // pins already defeat any ambient prefix setting — git's
+        // `--default-prefix` documents that it "overrides configuration
+        // variables such as `diff.noprefix`, `diff.srcPrefix`, `diff.dstPrefix`,
+        // and `diff.mnemonicPrefix`", and the production pins set that same
+        // `options->prefix` — so a leak could not make a loader assertion pass
+        // quietly. The unset is here so each leg measures its own setting
+        // rather than whatever the previous leg happened to leave behind.
         git(&repo.root, &["config", "--unset", setting])?;
     }
 
