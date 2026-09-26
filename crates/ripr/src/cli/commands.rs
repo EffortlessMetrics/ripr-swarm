@@ -7406,10 +7406,14 @@ language = "rust"
         assert!(workflow.contains("name: Render RIPR PR review front panel"));
         assert!(workflow.contains("name: Render RIPR first-pr start-here"));
         assert!(workflow.contains("name: Render RIPR report packet index"));
-        assert!(workflow.contains("escape_github_property()"));
-        assert!(workflow.contains("annotation_path=\"$(escape_github_property \"$path\")\""));
-        assert!(workflow.contains("::warning file=$annotation_path,line=$annotation_line"));
-        assert!(workflow.contains("title=$annotation_title"));
+        assert!(workflow.contains("def escape_data:"));
+        assert!(workflow.contains("def escape_property:"));
+        assert!(!workflow.contains("@tsv"));
+        assert!(!workflow.contains("escape_github_property()"));
+        assert!(workflow.contains(
+            r#"::warning file=\(.placement.path | escape_property),line=\(.placement.line | tostring | escape_property)"#
+        ));
+        assert!(workflow.contains("title=RIPR targeted test guidance::"));
         assert!(workflow.contains("name: Add RIPR advisory summary"));
         assert!(workflow.contains("## RIPR advisory summary"));
         assert!(workflow.contains("### Start here"));
