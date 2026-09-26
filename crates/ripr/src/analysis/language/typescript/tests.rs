@@ -9858,6 +9858,286 @@ fn spec_0027_object_pin_at_read_position_stays_exposed() -> Result<(), String> {
     Ok(())
 }
 
+/// #4117 review of guard 5b (fail-closed branch scan): a parameter
+/// reassignment before the branch `return` invalidates the folded branch
+/// value, so `branch_return_expressions` must give up (`None`) instead of
+/// folding a guessed expression — otherwise the dead-expected guard skips a
+/// genuine boundary witness.
+#[test]
+fn branch_return_expressions_fails_closed_on_intervening_statement() {
+    let lines: Vec<&str> = [
+        "export function applyDiscount(total: number): number {",
+        "    if (total >= 100) {",
+        "        total = 90;",
+        "        return total * 0.9;",
+        "    }",
+        "    return total;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&lines, 1),
+        None,
+        "a parameter reassignment before the branch return must fail the scan closed"
+    );
+}
+
+/// The fallthrough path fails closed the same way (#4117 review): a statement
+/// before the fall-through `return` (here a reassignment) makes the folded
+/// value wrong, so the scan is unattributable.
+#[test]
+fn branch_return_expressions_fails_closed_before_fallthrough_return() {
+    let lines: Vec<&str> = [
+        "export function applyDiscount(total: number): number {",
+        "    if (total >= 100) {",
+        "        return total * 0.9;",
+        "    }",
+        "    total = total - 5;",
+        "    return total;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&lines, 1),
+        None,
+        "a statement before the fall-through return must fail the scan closed"
+    );
+}
+
+/// Control for the fail-closed branch scan: the attributed shapes are
+/// unchanged — a plain two-`return` owner body still folds to both branch
+/// expressions, so the dead-expected guard keeps its discriminating power.
+#[test]
+fn branch_return_expressions_single_return_shapes_still_attributed() {
+    let lines: Vec<&str> = [
+        "export function applyDiscount(total: number): number {",
+        "    if (total >= 100) {",
+        "        return total * 0.9;",
+        "    }",
+        "    return total;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&lines, 1),
+        Some(("total * 0.9".to_string(), "total".to_string()))
+    );
+}
+
+/// #4117 review of the liveness lookup: a duplicated predicate line cannot be
+/// attributed through the declared offset (a multiline declarator can shift
+/// the offset onto the identical line of a different function), so the check
+/// gives up instead of reading the wrong branch pair.
+#[test]
+fn expected_side_is_live_gives_up_on_duplicated_predicate_line() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function applyDiscount(total: number): number {\n",
+                "    if (total >= 100) {\n",
+                "        return total * 0.9;\n",
+                "    }\n",
+                "    return total;\n",
+                "}\n",
+                "\n",
+                "export function legacyDiscount(total: number): number {\n",
+                "    if (total >= 100) {\n",
+                "        return 42;\n",
+                "    }\n",
+                "    return total;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "  if (total >= 100) {",
+            "total",
+            "100",
+            &["100".to_string()],
+            "42",
+        ),
+        None,
+        "two identical predicate lines must not attribute a branch pair"
+    );
+}
+
+/// Control: with a unique predicate line the liveness fold still resolves —
+/// a live expected value is `Some(true)` and a dead one `Some(false)`.
+#[test]
+fn expected_side_is_live_unique_line_still_folds_liveness() {
+    let owner = boundary_witness_owner();
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "  if (total >= 100) {",
+            "total",
+            "100",
+            &["100".to_string()],
+            "90",
+        ),
+        Some(true)
+    );
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "  if (total >= 100) {",
+            "total",
+            "100",
+            &["100".to_string()],
+            "999",
+        ),
+        Some(false)
+    );
+}
+
+/// #4117 review (fail-closed branch scan, end to end): the test pins the
+/// genuine changed value — at input 100 the changed comparison enters the
+/// branch, reassigns `total` to `90`, and returns `81`, while the unchanged
+/// comparison returns `100`. The branch scan must give up on the reassignment
+/// instead of folding `total * 0.9` to a value the reassignment already
+/// replaced, which would have skipped this witness as a dead expectation.
+#[test]
+fn spec_0027_reassigned_parameter_branch_stays_exposed() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function applyDiscount(total: number): number {\n",
+                "    if (total >= 100) {\n",
+                "        total = 90;\n",
+                "        return total * 0.9;\n",
+                "    }\n",
+                "    return total;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..boundary_witness_owner()
+    };
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(100)",
+        "81",
+    )];
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a reassigned parameter before the branch return must not let the dead-expected \
+         guard skip a genuine witness"
+    );
+    Ok(())
+}
+
+/// #4117 review (uniqueness before offset, end to end): the identical
+/// predicate line of a second function makes the declared line offset
+/// untrustworthy; the liveness check must give up so the genuine witness
+/// stays exposed instead of being skipped as a dead expectation attributed
+/// from the wrong function's branches.
+#[test]
+fn spec_0027_duplicate_predicate_line_keeps_genuine_witness_exposed() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function applyDiscount(total: number): number {\n",
+                "    if (total >= 100) {\n",
+                "        return total * 0.9;\n",
+                "    }\n",
+                "    return total;\n",
+                "}\n",
+                "\n",
+                "export function legacyDiscount(total: number): number {\n",
+                "    if (total >= 100) {\n",
+                "        return 42;\n",
+                "    }\n",
+                "    return total;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..boundary_witness_owner()
+    };
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(100)",
+        "42",
+    )];
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a duplicated predicate line must not attribute the wrong branch pair and skip \
+         the witness"
+    );
+    Ok(())
+}
+
+/// #4117 review (scope-aware shadow guard): a `const applyDiscount` declared
+/// inside a nested block does not shadow the imported-owner call made outside
+/// that block — the direct-owner relation and the boundary witness survive.
+#[test]
+fn spec_0027_nested_block_shadow_does_not_reject_outer_owner_call() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let mut test = exact_value_test("applyDiscount", "applyDiscount(100)", "90");
+    test.body_text = concat!(
+        "if (warm) {\n",
+        "    const applyDiscount = () => 42;\n",
+        "}\n",
+        "expect(applyDiscount(100)).toBe(90);",
+    )
+    .to_string();
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a nested-block declaration must not shadow the outer imported-owner call"
+    );
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|related| related.relation_reason
+                == Some(crate::domain::RelationReason::DirectOwnerCall)),
+        "the outer call must still credit the direct-owner relation: {:?}",
+        finding.related_tests
+    );
+    Ok(())
+}
+
+/// Control for the scope-aware shadow guard: a call INSIDE the block that
+/// declares the local still executes the shadow, so the guard must keep
+/// rejecting the relation and the boundary witness (over-credit stays closed).
+#[test]
+fn spec_0027_nested_block_shadow_still_rejects_call_in_scope() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let mut test = exact_value_test("applyDiscount", "applyDiscount(100)", "42");
+    test.body_text = concat!(
+        "if (warm) {\n",
+        "    const applyDiscount = () => 42;\n",
+        "    expect(applyDiscount(100)).toBe(42);\n",
+        "}",
+    )
+    .to_string();
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::NoStaticPath,
+        "a call inside the declaring block still executes the shadow"
+    );
+    assert!(
+        finding.related_tests.is_empty(),
+        "the shadowed in-block call must not credit owner-call relations: {:?}",
+        finding.related_tests
+    );
+    Ok(())
+}
+
 // ── F5-9: a test is related to an owner only when it references the owner ────
 
 /// Owners from the F5-9 re-walk shape: `discountedTotal` (tested) and a new

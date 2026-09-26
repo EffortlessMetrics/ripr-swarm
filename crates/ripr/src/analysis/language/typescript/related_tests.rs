@@ -1002,10 +1002,209 @@ fn expect_actual_slices(body_text: &str) -> Vec<&str> {
         .collect()
 }
 
+/// A local declaration of the shadow-checked identifier found by the lexical
+/// scope walk in `local_identifier_declared_in_test_body`.
+struct BodyDeclaration {
+    offset: usize,
+    /// Byte offset of the declared name token, so the walk does not count the
+    /// declaration's own binding as a use of the identifier.
+    name_start: usize,
+    /// Enclosing block scope (index into the walk's scope table); `None` is
+    /// the test body's top level, which shadows every use in the body.
+    scope: Option<usize>,
+    /// `function` declarations hoist within their block, so they shadow uses
+    /// regardless of textual order; `const`/`let`/`var` do not.
+    hoisted: bool,
+}
+
+/// Lexical states for the shadow-check walk.
+#[derive(Clone, Copy)]
+enum BodyScanState {
+    Code,
+    LineComment,
+    BlockComment,
+    SingleQuoted,
+    DoubleQuoted,
+    Template,
+}
+
+/// Whether a local declaration of `identifier` shadows one of its uses in the
+/// test body (#4102 shadow guard, scope-aware per the #4117 review): a
+/// declaration at the body's top level shadows every use (call or bare
+/// identifier reference), while a declaration inside a nested block shadows
+/// only the uses inside that same block — a `const owner` buried in a helper
+/// branch must not reject an imported-owner call made outside it. The walk is
+/// a conservative lexer that skips comments and string/template contents
+/// (template interpolations resume code tracking, and a multi-line comment
+/// counts as a statement break for the line-start check); regex literals are
+/// not modeled. Uses reuse the module's reference predicates: no member
+/// access (`x.owner`), no object-literal key. `function` declarations shadow
+/// every use in their block because they hoist; `const`/`let`/`var` shadow
+/// uses from the declaration onward.
 pub(crate) fn local_identifier_declared_in_test_body(body_text: &str, identifier: &str) -> bool {
-    body_text.lines().any(|line| {
-        let trimmed = line.trim_start();
-        !trimmed.starts_with("//") && declaration_line_declares_identifier(trimmed, identifier)
+    // Scope table: (open-brace offset, close-brace offset; `usize::MAX` while
+    // the scope is still open). Entries are kept after closing so a nested
+    // declaration can be tested for enclosing a specific use.
+    let mut scopes: Vec<(usize, usize)> = Vec::new();
+    let mut open_scopes: Vec<usize> = Vec::new();
+    let mut uses: Vec<usize> = Vec::new();
+    let mut declarations: Vec<BodyDeclaration> = Vec::new();
+    let mut state = BodyScanState::Code;
+    // Depths whose closing `}` returns the walk from a template
+    // interpolation (which opened a pseudo-scope) to its template literal.
+    let mut interpolation_returns: Vec<usize> = Vec::new();
+    let mut at_line_start = true;
+    let mut escaped = false;
+    let mut pending_dollar = false;
+    let mut block_comment_has_newline = false;
+    for (idx, ch) in body_text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '\n' {
+            match state {
+                BodyScanState::LineComment => state = BodyScanState::Code,
+                BodyScanState::SingleQuoted | BodyScanState::DoubleQuoted => {
+                    // Unterminated string: recover instead of mis-scoping the
+                    // remainder of the body.
+                    state = BodyScanState::Code;
+                    at_line_start = true;
+                }
+                BodyScanState::BlockComment => block_comment_has_newline = true,
+                BodyScanState::Template => pending_dollar = false,
+                BodyScanState::Code => at_line_start = true,
+            }
+            continue;
+        }
+        match state {
+            BodyScanState::Code => match ch {
+                c if c.is_whitespace() => {}
+                '/' if body_text[idx + 1..].starts_with('/') => state = BodyScanState::LineComment,
+                '/' if body_text[idx + 1..].starts_with('*') => state = BodyScanState::BlockComment,
+                '\'' => state = BodyScanState::SingleQuoted,
+                '"' => state = BodyScanState::DoubleQuoted,
+                '`' => state = BodyScanState::Template,
+                '{' => {
+                    scopes.push((idx, usize::MAX));
+                    open_scopes.push(scopes.len() - 1);
+                    at_line_start = false;
+                }
+                '}' => {
+                    if interpolation_returns.last() == Some(&open_scopes.len()) {
+                        // `}` closing a `${ ... }` interpolation.
+                        open_scopes.pop();
+                        interpolation_returns.pop();
+                        state = BodyScanState::Template;
+                    } else if let Some(frame) = open_scopes.pop() {
+                        scopes[frame].1 = idx;
+                    }
+                    at_line_start = false;
+                }
+                _ => {
+                    if at_line_start
+                        && let Some(keyword) = ["const ", "let ", "var ", "function "]
+                            .into_iter()
+                            .find(|keyword| body_text[idx..].starts_with(*keyword))
+                    {
+                        let line_end = body_text[idx..]
+                            .find('\n')
+                            .map_or(body_text.len(), |relative| idx + relative);
+                        let line = &body_text[idx..line_end];
+                        if declaration_line_declares_identifier(line, identifier) {
+                            // Skip the declaration's own name token when
+                            // collecting uses (leading whitespace after the
+                            // keyword included).
+                            let name_start = body_text[idx + keyword.len()..]
+                                .char_indices()
+                                .find(|(_, ch)| !ch.is_whitespace())
+                                .map_or(idx + keyword.len(), |(relative, _)| {
+                                    idx + keyword.len() + relative
+                                });
+                            declarations.push(BodyDeclaration {
+                                offset: idx,
+                                name_start,
+                                scope: open_scopes.last().copied(),
+                                hoisted: line.starts_with("function "),
+                            });
+                        }
+                    }
+                    // A use of the identifier: a call or bare reference with
+                    // the module's reference boundaries — never a member
+                    // access (`x.owner`), object-literal key, or the declared
+                    // name token itself. Comment/string occurrences cannot
+                    // reach this arm (the state machine skips them).
+                    if body_text[idx..].starts_with(identifier)
+                        && has_member_call_boundary(body_text, idx)
+                        && body_text[idx + identifier.len()..]
+                            .chars()
+                            .next()
+                            .is_none_or(|ch| !is_javascript_identifier_char(ch))
+                        && !is_object_literal_key(body_text, idx, idx + identifier.len())
+                        && declarations
+                            .last()
+                            .is_none_or(|declaration| declaration.name_start != idx)
+                    {
+                        uses.push(idx);
+                    }
+                    at_line_start = false;
+                }
+            },
+            BodyScanState::LineComment => {}
+            BodyScanState::BlockComment => {
+                if ch == '*' && body_text[idx + 1..].starts_with('/') {
+                    // A multi-line comment counts as a statement break for the
+                    // line-start check (ASI), so a declaration following it is
+                    // still recognized as leading its line.
+                    state = BodyScanState::Code;
+                    at_line_start = block_comment_has_newline;
+                }
+            }
+            BodyScanState::SingleQuoted => {
+                if ch == '\'' {
+                    state = BodyScanState::Code;
+                    at_line_start = false;
+                }
+            }
+            BodyScanState::DoubleQuoted => {
+                if ch == '"' {
+                    state = BodyScanState::Code;
+                    at_line_start = false;
+                }
+            }
+            BodyScanState::Template => {
+                if ch == '`' {
+                    state = BodyScanState::Code;
+                    at_line_start = false;
+                    pending_dollar = false;
+                } else if ch == '$' {
+                    pending_dollar = true;
+                } else if ch == '{' && pending_dollar {
+                    interpolation_returns.push(open_scopes.len() + 1);
+                    scopes.push((idx, usize::MAX));
+                    open_scopes.push(scopes.len() - 1);
+                    state = BodyScanState::Code;
+                    pending_dollar = false;
+                } else {
+                    pending_dollar = false;
+                }
+            }
+        }
+    }
+    uses.iter().any(|use_offset| {
+        declarations.iter().any(|declaration| {
+            let in_scope = match declaration.scope {
+                None => true,
+                Some(frame) => scopes
+                    .get(frame)
+                    .is_some_and(|(start, end)| *start <= *use_offset && *use_offset < *end),
+            };
+            in_scope && (declaration.hoisted || *use_offset >= declaration.offset)
+        })
     })
 }
 

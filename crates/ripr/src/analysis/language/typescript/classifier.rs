@@ -462,7 +462,6 @@ pub(crate) fn ts_observation_guard_limitation(
 pub(crate) fn ts_predicate_boundary_is_witnessed(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
-    line: usize,
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
     alias_map: Option<&TsAliasMap>,
@@ -532,9 +531,8 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
                     continue;
                 }
                 if let Some(expected) = assertion.expected_value_or_variant.as_deref()
-                    && expected_side_is_live(
-                        owner, line, line_text, left, right, &arguments, expected,
-                    ) == Some(false)
+                    && expected_side_is_live(owner, line_text, left, right, &arguments, expected)
+                        == Some(false)
                 {
                     continue;
                 }
@@ -1000,10 +998,10 @@ fn balanced_close_offset(inner: &str) -> Option<usize> {
 /// changed `if` in the owner's own source. At the boundary input the changed
 /// comparison takes the branch the new operator selects, and the unchanged
 /// behavior took the opposite branch — that is exactly what makes the input
-/// discriminating.
-fn expected_side_is_live(
+/// discriminating. Crate-visible so the typescript unit tests can pin the
+/// `None` fail-closed contract directly.
+pub(crate) fn expected_side_is_live(
     owner: &TypeScriptOwner,
-    line: usize,
     line_text: &str,
     left: &str,
     right: &str,
@@ -1014,19 +1012,21 @@ fn expected_side_is_live(
     let expected_value = numeric_literal_value(expected).and_then(|v| v.parse::<f64>().ok())?;
     let operator = changed_comparison_operator(line_text)?;
     let lines: Vec<&str> = source.lines().collect();
-    // Locate the changed line inside the owner body: prefer the declared line
-    // offset, fall back to a text match; a stale or duplicated line skips the
-    // check rather than attributing the wrong branch.
-    let start = line
-        .checked_sub(owner.start_line)
-        .and_then(|idx| lines.get(idx))
-        .filter(|candidate| candidate.trim() == line_text.trim())
-        .map(|_| line - owner.start_line)
-        .or_else(|| {
-            lines
-                .iter()
-                .position(|candidate| candidate.trim() == line_text.trim())
-        })?;
+    // Locate the changed line inside the owner body. Uniqueness runs before
+    // the declared offset (#4117 review): a multiline variable declarator can
+    // shift the offset onto a different line carrying identical predicate
+    // text, so the branches are attributed only when exactly one line
+    // matches; zero or duplicated matches skip the check instead of reading
+    // the wrong branch pair.
+    let mut matching = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| candidate.trim() == line_text.trim())
+        .map(|(index, _)| index);
+    let start = matching.next()?;
+    if matching.next().is_some() {
+        return None;
+    }
     let (true_expr, false_expr) = branch_return_expressions(&lines, start)?;
     let lhs = comparison_operand_value(left, owner, arguments)?;
     let rhs = comparison_operand_value(right, owner, arguments)?;
@@ -1099,7 +1099,13 @@ fn observed_argument_bindings(owner: &TypeScriptOwner, arguments: &[String]) -> 
 /// attributed — a fall-through else-less branch and a plain `} else {` block;
 /// nested branching, computed closers, quoted braces, and comments fail the
 /// scan so the caller skips the check instead of attributing a wrong branch.
-fn branch_return_expressions(lines: &[&str], start: usize) -> Option<(String, String)> {
+/// Fail closed (#4117 review): any top-level branch statement that is not
+/// that branch's single `return` — notably a parameter reassignment, in
+/// either branch or the fall-through — also fails the scan, because folding
+/// the `return` expression with the original argument bindings would credit a
+/// value the intervening statement already changed. Only closing braces at
+/// the branch's own depth are recognized as branch closers.
+pub(crate) fn branch_return_expressions(lines: &[&str], start: usize) -> Option<(String, String)> {
     if !lines.get(start)?.contains('{') {
         return None;
     }
@@ -1115,6 +1121,9 @@ fn branch_return_expressions(lines: &[&str], start: usize) -> Option<(String, St
     let mut false_return: Option<String> = None;
     for text in lines.iter().skip(start + 1) {
         let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
         if ["\"", "'", "`", "//", "/*"]
             .iter()
             .any(|marker| trimmed.contains(marker))
@@ -1124,7 +1133,7 @@ fn branch_return_expressions(lines: &[&str], start: usize) -> Option<(String, St
         match phase {
             Phase::Done => break,
             Phase::True => {
-                if trimmed.starts_with('}') {
+                if depth == 1 && trimmed.starts_with('}') {
                     if trimmed.contains("else") {
                         // `} else {`: the false branch body opens here.
                         if trimmed.contains("else if") || !trimmed.ends_with('{') {
@@ -1140,8 +1149,11 @@ fn branch_return_expressions(lines: &[&str], start: usize) -> Option<(String, St
                     }
                     continue;
                 }
-                if depth == 1 && true_return.is_none() {
-                    true_return = return_statement_expression(trimmed).map(str::to_string);
+                if depth == 1 {
+                    if true_return.is_some() {
+                        return None; // a statement follows the return: unattributable
+                    }
+                    true_return = Some(return_statement_expression(trimmed)?.to_string());
                 }
                 depth += trimmed.matches('{').count() as i64;
                 depth -= trimmed.matches('}').count() as i64;
@@ -1150,15 +1162,18 @@ fn branch_return_expressions(lines: &[&str], start: usize) -> Option<(String, St
                 }
             }
             Phase::Else => {
-                if trimmed.starts_with('}') {
+                if depth == 1 && trimmed.starts_with('}') {
                     if trimmed == "}" {
                         phase = Phase::Done;
                         continue;
                     }
                     return None;
                 }
-                if depth == 1 && false_return.is_none() {
-                    false_return = return_statement_expression(trimmed).map(str::to_string);
+                if depth == 1 {
+                    if false_return.is_some() {
+                        return None; // a statement follows the return: unattributable
+                    }
+                    false_return = Some(return_statement_expression(trimmed)?.to_string());
                 }
                 depth += trimmed.matches('{').count() as i64;
                 depth -= trimmed.matches('}').count() as i64;
@@ -1174,9 +1189,10 @@ fn branch_return_expressions(lines: &[&str], start: usize) -> Option<(String, St
                     false_return = Some(expression.to_string());
                     break;
                 }
-                if trimmed.contains('{') || trimmed.starts_with("else") {
-                    return None; // another branch intervenes: unattributable
-                }
+                // Fail closed (#4117 review): a statement before the
+                // fall-through `return` (a parameter reassignment, another
+                // branch) makes the folded value wrong — unattributable.
+                return None;
             }
         }
     }
@@ -1608,7 +1624,6 @@ pub(crate) fn classify_change(
         || ts_predicate_boundary_is_witnessed(
             &probe_shape,
             line_text,
-            line,
             owner,
             &related_candidates,
             alias_map,
