@@ -19,6 +19,15 @@ cargo install ripr
 This requires Rust 1.95 or newer. Git must be available for the diff workflow.
 The editor installation below normally does not require Cargo.
 
+Rust 1.95 is RIPR's build/install MSRV, not a minimum compiler version for the
+repository being analyzed. An already-built CLI or bundled server can perform
+static analysis for a repository that pins an older Rust toolchain. Project
+verification still uses that repository's selected toolchain and can succeed,
+fail, or be unavailable independently. Current 0.11 development builds can
+still report an older workspace compiler as a `doctor` failure; that is a known
+pre-release defect, not evidence that `ripr check` invoked or required that
+compiler.
+
 The latest GitHub release is [0.10.0](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0).
 This guide describes **0.11 development**, including `--worktree`, bounded
 `Start here:` output, and durable repair attempts. Those instructions are not a
@@ -104,7 +113,7 @@ sequence.
 ## VS Code First Hour
 
 Install [EffortlessMetrics.ripr](https://marketplace.visualstudio.com/items?itemName=EffortlessMetrics.ripr)
-from VS Code Marketplace or [Open VSX](https://open-vsx.org/extension/EffortlessMetrics/ripr),
+from VS Code Marketplace or [Open VSX](https://open-vsx.org/extension/EffortlessMetrics.ripr),
 then open a Rust/Cargo workspace. The released extension normally resolves a
 matching native server without `cargo install ripr`.
 
@@ -199,7 +208,7 @@ PR-facing packet. It does not run analysis or repair the code. See
 | Symptom | Next step |
 | --- | --- |
 | Cargo installation fails. | Check the first Cargo error and `rustc --version` (Rust 1.95 or newer). Fix the reported build or download problem before retrying. |
-| ripr is installed, but repository setup fails. | Run `ripr doctor` and follow its recovery step. `ripr doctor --json` provides machine-readable checks. |
+| ripr is installed, but repository setup fails. | Run `ripr doctor` and inspect its individual capability results. In current 0.11 development builds, an older workspace compiler can still be misreported as a RIPR build failure even though static analysis does not invoke it. |
 | `check` sees no change after an edit. | In a development build, use `--worktree` for staged and unstaged edits. Otherwise inspect a committed change using your installed version's supported options. |
 | The wrong base is selected. | Use `--base REF` with an existing reference in this repository. |
 | Configuration is rejected. | Run `ripr config validate` and fix the named setting. Configuration is optional, but an invalid file is not ignored. |
@@ -215,9 +224,20 @@ route is required, and ordinary real-repository route yield and success remain
 unestablished. Python analysis is `preview`, with selected pytest/unittest
 repair routes at `usable alpha`. Only complete weak-evidence routes get repair
 cards; zero cards is normal for unsupported or non-repairable findings.
-TypeScript and JavaScript are opt-in previews. Perl needs a `lang-perl` build
-and the unpublished `perl-ripr-facts` exporter, so it is not usable from a
-released build/exporter combination.
+
+TypeScript and JavaScript are opt-in previews. Diff analysis recognizes:
+
+```text
+.ts  .tsx  .mts  .cts  .js  .jsx  .mjs  .cjs
+```
+
+The modern module suffixes are analysis inputs, but some downstream repair,
+related-test, targeted-rerun, and packet surfaces can still under-emit for
+`.mts`, `.cts`, `.mjs`, and `.cjs`. An absent repair packet is therefore not
+evidence that the file was ignored or that the change is safe.
+
+Perl needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter,
+so it is not usable from a released build/exporter combination.
 
 The CLI does not generate tests, apply code edits, run mutants, or turn an empty
 result into proof of correctness. Generated CI is advisory by default.
