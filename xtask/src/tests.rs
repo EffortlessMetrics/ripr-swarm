@@ -28123,7 +28123,10 @@ fn traceability_failure_report_renders_recommended_fixes() -> Result<(), String>
 #[test]
 fn traceability_pass_report_discloses_registered_only_scope() -> Result<(), String> {
     with_temp_cwd("traceability-pass-scope-report", |_| {
-        finish_traceability_report(&[], &["RIPR-SPEC-0027 symbol suffix unverified".to_string()])?;
+        finish_traceability_report(
+            &[],
+            &["RIPR-SPEC-0027 symbol suffix unverified".to_string()],
+        )?;
         let report = fs::read_to_string("target/ripr/reports/traceability.md")
             .map_err(|err| format!("read traceability pass report: {err}"))?;
 
