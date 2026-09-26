@@ -134,13 +134,14 @@ pub(super) fn file_uris_match(left: &Uri, right: &Uri) -> bool {
     let Some(left_path) = normalized_file_uri_path(left) else {
         return false;
     };
-    // Equal wire strings are equivalent files only after local-path admission.
-    if left.as_str() == right.as_str() {
-        return true;
-    }
     let Some(right_path) = normalized_file_uri_path(right) else {
         return false;
     };
+    // Equal wire strings need no special case: once both sides are admitted they
+    // decode to the same path, so the comparisons below already report them
+    // equal. An earlier revision short-circuited on `left == right` *before*
+    // admission, which made a URI this decoder refuses match itself. Identity is
+    // therefore a statement about admitted local paths, never about wire strings.
     if windows_paths::is_windows_drive_path(&left_path)
         && windows_paths::is_windows_drive_path(&right_path)
     {

@@ -1209,10 +1209,27 @@ impl DocumentStore {
 
 /// Project a document URI to the path used for saved-content reads and
 /// display. A URI the shared decoder (`lsp::uri::normalized_file_uri_path`)
-/// refuses has no local file path, so the wire string is kept for diagnostics
-/// only. That fallback is relative text, not a workspace path, and
-/// `lsp::uri::path_is_within_root` refuses it so a rejected URI can never read
-/// as contained under the selected root.
+/// refuses has no local file path, so the wire string is kept as-is.
+///
+/// Be precise about what that guarantees, because it is weaker than "safe":
+///
+/// - The fallback is **relative text**, not a workspace path.
+///   `lsp::uri::path_is_within_root` refuses a relative candidate whose first
+///   component carries a URI scheme separator, so this fallback can never read
+///   as contained under the selected root. That is the whole of the guarantee,
+///   and it is a *containment-check* property only.
+/// - It is **not** display-only. The value feeds `std::fs::read` in
+///   `DocumentState::new` and in `pending_analyzed_digests`, neither of which
+///   consults `path_is_within_root`. A relative wire string therefore resolves
+///   against the process working directory there, not against a validated root.
+/// - It is published in the MCP-visible `workspace_status` projection as a
+///   display string. It does not reach code actions, apply-edit, or any spawned
+///   command payload; those are built from admitted `file_uri_for_path` output.
+///
+/// The decoder also does not reject `..` segments, so an *admitted* absolute URI
+/// can still carry them and the read follows them. That route is pre-existing at
+/// the merge base and is tracked separately; this fallback's guard does not
+/// address it and is not claimed to.
 fn document_path(uri: &Uri) -> PathBuf {
     path_from_file_uri(uri).unwrap_or_else(|| PathBuf::from(uri.as_str()))
 }
