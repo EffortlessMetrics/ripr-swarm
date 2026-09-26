@@ -831,10 +831,18 @@ pub(crate) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
 }
 
 fn has_call_boundary(body_text: &str, idx: usize) -> bool {
-    body_text[..idx]
-        .chars()
-        .next_back()
-        .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+    let prefix = &body_text[..idx];
+    let Some(ch) = prefix.chars().next_back() else {
+        return true;
+    };
+    if is_javascript_identifier_char(ch) {
+        return false;
+    }
+    if ch != '.' {
+        return true;
+    }
+    // `...name(` is a spread call. `obj.name(` and `obj?.name(` stay member access.
+    prefix.ends_with("...")
 }
 
 fn owner_name_shadowed_by_unrelated_import(
@@ -1183,4 +1191,30 @@ fn similarity_key_contains(haystack: &str, needle: &str) -> bool {
             .strip_suffix(needle)
             .is_some_and(|prefix| prefix.ends_with('_'))
         || haystack.contains(&format!("_{needle}_"))
+}
+
+#[cfg(test)]
+mod spread_call_boundary_tests {
+    use super::contains_call_name;
+
+    #[test]
+    fn spread_is_a_call_and_member_access_is_not() -> Result<(), String> {
+        let cases = [
+            ("[...steps(4)]", true),
+            ("Array.from(steps(4))", true),
+            ("steps(4)", true),
+            ("obj.steps(4)", false),
+            ("obj?.steps(4)", false),
+            ("notsteps(4)", false),
+            ("// steps(4)", false),
+            ("const steps = 1; steps(4)", true),
+        ];
+        for (text, expected) in cases {
+            let actual = contains_call_name(text, "steps");
+            if actual != expected {
+                return Err(format!("{text}: expected call={expected}, got {actual}"));
+            }
+        }
+        Ok(())
+    }
 }
