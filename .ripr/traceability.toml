@@ -2,7 +2,12 @@
 #
 # This file maps behavior specs to the tests, code, output contracts, and
 # metrics that prove or track them. It starts as a lightweight manifest and will
-# become mechanically checked as xtask traceability work lands.
+# become mechanically checked as xtask traceability work lands. The current
+# checker validates registered entries, spec coverage, and referenced paths;
+# this is a selective behavior map, not an inventory of every test symbol.
+# New tests may remain unregistered when they do not carry a distinct behavior
+# claim or when a path-level entry already covers the group. A `::symbol`
+# reference is advisory until the symbol resolver lands (#2345).
 
 [[behavior]]
 id = "RIPR-SPEC-0001"
@@ -2170,6 +2175,11 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  # #4140: cross-extension owner/test alignment and its public navigation label.
+  "crates/ripr/src/analysis/language/typescript/tests.rs::analyze_diff_credits_cross_extension_related_test_oracle_for_mts_sources",
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs::module_extension_tests",
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs::module_extension_tests::strip_typescript_module_extension_covers_every_routed_suffix",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::navigation_only_external_target_labels_modern_ts_js_extensions",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::extract_tests_records_safe_mock_payload_shapes",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::extract_tests_keeps_ambiguous_mock_payload_shapes_unbounded",
@@ -5800,6 +5810,7 @@ id = "RIPR-SPEC-0087"
 name = "TypeScript preview actionable repair-packet contract"
 spec = "docs/specs/RIPR-SPEC-0087-typescript-preview-actionable-repair-packet.md"
 tests = [
+  "crates/ripr/src/analysis/repair_route.rs::tests::modern_ts_related_tests_keep_the_repair_packet_fail_closed",
   # §7.4 validator-parity tests
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_complete_finding_passes_shared_validator",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_missing_verify_command_returns_none",

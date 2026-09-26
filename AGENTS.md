@@ -511,6 +511,11 @@ sidecar to delivery, not a substitute goal or an approval gate.
 Live work selection comes from current GitHub issues/PRs. Product direction is
 in `docs/ROADMAP.md` and `docs/IMPLEMENTATION_PLAN.md`; campaign history is in
 `docs/IMPLEMENTATION_CAMPAIGNS.md`, not a global selector. PR-local claims use
-`.allow/spec-system/slices/`; specs and `.ripr/traceability.toml` connect claims,
-tests and code. Keep durable failure knowledge in `docs/LEARNINGS.md`. Do not
+`.allow/spec-system/slices/`; specs and `.ripr/traceability.toml` connect selected
+behavior claims, tests and code. `check-traceability` validates registered
+entries and spec/path references; green does not establish that every test is
+registered or that `::symbol` references resolve. Record tests carrying a
+distinct behavior claim; path-level mappings and intentionally unregistered
+supporting tests are allowed. Keep durable failure knowledge in
+`docs/LEARNINGS.md`. Do not
 resurrect deleted active-goal manifests or store global writer/lifecycle state.

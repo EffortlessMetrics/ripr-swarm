@@ -6508,6 +6508,14 @@ fn finish_traceability_report(violations: &[String], advisories: &[String]) -> R
          discoverable for long-context human and agent work.",
     );
     body.push_str("\n\n");
+    body.push_str("## Verification scope\n\n");
+    body.push_str(
+        "The gate checks registered behavior entries, referenced paths, spec coverage, and \
+         fixture spec references. It does not enumerate all test symbols or resolve `::symbol` \
+         suffixes. A pass does not establish that every test is registered. Path-level entries \
+         may cover a test group; supporting tests without a distinct behavior claim may remain \
+         unregistered.\n\n",
+    );
 
     if violations.is_empty() {
         body.push_str("## Violations\n\nNone detected.\n\n");
