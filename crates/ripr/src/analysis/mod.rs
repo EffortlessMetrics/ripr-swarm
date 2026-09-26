@@ -12,6 +12,7 @@ mod probes;
 pub(crate) mod repair_route;
 mod rust_index;
 pub(crate) mod seam_cache;
+pub use seam_cache::CacheLayer;
 mod seam_classification;
 mod seam_inventory;
 pub(crate) mod seams;

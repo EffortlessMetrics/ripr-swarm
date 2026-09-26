@@ -59,6 +59,37 @@ use crate::config::{
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+// The cache producers and both cache-management commands share this registry.
+// Adding a producer layer here also adds it to the clear/report ownership set.
+macro_rules! cache_layers {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub enum CacheLayer {
+            $($variant),+
+        }
+
+        impl CacheLayer {
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name),+
+                }
+            }
+        }
+    };
+}
+
+cache_layers! {
+    SeamFacts => "repo-seam-facts",
+    SeamFactsSharded => "repo-seam-facts-sharded",
+    CompactClassifiedSeams => "repo-compact-classified-seams",
+    CompactClassifiedSeamsSharded => "repo-compact-classified-seams-sharded",
+    CorpusFingerprint => "repo-corpus-fingerprint",
+    FileFacts => "repo-file-facts",
+    SeamCounts => "repo-seam-counts",
+}
+
 /// On-disk representation of seam-limit metadata embedded in the cache envelope.
 /// Mirrors `SeamLimitInfo` but lives in the cache module to avoid a circular dep.
 /// `#[serde(default)]` ensures old cache entries without this field deserialize
@@ -917,7 +948,7 @@ impl RepoCorpusFingerprintCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         Self {
             dir: cache_base_dir(workspace_root)
-                .join("repo-corpus-fingerprint")
+                .join(CacheLayer::CorpusFingerprint.name())
                 .join(CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION),
         }
     }
@@ -1022,7 +1053,12 @@ pub(crate) struct CacheStoreStatus {
 impl RepoSeamFactCache {
     /// Construct a cache rooted at the workspace's `target/ripr/cache/...`.
     pub(crate) fn at(workspace_root: &Path) -> Self {
-        Self::at_named(workspace_root, "repo-seam-facts", CACHE_SCHEMA_VERSION)
+        Self::at_named(
+            workspace_root,
+            CacheLayer::SeamFacts,
+            CacheLayer::SeamFactsSharded,
+            CACHE_SCHEMA_VERSION,
+        )
     }
 
     /// Construct the separate compact-classified cache used by repo badge
@@ -1031,17 +1067,23 @@ impl RepoSeamFactCache {
     pub(crate) fn at_compact_classified(workspace_root: &Path) -> Self {
         Self::at_named(
             workspace_root,
-            "repo-compact-classified-seams",
+            CacheLayer::CompactClassifiedSeams,
+            CacheLayer::CompactClassifiedSeamsSharded,
             COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
         )
     }
 
-    fn at_named(workspace_root: &Path, cache_name: &str, schema_version: &str) -> Self {
+    fn at_named(
+        workspace_root: &Path,
+        cache_layer: CacheLayer,
+        sharded_layer: CacheLayer,
+        schema_version: &str,
+    ) -> Self {
         let cache_root = cache_base_dir(workspace_root);
         Self {
-            dir: cache_root.join(cache_name).join(schema_version),
+            dir: cache_root.join(cache_layer.name()).join(schema_version),
             sharded_dir: cache_root
-                .join(format!("{cache_name}-sharded"))
+                .join(sharded_layer.name())
                 .join(schema_version)
                 .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
         }
@@ -1502,7 +1544,7 @@ impl RepoFileFactCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         Self {
             dir: cache_base_dir(workspace_root)
-                .join("repo-file-facts")
+                .join(CacheLayer::FileFacts.name())
                 .join(FILE_FACT_CACHE_SCHEMA_VERSION),
         }
     }
@@ -1599,7 +1641,7 @@ impl RepoSeamCountCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         Self {
             dir: cache_base_dir(workspace_root)
-                .join("repo-seam-counts")
+                .join(CacheLayer::SeamCounts.name())
                 .join(COUNT_CACHE_SCHEMA_VERSION),
         }
     }

@@ -1,3 +1,4 @@
+use crate::analysis::CacheLayer;
 use crate::analysis::seam_cache::{
     CACHE_DIR_ENV, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
 };
@@ -32,21 +33,8 @@ root). The cache root and unrelated sibling files or directories are preserved.
   --force     Required to remove cache layers that hold entries.
 "#;
 
-/// Directory names `ripr` itself creates under the cache base directory.
-///
-/// `clear` is deliberately bounded to these direct children. A path suffix or
-/// one known child never grants ownership of the configured parent (#3843).
-/// This list mirrors the cache layers in `analysis::seam_cache`; a layer added
-/// there but missed here makes `clear` more conservative, never less.
-const CACHE_ROOT_MARKERS: &[&str] = &[
-    "repo-seam-facts",
-    "repo-seam-facts-sharded",
-    "repo-compact-classified-seams",
-    "repo-compact-classified-seams-sharded",
-    "repo-corpus-fingerprint",
-    "repo-file-facts",
-    "repo-seam-counts",
-];
+// `clear` is bounded to the producer's direct children. A recognized child
+// never grants ownership of the cache root or unrelated siblings (#3843).
 
 /// Whether the resolved cache root exists on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,7 +236,8 @@ fn layer_from_status(
 
 fn build_clear_plan(cache_dir: &Path) -> Result<ClearPlan, String> {
     let mut plan = ClearPlan::default();
-    for &marker in CACHE_ROOT_MARKERS {
+    for layer in CacheLayer::ALL {
+        let marker = layer.name();
         let layer_path = cache_dir.join(marker);
         match std::fs::symlink_metadata(&layer_path) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -722,6 +711,41 @@ mod tests {
             return Err(format!(
                 "clear did not disclose its bounded scope: {result}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn clear_derives_every_producer_layer_and_preserves_unrelated_data() -> Result<(), String> {
+        let root = temp_dir("all-layers");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        for layer in CacheLayer::ALL {
+            let path = root.join(layer.name());
+            fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+            fs::write(path.join("entry.json"), b"{}").map_err(|error| error.to_string())?;
+        }
+        let unrelated = root.join("KEEP.txt");
+        fs::write(&unrelated, b"user data").map_err(|error| error.to_string())?;
+
+        let plan = build_clear_plan(&root)?;
+        if plan.layers.len() != CacheLayer::ALL.len() {
+            return Err(format!("cache plan omitted a producer layer: {plan:?}"));
+        }
+        clear_cache_dir(
+            &root,
+            ClearOptions {
+                dry_run: false,
+                force: true,
+            },
+        )?;
+        let intact = root.is_dir()
+            && unrelated.is_file()
+            && CacheLayer::ALL
+                .iter()
+                .all(|layer| !root.join(layer.name()).exists());
+        remove_base(&root)?;
+        if !intact {
+            return Err("clear failed the producer-layer or unrelated-sibling boundary".into());
         }
         Ok(())
     }
