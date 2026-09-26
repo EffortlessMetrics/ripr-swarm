@@ -658,6 +658,7 @@ enum Selection {
         // Boxed to keep the variant small: CommandSpec is a wide struct
         // and `Selection` is matched by value on the render paths.
         command_spec: Option<Box<CommandSpec>>,
+        additional_missing_artifacts: Vec<MissingArtifactRecovery>,
     },
     Blocked {
         state: String,
@@ -669,6 +670,14 @@ enum Selection {
         reason: String,
         records_total: usize,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MissingArtifactRecovery {
+    id: String,
+    label: String,
+    path: String,
+    regeneration_command: String,
 }
 
 impl Selection {
@@ -685,7 +694,30 @@ impl Selection {
             path: path.to_string(),
             regeneration_command,
             command_spec: command_spec.map(Box::new),
+            additional_missing_artifacts: Vec::new(),
         }
+    }
+
+    fn with_additional_missing_artifact(
+        mut self,
+        id: &str,
+        label: &str,
+        path: &str,
+        regeneration_command: String,
+    ) -> Self {
+        if let Self::MissingArtifact {
+            additional_missing_artifacts,
+            ..
+        } = &mut self
+        {
+            additional_missing_artifacts.push(MissingArtifactRecovery {
+                id: id.to_string(),
+                label: label.to_string(),
+                path: path.to_string(),
+                regeneration_command,
+            });
+        }
+        self
     }
 
     fn blocked(state: &str, message: String, next_command: Option<String>) -> Self {
@@ -781,6 +813,7 @@ impl Selection {
                 path,
                 regeneration_command,
                 command_spec,
+                additional_missing_artifacts,
             } => {
                 // FIX #1617 slice 2: the typed spec is additive beside the
                 // legacy string; the `commands` map stays string-only.
@@ -799,6 +832,17 @@ impl Selection {
                     && let Ok(spec_value) = serde_json::to_value(spec)
                 {
                     value["regeneration_command_spec"] = spec_value;
+                }
+                if !additional_missing_artifacts.is_empty() {
+                    value["additional_missing_artifacts"] = json!(additional_missing_artifacts
+                        .iter()
+                        .map(|artifact| json!({
+                            "id": artifact.id,
+                            "label": artifact.label,
+                            "path": artifact.path,
+                            "regeneration_command": artifact.regeneration_command,
+                        }))
+                        .collect::<Vec<_>>());
                 }
                 value
             }
@@ -1317,6 +1361,12 @@ fn missing_repo_exposure_selection(root: &Path, options: &FirstPrOptions) -> Sel
         DEFAULT_REPO_EXPOSURE,
         regeneration_command,
         command_spec,
+    )
+    .with_additional_missing_artifact(
+        "gap_ledger",
+        "Gap decision ledger",
+        &options.gap_ledger,
+        regenerate_gap_ledger_command(root, options),
     )
 }
 
@@ -2515,6 +2565,12 @@ mod tests {
                 .as_str()
                 .is_some_and(|command| command == expected_regeneration)
         );
+        let next = &packet["selected"]["additional_missing_artifacts"];
+        assert_eq!(next.as_array().map(Vec::len), Some(1));
+        assert_eq!(next[0]["id"], "gap_ledger");
+        assert_eq!(next[0]["path"], DEFAULT_GAP_LEDGER);
+        let expected_ledger_command = regenerate_gap_ledger_command(&repo, &options);
+        assert_eq!(next[0]["regeneration_command"], expected_ledger_command);
         let summary = start_here_cli_summary(
             &packet,
             Path::new("target/ripr/reports/start-here.json"),
@@ -2524,6 +2580,14 @@ mod tests {
             "Missing artifact: Repo exposure report at `target/ripr/reports/repo-exposure.json`"
         ));
         assert!(summary.contains("Regeneration command: `ripr check --root . --mode instant"));
+        assert!(summary.contains(&format!(
+            "Then regenerate Gap decision ledger at `{DEFAULT_GAP_LEDGER}`: `{expected_ledger_command}`"
+        )));
+        let markdown = fs::read_to_string(repo.join(DEFAULT_OUT_DIR).join(START_HERE_MD))
+            .map_err(|err| format!("read start-here markdown: {err}"))?;
+        assert!(markdown.contains(&format!(
+            "- Then regenerate Gap decision ledger at `{DEFAULT_GAP_LEDGER}`: `{expected_ledger_command}`"
+        )));
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
     }
@@ -2701,6 +2765,7 @@ mod tests {
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "blocked_artifact");
         assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
+        assert!(packet["selected"].get("additional_missing_artifacts").is_none());
         let message = packet["selected"]["message"]
             .as_str()
             .ok_or_else(|| "selected message missing".to_string())?;
@@ -2805,6 +2870,7 @@ mod tests {
         assert_eq!(packet["selected"]["state"], "missing_artifact");
         assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
         assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
+        assert!(packet["selected"].get("additional_missing_artifacts").is_none());
         assert!(
             packet["selected"]["regeneration_command"]
                 .as_str()

@@ -137,6 +137,21 @@ pub(super) fn start_here_cli_summary(
                 out.push_str(&format!("Regeneration command: `{command}`\n"));
                 push_recovery_powershell_variant(&mut out, "Regeneration command", &command);
             }
+            if let Some(artifacts) = selected
+                .get("additional_missing_artifacts")
+                .and_then(Value::as_array)
+            {
+                for artifact in artifacts {
+                    if let (Some(label), Some(path), Some(command)) = (
+                        string_path(artifact, &["label"]),
+                        string_path(artifact, &["path"]),
+                        string_path(artifact, &["regeneration_command"]),
+                    ) {
+                        out.push_str(&format!("Then regenerate {label} at `{path}`: `{command}`\n"));
+                        push_recovery_powershell_variant(&mut out, "Then regenerate", &command);
+                    }
+                }
+            }
             out.push_str("Receipt path: `not_applicable`\n");
         }
         "empty_diff" | "no_action" => {
@@ -535,6 +550,21 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     if let Some(command) = selected.get("regeneration_command").and_then(Value::as_str) {
         out.push_str(&format!("- Regeneration command: `{command}`\n"));
         push_recovery_powershell_variant(out, "- Regeneration command", command);
+    }
+    if let Some(artifacts) = selected
+        .get("additional_missing_artifacts")
+        .and_then(Value::as_array)
+    {
+        for artifact in artifacts {
+            if let (Some(label), Some(path), Some(command)) = (
+                string_path(artifact, &["label"]),
+                string_path(artifact, &["path"]),
+                string_path(artifact, &["regeneration_command"]),
+            ) {
+                out.push_str(&format!("- Then regenerate {label} at `{path}`: `{command}`\n"));
+                push_recovery_powershell_variant(out, "- Then regenerate", &command);
+            }
+        }
     }
 }
 

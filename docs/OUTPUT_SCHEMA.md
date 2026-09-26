@@ -11803,6 +11803,13 @@ Field contract:
   `server_unavailable`, `unsupported_schema`, `unsafe_path`, and
   `unsafe_command` where the packet has that data.
 - `top_gap` requires `status = "actionable"`.
+- For a missing Rust repo-exposure report, `selected.artifact` and
+  `selected.regeneration_command` remain the first recovery step.
+  `selected.additional_missing_artifacts[]` names the dependent missing gap
+  ledger and its regeneration command in execution order. This is guidance,
+  not evidence that either artifact has been generated. When a bounded
+  repo-exposure latency report requires inspection, first-pr retains its
+  blocked diagnostic instead of proposing the dependent step.
 - `selected.canonical_gap_id` and `selected.gap_id` identify the repair unit
   when a top gap is selected. Generated CI and report indexes should prefer the
   canonical gap id when present.
