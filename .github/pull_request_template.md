@@ -111,6 +111,10 @@ How can this PR be reverted safely?
 
 ## Spec-Test-Code Traceability
 
+For new tests, link applicable behavior-spec entries in `.ripr/traceability.toml`
+or explain why they are outside the graph. `check-traceability` validates declared
+links and spec entries; a pass does not inventory every new test.
+
 - Spec:
 - Tests:
 - Code:

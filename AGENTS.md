@@ -157,6 +157,12 @@ semantic truth, actual loading or obedience. A fresh runtime observation records
 version, loaded files, working directory, remote/HEAD, parent goal and a real
 PR transition. Keep that receipt with the issue; a structural pass is not it.
 
+`check-traceability` checks declared manifest links and ensures every behavior
+spec has an entry. It does not inventory new test symbols or establish that
+every test is linked. In a PR's Spec-Test-Code Traceability section, identify
+new tests that belong in `.ripr/traceability.toml` or explain their omission;
+do not read a green gate as complete graph coverage.
+
 ## Product Contract
 
 `ripr` asks:

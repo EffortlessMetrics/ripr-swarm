@@ -28116,6 +28116,20 @@ fn traceability_failure_report_renders_recommended_fixes() -> Result<(), String>
         assert!(report.contains("cargo xtask specs next"));
         assert!(report.contains("docs/specs/README.md"));
         assert!(report.contains("valid RIPR-SPEC-NNNN IDs (exactly 4 digits)"));
+        assert!(report.contains("A pass means the checked declarations are consistent"));
+        Ok(())
+    })
+}
+
+#[test]
+fn traceability_pass_report_discloses_unregistered_test_boundary() -> Result<(), String> {
+    with_temp_cwd("traceability-pass-scope-report", |_| {
+        finish_traceability_report(&[], &[])?;
+        let report = fs::read_to_string("target/ripr/reports/traceability.md")
+            .map_err(|err| format!("read traceability report: {err}"))?;
+        assert!(report.contains("Status: pass"));
+        assert!(report.contains("It does not inventory all test symbols"));
+        assert!(report.contains("not that the spec-test-code graph covers every test"));
         Ok(())
     })
 }

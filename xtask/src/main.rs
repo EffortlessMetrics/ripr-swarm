@@ -6507,7 +6507,14 @@ fn finish_traceability_report(violations: &[String], advisories: &[String]) -> R
         "Traceability keeps behavior specs, tests, fixtures, code, outputs, and metrics \
          discoverable for long-context human and agent work.",
     );
-    body.push_str("\n\n");
+    body.push_str("\n\n## Checked Scope\n\n");
+    body.push_str(
+        "This gate checks the declared manifest entries and that every behavior spec has an entry. \
+         It does not inventory all test symbols in the repository or require each newly added test \
+         to appear in the manifest. A pass means the checked declarations are consistent, not that \
+         the spec-test-code graph covers every test. Review each PR's traceability section for \
+         new tests that should be linked.\n\n",
+    );
 
     if violations.is_empty() {
         body.push_str("## Violations\n\nNone detected.\n\n");
