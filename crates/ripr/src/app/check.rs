@@ -1,3 +1,6 @@
+use super::progress::{
+    AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage, ProgressRun,
+};
 use super::{CheckInput, CheckOutput};
 use crate::analysis::{
     AnalysisResult, run_analysis_with_oracle_policy_and_generated_file_patterns,
@@ -37,14 +40,32 @@ pub fn check_workspace_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Diff)
+    check_workspace_with_config_and_progress(input, config, None)
+}
+
+/// Run a diff check while observing producer-owned progress boundaries.
+pub fn check_workspace_with_config_and_progress(
+    input: CheckInput,
+    config: &RiprConfig,
+    sink: Option<&dyn AnalysisProgressSink>,
+) -> Result<CheckOutput, String> {
+    run_check(input, config, AnalysisMode::Diff, sink)
 }
 
 pub fn check_workspace_worktree_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Worktree)
+    check_workspace_worktree_with_config_and_progress(input, config, None)
+}
+
+/// Run a worktree check while observing producer-owned progress boundaries.
+pub fn check_workspace_worktree_with_config_and_progress(
+    input: CheckInput,
+    config: &RiprConfig,
+    sink: Option<&dyn AnalysisProgressSink>,
+) -> Result<CheckOutput, String> {
+    run_check(input, config, AnalysisMode::Worktree, sink)
 }
 
 /// Runs the repo-baseline static exposure analysis for a workspace. This
@@ -65,7 +86,16 @@ pub fn check_workspace_repo_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Repo)
+    check_workspace_repo_with_config_and_progress(input, config, None)
+}
+
+/// Run a repo check while observing producer-owned progress boundaries.
+pub fn check_workspace_repo_with_config_and_progress(
+    input: CheckInput,
+    config: &RiprConfig,
+    sink: Option<&dyn AnalysisProgressSink>,
+) -> Result<CheckOutput, String> {
+    run_check(input, config, AnalysisMode::Repo, sink)
 }
 
 /// Build a minimal [`CheckOutput`] for repo seam-driven rendering.
@@ -108,7 +138,15 @@ fn run_check(
     mut input: CheckInput,
     config: &RiprConfig,
     mode: AnalysisMode,
+    sink: Option<&dyn AnalysisProgressSink>,
 ) -> Result<CheckOutput, String> {
+    let scope = match mode {
+        AnalysisMode::Diff => AnalysisProgressScope::Diff,
+        AnalysisMode::Worktree => AnalysisProgressScope::Worktree,
+        AnalysisMode::Repo => AnalysisProgressScope::Repo,
+    };
+    let mut progress = ProgressRun::new(sink, scope);
+    progress.emit(AnalysisProgressStage::LoadingInput);
     // Immutable Git candidate subjects (#3237 / #3276): bind-and-validate
     // only in this build. Validate first, before any subprocess or diff
     // acquisition, so a subject input can never fall through to worktree
@@ -166,6 +204,7 @@ fn run_check(
         eprintln!("ripr: mode = {:?}", mode);
     }
 
+    progress.emit(AnalysisProgressStage::Analyzing);
     let analysis = match mode {
         AnalysisMode::Diff => run_analysis_with_oracle_policy_and_generated_file_patterns(
             &options,
@@ -195,11 +234,13 @@ fn run_check(
         eprintln!("ripr: analysis complete — {probe_count} probes, {finding_count} findings");
     }
 
+    progress.emit(AnalysisProgressStage::BuildingOutput);
     let suppression_policy = input.suppression_policy.clone();
     let mut output = output_builder::check_output_from_analysis(input, analysis);
     if let Some(policy) = suppression_policy {
         apply_suppression_policy(&mut output, &policy)?;
     }
+    progress.complete();
     Ok(output)
 }
 
@@ -546,8 +587,97 @@ fn simple_hash(s: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{Mode, OutputFormat};
+    use crate::app::{AnalysisProgressEvent, Mode, OutputFormat};
     use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct ProgressRecorder(Mutex<Vec<AnalysisProgressEvent>>);
+
+    impl AnalysisProgressSink for ProgressRecorder {
+        fn emit(&self, event: AnalysisProgressEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    #[test]
+    fn check_progress_reports_real_boundaries_without_invented_totals() -> Result<(), String> {
+        let recorder = ProgressRecorder::default();
+        let output = check_workspace_with_config_and_progress(
+            sample_diff_input(),
+            &RiprConfig::default(),
+            Some(&recorder),
+        )?;
+        assert!(
+            !output.findings.is_empty(),
+            "sample diff must execute analysis"
+        );
+        let events = recorder.0.lock().map_err(|error| error.to_string())?;
+        assert_eq!(
+            events.iter().map(|event| event.stage).collect::<Vec<_>>(),
+            [
+                AnalysisProgressStage::LoadingInput,
+                AnalysisProgressStage::Analyzing,
+                AnalysisProgressStage::BuildingOutput,
+                AnalysisProgressStage::Completed,
+            ]
+        );
+        assert!(events.iter().all(|event| {
+            event.scope == AnalysisProgressScope::Diff
+                && event.completed_units.is_none()
+                && event.total_units.is_none()
+        }));
+        assert!(events
+            .windows(2)
+            .all(|pair| pair[0].elapsed_ms <= pair[1].elapsed_ms));
+        Ok(())
+    }
+
+    #[test]
+    fn check_progress_failure_has_one_terminal_and_no_false_completion() {
+        let recorder = ProgressRecorder::default();
+        let mut input = sample_diff_input();
+        input.diff_file = Some(input.root.join("absent-progress-input.diff"));
+        assert!(
+            check_workspace_with_config_and_progress(input, &RiprConfig::default(), Some(&recorder))
+                .is_err()
+        );
+        let events = recorder.0.lock().unwrap();
+        assert_eq!(
+            events.last().map(|event| event.stage),
+            Some(AnalysisProgressStage::Failed)
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event.stage,
+                    AnalysisProgressStage::Completed | AnalysisProgressStage::Failed
+                ))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn progress_sink_panic_cannot_change_analysis_result() -> Result<(), String> {
+        struct BrokenSink;
+        impl AnalysisProgressSink for BrokenSink {
+            fn emit(&self, _: AnalysisProgressEvent) {
+                panic!("instrumentation failure");
+            }
+        }
+        let input = sample_diff_input();
+        let baseline = check_workspace_with_config(input.clone(), &RiprConfig::default())?;
+        let observed = check_workspace_with_config_and_progress(
+            input,
+            &RiprConfig::default(),
+            Some(&BrokenSink),
+        )?;
+        assert_eq!(observed.findings.len(), baseline.findings.len());
+        assert_eq!(observed.summary, baseline.summary);
+        Ok(())
+    }
 
     fn sample_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/sample")

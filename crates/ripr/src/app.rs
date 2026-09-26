@@ -14,6 +14,7 @@ mod context;
 mod explain;
 pub(crate) mod impacted_evidence;
 mod navigation;
+mod progress;
 pub mod pr_evidence;
 pub use pr_evidence::reject_pr_evidence_error_packet;
 /// Shared PR-evidence summary projection used by the `ripr` binary and the
@@ -30,6 +31,9 @@ pub(crate) mod verification_execution;
 
 pub use crate::output::format::OutputFormat;
 pub use check::{check_workspace, check_workspace_repo, repo_seam_inventory_input};
+pub use progress::{
+    AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
+};
 
 /// The `ripr-perl-facts-v1` packet schema this ripr build consumes (Campaign 31
 /// item 5). Canonical, always-compiled declaration; the lang-perl-gated perl
@@ -45,7 +49,8 @@ pub(crate) use crate::analysis::repair_route::repair_route_readiness;
 pub(crate) use check::is_managed_perl_producer;
 pub use check::{
     check_workspace_repo_with_config, check_workspace_with_config,
-    check_workspace_worktree_with_config,
+    check_workspace_repo_with_config_and_progress, check_workspace_with_config_and_progress,
+    check_workspace_worktree_with_config, check_workspace_worktree_with_config_and_progress,
 };
 pub(crate) use context::collect_context_from_artifact;
 pub use context::collect_context_with_config;
