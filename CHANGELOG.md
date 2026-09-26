@@ -529,6 +529,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr init --ci github` encodes PR guidance annotations inside jq. The
+  previous TSV round-trip rewrote backslash, tab, CR, and LF before GitHub
+  workflow-command escaping, so a path or message could display transport
+  text instead of the comment bytes
+  ([#4089](https://github.com/EffortlessMetrics/ripr-swarm/issues/4089)).
+
 - Gate baselines now treat canonical gap identity as the normal authority and
   disclose every legacy fallback match. `ripr baseline create` refuses
   `path:line:static_class` fallback identity as primary authority for new
