@@ -80,14 +80,21 @@ fn perl_static_limit_missing_runner_keeps_observation() -> Result<(), String> {
     assert_eq!(observed.class, ExposureClass::Exposed);
     assert_eq!(observed.language_status, Some(LanguageStatus::Preview));
     assert!(observed.canonical_gap.is_none());
-    assert!(observed.recommended_next_step.as_deref().is_some_and(|step| {
-        step.contains("Make the related Perl test runner available")
-            && !step.contains("No test change needed")
-    }));
-    assert!(observed
-        .evidence
-        .iter()
-        .any(|line| line.starts_with("perl_missing_test_runner:")));
+    assert!(
+        observed
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|step| {
+                step.contains("Make the related Perl test runner available")
+                    && !step.contains("No test change needed")
+            })
+    );
+    assert!(
+        observed
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("perl_missing_test_runner:"))
+    );
     assert!(
         observed
             .evidence
@@ -212,10 +219,12 @@ fn perl_static_limit_missing_runner_respects_scope() -> Result<(), String> {
     let mut other = packet.clone();
     other.dynamic_boundaries.push(unrelated);
     assert_eq!(projection(&other)?, Projection::default());
-    assert!(!finding(&other)?
-        .evidence
-        .iter()
-        .any(|line| line.starts_with("perl_missing_test_runner:")));
+    assert!(
+        !finding(&other)?
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("perl_missing_test_runner:"))
+    );
 
     let test = packet
         .tests
@@ -241,10 +250,12 @@ fn perl_missing_runner_limitation_discloses_unverified_observation() -> Result<(
     assert_eq!(finding(&packet)?.class, ExposureClass::Exposed);
     assert_eq!(projection(&packet)?.missing_test_runner, false);
     let baseline = finding(&packet)?;
-    assert!(baseline
-        .recommended_next_step
-        .as_deref()
-        .is_some_and(|step| step.starts_with("No test change needed")));
+    assert!(
+        baseline
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|step| step.starts_with("No test change needed"))
+    );
 
     // Reuse the packet's own limitation shape and scope, varying only its code.
     let original: PerlFactPacket = serde_json::from_str(REAL_PRODUCER_PACKET)
@@ -265,13 +276,20 @@ fn perl_missing_runner_limitation_discloses_unverified_observation() -> Result<(
     let observed = finding(&packet)?;
     assert_eq!(observed.class, ExposureClass::Exposed);
     assert_eq!(observed.static_limit_kind, None);
-    assert!(observed.recommended_next_step.as_deref().is_some_and(|step| {
-        step.contains("Make the related Perl test runner available")
-            && !step.contains("No test change needed")
-    }));
-    assert!(observed
-        .evidence
-        .iter()
-        .any(|line| line.starts_with("perl_missing_test_runner:")));
+    assert!(
+        observed
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|step| {
+                step.contains("Make the related Perl test runner available")
+                    && !step.contains("No test change needed")
+            })
+    );
+    assert!(
+        observed
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("perl_missing_test_runner:"))
+    );
     Ok(())
 }
