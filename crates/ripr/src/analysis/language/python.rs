@@ -602,9 +602,15 @@ impl PythonAdapter {
                 .get(&changed.path)
                 .map(Vec::as_slice)
                 .unwrap_or_default();
-            let old_docstring_ranges = std::fs::read_to_string(options.root.join(&changed.path))
-                .ok()
-                .and_then(|source| reconstruct_old_source(&source, changed))
+            // The old-source reconstruction reuses the once-read capped
+            // workspace source. A fresh read here would defeat the walk
+            // bounds above; a capped-out file degrades to empty ranges,
+            // exactly the pre-existing unreadable-file path, and the file
+            // itself is already named in the limitation set.
+            let old_docstring_ranges = workspace_read
+                .sources
+                .get(&changed.path)
+                .and_then(|source| reconstruct_old_source(source, changed))
                 .map(|source| extract_source_facts(&changed.path, &source).docstring_line_ranges)
                 .unwrap_or_default();
             for added in &changed.added_lines {
