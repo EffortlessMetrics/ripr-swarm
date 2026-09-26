@@ -1091,9 +1091,10 @@ fn human_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        GcOptions, ShardSetStatus, build_cache_report, build_cache_report_from_env, build_gc_plan,
-        build_gc_plan_from_env, cache_gc_markdown, cache_report_json, cache_report_markdown,
-        cache_root_from_env, deletion_path, parse_gc_options,
+        CacheLayer, GcOptions, ShardSetStatus, build_cache_report, build_cache_report_from_env,
+        build_gc_plan, build_gc_plan_from_env, cache_gc_markdown, cache_report_json,
+        cache_report_markdown, cache_root_from_env, deletion_path, is_recognized_cache_root,
+        parse_gc_options,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
