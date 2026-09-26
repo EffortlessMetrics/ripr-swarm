@@ -480,6 +480,9 @@ function unsupportedTextDocumentSyncReason(value: unknown): string | undefined {
   if (value === 1) {
     return undefined;
   }
+  if (value === 2) {
+    return 'incremental sync requires options advertising openClose and save';
+  }
   if (!isObject(value)) {
     return 'requires full or incremental change notifications';
   }
