@@ -532,7 +532,9 @@ mod tests {
 
     #[test]
     fn truncate_workspace_files_keeps_sorted_prefix_and_counts_refusals() {
-        let files: Vec<PathBuf> = (0..5).map(|index| PathBuf::from(format!("f{index}.py"))).collect();
+        let files: Vec<PathBuf> = (0..5)
+            .map(|index| PathBuf::from(format!("f{index}.py")))
+            .collect();
         let (kept, refused) = truncate_workspace_files(files.clone(), 3);
         assert_eq!(kept, files[..3], "sorted prefix is retained");
         assert_eq!(refused, 2, "refused count is disclosed");
