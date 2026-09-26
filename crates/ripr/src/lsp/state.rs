@@ -1207,6 +1207,12 @@ impl DocumentStore {
     }
 }
 
+/// Project a document URI to the path used for saved-content reads and
+/// display. A URI the shared decoder (`lsp::uri::normalized_file_uri_path`)
+/// refuses has no local file path, so the wire string is kept for diagnostics
+/// only. That fallback is relative text, not a workspace path, and
+/// `lsp::uri::path_is_within_root` refuses it so a rejected URI can never read
+/// as contained under the selected root.
 fn document_path(uri: &Uri) -> PathBuf {
     path_from_file_uri(uri).unwrap_or_else(|| PathBuf::from(uri.as_str()))
 }
@@ -1498,6 +1504,49 @@ mod tests {
         })();
         let _ = std::fs::remove_dir_all(&dir);
         result
+    }
+
+    #[test]
+    fn rejected_uri_document_path_fallback_is_never_contained() -> Result<(), String> {
+        // `document_path` keeps the wire string when the shared URI decoder
+        // refuses the URI. That text is relative, so without the containment
+        // guard it would join under any selected root and read as a workspace
+        // file. #4060.
+        let root = PathBuf::from("/workspace/ripr");
+        for value in [
+            "file://remote.example/workspace/ripr/src/lib.rs",
+            "file://127.0.0.1/workspace/ripr/src/lib.rs",
+            "file:////remote.example/share/workspace/ripr/src/lib.rs",
+            "FILE://LOCALHOST/workspace/ripr/src/lib.rs?revision=1",
+            "file:/workspace/ripr/src/lib.rs#symbol",
+        ] {
+            let uri = test_uri(value)?;
+            let fallback = document_path(&uri);
+            if !fallback.is_relative() {
+                return Err(format!("expected a relative fallback for {value}"));
+            }
+            if crate::lsp::uri::path_is_within_root(&root, &fallback) {
+                return Err(format!(
+                    "rejected-URI fallback must not read as contained: {value}"
+                ));
+            }
+            if crate::lsp::uri::file_uri_is_within_root(&root, &uri) {
+                return Err(format!("rejected URI must not be contained: {value}"));
+            }
+        }
+
+        // The admitted spelling still yields a real absolute path that does
+        // resolve under the same root, so the guard is not over-broad.
+        let admitted = document_path(&test_uri("file:///workspace/ripr/src/lib.rs")?);
+        if admitted.as_path() != std::path::Path::new("/workspace/ripr/src/lib.rs") {
+            return Err(format!(
+                "admitted URI must keep its local path: {admitted:?}"
+            ));
+        }
+        if !crate::lsp::uri::path_is_within_root(&root, &admitted) {
+            return Err("an admitted local path must stay contained".to_string());
+        }
+        Ok(())
     }
 
     #[test]
