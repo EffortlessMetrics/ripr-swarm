@@ -238,11 +238,13 @@ fn has_call_shape(text: &str) -> bool {
 /// calls (#3740, #3749). `Invalid(String)`, `struct Wrap(PathBuf);`, and
 /// `pub struct Wrapper(pub String);` must not become `call_deletion` probes.
 /// Generics between the name and the tuple (`Foo<T>(pub T)`) belong to the
-/// declaration. A value argument (`NotFound(id)`, `Foo(value)`) and an
-/// expression statement (`Invalid(msg);`) stay calls. `Err` / `Ok` / `Some`
-/// are constructors, not variant declarations.
+/// declaration. A same-line outer attribute (`#[derive(Clone)] struct ...`)
+/// and a tuple-struct `where` tail are still the declaration. A value
+/// argument (`NotFound(id)`, `Foo(value)`) and an expression statement
+/// (`Invalid(msg);`) stay calls. `Err` / `Ok` / `Some` are constructors,
+/// not variant declarations.
 fn is_tuple_type_declaration(text: &str) -> bool {
-    let mut rest = text.trim();
+    let mut rest = skip_outer_attributes(text.trim());
     if let Some(after_visibility) = strip_pub_visibility(rest) {
         rest = after_visibility.trim_start();
     }
@@ -279,12 +281,53 @@ fn is_tuple_type_declaration(text: &str) -> bool {
     }
     let tail = tail.trim();
     if struct_form {
-        return tail.is_empty() || tail == ";";
+        return tail.is_empty() || tail == ";" || is_where_clause(tail);
     }
     if tail.is_empty() || tail == "," || tail == "}" || tail == "}," {
         return true;
     }
     numeric_discriminant(tail)
+}
+
+/// `#[...]` / `#![...]` prefixes on the same line as a declaration.
+/// A line that is not an attribute is returned unchanged.
+fn skip_outer_attributes(text: &str) -> &str {
+    let mut rest = text.trim_start();
+    loop {
+        let Some(after_hash) = rest.strip_prefix('#') else {
+            return rest;
+        };
+        let after_inner = after_hash.strip_prefix('!').unwrap_or(after_hash);
+        let Some(inside) = after_inner.trim_start().strip_prefix('[') else {
+            return rest;
+        };
+        let Some(after_attr) = skip_balanced_delims(inside, '[', ']') else {
+            return rest;
+        };
+        rest = after_attr.trim_start();
+    }
+}
+
+fn skip_balanced_delims(text: &str, open: char, close: char) -> Option<&str> {
+    let mut depth = 1usize;
+    for (index, ch) in text.char_indices() {
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(&text[index + ch.len_utf8()..]);
+            }
+        }
+    }
+    None
+}
+
+fn is_where_clause(tail: &str) -> bool {
+    let Some(after) = tail.strip_prefix("where") else {
+        return false;
+    };
+    after.is_empty() || after.starts_with(|ch: char| ch.is_whitespace() || ch == ';' || ch == '{')
 }
 
 fn numeric_discriminant(tail: &str) -> bool {
@@ -718,6 +761,13 @@ mod tests {
             "pub struct Foo<T>(pub T);",
             "struct Foo<'a>(&'a str);",
             "struct Foo<T: Clone>(T);",
+            "#[derive(Clone)] struct Wrap(String);",
+            "#[repr(transparent)] pub struct Wrap(String);",
+            "#[derive(Debug)] #[repr(transparent)] pub struct Wrap(u32);",
+            "#[derive(Debug)] Invalid(String),",
+            "struct Foo<T>(T) where T: Clone;",
+            "pub struct Foo<T>(pub T) where T: Clone;",
+            "#[derive(Clone)] pub struct Foo<T>(T) where T: Clone;",
         ] {
             let families = classify_changed_line(text);
             assert_eq!(
@@ -733,6 +783,8 @@ mod tests {
             "Err(AuthError::Revoked)",
             "Foo(value)",
             "Id(0)",
+            "#[inline] send_invoice(invoice)",
+            "#[allow(unused)] Foo(value)",
         ] {
             let families = classify_changed_line(text);
             assert!(
