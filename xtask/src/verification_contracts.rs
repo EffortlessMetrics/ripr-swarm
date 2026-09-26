@@ -15,6 +15,55 @@ const RIPR_SCHEMA_PREFIX: &str = "schemas/ripr/";
 /// set it covered before the inventory was derived, and makes a non-schema
 /// parked in `schemas/` declare itself in the audit rather than slip past.
 const SCHEMA_FILE_SUFFIX: &str = ".json";
+const OUTPUT_SCHEMA_DOC: &str = "docs/OUTPUT_SCHEMA.md";
+
+/// The published-schema inventory is discovered from disk. Each discovered
+/// ripr schema must also have exactly one version row in the output reference.
+/// A source constant is named only where the producer has a single authority;
+/// design-only envelopes and producers with inline literals still get the
+/// schema/document comparison without pretending a constant exists.
+const VERSION_SOURCES: &[(&str, &str, &str)] = &[
+    (
+        "check.schema.json",
+        "crates/ripr/src/app.rs",
+        "CHECK_OUTPUT_SCHEMA_VERSION",
+    ),
+    (
+        "gate-decision.schema.json",
+        "crates/ripr/src/output/gate.rs",
+        "SCHEMA_VERSION",
+    ),
+    (
+        "repair-attempt.schema.json",
+        "crates/ripr/src/app/repair_attempt.rs",
+        "REPAIR_ATTEMPT_SCHEMA_VERSION",
+    ),
+    (
+        "review-comments.schema.json",
+        "crates/ripr/src/output/review_comments.rs",
+        "REVIEW_COMMENTS_SCHEMA_VERSION",
+    ),
+    (
+        "ripr-agent-capability.schema.json",
+        "crates/ripr/src/lsp/agent_protocol.rs",
+        "RIPR_AGENT_SCHEMA_VERSION",
+    ),
+    (
+        "ripr-agent-error.schema.json",
+        "crates/ripr/src/lsp/agent_protocol.rs",
+        "RIPR_AGENT_SCHEMA_VERSION",
+    ),
+    (
+        "ripr-agent-request.schema.json",
+        "crates/ripr/src/lsp/agent_protocol.rs",
+        "RIPR_AGENT_SCHEMA_VERSION",
+    ),
+    (
+        "ripr-agent-success.schema.json",
+        "crates/ripr/src/lsp/agent_protocol.rs",
+        "RIPR_AGENT_SCHEMA_VERSION",
+    ),
+];
 
 /// Which value inside `fixture_path` a contract validates.
 ///
@@ -409,29 +458,58 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         }
     }
 
-    // Reverse-direction check: every schemas/ripr/*.schema.json must define a
-    // schema_version property with a const value. This is the first
-    // enforcement step toward #1720 (per-output version reconciliation).
+    // Compare every published ripr schema with its canonical documentation
+    // row, and with the producer constant where one owns the version.
+    let output_doc = read_text(root.join(OUTPUT_SCHEMA_DOC))?;
+    let version_rows = published_version_rows(&output_doc, &mut violations);
+    let mut seen_rows = BTreeSet::new();
     for rel_str in published_schemas
         .iter()
         .filter(|path| path.starts_with(RIPR_SCHEMA_PREFIX))
     {
         let schema = read_json(root.join(rel_str))?;
-        let props = schema.get("properties").and_then(Value::as_object);
-        let Some(props) = props else {
-            violations.push(format!("{rel_str} has no properties"));
-            continue;
-        };
-        let Some(sv_prop) = props.get("schema_version") else {
+        seen_rows.insert(rel_str.as_str());
+        let version = schema
+            .pointer("/properties/schema_version/const")
+            .and_then(Value::as_str);
+        let Some(version) = version else {
             violations.push(format!(
-                "{rel_str} is missing `schema_version` property — every ripr output schema must declare a version (#1720)"
+                "{rel_str} schema_version must use a string `const` for a pinned version (#1720)"
             ));
             continue;
         };
-        if sv_prop.get("const").is_none() {
+        let filename = rel_str.strip_prefix(RIPR_SCHEMA_PREFIX).unwrap_or(rel_str);
+        let source_version = if let Some((_, source_path, constant)) =
+            VERSION_SOURCES.iter().find(|(name, _, _)| *name == filename)
+        {
+            let source = read_text(root.join(source_path))?;
+            Some((
+                *source_path,
+                *constant,
+                source_constant_values(&source, constant),
+            ))
+        } else {
+            None
+        };
+        compare_published_version(
+            rel_str,
+            version,
+            version_rows.get(rel_str.as_str()),
+            source_version,
+            &mut violations,
+        );
+    }
+    for row in version_rows.keys() {
+        if !seen_rows.contains(row.as_str()) {
             violations.push(format!(
-                "{rel_str} schema_version must use `const` for a pinned version (#1720)"
+                "{OUTPUT_SCHEMA_DOC} has a published version row for missing schema {row}"
             ));
+        }
+    }
+    for (filename, _, _) in VERSION_SOURCES {
+        let path = format!("{RIPR_SCHEMA_PREFIX}{filename}");
+        if !seen_rows.contains(path.as_str()) {
+            violations.push(format!("version source mapping names missing schema {path}"));
         }
     }
 
@@ -453,6 +531,81 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
                 .collect::<Vec<_>>()
                 .join("\n")
         ))
+    }
+}
+
+fn published_version_rows(
+    doc: &str,
+    violations: &mut Vec<String>,
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut rows = std::collections::BTreeMap::<String, Vec<String>>::new();
+    let Some(section) = doc.split_once("### Published ripr JSON Schemas").map(|(_, rest)| {
+        rest.split("\n## ").next().unwrap_or(rest)
+    }) else {
+        violations.push(format!(
+            "{OUTPUT_SCHEMA_DOC} is missing the published schema version table"
+        ));
+        return rows;
+    };
+    for line in section.lines() {
+        let cells = line.split('|').map(str::trim).collect::<Vec<_>>();
+        if cells.len() < 4 || !cells[1].starts_with('`') || !cells[1].contains(RIPR_SCHEMA_PREFIX) {
+            continue;
+        }
+        let Some(path) = cells[1].strip_prefix('`').and_then(|cell| cell.strip_suffix('`')) else {
+            violations.push(format!(
+                "{OUTPUT_SCHEMA_DOC} has malformed published schema path: {}",
+                cells[1]
+            ));
+            continue;
+        };
+        let Some(version) = cells[2].strip_prefix('`').and_then(|cell| cell.strip_suffix('`')) else {
+            violations.push(format!(
+                "{OUTPUT_SCHEMA_DOC} has malformed version for {path}: {}",
+                cells[2]
+            ));
+            continue;
+        };
+        rows.entry(path.to_string()).or_default().push(version.to_string());
+    }
+    rows
+}
+
+fn source_constant_values(source: &str, constant: &str) -> Vec<String> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let (_, definition) = line.split_once("const ")?;
+            let literal = definition
+                .strip_prefix(constant)?
+                .strip_prefix(": &str = \"")?;
+            literal.split_once('"').map(|(value, _)| value.to_string())
+        })
+        .collect()
+}
+
+fn compare_published_version(
+    schema_path: &str,
+    schema_version: &str,
+    doc_versions: Option<&Vec<String>>,
+    source: Option<(&str, &str, Vec<String>)>,
+    violations: &mut Vec<String>,
+) {
+    match doc_versions {
+        Some(values) if values.len() == 1 && values[0] == schema_version => {}
+        Some(values) => violations.push(format!(
+            "{OUTPUT_SCHEMA_DOC} version row for {schema_path} is {values:?}; schema declares `{schema_version}`"
+        )),
+        None => violations.push(format!(
+            "{OUTPUT_SCHEMA_DOC} has no published version row for {schema_path}"
+        )),
+    }
+    if let Some((source_path, constant, values)) = source {
+        if values.len() != 1 || values[0] != schema_version {
+            violations.push(format!(
+                "{source_path} {constant} is {values:?}; {schema_path} declares `{schema_version}`"
+            ));
+        }
     }
 }
 
@@ -1110,6 +1263,79 @@ fn compact_json(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn published_version_rows_reject_missing_duplicate_and_changed_versions() {
+        let path = "schemas/ripr/check.schema.json";
+        let row = format!("| `{path}` | `0.2` |");
+        let doc = format!("### Published ripr JSON Schemas\n{row}\n");
+        let mut errors = Vec::new();
+        let rows = published_version_rows(&doc, &mut errors);
+        assert!(errors.is_empty());
+        compare_published_version(
+            path,
+            "0.2",
+            rows.get(path),
+            Some((
+                "app.rs",
+                "CHECK_OUTPUT_SCHEMA_VERSION",
+                vec!["0.2".to_string()],
+            )),
+            &mut errors,
+        );
+        assert!(errors.is_empty());
+
+        let missing = published_version_rows("### Published ripr JSON Schemas\n", &mut errors);
+        compare_published_version(path, "0.2", missing.get(path), None, &mut errors);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("no published version row"))
+        );
+        errors.clear();
+        let duplicates = published_version_rows(&format!("{doc}{row}\n"), &mut errors);
+        compare_published_version(path, "0.2", duplicates.get(path), None, &mut errors);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("[\"0.2\", \"0.2\"]"))
+        );
+        errors.clear();
+        let changed = published_version_rows(&doc.replace("`0.2`", "`0.3`"), &mut errors);
+        compare_published_version(
+            path,
+            "0.2",
+            changed.get(path),
+            Some((
+                "app.rs",
+                "CHECK_OUTPUT_SCHEMA_VERSION",
+                vec!["0.3".to_string()],
+            )),
+            &mut errors,
+        );
+        assert_eq!(
+            errors.len(),
+            2,
+            "doc and code drift must each fail: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn source_version_reader_requires_the_named_literal_constant() {
+        let source = "pub(crate) const CHECK_OUTPUT_SCHEMA_VERSION: &str = \"0.2\";\nconst OTHER_SCHEMA_VERSION: &str = \"0.1\";";
+        assert_eq!(
+            source_constant_values(source, "CHECK_OUTPUT_SCHEMA_VERSION"),
+            ["0.2"]
+        );
+        assert_eq!(
+            source_constant_values(
+                &source.replace("\"0.2\"", "\"0.3\""),
+                "CHECK_OUTPUT_SCHEMA_VERSION"
+            ),
+            ["0.3"]
+        );
+        assert!(source_constant_values(source, "MISSING_SCHEMA_VERSION").is_empty());
+    }
 
     #[test]
     fn published_schema_inventory_is_read_from_disk() -> Result<(), String> {

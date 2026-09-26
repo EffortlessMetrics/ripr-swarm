@@ -57,6 +57,29 @@ map is:
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
 
+### Published ripr JSON Schemas
+
+These rows name the current top-level `schema_version` for every published
+`schemas/ripr/` schema. `cargo xtask check-verification-contracts --check`
+compares the rows with the schema `const` values and, where a producer has a
+named version constant, with that constant. The producer audit records which
+schemas describe live output and which reserve a future envelope. This table
+does not imply that a reserved envelope is emitted today.
+
+| Schema | Current version |
+| --- | --- |
+| `schemas/ripr/check.schema.json` | `0.2` |
+| `schemas/ripr/gate-decision.schema.json` | `0.1` |
+| `schemas/ripr/pr-evidence.schema.json` | `0.1` |
+| `schemas/ripr/repair-assurance.schema.json` | `1` |
+| `schemas/ripr/repair-attempt.schema.json` | `0.1` |
+| `schemas/ripr/review-comments.schema.json` | `0.1` |
+| `schemas/ripr/ripr-agent-capability.schema.json` | `0.2` |
+| `schemas/ripr/ripr-agent-error.schema.json` | `0.2` |
+| `schemas/ripr/ripr-agent-request.schema.json` | `0.2` |
+| `schemas/ripr/ripr-agent-success.schema.json` | `0.2` |
+| `schemas/ripr/rust-repair-trust-corpus.schema.json` | `0.1` |
+
 `ripr doctor --json` top-level `status` and `runtime_probes[].status` are
 `pass` or `fail`. Each `checks[].status` is `pass`, `fail`, or `skipped`;
 `skipped` (additive in schema `0.2`) marks a check that does not apply to the
