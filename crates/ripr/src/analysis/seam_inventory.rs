@@ -478,6 +478,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         match cache.load_classified_seams_with_fallback(&key) {
             CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
                 trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
+                trace_file_fact_cache(&FileFactCacheStats::zero_work());
                 trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
                 if let Some(disclosure) =
                     rust_index::lexical_fallback_disclosure_for_files(&lexical_fallback_files)
@@ -507,6 +508,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
     match cache.load_classified_seams_with_fallback(&key) {
         CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
             trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
+            trace_file_fact_cache(&FileFactCacheStats::zero_work());
             trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
             if let Some(disclosure) =
                 rust_index::lexical_fallback_disclosure_for_files(&lexical_fallback_files)
