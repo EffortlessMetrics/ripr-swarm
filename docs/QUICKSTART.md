@@ -114,7 +114,13 @@ ripr check --format human-full
 ripr check --format json > target/ripr/check.json
 ```
 
-### 2. Select one repo-scoped repair
+## Agent or reviewer first hour
+
+Use this path when you want one bounded repair packet and durable transaction.
+For retained evidence, `ripr agent status --root .` shows the current state.
+For a new guided selection, start with:
+
+### 1. Select one repo-scoped repair
 
 ```bash
 ripr pilot --root .
@@ -128,7 +134,7 @@ The seam ID used by `agent repair` is repo-scoped. Probe IDs printed by
 `ripr check` are diff-scoped and are used by commands such as `explain` and
 `context`; the two identifiers are not interchangeable.
 
-### 3. Retain the before state
+### 2. Retain the before state
 
 ```bash
 ripr agent repair --root . --seam-id <seam-id> --phase before
@@ -138,13 +144,13 @@ The before phase validates currentness, writes the pre-edit evidence, and
 prints the exact `--attempt` command for the after phase. Keep that command.
 The repair-attempt ID identifies the prepared transaction.
 
-### 4. Edit one focused test
+### 3. Edit one focused test
 
 Make the smallest coherent test or fixture change outside RIPR. Respect the
 packet's allowed edit surface, forbidden files, stop conditions, and named
 limitations. RIPR does not generate or apply the test edit.
 
-### 5. Finish the same transaction
+### 4. Finish the same transaction
 
 ```bash
 ripr agent repair --root . --attempt <repair-attempt-id> --phase after
@@ -161,7 +167,7 @@ Keep one selected repository root throughout the transaction. The root,
 before/after artifacts, selected work item, verification subject, and receipt
 must all describe the same repository and comparable revisions.
 
-### 6. Compose reviewer-facing evidence
+### 5. Compose reviewer-facing evidence
 
 After the analyzer and repair artifacts exist:
 
