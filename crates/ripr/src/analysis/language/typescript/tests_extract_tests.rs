@@ -210,6 +210,7 @@ test.only("discount boundary", () => {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);

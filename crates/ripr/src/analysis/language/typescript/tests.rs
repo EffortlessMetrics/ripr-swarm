@@ -20,6 +20,7 @@ fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     }
 }
@@ -1652,6 +1653,7 @@ fn find_related_tests_matches_by_call_name() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = vec![
@@ -1695,6 +1697,7 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
@@ -1724,6 +1727,7 @@ fn find_related_tests_matches_bounded_method_receiver_calls() {
         owner_kind: OwnerKind::Method,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1761,6 +1765,7 @@ fn find_related_tests_keeps_factory_receiver_calls_unrelated_for_method_owners()
         owner_kind: OwnerKind::Method,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1789,6 +1794,7 @@ fn find_related_tests_keeps_dynamic_method_receiver_calls_unrelated() {
         owner_kind: OwnerKind::Method,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1818,6 +1824,7 @@ fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
         owner_kind: OwnerKind::Method,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1852,6 +1859,7 @@ fn find_related_tests_keeps_mocked_function_owner_call_at_proximity() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1896,6 +1904,7 @@ fn find_related_tests_keeps_mocked_arrow_function_owner_call_at_proximity() {
         owner_kind: OwnerKind::ArrowFunction,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1945,6 +1954,7 @@ fn find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -1987,6 +1997,7 @@ fn find_related_tests_credits_unmocked_function_owner_call() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2021,6 +2032,7 @@ fn classify_change_stays_weakly_exposed_when_test_mocks_owner_module() -> Result
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2082,6 +2094,7 @@ fn find_related_tests_matches_bounded_class_method_calls() {
         owner_kind: OwnerKind::ClassMethod,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2118,6 +2131,7 @@ fn find_related_tests_keeps_shadowed_class_method_calls_unrelated() {
         owner_kind: OwnerKind::ClassMethod,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2146,6 +2160,7 @@ fn find_related_tests_matches_same_file_class_method_calls() {
         owner_kind: OwnerKind::ClassMethod,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2181,6 +2196,7 @@ fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
         owner_kind: OwnerKind::ClassMethod,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2208,6 +2224,7 @@ fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
         owner_kind: OwnerKind::ClassMethod,
         class_name: Some("Cart".to_string()),
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2237,6 +2254,7 @@ fn find_related_tests_requires_class_name_for_class_method_calls() {
         owner_kind: OwnerKind::ClassMethod,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2264,6 +2282,7 @@ fn find_related_tests_matches_module_initializer_named_import_observer() {
         owner_kind: OwnerKind::ModuleFunction,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2300,6 +2319,7 @@ fn find_related_tests_matches_module_initializer_namespace_observer() {
         owner_kind: OwnerKind::ModuleFunction,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2329,6 +2349,7 @@ fn find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_
         owner_kind: OwnerKind::ModuleFunction,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2366,6 +2387,7 @@ fn find_related_tests_matches_named_import_alias_calls() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2414,6 +2436,7 @@ fn find_related_tests_alias_wrong_name_not_credited() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2449,6 +2472,7 @@ fn find_related_tests_alias_shadowed_local_not_credited_high() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2484,6 +2508,7 @@ fn find_related_tests_non_alias_import_still_direct_owner_call() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2527,6 +2552,7 @@ fn find_related_tests_namespace_import_unchanged_imported_owner_call() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2570,6 +2596,7 @@ fn find_related_tests_matches_namespace_import_member_calls() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2598,6 +2625,7 @@ fn find_related_tests_ignores_unrelated_and_type_only_import_aliases() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2635,6 +2663,7 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
@@ -2664,6 +2693,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = vec![
@@ -2706,6 +2736,7 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     // Each test references the owner without a recognized call shape, so the
@@ -2777,6 +2808,7 @@ fn related_test_name_proximity_ignores_partial_tokens() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2804,6 +2836,7 @@ fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = extract_tests(
@@ -2854,6 +2887,7 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -3181,6 +3215,7 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -3223,6 +3258,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             owner_kind: OwnerKind::Function,
             class_name: None,
             decorated: false,
+            exported_as_default: false,
             imports: Vec::new(),
         },
         TypeScriptOwner {
@@ -3233,6 +3269,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             owner_kind: OwnerKind::Function,
             class_name: None,
             decorated: false,
+            exported_as_default: false,
             imports: Vec::new(),
         },
     ];
@@ -3958,6 +3995,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -4023,6 +4061,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -4084,6 +4123,7 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let finding = classify_change(
@@ -4116,6 +4156,7 @@ fn classify_change_returns_none_when_line_is_outside_any_owner() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let finding = classify_change(
@@ -5238,6 +5279,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = vec![
@@ -5278,6 +5320,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
@@ -5305,6 +5348,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
@@ -5333,6 +5377,7 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
@@ -5407,6 +5452,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     // The test body calls the owner (it would be credited without the
@@ -5460,6 +5506,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let unfiltered = classify_change(
@@ -5505,6 +5552,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
@@ -5583,6 +5631,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: vec![TypeScriptImport {
             source: "./labels".to_string(),
             imported: Some("normalizeLabel".to_string()),
@@ -6458,6 +6507,7 @@ fn package_local_filter_selects_same_package_test() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -6519,6 +6569,7 @@ fn package_local_filter_rejects_cross_package_test() {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -6662,6 +6713,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     // Cross-package test that calls applyDiscount by name (local shadow or
@@ -6790,6 +6842,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     // Two strong `toBe` assertions on the UNCHANGED return value.
@@ -6888,6 +6941,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -6959,6 +7013,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7032,6 +7087,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7101,6 +7157,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7170,6 +7227,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7243,6 +7301,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7324,6 +7383,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7395,6 +7455,7 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7533,6 +7594,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     // A strong MockExpectation assertion with observed_expression None — exactly
@@ -7606,6 +7668,7 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     // The observed expression names the owner (so the side-channel arm does
@@ -7723,6 +7786,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7790,6 +7854,7 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7880,6 +7945,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -7941,6 +8007,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     // Test only imports `cloneDeep` from lodash — unrelated to the owner name.
@@ -7996,6 +8063,7 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     // Test only imports the React default binding — unrelated to the owner.
@@ -8049,6 +8117,7 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -8102,6 +8171,7 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -8171,6 +8241,7 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -8241,6 +8312,7 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -8320,6 +8392,7 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -8385,6 +8458,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     // Test A: error-path observer — toThrow(DiscountError) — Strong, ExactErrorVariant.
@@ -8485,6 +8559,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let exact_value_test = TypeScriptTest {
@@ -8547,6 +8622,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let throw_test = TypeScriptTest {
@@ -8617,6 +8693,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     // ONE test with TWO assertions:
@@ -9219,6 +9296,7 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let test = TypeScriptTest {
@@ -9512,6 +9590,7 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
+        exported_as_default: false,
         imports: Vec::new(),
     };
     let mut test = exact_value_test("applyDiscount", "pricing.applyDiscount(100, 100)", "90");
@@ -10192,4 +10271,315 @@ fn detect_partial_none_when_every_test_extracted() {
         detect_partial_test_extraction(file, source, &extracted).is_none(),
         "fully extracted file must not report a partial-extraction gap"
     );
+}
+
+// ── #4103 under-credit half: genuine owner references the gate missed ──────
+//
+// Red witnesses: the ts-relation probe fixtures (case04b, case07, case08,
+// case11/11b, case12a/12b/12d) against main `f72022049`. Every shape below
+// reported `no_static_path` with the false "No test references `X(`" message
+// (case12b capped at a bare-reference heuristic) before these fixes. Each
+// positive test has a wrong-identity negative control.
+
+#[test]
+fn undercredit_4103_optional_chain_namespace_member_call_is_credited() {
+    let owner = test_owner("loyaltyPrice", "src/pricing.ts");
+    let tests = extract_tests(
+        Path::new("tests/pricing.test.ts"),
+        r#"import * as pricing from "../src/pricing";
+describe("tiers", () => {
+  it("veteran", () => {
+    expect(pricing?.loyaltyPrice(1000, 5)).toBe(950);
+  });
+});
+"#,
+    );
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert_eq!(
+        candidates.len(),
+        1,
+        "optional-chain member call must credit"
+    );
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::ImportedOwnerCall
+    );
+}
+
+#[test]
+fn undercredit_4103_optional_chain_member_reference_counts_as_reference() {
+    let owner = test_owner("loyaltyPrice", "src/pricing.ts");
+    let tests = extract_tests(
+        Path::new("tests/pricing.test.ts"),
+        r#"import * as pricing from "../src/pricing";
+describe("tiers", () => {
+  it("veteran", () => {
+    expect(pricing?.loyaltyPrice).toBeDefined();
+  });
+});
+"#,
+    );
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert_eq!(
+        candidates.len(),
+        1,
+        "optional-chain member reference must count as a reference"
+    );
+    assert!(candidates[0].relation.is_uncertain());
+}
+
+#[test]
+fn undercredit_4103_direct_optional_call_is_credited_as_call() {
+    let owner = test_owner("loyaltyPrice", "src/pricing.ts");
+    let tests = extract_tests(
+        Path::new("tests/pricing.test.ts"),
+        r#"import { loyaltyPrice } from "../src/pricing";
+describe("tiers", () => {
+  it("veteran", () => {
+    expect(loyaltyPrice?.(1000, 5)).toBe(950);
+  });
+});
+"#,
+    );
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert_eq!(candidates.len(), 1, "optional direct call must credit");
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::DirectOwnerCall
+    );
+}
+
+#[test]
+fn undercredit_4103_optional_chain_unrelated_receiver_is_not_credited() {
+    let owner = test_owner("loyaltyPrice", "src/pricing.ts");
+    let tests = extract_tests(
+        Path::new("tests/other.test.ts"),
+        r#"test("same name on an unrelated local", () => {
+    const odd = { loyaltyPrice: () => 1 };
+    expect(odd?.loyaltyPrice(2)).toBe(1);
+});
+"#,
+    );
+    let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert!(
+        related.is_empty(),
+        "a same-name member on an unrelated local must not relate"
+    );
+}
+
+#[test]
+fn undercredit_4103_dynamic_import_member_call_is_credited() {
+    let owner = test_owner("loyaltyPrice", "src/pricing.ts");
+    let tests = extract_tests(
+        Path::new("tests/pricing.test.ts"),
+        r#"import { describe, it, expect } from "vitest";
+describe("pricing", () => {
+  it("loyal customers", async () => {
+    const m = await import("../src/pricing");
+    expect(m.loyaltyPrice(1000, 5)).toBe(950);
+  });
+});
+"#,
+    );
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert_eq!(
+        candidates.len(),
+        1,
+        "dynamic import member call must credit"
+    );
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::ImportedOwnerCall
+    );
+}
+
+#[test]
+fn undercredit_4103_dynamic_import_other_module_is_not_credited() {
+    let owner = test_owner("loyaltyPrice", "src/pricing.ts");
+    let tests = extract_tests(
+        Path::new("tests/other.test.ts"),
+        r#"it("imports a different module", async () => {
+    const o = await import("../src/other");
+    expect(o.loyaltyPrice(1000, 5)).toBe(950);
+});
+"#,
+    );
+    let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert!(
+        related.is_empty(),
+        "a dynamic import of another module must not relate"
+    );
+}
+
+#[test]
+fn undercredit_4103_named_default_import_under_other_local_is_credited() {
+    let mut owner = test_owner("formatPrice", "src/defaulted.ts");
+    owner.exported_as_default = true;
+    let tests = extract_tests(
+        Path::new("tests/money.test.ts"),
+        r#"import fp from "../src/defaulted";
+describe("money", () => {
+  it("formats", () => {
+    expect(fp(199)).toBe("1.99");
+  });
+});
+"#,
+    );
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert_eq!(
+        candidates.len(),
+        1,
+        "a default import of a named default export must credit"
+    );
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::ImportedOwnerCall
+    );
+}
+
+#[test]
+fn undercredit_4103_default_import_when_owner_is_not_the_default_export_is_not_credited() {
+    let owner = test_owner("formatPrice", "src/defaulted.ts");
+    assert!(!owner.exported_as_default);
+    let tests = extract_tests(
+        Path::new("tests/money.test.ts"),
+        r#"import fp from "../src/defaulted";
+describe("money", () => {
+  it("formats", () => {
+    expect(fp(199)).toBe("1.99");
+  });
+});
+"#,
+    );
+    let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert!(
+        related.is_empty(),
+        "a default import must not credit an owner that is not the module's default export"
+    );
+}
+
+#[test]
+fn undercredit_4103_star_barrel_import_is_credited() {
+    let owner = test_owner("slugify", "src/utils.ts");
+    let index = ReExportIndex::from_parts(
+        Vec::new(),
+        vec![("src/index".to_string(), "src/utils".to_string())],
+    );
+    let tests = extract_tests(
+        Path::new("tests/slug.test.ts"),
+        r#"import { slugify } from "../src/index";
+describe("slugify", () => {
+  it("slugs", () => {
+    expect(slugify("Hello World")).toBe("hello world");
+  });
+});
+"#,
+    );
+    let candidates = related_test_candidates(&owner, &tests, None, &index, None);
+    assert_eq!(candidates.len(), 1, "star barrel import must credit");
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::ReExportChainFollowed
+    );
+}
+
+#[test]
+fn undercredit_4103_star_barrel_other_name_is_not_credited() {
+    let owner = test_owner("slugify", "src/utils.ts");
+    let index = ReExportIndex::from_parts(
+        Vec::new(),
+        vec![("src/index".to_string(), "src/utils".to_string())],
+    );
+    let tests = extract_tests(
+        Path::new("tests/slug.test.ts"),
+        r#"import { notslugify } from "../src/index";
+describe("slug", () => {
+  it("slugs", () => {
+    expect(notslugify("Hello World")).toBe("hello world");
+  });
+});
+"#,
+    );
+    let related = find_related_tests(&owner, &tests, None, &index, None);
+    assert!(
+        related.is_empty(),
+        "a star hop invents no aliases: another name through the barrel must not credit"
+    );
+}
+
+#[test]
+fn undercredit_4103_default_as_reexport_is_credited() {
+    let mut owner = test_owner("formatPrice", "src/defaulted.ts");
+    owner.exported_as_default = true;
+    let index = ReExportIndex::from_parts(
+        vec![(
+            ("src/index".to_string(), "formatPrice".to_string()),
+            ("default".to_string(), "src/defaulted".to_string()),
+        )],
+        Vec::new(),
+    );
+    let tests = extract_tests(
+        Path::new("tests/money.test.ts"),
+        r#"import { formatPrice } from "../src/index";
+describe("formatPrice", () => {
+  it("formats", () => {
+    expect(formatPrice(199)).toBe("1.99");
+  });
+});
+"#,
+    );
+    let candidates = related_test_candidates(&owner, &tests, None, &index, None);
+    assert_eq!(
+        candidates.len(),
+        1,
+        "export {{ default as X }} of a named default export must credit"
+    );
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::ReExportChainFollowed
+    );
+}
+
+#[test]
+fn undercredit_4103_default_as_reexport_non_default_owner_is_not_credited() {
+    let owner = test_owner("formatPrice", "src/defaulted.ts");
+    let index = ReExportIndex::from_parts(
+        vec![(
+            ("src/index".to_string(), "formatPrice".to_string()),
+            ("default".to_string(), "src/defaulted".to_string()),
+        )],
+        Vec::new(),
+    );
+    let tests = extract_tests(
+        Path::new("tests/money.test.ts"),
+        r#"import { formatPrice } from "../src/index";
+describe("formatPrice", () => {
+  it("formats", () => {
+    expect(formatPrice(199)).toBe("1.99");
+  });
+});
+"#,
+    );
+    let related = find_related_tests(&owner, &tests, None, &index, None);
+    assert!(
+        related.is_empty(),
+        "the `default` original name must not match an owner that is not the module's default export"
+    );
+}
+
+#[test]
+fn undercredit_4103_owner_extraction_records_default_export_fact() {
+    let owners = extract_owners(
+        Path::new("src/defaulted.ts"),
+        "export default function formatPrice(cents: number): string {\n  return (cents / 100).toFixed(2);\n}\n",
+    );
+    assert_eq!(owners.len(), 1);
+    assert!(owners[0].exported_as_default);
+
+    let plain = extract_owners(
+        Path::new("src/plain.ts"),
+        "export function other(cents: number): string {\n  return \"x\";\n}\n",
+    );
+    assert_eq!(plain.len(), 1);
+    assert!(!plain[0].exported_as_default);
 }

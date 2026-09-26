@@ -14,6 +14,14 @@ pub(crate) struct TypeScriptOwner {
     pub(crate) owner_kind: OwnerKind,
     pub(crate) class_name: Option<String>,
     pub(crate) decorated: bool,
+    /// `true` when the owner declaration is the module's default export
+    /// (`export default function name(...)`, `export default const name = ...`).
+    /// A default import (`import local from './owner'`) binds exactly this
+    /// declaration, so the relation gate may credit a call through `local`
+    /// only when this fact is recorded (#4103 under-credit: a named default
+    /// export imported under a different local name was previously
+    /// unreachable from every relation arm).
+    pub(crate) exported_as_default: bool,
     pub(crate) imports: Vec<TypeScriptImport>,
 }
 
