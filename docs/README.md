@@ -8,7 +8,7 @@ GitHub Actions, and agent paths, including honest no-action and limited results.
 | Goal | Start here | What it covers |
 | --- | --- | --- |
 | Inspect one change | [CLI first hour](QUICKSTART.md#cli-first-hour) | Run `ripr check`, choose the diff, and read the bounded next action. |
-| Understand a finding | [Static exposure model](STATIC_EXPOSURE_MODEL.md) · [Terminology](TERMINOLOGY.md) · [Finding triage](how-to/triage-a-finding.md) | How RIPR connects changed behavior, related tests, observations, and assertions—and where static analysis stops. |
+| Understand a finding | [Static exposure model](STATIC_EXPOSURE_MODEL.md) · [Terminology](TERMINOLOGY.md) · [Finding triage](how-to/triage-a-finding.md) | How RIPR connects changed behavior, related tests, observations, and assertions — and where static analysis stops. |
 | Add one focused test | [Targeted test workflow](TARGETED_TEST_WORKFLOW.md) | Turn one supported gap into a focused test and compare before/after evidence. |
 | Try RIPR on one pull request | [First successful PR workflow](FIRST_PR_WORKFLOW.md) | Run one bounded adoption loop and retain reviewer-facing evidence. |
 | Work in VS Code | [Editor extension](EDITOR_EXTENSION.md) · [First run to first receipt](EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md) | Install the extension, inspect saved-workspace diagnostics, and complete one repair receipt. |
