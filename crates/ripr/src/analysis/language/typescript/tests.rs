@@ -7359,6 +7359,63 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
     Ok(())
 }
 
+/// The cross-package disclosure must use the same module identity as related
+/// test matching. A namespace call alone is not a direct owner-name call, so
+/// this exercises the import decision in `static_limit` itself.
+#[test]
+fn target_unresolved_namespace_import_uses_routed_module_identity() -> Result<(), String> {
+    use std::fs;
+    let root = ts_unique_tempdir("target-unresolved-module-identity")?;
+    let owner_package = root.join("packages/owner");
+    let test_package = root.join("packages/consumer");
+    for package in [&owner_package, &test_package] {
+        fs::create_dir_all(package.join("src")).map_err(|error| error.to_string())?;
+        fs::write(package.join("package.json"), "{}").map_err(|error| error.to_string())?;
+    }
+
+    for (source_suffix, import_suffix) in [
+        ("mts", "mjs"),
+        ("cts", "cjs"),
+        ("tsx", "jsx"),
+        ("ts", "js"),
+        ("mjs", "mjs"),
+        ("cjs", "cjs"),
+        ("jsx", "jsx"),
+        ("js", "js"),
+    ] {
+        let owner = test_owner(
+            "run",
+            &owner_package
+                .join(format!("src/cart.{source_suffix}"))
+                .to_string_lossy(),
+        );
+        let mut test = weak_direct_test_for("run");
+        test.file = test_package.join("src/cart.test.ts");
+        test.body_text = "subject.run();".to_string();
+        test.imports_in_file = vec![TypeScriptImport {
+            source: format!("../../owner/src/cart.{import_suffix}"),
+            imported: None,
+            local: "subject".to_string(),
+            namespace: true,
+        }];
+        assert_eq!(
+            named_limitations_for_unresolved_ownership(&owner, &[test.clone()], &root)
+                .iter()
+                .map(|limit| limit.name)
+                .collect::<Vec<_>>(),
+            vec!["typescript_target_unresolved"],
+            "{source_suffix} owner through {import_suffix} import must be disclosed"
+        );
+        test.imports_in_file[0].source = format!("../../owner/src/other.{import_suffix}");
+        assert!(
+            named_limitations_for_unresolved_ownership(&owner, &[test], &root).is_empty(),
+            "another module must not be reported as an owner reference"
+        );
+    }
+    fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 /// `typescript_target_unresolved` must NOT be emitted when all tests are in
 /// the same package (single-package workspace without a package.json hierarchy
 /// does not trigger cross-package detection).
