@@ -12,6 +12,10 @@
 //! - Multi-entry value arrays (more than one candidate template) → `None`.
 //! - Multi-`*` glob patterns → `None`.
 //! - Any parse error or missing field → `None`.
+//! - Candidates or `baseUrl` containing `..` segments, rooted components,
+//!   or drive/UNC prefixes → `None` BEFORE any filesystem probe; an
+//!   absolute `baseUrl` additionally surfaces the named limitation
+//!   `typescript_base_url_absolute_unsupported`.
 //!
 //! The alias map is built once per analysis run and reused for every
 //! `normalized_relative_import_module` call that encounters a non-relative
@@ -57,6 +61,12 @@ pub(crate) struct TsAliasMap {
     root: PathBuf,
     /// `baseUrl`, relative to `root` (often `.`).
     base_url: String,
+    /// `true` when `baseUrl` was absolute or contained non-normal path
+    /// components: single-hop resolution cannot anchor it to `root`, so
+    /// every lookup fails closed instead of silently trimming the leading
+    /// slash into a wrong in-root path. Callers surface this as the named
+    /// limitation `typescript_base_url_absolute_unsupported`.
+    base_url_absolute: bool,
     /// Literal entries: key → supported template, or `None` to block resolution.
     literal_entries: HashMap<String, Option<String>>,
     /// Glob entries: (prefix, suffix) → supported template or blocker.
@@ -76,10 +86,91 @@ struct GlobEntry {
     template: Option<String>,
 }
 
+/// Typed fail-closed cause for a specifier the alias map did not resolve.
+/// Drives the `typescript_path_alias_unresolved` advice text so it names
+/// the actual reason (unknown baseUrl vs unmatched pattern vs
+/// out-of-root/unresolved candidate) instead of a generic message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TsAliasUnresolveCause {
+    /// No alias map: opt-out flag, missing config, or unparseable config.
+    MapUnavailable,
+    /// `baseUrl` is absolute or non-normal; resolution deliberately
+    /// fail-closes (`typescript_base_url_absolute_unsupported`).
+    BaseUrlAbsolute,
+    /// The map parsed but has no `paths` entries to match against.
+    NoPatterns,
+    /// No literal or single-`*` key matches the specifier.
+    PatternUnmatched,
+    /// A key owned the specifier, but its candidate did not resolve to
+    /// exactly one in-root workspace file (zero files, >1 files, an
+    /// unsupported template, or a `..`/absolute candidate rejected before
+    /// probing).
+    CandidateUnresolved,
+}
+
+impl TsAliasUnresolveCause {
+    /// Typed cause phrase for the limitation's `why_not_actionable` text,
+    /// paired with a cause-specific recovery hint.
+    fn parts(self) -> (&'static str, &'static str) {
+        match self {
+            Self::MapUnavailable => (
+                "no tsconfig.json/jsconfig.json alias map was available (opt-out flag, missing config, or unparseable config)",
+                "enable `[typescript] resolve_tsconfig_paths = true` with a parseable config for credit",
+            ),
+            Self::BaseUrlAbsolute => (
+                "compilerOptions.baseUrl is absolute or non-normal, so single-hop resolution fails closed rather than guessing an in-root anchor",
+                "change compilerOptions.baseUrl to a workspace-relative path, then re-run the analysis",
+            ),
+            Self::NoPatterns => (
+                "the alias map has no compilerOptions.paths entries to match this specifier",
+                "add a compilerOptions.paths entry naming this specifier for credit",
+            ),
+            Self::PatternUnmatched => (
+                "no compilerOptions.paths key (literal or single-`*`) matches this specifier",
+                "add a compilerOptions.paths key matching this specifier for credit",
+            ),
+            Self::CandidateUnresolved => (
+                "the matched pattern's candidate did not resolve to exactly one in-root workspace file (zero or multiple files, an unsupported template, or an out-of-root candidate rejected before probing)",
+                "point the matched template at exactly one existing workspace file for credit",
+            ),
+        }
+    }
+}
+
 impl TsAliasMap {
     /// `true` when this map has no entries (opt-out / parse-failure path).
     pub(crate) fn is_empty(&self) -> bool {
         self.literal_entries.is_empty() && self.glob_entries.is_empty()
+    }
+
+    /// `true` when `baseUrl` was absolute (or contained non-normal path
+    /// components) and alias resolution therefore fail-closes. The caller
+    /// surfaces this as the named limitation
+    /// `typescript_base_url_absolute_unsupported`.
+    pub(crate) fn base_url_absolute(&self) -> bool {
+        self.base_url_absolute
+    }
+
+    /// The typed fail-closed cause for a specifier that did not resolve,
+    /// so the `typescript_path_alias_unresolved` advice can name the real
+    /// reason instead of a generic message.
+    pub(crate) fn unresolve_cause_for(&self, specifier: &str) -> TsAliasUnresolveCause {
+        if self.base_url_absolute {
+            return TsAliasUnresolveCause::BaseUrlAbsolute;
+        }
+        if self.is_empty() {
+            return TsAliasUnresolveCause::NoPatterns;
+        }
+        if self.literal_entries.contains_key(specifier)
+            || self
+                .glob_entries
+                .iter()
+                .any(|entry| match_glob(specifier, &entry.prefix, &entry.suffix).is_some())
+        {
+            // A key owned this specifier; the candidate itself failed.
+            return TsAliasUnresolveCause::CandidateUnresolved;
+        }
+        TsAliasUnresolveCause::PatternUnmatched
     }
 
     /// Resolve a non-relative specifier to a canonical workspace-relative path.
@@ -138,7 +229,20 @@ impl TsAliasMap {
     /// try each TS extension and collect the unique matching file.
     ///
     /// Returns `None` if zero files or more than one file match.
+    ///
+    /// Candidates containing `..` segments, rooted components, or prefixes
+    /// (drive letters / UNC) are rejected BEFORE any filesystem probe: they
+    /// would make `is_file()` read outside the workspace root, and a
+    /// component-wise `strip_prefix` credit could still escape the root.
     fn unique_file_for(&self, candidate_base: &str) -> Option<PathBuf> {
+        if self.base_url_absolute || !is_safe_relative(Path::new(candidate_base)) {
+            return None;
+        }
+        // The workspace root itself is trusted; only the configured baseUrl
+        // segment must stay relative and free of `..` components.
+        if !is_safe_relative(Path::new(&self.base_url)) {
+            return None;
+        }
         let base_dir = self.root.join(self.base_url.trim_matches('/'));
         let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
         let mut found: Vec<PathBuf> = Vec::new();
@@ -220,6 +324,13 @@ fn parse_alias_map(root: &Path, text: &str) -> Option<TsAliasMap> {
     let base_url = compiler_opts.base_url?;
     let paths = compiler_opts.paths.unwrap_or_default();
 
+    // An absolute baseUrl (POSIX `/…`, drive-letter, or UNC) cannot be
+    // anchored to `root` by single-hop resolution. Keep the map so the
+    // caller can surface the named limitation, but flag every lookup to
+    // fail closed instead of silently trimming the leading slash into a
+    // wrong in-root path.
+    let base_url_absolute = !is_safe_relative(Path::new(&base_url));
+
     let mut literal_entries: HashMap<String, Option<String>> = HashMap::new();
     let mut glob_entries: Vec<GlobEntry> = Vec::new();
 
@@ -254,12 +365,22 @@ fn parse_alias_map(root: &Path, text: &str) -> Option<TsAliasMap> {
     Some(TsAliasMap {
         root: root.to_path_buf(),
         base_url,
+        base_url_absolute,
         literal_entries,
         glob_entries,
     })
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// `true` only when every component of `p` is a normal name or `.` — no
+/// `..`, no rooted component, no drive letter / UNC prefix. Joining such a
+/// path onto the trusted workspace root cannot escape it.
+fn is_safe_relative(p: &Path) -> bool {
+    use std::path::Component;
+    p.components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+}
 
 /// Strip the file extension from a path string, preserving the rest.
 fn strip_ts_ext(s: &str) -> String {
@@ -490,6 +611,92 @@ mod tests {
         let map = load_alias_map(&root).ok_or("should parse tsconfig.json")?;
         // tsconfig takes priority and has no @/* entry → None
         assert!(map.resolve("@/owner").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn parent_dir_base_url_escapes_root_and_fails_closed() -> Result<(), String> {
+        let root = temp_dir("dotdot-base-url");
+        // A `..` baseUrl reaches a sibling directory of the workspace root.
+        // Before hardening, the in-root-existence check credited the file
+        // via a component-wise `strip_prefix`; it must now fail closed.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":"..","paths":{"@/*":["sibling/*"]}}}"#,
+        );
+        write(&root, "../sibling/owner.ts", "export function owner() {}");
+
+        let map = load_alias_map(&root).ok_or("should parse")?;
+        assert!(
+            map.resolve("@/owner").is_none(),
+            "a `..` baseUrl must not credit files outside the workspace root"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parent_dir_specifier_capture_fails_closed() -> Result<(), String> {
+        let root = temp_dir("dotdot-capture");
+        // A captured `../` group from the specifier must not steer the
+        // candidate outside the workspace root (or smuggle an in-root file
+        // through a traversal segment).
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        write(&root, "src/lib.ts", "export function lib() {}");
+        write(&root, "owner.ts", "export function owner() {}");
+
+        let map = load_alias_map(&root).ok_or("should parse")?;
+        assert!(
+            map.resolve("@/../owner").is_none(),
+            "a captured `..` group must fail closed, not credit a traversal path"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn absolute_base_url_fails_closed_with_named_cause() -> Result<(), String> {
+        let root = temp_dir("absolute-base-url");
+        // The trimmed absolute baseUrl would collide with a REAL in-root
+        // directory on some platforms (`abs/base` below); resolution must
+        // not silently credit it.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":"/abs/base","paths":{"@/*":["*"]}}}"#,
+        );
+        write(&root, "abs/base/owner.ts", "export function owner() {}");
+
+        let map = load_alias_map(&root).ok_or("should parse")?;
+        assert!(
+            map.base_url_absolute(),
+            "an absolute baseUrl must be flagged for the named limitation"
+        );
+        assert!(
+            map.resolve("@/owner").is_none(),
+            "an absolute baseUrl must fail closed instead of trimming into a wrong in-root path"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn relative_base_url_unaffected_by_hardening() -> Result<(), String> {
+        let root = temp_dir("relative-base-url-ok");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":"./src","paths":{"@/*":["*"]}}}"#,
+        );
+        write(&root, "src/owner.ts", "export function owner() {}");
+
+        let map = load_alias_map(&root).ok_or("should parse")?;
+        assert!(!map.base_url_absolute());
+        let resolved = map.resolve("@/owner").ok_or("relative baseUrl must still resolve")?;
+        let resolved_str = resolved.to_string_lossy().replace('\\', "/");
+        assert_eq!(resolved_str, "src/owner.ts");
         Ok(())
     }
 }
