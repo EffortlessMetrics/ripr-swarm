@@ -21,10 +21,12 @@ fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     }
 }
 
@@ -1675,10 +1677,12 @@ fn find_related_tests_matches_by_call_name() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![
         TypeScriptTest {
@@ -1722,10 +1726,12 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
         name: "method call on another object".to_string(),
@@ -1755,10 +1761,12 @@ fn find_related_tests_matches_bounded_method_receiver_calls() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -1796,10 +1804,12 @@ fn find_related_tests_keeps_factory_receiver_calls_unrelated_for_method_owners()
         class_name: Some("Cart".to_string()),
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -1828,10 +1838,12 @@ fn find_related_tests_keeps_dynamic_method_receiver_calls_unrelated() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -1861,10 +1873,12 @@ fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -1899,10 +1913,12 @@ fn find_related_tests_keeps_mocked_function_owner_call_at_proximity() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -1947,10 +1963,12 @@ fn find_related_tests_keeps_mocked_arrow_function_owner_call_at_proximity() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2000,10 +2018,12 @@ fn find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2046,10 +2066,12 @@ fn find_related_tests_credits_unmocked_function_owner_call() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2084,10 +2106,12 @@ fn classify_change_stays_weakly_exposed_when_test_mocks_owner_module() -> Result
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/lib.test.ts"),
@@ -2149,10 +2173,12 @@ fn find_related_tests_matches_bounded_class_method_calls() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2189,10 +2215,12 @@ fn find_related_tests_keeps_shadowed_class_method_calls_unrelated() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2221,10 +2249,12 @@ fn find_related_tests_matches_same_file_class_method_calls() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("src/owners.ts"),
@@ -2260,10 +2290,12 @@ fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2291,10 +2323,12 @@ fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2324,10 +2358,12 @@ fn find_related_tests_requires_class_name_for_class_method_calls() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2355,10 +2391,12 @@ fn find_related_tests_matches_module_initializer_named_import_observer() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2395,10 +2433,12 @@ fn find_related_tests_matches_module_initializer_namespace_observer() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2428,10 +2468,12 @@ fn find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2469,10 +2511,12 @@ fn find_related_tests_matches_named_import_alias_calls() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -2521,10 +2565,12 @@ fn find_related_tests_alias_wrong_name_not_credited() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -2560,10 +2606,12 @@ fn find_related_tests_alias_shadowed_local_not_credited_high() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/compute.test.ts"),
@@ -2599,10 +2647,12 @@ fn find_related_tests_non_alias_import_still_direct_owner_call() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/compute.test.ts"),
@@ -2646,10 +2696,12 @@ fn find_related_tests_namespace_import_unchanged_imported_owner_call() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/compute.test.ts"),
@@ -2693,10 +2745,12 @@ fn find_related_tests_matches_namespace_import_member_calls() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -2725,10 +2779,12 @@ fn find_related_tests_ignores_unrelated_and_type_only_import_aliases() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -2766,10 +2822,12 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
         name: "string mention".to_string(),
@@ -2799,10 +2857,12 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![
         TypeScriptTest {
@@ -2845,10 +2905,12 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     // Each test references the owner without a recognized call shape, so the
     // proximity/name heuristics only rank an existing reference
@@ -2920,10 +2982,12 @@ fn related_test_name_proximity_ignores_partial_tokens() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/checkout.test.ts"),
@@ -2951,10 +3015,12 @@ fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -3005,10 +3071,12 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "alpha".to_string(),
@@ -3339,10 +3407,12 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "alpha".to_string(),
@@ -3385,10 +3455,12 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             class_name: None,
             decorated: false,
             exported_as_default: false,
+            class_default_export: false,
             arity: None,
             params: Vec::new(),
             source_text: None,
             imports: Vec::new(),
+            method_kind: TypeScriptMethodKind::Ordinary,
         },
         TypeScriptOwner {
             name: "betaScore".to_string(),
@@ -3399,10 +3471,12 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             class_name: None,
             decorated: false,
             exported_as_default: false,
+            class_default_export: false,
             arity: None,
             params: Vec::new(),
             source_text: None,
             imports: Vec::new(),
+            method_kind: TypeScriptMethodKind::Ordinary,
         },
     ];
     let tests = vec![
@@ -4128,10 +4202,12 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "alpha".to_string(),
@@ -4202,10 +4278,12 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "alpha".to_string(),
@@ -4272,10 +4350,12 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -4308,10 +4388,12 @@ fn classify_change_returns_none_when_line_is_outside_any_owner() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -5768,10 +5850,12 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![
         TypeScriptTest {
@@ -5822,10 +5906,12 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
         name: "unrelated".to_string(),
@@ -5853,10 +5939,12 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
         name: "unrelated method".to_string(),
@@ -5885,10 +5973,12 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
         name: "alpha".to_string(),
@@ -5963,8 +6053,10 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
         params: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         source_text: None,
     };
@@ -6020,8 +6112,10 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
         params: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         source_text: None,
     };
@@ -6069,10 +6163,12 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
         name: "alpha".to_string(),
@@ -6151,6 +6247,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -6160,6 +6257,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
             local: "normalizeLabel".to_string(),
             namespace: false,
         }],
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
         name: "LabelView smoke".to_string(),
@@ -7041,10 +7139,12 @@ fn package_local_filter_selects_same_package_test() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "do work test".to_string(),
@@ -7111,10 +7211,12 @@ fn package_local_filter_rejects_cross_package_test() {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "cross-package doWork test".to_string(),
@@ -7258,10 +7360,12 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     // Cross-package test that calls applyDiscount by name (local shadow or
     // referencing it without a resolvable import).
@@ -7395,10 +7499,12 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     // Two strong `toBe` assertions on the UNCHANGED return value.
     // Neither `observed_expression` mentions `amount` or `audit` (the changed
@@ -7502,10 +7608,12 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "applies discount".to_string(),
@@ -7582,8 +7690,10 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
         params: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         source_text: None,
     };
@@ -7664,8 +7774,10 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
         params: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         source_text: None,
     };
@@ -7742,8 +7854,10 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
         params: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         source_text: None,
     };
@@ -7820,8 +7934,10 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
         params: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         source_text: None,
     };
@@ -7902,10 +8018,12 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "side-effect is visible and return value correct".to_string(),
@@ -7992,10 +8110,12 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "builds config with timeout".to_string(),
@@ -8072,8 +8192,10 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
         params: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         source_text: None,
     };
@@ -8219,10 +8341,12 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     // A strong MockExpectation assertion with observed_expression None — exactly
     // the live shape for `expect(spy).toHaveBeenCalledWith(...)` where the
@@ -8301,8 +8425,10 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
         params: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         source_text: None,
     };
@@ -8427,10 +8553,12 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "applyDiscount returns correct value".to_string(),
@@ -8498,10 +8626,12 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "applyDiscount returns correct value".to_string(),
@@ -8592,10 +8722,12 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "applyDiscount test".to_string(),
@@ -8657,10 +8789,12 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     // Test only imports `cloneDeep` from lodash — unrelated to the owner name.
     let test = TypeScriptTest {
@@ -8716,8 +8850,10 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
         params: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         source_text: None,
     };
@@ -8773,8 +8909,10 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
         params: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         source_text: None,
     };
@@ -8830,7 +8968,9 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -8866,10 +9006,10 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
     )
     .ok_or_else(|| "expected a finding".to_string())?;
 
-    assert_evidence_contains(
-        &finding,
-        "no tsconfig.json/jsconfig.json alias map was available",
-    );
+    // #4106-B: a None map with no load gap means the FLAG IS OFF, so the
+    // advice names the flag instead of a generic "no map" message.
+    assert_evidence_contains(&finding, "alias resolution is not enabled");
+    assert_evidence_contains(&finding, "set `[typescript] resolve_tsconfig_paths = true`");
     Ok(())
 }
 
@@ -8903,7 +9043,9 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -8977,7 +9119,9 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -9060,7 +9204,9 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -9129,10 +9275,12 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     // Test A: error-path observer — toThrow(DiscountError) — Strong, ExactErrorVariant.
     // This test does NOT match the ReturnValue seam family.
@@ -9243,10 +9391,12 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let exact_value_test = TypeScriptTest {
         name: "applyDiscount gold rate".to_string(),
@@ -9314,10 +9464,12 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let throw_test = TypeScriptTest {
         name: "applyDiscount throws on negative amount".to_string(),
@@ -9393,10 +9545,12 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     // ONE test with TWO assertions:
     //   1. `.toThrow(DiscountError)` — ExactErrorVariant, Strong — wrong-family for ReturnValue.
@@ -10004,10 +10158,12 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
         name: "parseLimit parses".to_string(),
@@ -10311,8 +10467,10 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
         params: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         source_text: None,
     };
@@ -11015,7 +11173,9 @@ fn boundary_witness_owner() -> TypeScriptOwner {
         class_name: None,
         decorated: false,
         exported_as_default: false,
+        class_default_export: false,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
         arity: Some(1),
         params: vec!["total".to_string()],
         source_text: Some(
@@ -11992,6 +12152,43 @@ fn analyze_diff_emits_test_extraction_partial_for_template_literal_title() -> Re
     Ok(())
 }
 
+/// #4099 end-to-end: a VALID tagged-template `.each` registration (the table
+/// jest itself accepts) parses cleanly, is not extractable by design, and
+/// must surface `typescript_test_extraction_partial` through `analyze_diff`
+/// — not only at the detector level. (The original #4104 fx13 fixture was
+/// malformed JavaScript — a stray `}` before the call, rejected by node
+/// itself — so its silence was the parse-error lane, not this disclosure.)
+#[test]
+fn analyze_diff_discloses_valid_tagged_template_each() -> Result<(), String> {
+    let root = ts_unique_tempdir("fx13-repro")?;
+    ts_write_file(
+        &root.join("src/pricing.ts"),
+        "export function tier(amount: number): string {\n  if (amount >= 150) {\n    return 'premium';\n  }\n  return 'standard';\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/tiers.test.ts"),
+        "import { expect, test } from 'vitest';\nimport { tier } from '../src/pricing';\n\ntest.each`\n  amount | expected\n  ${100} | ${'standard'}\n  ${150} | ${'premium'}\n`('computes the boundary case', ({ amount, expected }) => {\n  expect(tier(amount)).toBe(expected);\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/pricing.ts")],
+    )?;
+    assert!(
+        result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        }),
+        "a valid tagged-template .each file must disclose the partial test extraction e2e, got {:?}",
+        result.limitations
+    );
+    Ok(())
+}
+
 /// (c) Negative control: a normal, fully extracted test file (plain titles,
 /// describe nesting, array-form `.each`) must NOT emit the new limitation.
 #[test]
@@ -12099,6 +12296,964 @@ fn detect_partial_none_when_every_test_extracted() {
     );
 }
 
+// ── #4104-A: owner-extraction gap disclosure ─────────────────────────────────
+
+fn changed_with_lines(path: &str, lines: &[(usize, &str)]) -> ChangedFile {
+    ChangedFile {
+        path: PathBuf::from(path),
+        added_lines: lines
+            .iter()
+            .map(|(line, text)| crate::analysis::diff::ChangedLine {
+                line: *line,
+                text: (*text).to_string(),
+                new_side_line: *line,
+            })
+            .collect(),
+        removed_lines: Vec::new(),
+    }
+}
+
+/// Shared runner: analyze a fixture whose changed line sits inside an
+/// unsupported owner shape and require the typed
+/// `typescript_owner_extraction_partial` limitation naming the shape.
+fn assert_owner_extraction_gap_disclosed(
+    label: &str,
+    src_path: &str,
+    src: &str,
+    added_line: (usize, &str),
+    expected_shape: &str,
+) -> Result<(), String> {
+    let root = ts_unique_tempdir(label)?;
+    ts_write_file(&root.join(src_path), src)?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(src_path, &[added_line])],
+    )?;
+    let disclosed = result.limitations.iter().any(|limitation| {
+        limitation.bounded_detail.as_deref().is_some_and(|detail| {
+            detail.contains("typescript_owner_extraction_partial")
+                && detail.contains(expected_shape)
+        })
+    });
+    assert!(
+        disclosed,
+        "expected typescript_owner_extraction_partial ({expected_shape}) limitation, got {limitation_result:?}",
+        limitation_result = result.limitations
+    );
+    Ok(())
+}
+
+#[test]
+fn owner_extraction_gap_discloses_arrow_function_class_field() -> Result<(), String> {
+    assert_owner_extraction_gap_disclosed(
+        "owner-gap-arrow",
+        "src/checkout.ts",
+        "export class Checkout {\n  applyDiscount = (amount: number): number => {\n    if (amount >= 100) {\n      return amount * 0.9;\n    }\n    return amount;\n  };\n}\n",
+        (3, "    if (amount >= 100) {"),
+        "arrow-function class field",
+    )
+}
+
+#[test]
+fn owner_extraction_gap_discloses_private_method() -> Result<(), String> {
+    assert_owner_extraction_gap_disclosed(
+        "owner-gap-private",
+        "src/ledger.ts",
+        "export class Ledger {\n  #adjust(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n\n  entry(amount: number): number {\n    return this.#adjust(amount);\n  }\n}\n",
+        (3, "    if (amount >= 50) {"),
+        "class method with unsupported key",
+    )
+}
+
+#[test]
+fn owner_extraction_gap_discloses_enum_member_change() -> Result<(), String> {
+    assert_owner_extraction_gap_disclosed(
+        "owner-gap-enum",
+        "src/plans.ts",
+        "export enum PlanRate {\n  Basic = 8,\n  Premium = 18,\n}\n",
+        (2, "  Basic = 8,"),
+        "enum declaration",
+    )
+}
+
+#[test]
+fn owner_extraction_gap_discloses_namespace_function() -> Result<(), String> {
+    assert_owner_extraction_gap_disclosed(
+        "owner-gap-namespace",
+        "src/geometry.ts",
+        "export namespace Pricing {\n  export function tax(amount: number): number {\n    if (amount >= 200) {\n      return amount * 0.3;\n    }\n    return 0;\n  }\n}\n",
+        (4, "      return amount * 0.3;"),
+        "module/namespace declaration",
+    )
+}
+
+#[test]
+fn owner_extraction_gap_discloses_accessor_auto_accessor() -> Result<(), String> {
+    assert_owner_extraction_gap_disclosed(
+        "owner-gap-accessor",
+        "src/gauge.ts",
+        "export class Gauge {\n  accessor level = 2;\n}\n",
+        (2, "  accessor level = 2;"),
+        "accessor auto-accessor",
+    )
+}
+
+#[test]
+fn owner_extraction_gap_discloses_static_block() -> Result<(), String> {
+    assert_owner_extraction_gap_disclosed(
+        "owner-gap-static-block",
+        "src/registry.ts",
+        "export class Registry {\n  static defaults = new Map<string, number>();\n\n  static {\n    Registry.defaults.set(\"standard\", 8);\n  }\n\n  rate(key: string): number {\n    return Registry.defaults.get(key) ?? 0;\n  }\n}\n",
+        (5, "    Registry.defaults.set(\"standard\", 8);"),
+        "class static block",
+    )
+}
+
+#[test]
+fn no_owner_extraction_gap_for_supported_owner_shape() -> Result<(), String> {
+    let root = ts_unique_tempdir("owner-gap-negative")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function calc(amount: number): number {\n  if (amount >= 6) {\n    return amount * 2;\n  }\n  return amount;\n}\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/calc.ts",
+            &[(2, "  if (amount >= 6) {")],
+        )],
+    )?;
+    assert!(
+        !result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_owner_extraction_partial"))
+        }),
+        "supported owner shapes must not emit typescript_owner_extraction_partial, got {:?}",
+        result.limitations
+    );
+    Ok(())
+}
+
+// ── #4104-B: relation fixes ───────────────────────────────────────────────────
+
+/// Getter owner: a property READ on a constructed receiver runs the getter
+/// body, so `expect(cart.total).toBe(80)` must credit the relation.
+#[test]
+fn getter_property_read_on_constructed_receiver_credits_relation() -> Result<(), String> {
+    let root = ts_unique_tempdir("getter-read")?;
+    ts_write_file(
+        &root.join("src/cart.ts"),
+        "export class Cart {\n  private items: number[] = [30, 40, 30];\n\n  get total(): number {\n    return this.items.reduce((sum, n) => sum + n, 0) * 0.8;\n  }\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/cart.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport { Cart } from '../src/cart';\n\ndescribe('Cart', () => {\n  it('totals with the member discount', () => {\n    const cart = new Cart();\n    expect(cart.total).toBe(80);\n  });\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/cart.ts",
+            &[(
+                6,
+                "    return this.items.reduce((sum, n) => sum + n, 0) * 0.8;",
+            )],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the getter seam".to_string())?;
+    assert_eq!(
+        finding.ripr.reach.state,
+        StageState::Yes,
+        "getter property read must credit the receiver relation, evidence: {:?}",
+        finding.evidence
+    );
+    assert!(!matches!(finding.class, ExposureClass::NoStaticPath));
+    Ok(())
+}
+
+/// Ordinary (non-getter) methods keep the call-only rule: a bare property
+/// read must not credit them (negative control for the getter read needle).
+#[test]
+fn ordinary_method_property_read_does_not_credit_relation() -> Result<(), String> {
+    let root = ts_unique_tempdir("method-read-negative")?;
+    ts_write_file(
+        &root.join("src/counter.ts"),
+        "export class Counter {\n  current = 1;\n\n  step(): number {\n    return this.current * 2;\n  }\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/counter.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport { Counter } from '../src/counter';\n\ndescribe('Counter', () => {\n  it('reads the field but never calls step', () => {\n    const counter = new Counter();\n    expect(counter.current).toBe(1);\n  });\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/counter.ts",
+            &[(5, "    return this.current * 2;")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the method seam".to_string())?;
+    assert_eq!(
+        finding.ripr.reach.state,
+        StageState::No,
+        "a property read must NOT credit an ordinary method (no call exists), evidence: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// Constructor owner: `new Wallet(100)` executes the changed constructor.
+#[test]
+fn constructor_owner_is_credited_by_new_expression() -> Result<(), String> {
+    let root = ts_unique_tempdir("ctor-new")?;
+    ts_write_file(
+        &root.join("src/wallet.ts"),
+        "export class Wallet {\n  balance: number;\n\n  constructor(start: number) {\n    this.balance = start >= 100 ? start - 10 : start;\n  }\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/wallet.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport { Wallet } from '../src/wallet';\n\ndescribe('Wallet', () => {\n  it('applies the opening bonus at the boundary', () => {\n    const wallet = new Wallet(100);\n    expect(wallet.balance).toBe(90);\n  });\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/wallet.ts",
+            &[(5, "    this.balance = start >= 100 ? start - 10 : start;")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the constructor seam".to_string())?;
+    assert_eq!(
+        finding.ripr.reach.state,
+        StageState::Yes,
+        "new Wallet(100) must credit the constructor owner, evidence: {:?}",
+        finding.evidence
+    );
+    assert!(!matches!(finding.class, ExposureClass::NoStaticPath));
+    Ok(())
+}
+
+#[test]
+fn new_expression_call_needle_boundary_guards() {
+    // Positive.
+    assert!(contains_new_expression_call(
+        "const wallet = new Wallet(100);",
+        "Wallet"
+    ));
+    // Not the tail of a longer identifier.
+    assert!(!contains_new_expression_call(
+        "const w = renew Wallet(100);",
+        "Wallet"
+    ));
+    // A different constructor: WalletFactory is not Wallet.
+    assert!(!contains_new_expression_call(
+        "const w = new WalletFactory(100);",
+        "Wallet"
+    ));
+    // Member chain selects a different constructor.
+    assert!(!contains_new_expression_call(
+        "const w = new Wallet.Provider(100);",
+        "Wallet"
+    ));
+    // Unsafe identifier never matches.
+    assert!(!contains_new_expression_call(
+        "const w = new has space(100);",
+        "has space"
+    ));
+}
+
+#[test]
+fn member_read_needle_boundary_guards() {
+    // Positive read.
+    assert!(contains_member_read_name(
+        "expect(cart.total).toBe(80);",
+        "cart",
+        "total"
+    ));
+    // A call is not a read (the call needle covers it).
+    assert!(!contains_member_read_name(
+        "expect(cart.total(80)).toBe(80);",
+        "cart",
+        "total"
+    ));
+    // Longer identifier does not match.
+    assert!(!contains_member_read_name(
+        "expect(cart.totalAmount).toBe(80);",
+        "cart",
+        "total"
+    ));
+    // A different property does not match.
+    assert!(!contains_member_read_name(
+        "expect(cart.itemCount).toBe(3);",
+        "cart",
+        "total"
+    ));
+}
+
+/// Methods of a default-exported class are not themselves the module's
+/// default export (review #4138): they carry `class_default_export` for
+/// constructor matching while `exported_as_default` stays false. A named
+/// class carries neither.
+#[test]
+fn default_exported_class_methods_carry_class_marker_not_default_flag() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/cart.ts"),
+        "export default class Cart {\n  balance: number;\n\n  constructor(start: number) {\n    this.balance = start;\n  }\n\n  get total(): number {\n    return this.balance;\n  }\n}\n",
+    );
+    let constructor = owners
+        .iter()
+        .find(|owner| owner.method_kind == TypeScriptMethodKind::Constructor)
+        .ok_or("constructor owner extracted")?;
+    assert!(
+        !constructor.exported_as_default,
+        "a method is not the module's default export"
+    );
+    assert!(
+        constructor.class_default_export,
+        "the containing class IS the module's default export"
+    );
+    let getter = owners
+        .iter()
+        .find(|owner| owner.method_kind == TypeScriptMethodKind::Getter)
+        .ok_or("getter owner extracted")?;
+    assert!(!getter.exported_as_default);
+    assert!(getter.class_default_export);
+
+    let named = extract_owners(
+        Path::new("src/plain.ts"),
+        "export class Plain {\n  step(): number {\n    return 1;\n  }\n}\n",
+    );
+    let step = named
+        .iter()
+        .find(|owner| owner.name == "step")
+        .ok_or("method owner extracted")?;
+    assert!(!step.exported_as_default);
+    assert!(!step.class_default_export);
+    Ok(())
+}
+
+/// Default-import alias: `import CartAlias from './cart'` + `new
+/// CartAlias(100)` runs the constructor of `export default class Cart` even
+/// though the class name never appears in the test body (review #4138).
+#[test]
+fn default_import_alias_constructs_default_exported_class() -> Result<(), String> {
+    let root = ts_unique_tempdir("ctor-alias")?;
+    ts_write_file(
+        &root.join("src/cart.ts"),
+        "export default class Cart {\n  balance: number;\n\n  constructor(start: number) {\n    this.balance = start >= 100 ? start - 10 : start;\n  }\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/cart.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport CartAlias from '../src/cart';\n\ndescribe('Cart', () => {\n  it('applies the opening bonus at the boundary', () => {\n    const cart = new CartAlias(100);\n    expect(cart.balance).toBe(90);\n  });\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/cart.ts",
+            &[(5, "    this.balance = start >= 100 ? start - 10 : start;")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the aliased constructor seam".to_string())?;
+    assert_eq!(
+        finding.ripr.reach.state,
+        StageState::Yes,
+        "new CartAlias(100) must credit the default-exported class constructor, evidence: {:?}",
+        finding.evidence
+    );
+    assert!(!matches!(finding.class, ExposureClass::NoStaticPath));
+    Ok(())
+}
+
+/// Shadow guard: a test-body `function CartAlias` is a genuine constructor
+/// of a different binding, so `new CartAlias(100)` inside that body must NOT
+/// credit the default-exported class constructor through the alias
+/// (review #4138). The declaration guard is the same test-body discipline
+/// the other import arms apply.
+#[test]
+fn locally_redeclared_alias_does_not_credit_default_exported_constructor() -> Result<(), String> {
+    let root = ts_unique_tempdir("ctor-alias-shadow")?;
+    ts_write_file(
+        &root.join("src/cart.ts"),
+        "export default class Cart {\n  balance: number;\n\n  constructor(start: number) {\n    this.balance = start >= 100 ? start - 10 : start;\n  }\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/cart.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport CartAlias from '../src/cart';\n\ndescribe('local shadow', () => {\n  it('constructs the local binding', () => {\n    function CartAlias(start: number) {\n      return { balance: start };\n    }\n    const cart = new CartAlias(100);\n    expect(cart.balance).toBe(100);\n  });\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/cart.ts",
+            &[(5, "    this.balance = start >= 100 ? start - 10 : start;")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the shadowed constructor seam".to_string())?;
+    assert_eq!(
+        finding.ripr.reach.state,
+        StageState::No,
+        "a locally re-declared alias constructs the shadow, not the owner constructor, evidence: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// Owner-file rename export: `export { computeTotals as totals }` must let
+/// `import { totals } from './totals'` credit the owner.
+#[test]
+fn owner_file_rename_export_credits_the_owner() -> Result<(), String> {
+    let root = ts_unique_tempdir("rename-export")?;
+    ts_write_file(
+        &root.join("src/totals.ts"),
+        "function computeTotals(amount: number): number {\n  if (amount >= 100) {\n    return amount - 10;\n  }\n  return amount;\n}\n\nexport { computeTotals as totals };\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/billing.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport { totals } from '../src/totals';\n\ndescribe('invoice totals', () => {\n  it('deducts at the threshold', () => {\n    expect(totals(100)).toBe(90);\n  });\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/totals.ts",
+            &[(2, "  if (amount >= 100) {")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the rename-export seam".to_string())?;
+    assert_eq!(
+        finding.ripr.reach.state,
+        StageState::Yes,
+        "the owner-file rename export must credit the import, evidence: {:?}",
+        finding.evidence
+    );
+    assert!(!matches!(finding.class, ExposureClass::NoStaticPath));
+    Ok(())
+}
+
+/// Default import bound to a local name: the owner IS the module's default
+/// export, so `import ride from './greeter'` + `ride(40)` credits it.
+#[test]
+fn default_import_with_local_name_credits_default_export_owner() -> Result<(), String> {
+    let root = ts_unique_tempdir("default-import")?;
+    ts_write_file(
+        &root.join("src/greeter.ts"),
+        "export default function fare(base: number): number {\n  if (base >= 40) {\n    return base + 2;\n  }\n  return base;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/ride.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport ride from '../src/greeter';\n\ndescribe('boundary surcharge', () => {\n  it('adds the fee at the threshold', () => {\n    expect(ride(40)).toBe(42);\n  });\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/greeter.ts",
+            &[(2, "  if (base >= 40) {")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the default-import seam".to_string())?;
+    assert_eq!(
+        finding.ripr.reach.state,
+        StageState::Yes,
+        "the default import of a default-export owner must credit, evidence: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// Negative control: a default import does NOT credit a named (non-default)
+/// export just because the specifier resolves to the owner file.
+#[test]
+fn default_import_does_not_credit_named_non_default_owner() -> Result<(), String> {
+    let root = ts_unique_tempdir("default-import-negative")?;
+    ts_write_file(
+        &root.join("src/greeter.ts"),
+        "export function fare(base: number): number {\n  if (base >= 40) {\n    return base + 2;\n  }\n  return base;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/ride.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport ride from '../src/greeter';\n\ndescribe('boundary surcharge', () => {\n  it('adds the fee at the threshold', () => {\n    expect(ride(40)).toBe(42);\n  });\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/greeter.ts",
+            &[(2, "  if (base >= 40) {")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the named-export seam".to_string())?;
+    assert_eq!(
+        finding.ripr.reach.state,
+        StageState::No,
+        "a default import must not credit a named non-default owner, evidence: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+// ── #4104-C: ghost relative import disclosure ─────────────────────────────────
+
+#[test]
+fn ghost_relative_import_is_disclosed_not_silent() -> Result<(), String> {
+    let root = ts_unique_tempdir("ghost-import")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function calc(amount: number): number {\n  if (amount >= 6) {\n    return amount * 2;\n  }\n  return amount;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/calc.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport { calc } from './no-such-module';\n\nit('doubles', () => {\n  expect(calc(6)).toBe(12);\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/calc.ts",
+            &[(2, "  if (amount >= 6) {")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the ghost-import seam".to_string())?;
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_relative_import_unresolved")),
+        "the ghost relative import must be disclosed, evidence: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn resolving_relative_import_emits_no_ghost_disclosure() -> Result<(), String> {
+    let root = ts_unique_tempdir("valid-import")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function calc(amount: number): number {\n  if (amount >= 6) {\n    return amount * 2;\n  }\n  return amount;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/calc.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport { calc } from '../src/calc';\n\nit('doubles', () => {\n  expect(calc(6)).toBe(12);\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/calc.ts",
+            &[(2, "  if (amount >= 6) {")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the valid-import seam".to_string())?;
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_relative_import_unresolved")),
+        "a resolving relative import must NOT be disclosed as ghost, evidence: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+// ── #4106-B: tsconfig unavailability causes ───────────────────────────────────
+
+/// ESM-style `../src/calc.js` specifiers resolve to the `calc.ts` source
+/// (TypeScript's JS-extension rewrite; the relation layer already strips the
+/// `.js` spelling). The ghost disclosure must agree: probing only `calc.js`
+/// previously claimed the specifier "resolves to no workspace file" — a
+/// wrong cause for an import that credits (review #4138).
+#[test]
+fn js_extension_relative_import_resolves_to_ts_source() -> Result<(), String> {
+    let root = ts_unique_tempdir("js-ext-import")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function calc(amount: number): number {\n  if (amount >= 6) {\n    return amount * 2;\n  }\n  return amount;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/calc.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport { calc } from '../src/calc.js';\n\nit('doubles', () => {\n  expect(calc(6)).toBe(12);\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/calc.ts",
+            &[(2, "  if (amount >= 6) {")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the .js-import seam".to_string())?;
+    assert_eq!(
+        finding.ripr.reach.state,
+        StageState::Yes,
+        "a .js specifier resolving to the .ts source must credit, evidence: {:?}",
+        finding.evidence
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_relative_import_unresolved")),
+        "a resolving .js specifier must NOT be disclosed as ghost, evidence: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// Dotted module names are NOT JS-extension spellings: `./bar.v2` resolves
+/// to `bar.v2.ts` by plain extension-append, never by replacing the suffix
+/// (`bar.ts` would be an unrelated file). Positive: the dotted module
+/// resolves. Negative control: a specifier for a module that does not exist
+/// still discloses.
+#[test]
+fn dotted_module_name_resolves_by_append_not_replacement() -> Result<(), String> {
+    let root = ts_unique_tempdir("dotted-module")?;
+    ts_write_file(
+        &root.join("src/bar.v2.ts"),
+        "export function bar(amount: number): number {\n  if (amount >= 6) {\n    return amount * 2;\n  }\n  return amount;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/dotted.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport { bar } from '../src/bar.v2';\n\nit('doubles', () => {\n  expect(bar(6)).toBe(12);\n});\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/bar.v2.ts",
+            &[(2, "  if (amount >= 6) {")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the dotted-module seam".to_string())?;
+    assert_eq!(
+        finding.ripr.reach.state,
+        StageState::Yes,
+        "the dotted module resolves by extension-append and must credit, evidence: {:?}",
+        finding.evidence
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_relative_import_unresolved")),
+        "the resolving dotted import must NOT be disclosed as ghost, evidence: {:?}",
+        finding.evidence
+    );
+    // Negative control: a specifier with NO matching module still discloses —
+    // the rewrite must not have widened resolution into over-matching.
+    let ghost_root = ts_unique_tempdir("dotted-module-ghost")?;
+    ts_write_file(
+        &ghost_root.join("src/bar.v2.ts"),
+        "export function bar(amount: number): number {\n  if (amount >= 6) {\n    return amount * 2;\n  }\n  return amount;\n}\n",
+    )?;
+    ts_write_file(
+        &ghost_root.join("tests/dotted.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport { bar } from '../src/no-such';\n\nit('doubles', () => {\n  expect(bar(6)).toBe(12);\n});\n",
+    )?;
+    let ghost_result = adapter.analyze_diff(
+        &ts_analysis_options(ghost_root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/bar.v2.ts",
+            &[(2, "  if (amount >= 6) {")],
+        )],
+    )?;
+    let ghost_finding = ghost_result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the ghost seam".to_string())?;
+    assert!(
+        ghost_finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_relative_import_unresolved")),
+        "an unresolvable specifier must still be disclosed as ghost, evidence: {:?}",
+        ghost_finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn alias_load_gap_types_distinguish_flag_on_failures() -> Result<(), String> {
+    let root = ts_unique_tempdir("alias-gap-types")?;
+
+    // No config at all.
+    let (map, err, gap) = load_alias_map_with_read_error(&root);
+    assert!(map.is_none());
+    assert!(err.is_none());
+    assert_eq!(gap, Some(TsAliasMapLoadGap::ConfigMissing));
+
+    // Invalid strict JSON (no comments) — parse failure without JSONC hint.
+    ts_write_file(
+        &root.join("tsconfig.json"),
+        "{ \"compilerOptions\": { INVALID }\n",
+    )?;
+    let (map, err, gap) = load_alias_map_with_read_error(&root);
+    assert!(map.is_none() && err.is_none());
+    match gap {
+        Some(TsAliasMapLoadGap::ConfigUnparseable {
+            jsonc_comments: false,
+            ..
+        }) => {}
+        other => {
+            return Err(format!("expected plain ConfigUnparseable, got {other:?}"));
+        }
+    }
+
+    // JSONC: comments make the strict parser fail and the gap names them.
+    ts_write_file(
+        &root.join("tsconfig.json"),
+        "{\n  // compiler options\n  \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@/*\": [\"./src/*\"] } }\n}\n",
+    )?;
+    let (map, err, gap) = load_alias_map_with_read_error(&root);
+    assert!(map.is_none() && err.is_none());
+    match gap {
+        Some(TsAliasMapLoadGap::ConfigUnparseable {
+            jsonc_comments: true,
+            ..
+        }) => {}
+        other => {
+            return Err(format!("expected JSONC ConfigUnparseable, got {other:?}"));
+        }
+    }
+
+    // extends is a distinct typed cause.
+    ts_write_file(
+        &root.join("tsconfig.json"),
+        "{\n  \"extends\": \"./base.json\",\n  \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@/*\": [\"./src/*\"] } }\n}\n",
+    )?;
+    let (map, err, gap) = load_alias_map_with_read_error(&root);
+    assert!(map.is_none() && err.is_none());
+    assert_eq!(
+        gap,
+        Some(TsAliasMapLoadGap::ExtendsUnsupported {
+            config: "tsconfig.json"
+        })
+    );
+
+    // Parsed config but no baseUrl is incomplete, not unparseable.
+    ts_write_file(
+        &root.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"paths\": { \"@/*\": [\"./src/*\"] } } }\n",
+    )?;
+    let (map, err, gap) = load_alias_map_with_read_error(&root);
+    assert!(map.is_none() && err.is_none());
+    assert_eq!(
+        gap,
+        Some(TsAliasMapLoadGap::IncompleteConfig {
+            config: "tsconfig.json"
+        })
+    );
+
+    // A valid config yields the map and no gap.
+    ts_write_file(
+        &root.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@/*\": [\"./src/*\"] } } }\n",
+    )?;
+    let (map, err, gap) = load_alias_map_with_read_error(&root);
+    assert!(map.is_some() && err.is_none() && gap.is_none());
+    Ok(())
+}
+
+/// JavaScript-only projects load `jsconfig.json` when `tsconfig.json` is
+/// absent. The typed gap and its recovery hints must name the file that was
+/// actually loaded, not tell the user to fix a `tsconfig.json` that does not
+/// exist (review #4138).
+#[test]
+fn alias_load_gap_names_the_jsconfig_fallback_file() -> Result<(), String> {
+    let root = ts_unique_tempdir("alias-gap-jsconfig")?;
+    ts_write_file(
+        &root.join("jsconfig.json"),
+        "{\n  \"extends\": \"./base.json\",\n  \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@/*\": [\"./src/*\"] } }\n}\n",
+    )?;
+    let (map, err, gap) = load_alias_map_with_read_error(&root);
+    assert!(map.is_none() && err.is_none());
+    let gap = gap.ok_or("expected a typed load gap for the jsconfig fallback")?;
+    assert_eq!(
+        gap,
+        TsAliasMapLoadGap::ExtendsUnsupported {
+            config: "jsconfig.json"
+        },
+        "the gap must record the jsconfig.json fallback as the loaded config"
+    );
+    let (cause, hint) = gap.parts();
+    assert!(
+        cause.contains("jsconfig.json") && !cause.contains("the tsconfig at"),
+        "cause must name jsconfig.json, got: {cause}"
+    );
+    assert!(
+        hint.contains("jsconfig.json") && !hint.contains("tsconfig.json"),
+        "hint must point at jsconfig.json, got: {hint}"
+    );
+    Ok(())
+}
+
+/// End-to-end #4106-B: with the flag ON and an unparseable tsconfig, the
+/// alias advice must name the parse failure and NOT tell the user to enable
+/// the already-enabled flag.
+#[test]
+fn alias_advice_names_the_real_cause_when_flag_is_on() -> Result<(), String> {
+    let root = ts_unique_tempdir("alias-advice-flag-on")?;
+    ts_write_file(
+        &root.join("lib/util.ts"),
+        "export function util(amount: number): number {\n  if (amount >= 4) {\n    return amount * 2;\n  }\n  return amount;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/util.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport { util } from '@/util';\n\nit('doubles', () => {\n  expect(util(4)).toBe(8);\n});\n",
+    )?;
+    ts_write_file(
+        &root.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"baseUrl\": \".\", INVALID }\n",
+    )?;
+    let mut options = ts_analysis_options(root.clone());
+    options.resolve_tsconfig_paths = true;
+    let adapter = TypeScriptAdapter;
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "lib/util.ts",
+            &[(2, "  if (amount >= 4) {")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the alias seam".to_string())?;
+    let why = finding
+        .evidence
+        .iter()
+        .find(|line| line.contains("typescript_limitation_why: typescript_path_alias_unresolved"))
+        .ok_or_else(|| {
+            format!(
+                "expected the alias limitation to fire, evidence: {:?}",
+                finding.evidence
+            )
+        })?;
+    assert!(
+        why.contains("could not be parsed as strict JSON"),
+        "the advice must name the parse failure, got: {why}"
+    );
+    assert!(
+        !why.contains("resolve_tsconfig_paths = true"),
+        "the advice must NOT tell the user to enable an already-enabled flag, got: {why}"
+    );
+    Ok(())
+}
+
+/// Flag-OFF keeps the honest "enable the flag" advice (negative control).
+#[test]
+fn alias_advice_names_the_flag_only_when_flag_is_off() -> Result<(), String> {
+    let root = ts_unique_tempdir("alias-advice-flag-off")?;
+    ts_write_file(
+        &root.join("lib/util.ts"),
+        "export function util(amount: number): number {\n  if (amount >= 4) {\n    return amount * 2;\n  }\n  return amount;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/util.test.ts"),
+        "import { describe, it, expect } from 'vitest';\nimport { util } from '@/util';\n\nit('doubles', () => {\n  expect(util(4)).toBe(8);\n});\n",
+    )?;
+    let options = ts_analysis_options(root.clone());
+    let adapter = TypeScriptAdapter;
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "lib/util.ts",
+            &[(2, "  if (amount >= 4) {")],
+        )],
+    )?;
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for the alias seam".to_string())?;
+    let why = finding
+        .evidence
+        .iter()
+        .find(|line| line.contains("typescript_limitation_why: typescript_path_alias_unresolved"))
+        .ok_or_else(|| {
+            format!(
+                "expected the alias limitation to fire, evidence: {:?}",
+                finding.evidence
+            )
+        })?;
+    assert!(
+        why.contains("alias resolution is not enabled")
+            && why.contains("resolve_tsconfig_paths = true"),
+        "flag-off advice must name the flag, got: {why}"
+    );
+    Ok(())
+}
 // ── #4103 under-credit half: genuine owner references the gate missed ──────
 //
 // Red witnesses: the ts-relation probe fixtures (case04b, case07, case08,

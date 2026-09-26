@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -9,7 +10,12 @@ use crate::{
     read_file_policy_allowlist, read_file_policy_test_commands,
 };
 
-const TEST_COVERED_BY_ENUMERATION_TIMEOUT: Duration = Duration::from_mins(5);
+const TEST_COVERED_BY_LIST_TIMEOUT: Duration = Duration::from_mins(5);
+/// Compile budget, separate from listing. A cold `cargo test --list` spends
+/// almost all of its wall clock building; that must not be charged against
+/// the list cap or reported as an unresolved `covered_by` pointer (#4141).
+const TEST_COVERED_BY_BUILD_TIMEOUT: Duration = Duration::from_mins(30);
+const COVERED_BY_INSTRUMENT_PREFIX: &str = "covered_by_instrument_timeout:";
 
 /// Validate the repository's non-Rust file policy and write its standard
 /// report. The parser and shared path predicates remain in `main.rs` until
@@ -63,32 +69,66 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
 }
 
 fn validate_test_covered_by(path: &str, commands: &[(usize, String)]) -> Result<(), String> {
+    let mut built = BTreeSet::new();
     validate_test_covered_by_with(path, commands, |args| {
+        if let Some(build_args) = build_args_before_list(args) {
+            let build_key = build_args.join("\u{1f}");
+            if built.insert(build_key) {
+                let build = capture_output_with_timeout(
+                    "cargo",
+                    &build_args,
+                    &[],
+                    TEST_COVERED_BY_BUILD_TIMEOUT,
+                    "test-valued covered_by build",
+                )?;
+                if build.timed_out || !build.status.is_some_and(|status| status.success()) {
+                    return Ok(enumeration_result(build, TEST_COVERED_BY_BUILD_TIMEOUT));
+                }
+            }
+        }
         let output = capture_output_with_timeout(
             "cargo",
             args,
             &[],
-            TEST_COVERED_BY_ENUMERATION_TIMEOUT,
+            TEST_COVERED_BY_LIST_TIMEOUT,
             "test-valued covered_by enumeration",
         )?;
-        Ok(map_test_covered_by_enumeration_output(output))
+        Ok(enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT))
     })
 }
 
-fn map_test_covered_by_enumeration_output(output: TimedOutput) -> (bool, String, String) {
+/// Build args for `cargo test … --no-run`, or `None` when Cargo rejects
+/// that combination. `cargo test --doc --no-run` is an error, so a
+/// documentation-test pointer keeps the list command as its only spawn.
+fn build_args_before_list(args: &[String]) -> Option<Vec<String>> {
+    let mut build_args = Vec::new();
+    for arg in args {
+        if arg == "--" {
+            break;
+        }
+        if arg == "--doc" {
+            return None;
+        }
+        build_args.push(arg.clone());
+    }
+    build_args.push("--no-run".to_string());
+    Some(build_args)
+}
+
+fn enumeration_result(output: TimedOutput, timeout: Duration) -> (bool, String, String) {
     let status = output
         .status
         .map(|status| status.to_string())
         .unwrap_or_else(|| "not available".to_string());
-    let timeout = if output.timed_out {
-        format!(
-            "timed out after {:?}; ",
-            TEST_COVERED_BY_ENUMERATION_TIMEOUT
-        )
+    let timeout_note = if output.timed_out {
+        format!("{COVERED_BY_INSTRUMENT_PREFIX} timed out after {timeout:?}; ")
     } else {
         String::new()
     };
-    let stderr = format!("{timeout}status: {status}\n{}", output.stderr.trim_end());
+    let stderr = format!(
+        "{timeout_note}status: {status}\n{}",
+        output.stderr.trim_end()
+    );
     (
         output.status.is_some_and(|status| status.success()) && !output.timed_out,
         output.stdout,
@@ -118,6 +158,11 @@ fn validate_test_covered_by_with(
         ]);
         let (success, stdout, stderr) = enumerate(&args)
             .map_err(|error| format!("{path}:{line} enumerate `{command}`: {error}"))?;
+        if stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX) {
+            return Err(format!(
+                "{path}:{line} test-valued `covered_by` enumeration did not finish (instrument timeout, not an unresolved pointer): `{command}`\nstdout: {stdout}\nstderr: {stderr}"
+            ));
+        }
         if !success {
             return Err(format!(
                 "{path}:{line} test-valued `covered_by` could not be enumerated: `{command}`\nstdout: {stdout}\nstderr: {stderr}"
@@ -140,7 +185,10 @@ fn validate_test_covered_by_with(
 mod tests {
     use std::time::Duration;
 
-    use super::map_test_covered_by_enumeration_output;
+    use super::COVERED_BY_INSTRUMENT_PREFIX;
+    use super::TEST_COVERED_BY_LIST_TIMEOUT;
+    use super::build_args_before_list;
+    use super::enumeration_result;
     use super::validate_test_covered_by;
     use super::validate_test_covered_by_with;
     use crate::is_cargo_test_command;
@@ -206,7 +254,8 @@ mod tests {
         ];
 
         for (output, (expected_status, expected_stderr)) in cases {
-            let (success, stdout, stderr) = map_test_covered_by_enumeration_output(output);
+            let (success, stdout, stderr) =
+                enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT);
             if success || stdout != "selected_case: test\n" || !stderr.contains(&expected_status) {
                 return Err(format!(
                     "enumeration output mapping was not fail-closed: success={success}, stdout={stdout:?}, stderr={stderr:?}"
@@ -313,6 +362,98 @@ mod tests {
             Ok(())
         } else {
             Err(format!("enumeration diagnostics were lost: {error}"))
+        }
+    }
+
+    #[test]
+    fn test_covered_by_build_args_stop_before_the_list_harness() -> Result<(), String> {
+        let args = [
+            "test",
+            "-p",
+            "xtask",
+            "some_filter",
+            "--",
+            "--list",
+            "--format",
+            "terse",
+        ]
+        .map(str::to_string);
+        let build = build_args_before_list(&args)
+            .ok_or("ordinary cargo test lost its separate build step")?;
+        let expected = ["test", "-p", "xtask", "some_filter", "--no-run"].map(str::to_string);
+        if build == expected {
+            Ok(())
+        } else {
+            Err(format!("build args drifted: {build:?}"))
+        }
+    }
+
+    #[test]
+    fn test_covered_by_doc_tests_do_not_append_no_run() -> Result<(), String> {
+        let args = [
+            "test",
+            "--workspace",
+            "--doc",
+            "--",
+            "--list",
+            "--format",
+            "terse",
+        ]
+        .map(str::to_string);
+        if build_args_before_list(&args).is_none() {
+            Ok(())
+        } else {
+            Err("cargo test --doc must not be combined with --no-run".to_string())
+        }
+    }
+
+    #[test]
+    fn test_covered_by_instrument_timeout_is_not_an_unresolved_pointer() -> Result<(), String> {
+        let commands = [(4, "cargo test -p xtask slow_filter".to_string())];
+        let error = match validate_test_covered_by_with("policy.toml", &commands, |_| {
+            Ok((
+                false,
+                String::new(),
+                format!("{COVERED_BY_INSTRUMENT_PREFIX} timed out after 300s"),
+            ))
+        }) {
+            Ok(()) => {
+                return Err("instrument timeout unexpectedly passed".to_string());
+            }
+            Err(error) => error,
+        };
+        if error.contains("not an unresolved pointer") && !error.contains("selects zero tests") {
+            Ok(())
+        } else {
+            Err(format!(
+                "instrument timeout was reported as an unresolved pointer: {error}"
+            ))
+        }
+    }
+
+    #[test]
+    fn test_covered_by_zero_tests_stay_unresolved_and_slow_success_passes() -> Result<(), String> {
+        let commands = [(9, "cargo test -p xtask missing_pointer".to_string())];
+        let unresolved = match validate_test_covered_by_with("policy.toml", &commands, |_| {
+            Ok((true, String::new(), String::new()))
+        }) {
+            Ok(()) => return Err("zero-test enumeration unexpectedly passed".to_string()),
+            Err(error) => error,
+        };
+        if !unresolved.contains("selects zero tests") || unresolved.contains("instrument timeout") {
+            return Err(format!(
+                "unresolved pointer was not kept distinct: {unresolved}"
+            ));
+        }
+        let slow_but_complete = validate_test_covered_by_with("policy.toml", &commands, |_| {
+            Ok((true, "slow_case: test\n".to_string(), String::new()))
+        });
+        if slow_but_complete.is_ok() {
+            Ok(())
+        } else {
+            Err(format!(
+                "a completed enumeration failed only because it was slow: {slow_but_complete:?}"
+            ))
         }
     }
 }

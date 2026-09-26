@@ -61,8 +61,20 @@ mod windows_paths {
     }
 }
 
+/// Encode a local path as a `file:` URI. The inverse of
+/// [`normalized_file_uri_path`], so every admitted `Ok` round-trips through the
+/// shared decoder. A UNC, extended-length (`\\?\...`), or device (`\\.\...`)
+/// spelling normalizes to a doubled leading separator, which this local-only
+/// decoder rejects; refuse it here at emission rather than publishing a URI
+/// that would later read as no file at all.
 pub(super) fn file_uri_for_path(path: &Path) -> Result<Uri, String> {
     let normalized = path.to_string_lossy().replace('\\', "/");
+    if normalized.starts_with("//") {
+        return Err(format!(
+            "refusing to build a local file URI for the network-share path {}",
+            path.display()
+        ));
+    }
     let encoded = encode_uri_path(&normalized);
     let uri = if encoded.starts_with('/') {
         format!("file://{encoded}")
@@ -81,7 +93,15 @@ pub(super) fn path_from_file_uri(uri: &Uri) -> Option<PathBuf> {
 /// Existing paths are canonicalized so symlink/junction escapes are rejected;
 /// missing paths fall back to normalized lexical containment for diagnostics
 /// and command payloads that refer to a future file.
+///
+/// A relative candidate that is really raw URI text is refused outright. When
+/// [`normalized_file_uri_path`] rejects a URI, `state::document_path` keeps the
+/// wire string as the document's path; that string begins with a scheme, so it
+/// is relative and would otherwise join under every root and read as contained.
 pub(super) fn path_is_within_root(root: &Path, path: &Path) -> bool {
+    if !path.is_absolute() && carries_uri_separator(path) {
+        return false;
+    }
     let candidate = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -92,20 +112,36 @@ pub(super) fn path_is_within_root(root: &Path, path: &Path) -> bool {
     paths_equal_or_below(&root, &candidate)
 }
 
+/// Whether a relative candidate's first component ends in a URI scheme
+/// separator (`file:`). That is the shape of a raw-wire URI fallback, not of a
+/// file path: `:` cannot appear in a Windows filename at all, and a
+/// scheme-shaped first segment names a URI the decoder refused rather than a
+/// file under the root. Unix does permit `:` inside a filename, so this is a
+/// deliberate fail-closed lexical guard rather than a portable statement about
+/// Unix path syntax.
+fn carries_uri_separator(path: &Path) -> bool {
+    match path.components().next() {
+        Some(Component::Normal(value)) => value.to_string_lossy().ends_with(':'),
+        _ => false,
+    }
+}
+
 pub(super) fn file_uri_is_within_root(root: &Path, uri: &Uri) -> bool {
     path_from_file_uri(uri).is_some_and(|path| path_is_within_root(root, &path))
 }
 
 pub(super) fn file_uris_match(left: &Uri, right: &Uri) -> bool {
-    if left == right {
-        return true;
-    }
     let Some(left_path) = normalized_file_uri_path(left) else {
         return false;
     };
     let Some(right_path) = normalized_file_uri_path(right) else {
         return false;
     };
+    // Equal wire strings need no special case: once both sides are admitted they
+    // decode to the same path, so the comparisons below already report them
+    // equal. An earlier revision short-circuited on `left == right` *before*
+    // admission, which made a URI this decoder refuses match itself. Identity is
+    // therefore a statement about admitted local paths, never about wire strings.
     if windows_paths::is_windows_drive_path(&left_path)
         && windows_paths::is_windows_drive_path(&right_path)
     {
@@ -114,16 +150,53 @@ pub(super) fn file_uris_match(left: &Uri, right: &Uri) -> bool {
     left_path == right_path
 }
 
+/// Resolve the supported local forms of a file URI (RFC 8089 sections 2-3).
+/// An empty authority and `localhost` identify the same local path. Other
+/// authorities are unsupported here: never reinterpret a host as a relative
+/// path under the workspace, and never perform DNS or network-share discovery.
+///
+/// This is the single admission authority for the LSP side: workspace-root
+/// selection, file identity ([`file_uris_match`]), containment
+/// ([`file_uri_is_within_root`]), and the display path kept by
+/// `state::document_path` all resolve through it. `None` therefore means "not a
+/// local file this server supports", and callers must fail closed rather than
+/// re-derive a path from the wire string. [`file_uri_for_path`] is the matching
+/// encoder and refuses the paths whose encoding this decoder would reject.
 fn normalized_file_uri_path(uri: &Uri) -> Option<String> {
-    let raw = uri.as_str();
-    let path = raw.strip_prefix("file://")?;
-    let decoded = percent_codec::decode_uri_path(path)?;
-    let path = if windows_paths::is_windows_drive_uri_path(&decoded) {
-        decoded[1..].to_string()
+    let (scheme, rest) = uri.as_str().split_once(':')?;
+    if !scheme.eq_ignore_ascii_case("file") || rest.contains(['?', '#']) {
+        return None;
+    }
+    let path = if let Some(authority_path) = rest.strip_prefix("//") {
+        let (authority, path) = authority_path.split_at(authority_path.find('/')?);
+        if !authority.is_empty() && !authority.eq_ignore_ascii_case("localhost") {
+            return None;
+        }
+        path
+    } else if rest.starts_with('/') {
+        rest
     } else {
-        decoded
+        return None;
     };
-    Some(path.replace('\\', "/"))
+    // Split URI components before decoding: encoded filename delimiters are
+    // literal path data, not a query, fragment, or a second decoding pass.
+    let decoded = percent_codec::decode_uri_path(path)?.replace('\\', "/");
+    if decoded.contains('\0') || decoded.starts_with("//") {
+        // A doubled leading separator is a UNC/network-share spelling on
+        // Windows even when the URI authority is empty or localhost. This
+        // local-only decoder must not turn an authority bypass into network
+        // filesystem access.
+        return None;
+    }
+    if windows_paths::is_windows_drive_uri_path(&decoded) {
+        // `/C:relative` must not become a drive-relative filesystem path.
+        if decoded.as_bytes().get(3) != Some(&b'/') {
+            return None;
+        }
+        Some(decoded[1..].to_string())
+    } else {
+        Some(decoded)
+    }
 }
 
 /// Render a path with forward slashes for LSP display (diagnostic messages,
@@ -298,6 +371,7 @@ mod tests {
         let uri = parse_uri("file:///tmp/%FF.rs")?;
 
         assert_eq!(path_from_file_uri(&uri), None);
+        assert!(!file_uris_match(&uri, &uri));
         Ok(())
     }
 
@@ -306,6 +380,7 @@ mod tests {
         let uri = parse_uri("https://example.test/src.rs")?;
 
         assert_eq!(path_from_file_uri(&uri), None);
+        assert!(!file_uris_match(&uri, &uri));
         Ok(())
     }
 
@@ -464,6 +539,256 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn local_file_uri_forms_share_path_and_identity() -> Result<(), String> {
+        let canonical = parse_uri("file:///workspace/ripr/caf%C3%A9.rs")?;
+        for value in [
+            "file:/workspace/ripr/caf%C3%A9.rs",
+            "file:///workspace/ripr/caf%C3%A9.rs",
+            "file://localhost/workspace/ripr/caf%C3%A9.rs",
+            "FiLe://LOCALHOST/workspace/ripr/caf%C3%A9.rs",
+        ] {
+            let uri = parse_uri(value)?;
+            assert_eq!(
+                path_from_file_uri(&uri),
+                Some(PathBuf::from("/workspace/ripr/café.rs")),
+                "{value}"
+            );
+            assert!(file_uris_match(&canonical, &uri), "{value}");
+            assert!(file_uris_match(&uri, &canonical), "{value}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn local_file_uri_forms_preserve_windows_drive_paths() -> Result<(), String> {
+        let canonical = parse_uri("file:///c:/Work/Ripr/src/lib.rs")?;
+        for value in [
+            "file:/C:/Work/Ripr/src/lib.rs",
+            "file://localhost/C:/Work/Ripr/src/lib.rs",
+            "FILE://LOCALHOST/C%3A/Work/Ripr/src/lib.rs",
+        ] {
+            let uri = parse_uri(value)?;
+            assert_eq!(
+                path_from_file_uri(&uri),
+                Some(PathBuf::from(
+                    ["C:", "Work", "Ripr", "src", "lib.rs"].join("/")
+                )),
+                "{value}"
+            );
+            assert!(file_uris_match(&canonical, &uri), "{value}");
+            assert!(file_uris_match(&uri, &canonical), "{value}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn file_uri_rejects_nonlocal_authorities_before_containment() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr-uri-authority-root");
+        for value in [
+            "file://remote.example/src/lib.rs",
+            "file://localhost.example/src/lib.rs",
+            "file://127.0.0.1/src/lib.rs",
+            "file://[::1]/src/lib.rs",
+            "file://user@localhost/src/lib.rs",
+            "file://localhost:80/src/lib.rs",
+            "file://local%68ost/src/lib.rs",
+        ] {
+            let uri = parse_uri(value)?;
+            assert_eq!(path_from_file_uri(&uri), None, "{value}");
+            assert!(!file_uris_match(&uri, &uri), "{value}");
+            assert!(!file_uri_is_within_root(&root, &uri), "{value}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn file_uri_rejects_network_share_paths_with_local_authority() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr-uri-network-share-root");
+        for value in [
+            "file:////remote.example/share/lib.rs",
+            "file://localhost//remote.example/share/lib.rs",
+            "file:///%2Fremote.example/share/lib.rs",
+            "file:/%2F/remote.example/share/lib.rs",
+        ] {
+            let uri = parse_uri(value)?;
+            assert_eq!(path_from_file_uri(&uri), None, "{value}");
+            assert!(!file_uris_match(&uri, &uri), "{value}");
+            assert!(!file_uri_is_within_root(&root, &uri), "{value}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn file_uri_for_path_round_trips_local_paths_and_refuses_network_shares() -> Result<(), String>
+    {
+        // The no-network-share policy is enforced at emission too: a doubled
+        // leading separator has no admitted local `file:` form, so the encoder
+        // must refuse it instead of emitting a URI the shared decoder rejects.
+        for path in [
+            r"\\remote.example\share\src\lib.rs",
+            r"//remote.example/share/src/lib.rs",
+            r"\\?\UNC\remote.example\share\src\lib.rs",
+            r"\\.\UNC\remote.example\share\src\lib.rs",
+        ] {
+            assert!(
+                file_uri_for_path(Path::new(path)).is_err(),
+                "network-share path must be refused, not encoded: {path}"
+            );
+        }
+        // Every local path the encoder accepts must still decode through the
+        // shared authority, on drive-absolute, rooted, and relative spellings.
+        let drive_absolute = ["C:", "workspace", "ripr", "src", "lib.rs"].join("/");
+        let drive_absolute_lower = drive_absolute.to_ascii_lowercase();
+        for path in [
+            "/workspace/ripr/src/lib.rs",
+            drive_absolute.as_str(),
+            drive_absolute_lower.as_str(),
+            "workspace/ripr/src/lib.rs",
+            "/workspace/ripr fixtures/a#b?.rs",
+        ] {
+            let uri = file_uri_for_path(Path::new(path))
+                .map_err(|err| format!("expected a local file URI for {path}: {err}"))?;
+            assert!(
+                path_from_file_uri(&uri).is_some(),
+                "encoder emitted a URI the shared decoder rejects: {path} -> {}",
+                uri.as_str()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn path_is_within_root_refuses_relative_uri_text_fallbacks() {
+        let root = Path::new("/workspace/ripr");
+        for fallback in [
+            "file://remote.example/workspace/ripr/src/lib.rs",
+            "FILE://LOCALHOST/workspace/ripr/src/lib.rs?revision=1",
+            "file:/workspace/ripr/src/lib.rs#symbol",
+            "file:////remote.example/share/lib.rs",
+        ] {
+            let path = Path::new(fallback);
+            assert!(
+                path.is_relative(),
+                "expected a relative fallback: {fallback}"
+            );
+            assert!(
+                !path_is_within_root(root, path),
+                "rejected-URI fallback must not read as contained: {fallback}"
+            );
+        }
+        // A genuine workspace-relative source path still resolves under the root.
+        assert!(path_is_within_root(root, Path::new("src/lib.rs")));
+    }
+
+    #[test]
+    fn file_uri_rejects_missing_and_drive_relative_paths() -> Result<(), String> {
+        for value in [
+            "file:",
+            "file://",
+            "file://localhost",
+            "file:src/lib.rs",
+            "file:///C:",
+            "file:///C:src/lib.rs",
+            "file:/C:src/lib.rs",
+        ] {
+            let uri = parse_uri(value)?;
+            assert_eq!(path_from_file_uri(&uri), None, "{value}");
+            assert!(!file_uris_match(&uri, &uri), "{value}");
+        }
+        assert_eq!(
+            path_from_file_uri(&parse_uri("file://localhost/")?),
+            Some(PathBuf::from("/"))
+        );
+        assert_eq!(
+            path_from_file_uri(&parse_uri("file://localhost/C:/")?),
+            Some(PathBuf::from(["C:", ""].join("/")))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn file_uri_rejects_query_fragment_and_nul_paths() -> Result<(), String> {
+        for value in [
+            "file:///workspace/lib.rs?revision=1",
+            "file:///workspace/lib.rs#symbol",
+            "file:///workspace/lib.rs?",
+            "file:///workspace/lib.rs#",
+            "file:///workspace/lib%00.rs",
+            "file://localhost/workspace/lib.rs?revision=1",
+        ] {
+            let uri = parse_uri(value)?;
+            assert_eq!(path_from_file_uri(&uri), None, "{value}");
+            assert!(!file_uris_match(&uri, &uri), "{value}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn local_file_uri_preserves_encoded_filename_delimiters() -> Result<(), String> {
+        let uri = parse_uri("file://localhost/workspace/a%23b%3F%252F%20caf%C3%A9.rs")?;
+        let path = PathBuf::from("/workspace/a#b?%2F café.rs");
+        assert_eq!(path_from_file_uri(&uri), Some(path.clone()));
+        assert!(file_uris_match(&uri, &file_uri_for_path(&path)?));
+        Ok(())
+    }
+
+    #[test]
+    fn local_authority_containment_uses_the_absolute_path() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr-uri-local-root");
+        let inside = file_uri_for_path(&root.join("src/lib.rs"))?;
+        let outside = file_uri_for_path(&root.with_file_name("ripr-uri-other").join("lib.rs"))?;
+        let local_inside = parse_uri(&inside.as_str().replacen("file://", "file://localhost", 1))?;
+        let local_outside =
+            parse_uri(&outside.as_str().replacen("file://", "file://localhost", 1))?;
+
+        assert!(file_uri_is_within_root(&root, &inside));
+        assert!(file_uri_is_within_root(&root, &local_inside));
+        assert!(!file_uri_is_within_root(&root, &outside));
+        assert!(!file_uri_is_within_root(&root, &local_outside));
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_root_selection_uses_local_uri_authority() -> Result<(), String> {
+        use crate::lsp::capabilities::{WorkspaceRootResolution, root_from_initialize_params};
+        use tower_lsp_server::ls_types::{InitializeParams, WorkspaceFolder};
+
+        let root = std::env::temp_dir().join("ripr-uri-initialize-root");
+        let canonical = file_uri_for_path(&root)?;
+        for authority in ["", "localhost", "LOCALHOST"] {
+            let uri = parse_uri(&canonical.as_str().replacen(
+                "file://",
+                &format!("file://{authority}"),
+                1,
+            ))?;
+            let params = InitializeParams {
+                workspace_folders: Some(vec![WorkspaceFolder {
+                    uri,
+                    name: "workspace".to_string(),
+                }]),
+                ..InitializeParams::default()
+            };
+            assert_eq!(
+                root_from_initialize_params(&params),
+                WorkspaceRootResolution::Selected(root.clone()),
+                "{authority}"
+            );
+        }
+        let params = InitializeParams {
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: parse_uri("file://remote.example/workspace/ripr")?,
+                name: "workspace".to_string(),
+            }]),
+            ..InitializeParams::default()
+        };
+        assert!(matches!(
+            root_from_initialize_params(&params),
+            WorkspaceRootResolution::Unavailable(_)
+        ));
         Ok(())
     }
 }

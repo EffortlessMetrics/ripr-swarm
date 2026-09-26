@@ -214,9 +214,11 @@ test.only("discount boundary", () => {
         decorated: false,
         params: Vec::new(),
         exported_as_default: false,
+        class_default_export: false,
         arity: None,
         source_text: None,
         imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
     };
     let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
 
