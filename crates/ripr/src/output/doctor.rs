@@ -1324,8 +1324,9 @@ mod tests {
         // The subject here is which directory the probe ran in, so the oracle
         // is the shim's own per-directory marker rather than the verdict: the
         // selected root prints `target-root`, the caller root `caller-root`.
-        // A version below ripr's build minimum is now a disclosure rather than
-        // a failure, so a status assertion would no longer discriminate.
+        // The probe reports the source-build prerequisite as failed; the
+        // analysis profile projects that observation as advisory. The root
+        // discriminator remains the shim's own per-directory marker.
         assert!(
             result.evidence.contains("target-root"),
             "probe must run in the selected root; evidence: {}",
@@ -1338,7 +1339,7 @@ mod tests {
         );
         assert_eq!(
             result.status,
-            DoctorStatus::Pass,
+            DoctorStatus::Fail,
             "evidence: {}",
             result.evidence
         );
