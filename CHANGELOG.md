@@ -547,6 +547,11 @@ are scoped or reviewed.
   gain related-test evidence; a relation alone does not establish a
   discriminating oracle
   ([#4103](https://github.com/EffortlessMetrics/ripr-swarm/issues/4103)).
+- TypeScript and JavaScript preview repair, targeted rerun, and output paths
+  now recognize `.mts`, `.cts`, `.mjs`, and `.cjs` sources and tests through
+  the same extension authority used by analysis. These module forms no longer
+  disappear solely because a later consumer used the narrower extension list
+  ([#4116](https://github.com/EffortlessMetrics/ripr-swarm/issues/4116)).
 - `check-file-policy` builds test binaries before it lists `covered_by`
   subjects. A cold compile is no longer charged against the five-minute
   list cap, and a timeout is reported as an instrument failure rather than
