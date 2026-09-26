@@ -111,7 +111,7 @@ pub(crate) enum TsAliasUnresolveCause {
 impl TsAliasUnresolveCause {
     /// Typed cause phrase for the limitation's `why_not_actionable` text,
     /// paired with a cause-specific recovery hint.
-    fn parts(self) -> (&'static str, &'static str) {
+    pub(crate) fn parts(self) -> (&'static str, &'static str) {
         match self {
             Self::MapUnavailable => (
                 "no tsconfig.json/jsconfig.json alias map was available (opt-out flag, missing config, or unparseable config)",
