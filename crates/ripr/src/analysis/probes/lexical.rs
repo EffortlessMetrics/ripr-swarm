@@ -293,7 +293,8 @@ fn numeric_discriminant(tail: &str) -> bool {
 fn strip_pub_visibility(text: &str) -> Option<&str> {
     let rest = text.trim_start();
     let after_pub = rest.strip_prefix("pub")?;
-    let after_pub = after_pub.trim_start();
+    // Do not trim before the word-boundary check. `pub struct` has a space
+    // after `pub`; trimming it makes `struct` look like an identifier suffix.
     if let Some(after_paren) = after_pub.strip_prefix('(') {
         let (_, after_visibility) = split_matching_paren(after_paren)?;
         return Some(after_visibility);
