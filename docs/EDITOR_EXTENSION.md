@@ -52,7 +52,7 @@ An empty Problems panel is not proof that testing is complete. Read
 Editor diagnostics and actions are advisory, saved-workspace static evidence.
 They do not grant source-edit authority, execute a copied command, run mutants,
 establish runtime test adequacy, choose a gate result, or approve a merge.
-TypeScript, JavaScript, Python, and Perl remain preview surfaces within their
+TypeScript, JavaScript, and Python remain preview surfaces within their
 published limits; an installed adapter does not imply Rust parity.
 
 For the shortest install-to-first-PR walkthrough, see
