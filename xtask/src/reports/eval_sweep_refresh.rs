@@ -3302,8 +3302,7 @@ mod python_eval_sweep_refresh {
         super::discard_partial_dir(&dir);
         let sealed = dir.join("sealed");
         std::fs::create_dir_all(&sealed).map_err(|error| error.to_string())?;
-        std::fs::write(sealed.join("hidden.py"), "x = 1\n")
-            .map_err(|error| error.to_string())?;
+        std::fs::write(sealed.join("hidden.py"), "x = 1\n").map_err(|error| error.to_string())?;
         std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000))
             .map_err(|error| format!("chmod sealed: {error}"))?;
 
@@ -3321,7 +3320,12 @@ mod python_eval_sweep_refresh {
             "NOT_ESTABLISHED: this process can still list a mode-000 directory".to_string()
         })?;
         assert!(!counts.complete);
-        assert!(counts.limitation.as_deref().is_some_and(|s| s.contains("sealed")));
+        assert!(
+            counts
+                .limitation
+                .as_deref()
+                .is_some_and(|s| s.contains("sealed"))
+        );
         Ok(())
     }
 
