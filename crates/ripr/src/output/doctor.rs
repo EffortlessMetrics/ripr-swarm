@@ -546,6 +546,7 @@ fn is_inside_work_tree(root: &Path) -> Option<bool> {
 /// without going through the redacted JSON evidence. `detected` is the
 /// caller's marker scan of the root, used only to decide whether the Rust
 /// toolchain checks apply (see [`rust_toolchain_scope`]).
+#[cfg(test)]
 pub(crate) fn evaluate_doctor_core_with_config(
     root: &Path,
     detected: &[LanguageId],
@@ -561,6 +562,7 @@ pub(crate) fn evaluate_doctor_core_with_config_for_profile(
     evaluate_doctor_core_with_probe_for_profile(root, detected, profile, doctor_tool_check_for_root)
 }
 
+#[cfg(test)]
 fn evaluate_doctor_core_with_probe(
     root: &Path,
     detected: &[LanguageId],
