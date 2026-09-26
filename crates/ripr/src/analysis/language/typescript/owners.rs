@@ -208,9 +208,11 @@ pub(crate) fn owner_from_variable_declarator(
             decorated: false,
             exported_as_default: false,
             imports: imports.to_vec(),
-            // Non-function initializers carry no resolvable signature facts.
+            // Non-function initializers carry no resolvable signature facts:
+            // no fixed positional signature the boundary witness could
+            // arity-check against.
+            params: Vec::new(),
             arity: None,
-            parameters: Vec::new(),
             source_text: None,
         }),
     }
@@ -245,7 +247,7 @@ pub(crate) fn owner_from_function(
     decorated: bool,
     imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
-    let (arity, parameters) = parameter_facts(&func.params);
+    let (arity, params) = parameter_facts(&func.params);
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
@@ -256,8 +258,8 @@ pub(crate) fn owner_from_function(
         decorated,
         exported_as_default: false,
         imports: imports.to_vec(),
+        params,
         arity,
-        parameters,
         source_text: Some(source[func.span.start as usize..func.span.end as usize].to_string()),
     }
 }
@@ -271,7 +273,7 @@ pub(crate) fn owner_from_arrow(
     decorated: bool,
     imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
-    let (arity, parameters) = parameter_facts(&arrow.params);
+    let (arity, params) = parameter_facts(&arrow.params);
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
@@ -282,8 +284,8 @@ pub(crate) fn owner_from_arrow(
         decorated,
         exported_as_default: false,
         imports: imports.to_vec(),
+        params,
         arity,
-        parameters,
         source_text: Some(source[arrow.span.start as usize..arrow.span.end as usize].to_string()),
     }
 }
@@ -329,7 +331,7 @@ pub(crate) fn owner_from_method(
         return None;
     }
     let name = property_key_name(&method.key)?;
-    let (arity, parameters) = parameter_facts(&method.value.params);
+    let (arity, params) = parameter_facts(&method.value.params);
     Some(TypeScriptOwner {
         name,
         file: file.to_path_buf(),
@@ -344,8 +346,8 @@ pub(crate) fn owner_from_method(
         decorated: class_decorated || !method.decorators.is_empty(),
         exported_as_default: false,
         imports: imports.to_vec(),
+        params,
         arity,
-        parameters,
         source_text: Some(source[method.span.start as usize..method.span.end as usize].to_string()),
     })
 }
