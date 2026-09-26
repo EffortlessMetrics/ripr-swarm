@@ -1480,6 +1480,39 @@
         { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
+    },
+    {
+      "id": "ts_predicate_boundary_dead_argument",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_predicate_boundary_overcredit",
+      "vector": "predicate_boundary_literal_in_dead_argument_position_not_witnessed",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" },
+        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "ts_domock_relation_gate",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_domock_relation_gate",
+      "vector": "domock_hoisted_registration_treated_as_owner_module_mock",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_emit_limitation", "expected_limit_kind": "mocked_module" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
     }
   ]
 }

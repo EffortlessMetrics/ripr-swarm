@@ -427,11 +427,28 @@ pub(crate) fn ts_observation_guard_limitation(
 /// an assertion whose observed owner call carries that boundary:
 ///
 /// - **One literal operand** (`total >= 50`, `status === 'paid'`): an argument
-///   of the observed owner call contains the literal as a value token.
-/// - **No literal operand** (`count <= limit`): the adapter has no owner
-///   parameter facts to map operands to argument positions, so it accepts the
-///   same textual witness the Rust boundary evidence accepts without value
-///   resolution — two identical arguments in one observed owner call
+///   of the observed owner call must BE the literal as a whole value — numeric
+///   canonical equality or quote-stripped string equality, including an
+///   object-literal field that pins it. A literal token nested inside a larger
+///   expression (`price + 100` evaluates to 160) never witnesses (#4102
+///   shape 2).
+/// - **Argument liveness** (#4102 shape 1): with owner parameter facts, an
+///   argument at or beyond the declared arity is dead (`applyDiscount(150,
+///   100)` against a single-parameter owner never reads `100`), and when the
+///   compared operand names an owner parameter the literal must sit in exactly
+///   that parameter's position. Without parameter facts (destructured or rest
+///   signatures) the position check degrades to arity-blind matching rather
+///   than guessing.
+/// - **Expected side liveness** (#4102 shape 5): the assertion must pin a
+///   statically resolvable expected value; a dynamically resolved expectation
+///   (`toBe(applyDiscount(100))`, a self-comparing tautology) cannot
+///   discriminate. A pinned literal that contradicts the real owner output
+///   (a dead failing test such as `toBe(999)`) stays indistinguishable from
+///   a strict expectation without runtime facts — a typed static limitation,
+///   not a credit.
+/// - **No literal operand** (`count <= limit`): the adapter accepts the same
+///   textual witness the Rust boundary evidence accepts without value
+///   resolution — two identical LIVE arguments in one observed owner call
 ///   (`isAllowed(5, 5)`) — or an object-literal argument that names both
 ///   operands with identical values (`PriceLabel({ amount: 100, threshold:
 ///   100 })`). Otherwise the boundary is not witnessed.
@@ -443,11 +460,24 @@ pub(crate) fn ts_observation_guard_limitation(
 /// When it is absent, or names a local such as `result`, the witness fails
 /// closed; the finding then takes the existing weak path.
 ///
-/// Receiver resolution: a member match (`pricing.applyDiscount(...)`) only
-/// counts when the receiver is bound to the owner's own module in this test
-/// (a namespace import such as `import * as pricing from "../src/pricing"`).
-/// A same-named method on an unrelated receiver (`other.total(50)`) never
-/// witnesses, even when its arguments carry the boundary literal.
+/// Receiver resolution (#4102 shape 3, landed in #4092 and pinned here): a
+/// member match (`pricing.applyDiscount(...)`) only counts when the receiver
+/// is bound to the owner's own module in this test (a namespace import such as
+/// `import * as pricing from "../src/pricing"`). A same-named method on an
+/// unrelated receiver — including a test-local object
+/// (`const pricing = { applyDiscount: () => 200 }`) — never witnesses, even
+/// when its arguments carry the boundary literal.
+///
+/// Shadow resolution (#4102 shape 4): when the test body declares a local
+/// binding of the owner name (`function applyDiscount() { ... }`), a bare
+/// `applyDiscount(...)` in the observed expression reaches the shadow, so
+/// only receiver-qualified calls that resolve to the owner's module can
+/// witness.
+///
+/// Residual over-credit (#4102, disclosed): when the compared operand is a
+/// derived local (`const total = raw * 2;`) the adapter cannot map it to a
+/// parameter, so any live position is accepted; and a pinned expected literal
+/// is never checked against the real owner output. Both stay advisory.
 pub(crate) fn ts_predicate_boundary_is_witnessed(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
@@ -474,6 +504,13 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
         .into_iter()
         .filter(|operand| is_boundary_literal(operand))
         .collect();
+    // The non-literal comparison operand names the value the boundary literal
+    // must reach; its last member segment (`cfg.total` -> `total`) is matched
+    // against the owner's parameter names to constrain the argument position.
+    let operand_key = [left, right]
+        .iter()
+        .find(|operand| !is_boundary_literal(operand))
+        .map(|operand| operand.rsplit('.').next().unwrap_or(operand).trim().to_string());
 
     for candidate in candidates {
         if !candidate.relation.uses_oracle() {
@@ -481,6 +518,11 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
         }
         let owner_receivers =
             owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        // #4102 shape 4: a body-local declaration of the owner name shadows
+        // the bare owner call — the observed call reaches the shadow, not the
+        // owner, so bare matches can no longer witness for this test.
+        let bare_calls_shadowed =
+            local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name);
         for assertion in &candidate.test.assertions {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
                 || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate)
@@ -490,14 +532,37 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
             let Some(observed) = assertion.observed_expression.as_deref() else {
                 continue;
             };
-            for arguments in owner_call_arguments(observed, &owner.name, &owner_receivers) {
+            // #4102 shape 5: a dynamically resolved or self-comparing expected
+            // side cannot discriminate the changed comparison.
+            if !assertion_expected_side_is_pinned(assertion) {
+                continue;
+            }
+            if assertion_is_self_comparing(assertion, observed) {
+                continue;
+            }
+            for arguments in owner_call_arguments(
+                observed,
+                &owner.name,
+                &owner_receivers,
+                bare_calls_shadowed,
+            ) {
                 let witnessed = if literals.is_empty() {
-                    call_has_identical_arguments(&arguments)
-                        || object_argument_pins_operands_equal(&arguments, left, right)
+                    call_has_identical_arguments(&arguments, &owner.params)
+                        || object_argument_pins_operands_equal(
+                            &arguments,
+                            left,
+                            right,
+                            &owner.params,
+                        )
                 } else {
-                    literals
-                        .iter()
-                        .any(|literal| arguments_contain_literal(&arguments, literal))
+                    literals.iter().any(|literal| {
+                        arguments_contain_literal(
+                            &arguments,
+                            literal,
+                            &owner.params,
+                            operand_key.as_deref(),
+                        )
+                    })
                 };
                 if witnessed {
                     return true;
@@ -506,6 +571,29 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
         }
     }
     false
+}
+
+/// #4102 shape 5: the expected side of a boundary assertion must pin a
+/// statically resolvable value. `oracle.rs` marks non-literal matcher
+/// arguments as dynamic and leaves `expected_value_or_variant` unset for
+/// them; such an expectation (`toBe(applyDiscount(100))`) compares against a
+/// value the static adapter cannot tie to a concrete boundary outcome.
+fn assertion_expected_side_is_pinned(assertion: &TypeScriptAssertion) -> bool {
+    assertion.expected_value_or_variant.is_some() && !assertion.has_dynamic_matcher_arg
+}
+
+/// #4102 shape 5: a self-comparing assertion (`expect(applyDiscount(100))
+/// .toBe(applyDiscount(100))`) is a tautology — it passes under both sides of
+/// the changed comparison and can never discriminate. Compared with
+/// whitespace stripped so formatting alone cannot hide the tautology.
+fn assertion_is_self_comparing(assertion: &TypeScriptAssertion, observed: &str) -> bool {
+    let Some(expected) = assertion.expected_value_or_variant.as_deref() else {
+        return false;
+    };
+    let normalize = |text: &str| -> String {
+        text.chars().filter(|ch| !ch.is_whitespace()).collect()
+    };
+    normalize(expected) == normalize(observed)
 }
 
 /// Build the named limitation for a predicate whose boundary no strong
@@ -610,10 +698,16 @@ fn receiver_before_dot(before_match: &str) -> String {
 /// receiver is bound to the owner's own module via a namespace import
 /// (`owner_receivers`); otherwise the match is a same-named method on an
 /// unrelated receiver and is skipped.
+///
+/// `bare_calls_shadowed` (#4102 shape 4): when the test body declares a local
+/// binding of the owner name, a bare `owner_name(...)` reaches the shadow and
+/// is skipped; only receiver-qualified calls that resolve to the owner's
+/// module can still be the owner.
 fn owner_call_arguments(
     observed: &str,
     owner_name: &str,
     owner_receivers: &[String],
+    bare_calls_shadowed: bool,
 ) -> Vec<Vec<String>> {
     let mut calls = Vec::new();
     if owner_name.is_empty() {
@@ -636,11 +730,14 @@ fn owner_call_arguments(
         // resolves to the owner's own module (namespace import); a same-named
         // method on an unrelated receiver (`other.total(50)`) must not
         // witness the owner's boundary.
-        if before.trim_end().ends_with('.')
-            && !owner_receivers
+        if before.trim_end().ends_with('.') {
+            if !owner_receivers
                 .iter()
                 .any(|receiver| receiver == &receiver_before_dot(before))
-        {
+            {
+                continue;
+            }
+        } else if bare_calls_shadowed {
             continue;
         }
         let Some(inner) = observed
@@ -706,22 +803,49 @@ fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
     None
 }
 
-fn call_has_identical_arguments(arguments: &[String]) -> bool {
-    arguments.iter().enumerate().any(|(idx, left)| {
-        !left.is_empty() && arguments.iter().skip(idx + 1).any(|right| right == left)
+/// `true` when an argument at `position` can be read by the owner. With no
+/// parameter facts every position is live (previous behaviour); with facts,
+/// positions at or beyond the declared arity are dead — extra call arguments
+/// a fixed-signature owner never reads.
+fn argument_position_is_live(position: usize, params: &[String]) -> bool {
+    params.is_empty() || position < params.len()
+}
+
+/// `true` when two LIVE arguments of one observed owner call are identical
+/// (`isAllowed(5, 5)` witnesses `count <= limit`). Arguments in dead
+/// positions (past the owner's declared arity) are ignored — a duplicated
+/// literal parked in an unread argument cannot witness (#4102 shape 1).
+fn call_has_identical_arguments(arguments: &[String], params: &[String]) -> bool {
+    let live: Vec<&String> = arguments
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| argument_position_is_live(*idx, params))
+        .map(|(_, argument)| argument)
+        .collect();
+    live.iter().enumerate().any(|(idx, left)| {
+        !left.is_empty() && live.iter().skip(idx + 1).any(|right| *right == *left)
     })
 }
 
 /// `true` when an object-literal argument binds both comparison operands
 /// (matched by their last member segment, e.g. `props.amount` → `amount`) to
-/// the same non-empty value text.
-fn object_argument_pins_operands_equal(arguments: &[String], left: &str, right: &str) -> bool {
+/// the same non-empty value text. Object arguments in dead positions (past
+/// the owner's declared arity) are ignored (#4102 shape 1).
+fn object_argument_pins_operands_equal(
+    arguments: &[String],
+    left: &str,
+    right: &str,
+    params: &[String],
+) -> bool {
     let key_of = |operand: &str| operand.rsplit('.').next().unwrap_or(operand).to_string();
     let (left_key, right_key) = (key_of(left), key_of(right));
     if left_key.is_empty() || left_key == right_key {
         return false;
     }
-    arguments.iter().any(|argument| {
+    arguments.iter().enumerate().any(|(position, argument)| {
+        if !argument_position_is_live(position, params) {
+            return false;
+        }
         let Some(body) = argument
             .trim()
             .strip_prefix('{')
@@ -746,31 +870,93 @@ fn object_argument_pins_operands_equal(arguments: &[String], left: &str, right: 
     })
 }
 
-fn arguments_contain_literal(arguments: &[String], literal: &str) -> bool {
+/// #4102 shapes 1/2: position- and value-aware boundary literal matching.
+///
+/// An argument witnesses the boundary literal only when the WHOLE argument is
+/// that literal (numeric-canonical or quote-stripped equality) or an
+/// object-literal field pins it — a literal token nested inside a larger
+/// expression (`price + 100` evaluates to 160, not 100) never witnesses.
+///
+/// The argument position must be live (`argument_position_is_live`), and when
+/// the compared operand names an owner parameter the literal must sit in that
+/// parameter's position — a boundary literal parked in a parameter the
+/// comparison never reads (`applyDiscount(150, 100)` against a single-param
+/// owner) cannot witness.
+fn arguments_contain_literal(
+    arguments: &[String],
+    literal: &str,
+    params: &[String],
+    operand_key: Option<&str>,
+) -> bool {
     let literal = literal.trim();
-    if let Some(expected) = numeric_literal_value(literal) {
-        return arguments.iter().any(|argument| {
-            argument
-                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
-                .filter_map(numeric_literal_value)
-                .any(|value| value == expected)
-        });
-    }
-    if let Some(body) = literal
-        .strip_prefix(['"', '\'', '`'])
-        .and_then(|rest| rest.strip_suffix(['"', '\'', '`']))
-    {
-        return arguments.iter().any(|argument| {
-            ['"', '\'', '`']
-                .iter()
-                .any(|quote| argument.contains(&format!("{quote}{body}{quote}")))
-        });
-    }
-    arguments.iter().any(|argument| {
-        argument
-            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
-            .any(|token| token == literal)
+    let param_position = operand_key.and_then(|key| params.iter().position(|param| param == key));
+    arguments.iter().enumerate().any(|(position, argument)| {
+        if !argument_position_is_live(position, params) {
+            return false;
+        }
+        if param_position.is_some_and(|index| position != index) {
+            return false;
+        }
+        argument_is_literal(argument, literal)
+            || object_argument_contains_literal(argument, literal, operand_key)
     })
+}
+
+/// `true` when the whole argument text is the boundary literal: numeric
+/// canonical equality (`50`, `50.0`), quote-stripped string equality
+/// (`"gold"`, `'gold'`), or the exact `true`/`false`/`null`/`undefined`
+/// token.
+fn argument_is_literal(argument: &str, literal: &str) -> bool {
+    let argument = argument.trim();
+    if let Some(expected) = numeric_literal_value(literal) {
+        return numeric_literal_value(argument).is_some_and(|value| value == expected);
+    }
+    if let Some(body) = strip_matching_quotes(literal) {
+        return strip_matching_quotes(argument).is_some_and(|argument_body| argument_body == body);
+    }
+    matches!(argument, "true" | "false" | "null" | "undefined") && argument == literal
+}
+
+/// `true` when an object-literal argument pins the boundary literal in a
+/// field. When the compared operand names what it compares (`total`,
+/// `cfg.total`), only the matching field can feed it, so other fields are
+/// rejected; with no operand name any field counts (both operands literal).
+fn object_argument_contains_literal(
+    argument: &str,
+    literal: &str,
+    operand_key: Option<&str>,
+) -> bool {
+    let Some(body) = argument
+        .trim()
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+    else {
+        return false;
+    };
+    let Some(fields) = balanced_call_arguments(&format!("{body})")) else {
+        return false;
+    };
+    fields.iter().any(|field| {
+        let Some((name, value)) = field.split_once(':') else {
+            return false;
+        };
+        if let Some(key) = operand_key {
+            if name.trim().trim_matches(['"', '\'']) != key {
+                return false;
+            }
+        }
+        argument_is_literal(value, literal)
+    })
+}
+
+/// Strip one layer of matching quotes (`"gold"`, `'gold'`, `` `gold` ``).
+fn strip_matching_quotes(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let quote = text.chars().next()?;
+    if !matches!(quote, '"' | '\'' | '`') {
+        return None;
+    }
+    text.strip_prefix(quote)?.strip_suffix(quote)
 }
 
 // ── Family↔oracle-kind matching (RIPR-SPEC-0104) ─────────────────────────────
@@ -961,6 +1147,12 @@ pub(crate) fn classify_change(
         } else {
             Vec::new()
         };
+    // Spy-fabrication limitation (#4103 shape 4): a test that spies on the
+    // owner and fabricates its return value observes the fabrication, not the
+    // changed sink. Additive disclosure; the relation gate separately refuses
+    // the trusted relation for such tests.
+    let named_limitations_from_spy: Vec<TypeScriptNamedLimitation> =
+        named_limitations_for_spy_fabrication(owner, all_tests);
 
     // Path-alias unresolved disclosure (RIPR-SPEC-0099 always-on honesty):
     // When a test has a non-relative, name-matched import that was NOT credited
@@ -1283,6 +1475,7 @@ pub(crate) fn classify_change(
         .chain(named_limitations_from_oracle.iter())
         .chain(named_limitations_from_ownership.iter())
         .chain(named_limitations_from_alias.iter())
+        .chain(named_limitations_from_spy.iter())
     {
         evidence.extend(named_limit.evidence_lines());
     }

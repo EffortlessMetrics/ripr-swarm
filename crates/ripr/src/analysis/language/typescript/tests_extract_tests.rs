@@ -202,7 +202,7 @@ test.only("discount boundary", () => {
     );
     assert_eq!(tests.len(), 1);
 
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -211,6 +211,7 @@ test.only("discount boundary", () => {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
 

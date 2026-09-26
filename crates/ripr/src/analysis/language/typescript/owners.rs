@@ -190,6 +190,9 @@ pub(crate) fn owner_from_variable_declarator(
             class_name: None,
             decorated: false,
             imports: imports.to_vec(),
+            // A module initializer has no fixed positional signature the
+            // boundary witness could arity-check against.
+            params: Vec::new(),
         }),
     }
 }
@@ -212,6 +215,7 @@ pub(crate) fn owner_from_function(
         class_name: None,
         decorated,
         imports: imports.to_vec(),
+        params: positional_param_names(&func.params),
     }
 }
 
@@ -233,6 +237,7 @@ pub(crate) fn owner_from_arrow(
         class_name: None,
         decorated,
         imports: imports.to_vec(),
+        params: positional_param_names(&arrow.params),
     }
 }
 
@@ -290,7 +295,31 @@ pub(crate) fn owner_from_method(
         class_name: class_name.map(str::to_string),
         decorated: class_decorated || !method.decorators.is_empty(),
         imports: imports.to_vec(),
+        params: positional_param_names(&method.value.params),
     })
+}
+
+/// Summarize a formal parameter list into positional parameter names.
+///
+/// Returns the declared names in order when every parameter is a plain
+/// binding identifier (the only shape the boundary witness can soundly map
+/// to call argument positions). Returns an empty vec — "no facts" — when any
+/// parameter uses destructuring or a rest element: the arity/position rules
+/// in the predicate boundary witness would be unsound for those signatures,
+/// so the witness keeps its previous position-blind behaviour for them
+/// (fail-open positions, not fabricated facts).
+pub(crate) fn positional_param_names(params: &oxc_ast::ast::FormalParameters<'_>) -> Vec<String> {
+    if params.rest.is_some() {
+        return Vec::new();
+    }
+    let mut names = Vec::new();
+    for item in &params.items {
+        let Some(name) = binding_identifier_name(&item.pattern) else {
+            return Vec::new();
+        };
+        names.push(name.to_string());
+    }
+    names
 }
 
 pub(crate) fn binding_identifier_name<'a>(pattern: &'a BindingPattern<'a>) -> Option<&'a str> {

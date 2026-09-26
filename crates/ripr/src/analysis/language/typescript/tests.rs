@@ -11,7 +11,7 @@ fn changed(path: &str) -> ChangedFile {
     }
 }
 
-fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
+fn test_owner(name: &str, file: &str) -> TypeScriptOwner  {
     TypeScriptOwner {
         name: name.to_string(),
         file: PathBuf::from(file),
@@ -21,6 +21,7 @@ fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     }
 }
 
@@ -50,7 +51,12 @@ fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
         body_text: format!("const result = {owner_name}(50, 100);\nexpect(result).toBeTruthy();"),
         assertions: vec![smoke_assertion()],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some(owner_name.to_string()),
+            local: owner_name.to_string(),
+            namespace: false,
+        }],
     }
 }
 
@@ -98,12 +104,18 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
             oracle_confidence: OracleConfidence::Medium,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some(owner_name.to_string()),
+            local: owner_name.to_string(),
+            namespace: false,
+        }],
     }
 }
 
 fn direct_test_with_assertion(
     test_name: &str,
+    owner_name: &str,
     body_text: impl Into<String>,
     matcher: &str,
     argument_count: usize,
@@ -131,7 +143,12 @@ fn direct_test_with_assertion(
             oracle_confidence: OracleConfidence::Unknown,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some(owner_name.to_string()),
+            local: owner_name.to_string(),
+            namespace: false,
+        }],
     }
 }
 
@@ -1644,7 +1661,7 @@ it("beta", () => { expect(otherHelper()).toBe(true); });
 
 #[test]
 fn find_related_tests_matches_by_call_name() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -1653,6 +1670,7 @@ fn find_related_tests_matches_by_call_name() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = vec![
         TypeScriptTest {
@@ -1687,7 +1705,7 @@ fn find_related_tests_matches_by_call_name() {
 
 #[test]
 fn find_related_tests_ignores_object_method_calls_for_function_owners() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -1696,6 +1714,7 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
         name: "method call on another object".to_string(),
@@ -1716,7 +1735,7 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
 
 #[test]
 fn find_related_tests_matches_bounded_method_receiver_calls() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "total".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 5,
@@ -1725,6 +1744,7 @@ fn find_related_tests_matches_bounded_method_receiver_calls() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -1753,7 +1773,7 @@ test("cart total observes receiver", () => {
 
 #[test]
 fn find_related_tests_keeps_factory_receiver_calls_unrelated_for_method_owners() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "total".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 5,
@@ -1762,6 +1782,7 @@ fn find_related_tests_keeps_factory_receiver_calls_unrelated_for_method_owners()
         class_name: Some("Cart".to_string()),
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -1781,7 +1802,7 @@ test("cart total through factory stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_keeps_dynamic_method_receiver_calls_unrelated() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "total".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 5,
@@ -1790,6 +1811,7 @@ fn find_related_tests_keeps_dynamic_method_receiver_calls_unrelated() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -1810,7 +1832,7 @@ test("cart total through dynamic method stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "total".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 5,
@@ -1819,6 +1841,7 @@ fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -1844,7 +1867,7 @@ fn find_related_tests_keeps_mocked_function_owner_call_at_proximity() {
     // must NOT be credited `DirectOwnerCall` — the owner call executes the
     // mock, not the changed code. Only the advisory same-file-stem proximity
     // heuristic may link the test.
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 1,
@@ -1853,6 +1876,7 @@ fn find_related_tests_keeps_mocked_function_owner_call_at_proximity() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -1888,7 +1912,7 @@ fn find_related_tests_keeps_mocked_arrow_function_owner_call_at_proximity() {
     // both Function and ArrowFunction owner kinds — an arrow-function owner
     // call under its own module's mock executes the mock, not the changed
     // code, so only the advisory proximity heuristic may link the test.
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 1,
@@ -1897,6 +1921,7 @@ fn find_related_tests_keeps_mocked_arrow_function_owner_call_at_proximity() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -1937,7 +1962,7 @@ fn find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity() {
     // `find_related_tests_namespace_import_unchanged_imported_owner_call`.
     // Under an owner-module mock it must fall back to the advisory
     // same-file-stem proximity link only.
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 1,
@@ -1946,6 +1971,7 @@ fn find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -1979,7 +2005,7 @@ test("mocked namespace applyDiscount stays ambiguous", () => {
 fn find_related_tests_credits_unmocked_function_owner_call() {
     // Positive control for the #2269 guard: the same scenario WITHOUT the
     // owner-module mock keeps the `DirectOwnerCall` credit.
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 1,
@@ -1988,6 +2014,7 @@ fn find_related_tests_credits_unmocked_function_owner_call() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2013,7 +2040,7 @@ test("unmocked applyDiscount observes the owner", () => {
 fn classify_change_stays_weakly_exposed_when_test_mocks_owner_module() -> Result<(), String> {
     // issue #2269: mocked owner module + strong exact-value oracle must not
     // classify `exposed`; the `mocked_module` static limit stays disclosed.
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -2022,6 +2049,7 @@ fn classify_change_stays_weakly_exposed_when_test_mocks_owner_module() -> Result
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/lib.test.ts"),
@@ -2074,7 +2102,7 @@ test("mocked applyDiscount stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_matches_bounded_class_method_calls() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "build".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 10,
@@ -2083,6 +2111,7 @@ fn find_related_tests_matches_bounded_class_method_calls() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2110,7 +2139,7 @@ test("static build observes class method", () => {
 
 #[test]
 fn find_related_tests_keeps_shadowed_class_method_calls_unrelated() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "build".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 10,
@@ -2119,6 +2148,7 @@ fn find_related_tests_keeps_shadowed_class_method_calls_unrelated() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2138,7 +2168,7 @@ test("shadowed static build stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_matches_same_file_class_method_calls() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "build".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 10,
@@ -2147,6 +2177,7 @@ fn find_related_tests_matches_same_file_class_method_calls() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("src/owners.ts"),
@@ -2173,7 +2204,7 @@ fn find_related_tests_matches_same_file_class_method_calls() {
 
 #[test]
 fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "build".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 10,
@@ -2182,6 +2213,7 @@ fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2200,7 +2232,7 @@ test("namespace static build stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "build".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 10,
@@ -2209,6 +2241,7 @@ fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
         class_name: Some("Cart".to_string()),
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2229,7 +2262,7 @@ test("mocked static build stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_requires_class_name_for_class_method_calls() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "build".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 10,
@@ -2238,6 +2271,7 @@ fn find_related_tests_requires_class_name_for_class_method_calls() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2256,7 +2290,7 @@ test("unknown class static build stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_matches_module_initializer_named_import_observer() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "DEFAULT_RATE".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 15,
@@ -2265,6 +2299,7 @@ fn find_related_tests_matches_module_initializer_named_import_observer() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2292,7 +2327,7 @@ test("rate value observes initializer", () => {
 
 #[test]
 fn find_related_tests_matches_module_initializer_namespace_observer() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "DEFAULT_RATE".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 15,
@@ -2301,6 +2336,7 @@ fn find_related_tests_matches_module_initializer_namespace_observer() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2321,7 +2357,7 @@ test("rate value observes namespace initializer", () => {
 
 #[test]
 fn find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_unrelated() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "DEFAULT_RATE".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 15,
@@ -2330,6 +2366,7 @@ fn find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
@@ -2358,7 +2395,7 @@ test("string mention stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_matches_named_import_alias_calls() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2367,6 +2404,7 @@ fn find_related_tests_matches_named_import_alias_calls() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -2406,7 +2444,7 @@ test("alias import observes threshold", () => {
 /// otherFn != owner) must NOT be credited as ImportAliasOwnerCall.
 #[test]
 fn find_related_tests_alias_wrong_name_not_credited() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2415,6 +2453,7 @@ fn find_related_tests_alias_wrong_name_not_credited() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -2441,7 +2480,7 @@ test("wrong-name alias", () => {
 /// not the owner.  Must NOT be credited at High confidence.
 #[test]
 fn find_related_tests_alias_shadowed_local_not_credited_high() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "computeValue".to_string(),
         file: PathBuf::from("src/compute.ts"),
         start_line: 1,
@@ -2450,6 +2489,7 @@ fn find_related_tests_alias_shadowed_local_not_credited_high() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/compute.test.ts"),
@@ -2476,7 +2516,7 @@ test("shadow guard", () => {
 /// still produces DirectOwnerCall via the existing path.
 #[test]
 fn find_related_tests_non_alias_import_still_direct_owner_call() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "computeValue".to_string(),
         file: PathBuf::from("src/compute.ts"),
         start_line: 1,
@@ -2485,6 +2525,7 @@ fn find_related_tests_non_alias_import_still_direct_owner_call() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/compute.test.ts"),
@@ -2519,7 +2560,7 @@ test("non-alias direct call", () => {
 /// produces ImportedOwnerCall (out of scope for alias upgrade) → import_path_affinity/medium.
 #[test]
 fn find_related_tests_namespace_import_unchanged_imported_owner_call() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "computeValue".to_string(),
         file: PathBuf::from("src/compute.ts"),
         start_line: 1,
@@ -2528,6 +2569,7 @@ fn find_related_tests_namespace_import_unchanged_imported_owner_call() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/compute.test.ts"),
@@ -2562,7 +2604,7 @@ test("namespace import member call", () => {
 
 #[test]
 fn find_related_tests_matches_namespace_import_member_calls() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2571,6 +2613,7 @@ fn find_related_tests_matches_namespace_import_member_calls() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -2590,7 +2633,7 @@ test("namespace import observes threshold", () => {
 
 #[test]
 fn find_related_tests_ignores_unrelated_and_type_only_import_aliases() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2599,6 +2642,7 @@ fn find_related_tests_ignores_unrelated_and_type_only_import_aliases() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -2627,7 +2671,7 @@ test("type only import", () => {
 
 #[test]
 fn find_related_tests_ignores_call_shaped_string_mentions() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -2636,6 +2680,7 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
         name: "string mention".to_string(),
@@ -2656,7 +2701,7 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
 
 #[test]
 fn find_related_tests_ignores_call_shaped_comment_mentions() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -2665,6 +2710,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = vec![
         TypeScriptTest {
@@ -2698,7 +2744,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
 
 #[test]
 fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2707,6 +2753,7 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     // Each test references the owner without a recognized call shape, so the
     // proximity/name heuristics only rank an existing reference
@@ -2769,7 +2816,7 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
 
 #[test]
 fn related_test_name_proximity_ignores_partial_tokens() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2778,6 +2825,7 @@ fn related_test_name_proximity_ignores_partial_tokens() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/checkout.test.ts"),
@@ -2796,7 +2844,7 @@ fn related_test_name_proximity_ignores_partial_tokens() {
 
 #[test]
 fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2805,6 +2853,7 @@ fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
@@ -2846,7 +2895,7 @@ fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<
 
 #[test]
 fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -2855,6 +2904,7 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "alpha".to_string(),
@@ -2935,6 +2985,7 @@ fn typescript_preview_weak_oracle_guidance_names_snapshot_exact_value_shape() ->
     let owner = test_owner("renderSummary", "src/lib.ts");
     let test = direct_test_with_assertion(
         "renders summary snapshot",
+        "renderSummary",
         "const value = renderSummary(status);\nexpect(value).toMatchSnapshot();",
         "toMatchSnapshot",
         0,
@@ -3008,6 +3059,7 @@ fn typescript_preview_weak_oracle_guidance_keeps_broad_error_advisory() -> Resul
     let owner = test_owner("parseUser", "src/lib.ts");
     let test = direct_test_with_assertion(
         "rejects empty user broadly",
+        "parseUser",
         "expect(() => parseUser('')).toThrow();",
         "toThrow",
         0,
@@ -3173,7 +3225,7 @@ fn typescript_preview_mock_payload_guidance_names_literal_payload_without_repair
 
 #[test]
 fn classify_change_labels_javascript_sources_separately() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.js"),
         start_line: 1,
@@ -3182,6 +3234,7 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "alpha".to_string(),
@@ -3215,7 +3268,7 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
 #[test]
 fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> {
     let owners = vec![
-        TypeScriptOwner {
+        TypeScriptOwner  {
             name: "alphaScore".to_string(),
             file: PathBuf::from("src/a.ts"),
             start_line: 1,
@@ -3224,8 +3277,9 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             class_name: None,
             decorated: false,
             imports: Vec::new(),
+            params: Vec::new(),
         },
-        TypeScriptOwner {
+        TypeScriptOwner  {
             name: "betaScore".to_string(),
             file: PathBuf::from("src/b.ts"),
             start_line: 1,
@@ -3234,6 +3288,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             class_name: None,
             decorated: false,
             imports: Vec::new(),
+            params: Vec::new(),
         },
     ];
     let tests = vec![
@@ -3950,7 +4005,7 @@ fn oracle_for_matcher_covers_canonical_jest_vitest_set() {
 
 #[test]
 fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -3959,6 +4014,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "alpha".to_string(),
@@ -3983,7 +4039,12 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
             oracle_confidence: OracleConfidence::Medium,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -4015,7 +4076,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
 
 #[test]
 fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -4024,6 +4085,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "alpha".to_string(),
@@ -4047,7 +4109,12 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -4076,7 +4143,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
 
 #[test]
 fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -4085,6 +4152,7 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -4108,7 +4176,7 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
 
 #[test]
 fn classify_change_returns_none_when_line_is_outside_any_owner() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 10,
@@ -4117,6 +4185,7 @@ fn classify_change_returns_none_when_line_is_outside_any_owner() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -5173,7 +5242,7 @@ test("alpha", () => {
 
 #[test]
 fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -5182,6 +5251,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = vec![
         TypeScriptTest {
@@ -5193,7 +5263,12 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             body_text: "applyDiscount(1, 2)".to_string(),
             assertions: Vec::new(),
             mocks_in_file: vec!["./api".to_string()],
-            imports_in_file: Vec::new(),
+            imports_in_file: vec![TypeScriptImport {
+                source: "../src/lib".to_string(),
+                imported: Some("applyDiscount".to_string()),
+                local: "applyDiscount".to_string(),
+                namespace: false,
+            }],
         },
         TypeScriptTest {
             name: "beta".to_string(),
@@ -5204,7 +5279,12 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             body_text: "applyDiscount(3, 4)".to_string(),
             assertions: Vec::new(),
             mocks_in_file: vec!["./api".to_string()],
-            imports_in_file: Vec::new(),
+            imports_in_file: vec![TypeScriptImport {
+                source: "../src/lib".to_string(),
+                imported: Some("applyDiscount".to_string()),
+                local: "applyDiscount".to_string(),
+                namespace: false,
+            }],
         },
     ];
     let paths = collect_related_mock_paths(&owner, &tests, None, &ReExportIndex::empty(), None);
@@ -5213,7 +5293,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
 
 #[test]
 fn collect_related_mock_paths_ignores_unrelated_tests() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -5222,6 +5302,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
         name: "unrelated".to_string(),
@@ -5240,7 +5321,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
 
 #[test]
 fn collect_related_mock_paths_ignores_object_method_mentions() {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -5249,6 +5330,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
         name: "unrelated method".to_string(),
@@ -5268,7 +5350,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
 #[test]
 fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
 -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -5277,6 +5359,7 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
         name: "alpha".to_string(),
@@ -5342,7 +5425,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
     let _ = fs::write(pkg_a.join("package.json"), r#"{"name":"pkg-a"}"#);
     let _ = fs::write(pkg_b.join("package.json"), r#"{"name":"pkg-b"}"#);
 
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "doWork".to_string(),
         file: pkg_a.join("src").join("work.ts"),
         start_line: 1,
@@ -5351,6 +5434,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     // The test body calls the owner (it would be credited without the
     // package-local filter) and mocks a path resolving to the owner's module.
@@ -5395,7 +5479,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
     // Removal/known-wrong control: without the package-local filter (the
     // single-package path), the same fixtures DO credit the test and surface
     // the limit — proving the negative control exercises the real producer.
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "doWork".to_string(),
         file: pkg_a.join("src").join("work.ts"),
         start_line: 1,
@@ -5404,6 +5488,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let unfiltered = classify_change(
         &pkg_a.join("src").join("work.ts"),
@@ -5440,7 +5525,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
 #[test]
 fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() -> Result<(), String>
 {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -5449,6 +5534,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
         name: "alpha".to_string(),
@@ -5518,7 +5604,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
 #[test]
 fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -> Result<(), String>
 {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "LabelView".to_string(),
         file: PathBuf::from("src/label.jsx"),
         start_line: 1,
@@ -5527,6 +5613,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         class_name: None,
         decorated: false,
         imports: vec![TypeScriptImport {
+        params: Vec::new(),
             source: "./labels".to_string(),
             imported: Some("normalizeLabel".to_string()),
             local: "normalizeLabel".to_string(),
@@ -5696,6 +5783,7 @@ fn named_limitation_custom_matcher_not_emitted_for_recognised_matcher() -> Resul
     let owner = test_owner("applyDiscount", "src/lib.ts");
     let test = direct_test_with_assertion(
         "discount test",
+        "applyDiscount",
         "applyDiscount(100, 100)",
         "toBe",
         1,
@@ -6183,7 +6271,12 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
             oracle_confidence: OracleConfidence::Medium,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/clamp".to_string(),
+            imported: Some("clamp".to_string()),
+            local: "clamp".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/clamp.ts"),
@@ -6244,7 +6337,12 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
             oracle_confidence: OracleConfidence::Medium,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/clamp".to_string(),
+            imported: Some("clamp".to_string()),
+            local: "clamp".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/clamp.ts"),
@@ -6393,7 +6491,7 @@ fn package_local_filter_selects_same_package_test() {
         r#"{"name":"pkg-a","devDependencies":{"jest":"^29"}}"#,
     );
 
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "doWork".to_string(),
         file: pkg_a.join("src").join("work.ts"),
         start_line: 1,
@@ -6402,6 +6500,7 @@ fn package_local_filter_selects_same_package_test() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "do work test".to_string(),
@@ -6412,7 +6511,12 @@ fn package_local_filter_selects_same_package_test() {
         body_text: "doWork();".to_string(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/work".to_string(),
+            imported: Some("doWork".to_string()),
+            local: "doWork".to_string(),
+            namespace: false,
+        }],
     };
 
     let tests_slice = [test.clone()];
@@ -6454,7 +6558,7 @@ fn package_local_filter_rejects_cross_package_test() {
     let _ = fs::write(pkg_a.join("package.json"), r#"{"name":"pkg-a"}"#);
     let _ = fs::write(pkg_b.join("package.json"), r#"{"name":"pkg-b"}"#);
 
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "doWork".to_string(),
         file: pkg_a.join("src").join("work.ts"),
         start_line: 1,
@@ -6463,6 +6567,7 @@ fn package_local_filter_rejects_cross_package_test() {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "cross-package doWork test".to_string(),
@@ -6597,7 +6702,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         r#"{"name":"pkg-b","devDependencies":{"jest":"^29"}}"#,
     );
 
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: pkg_a.join("src").join("discount.ts"),
         start_line: 1,
@@ -6606,6 +6711,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     // Cross-package test that calls applyDiscount by name (local shadow or
     // referencing it without a resolvable import).
@@ -6642,7 +6748,12 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         body_text: "applyDiscount(100, 20);".to_string(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
 
     let all_owners = vec![owner.clone()];
@@ -6725,7 +6836,7 @@ fn named_limitation_target_unresolved_not_emitted_for_same_package() -> Result<(
 /// `propagation_unknown` limitation and `discriminate != yes`.
 #[test]
 fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -6734,6 +6845,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     // Two strong `toBe` assertions on the UNCHANGED return value.
     // Neither `observed_expression` mentions `amount` or `audit` (the changed
@@ -6775,7 +6887,12 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
             },
         ],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: SideEffect (console.log call) — the `amount` and `audit`
     // tokens are not in any assertion's observed_expression.
@@ -6823,7 +6940,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
 /// downgrades a genuine whole-value return discriminator will fail here.
 #[test]
 fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -6832,6 +6949,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "applies discount".to_string(),
@@ -6855,7 +6973,12 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -6894,7 +7017,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
 /// `propagation_unknown` limitation.
 #[test]
 fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -6903,6 +7026,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "discount side checks".to_string(),
@@ -6927,7 +7051,12 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -6967,7 +7096,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
 /// finding stays `class:exposed, discriminate:yes`.
 #[test]
 fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -6976,6 +7105,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "applies discount".to_string(),
@@ -6999,7 +7129,12 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -7036,7 +7171,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
 /// `class:exposed, discriminate:yes` (no repair packet, no receipt command).
 #[test]
 fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -7045,6 +7180,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "applies discount".to_string(),
@@ -7069,7 +7205,12 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -7105,7 +7246,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
 /// `weakly_exposed`.
 #[test]
 fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -7114,6 +7255,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "discount side checks".to_string(),
@@ -7139,7 +7281,12 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -7178,7 +7325,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
 /// assertion is asserting something other than the owner return value.
 #[test]
 fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -7187,6 +7334,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "side-effect is visible and return value correct".to_string(),
@@ -7226,7 +7374,12 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
             },
         ],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: SideEffect (console.log call)
     let finding = classify_change(
@@ -7259,7 +7412,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
 /// MUST stay `class:exposed`.
 #[test]
 fn ts_field_construction_observed_control() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "buildConfig".to_string(),
         file: PathBuf::from("src/config.ts"),
         start_line: 1,
@@ -7268,6 +7421,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "builds config with timeout".to_string(),
@@ -7291,7 +7445,12 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/config".to_string(),
+            imported: Some("buildConfig".to_string()),
+            local: "buildConfig".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: a field value assignment (FieldConstruction)
     let finding = classify_change(
@@ -7330,7 +7489,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
 /// `ts_returnvalue_unrelated_strong_assertion_downgrades`.
 #[test]
 fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "buildConfig".to_string(),
         file: PathBuf::from("src/config.ts"),
         start_line: 1,
@@ -7339,6 +7498,7 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "config side checks".to_string(),
@@ -7362,7 +7522,12 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/config".to_string(),
+            imported: Some("buildConfig".to_string()),
+            local: "buildConfig".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: a field value assignment (FieldConstruction).
     let finding = classify_change(
@@ -7468,7 +7633,7 @@ fn ts_swallowed_console_log_downgrade_live_extractor() -> Result<(), String> {
 /// the fail-closed downgrade.
 #[test]
 fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -7477,6 +7642,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     // A strong MockExpectation assertion with observed_expression None — exactly
     // the live shape for `expect(spy).toHaveBeenCalledWith(...)` where the
@@ -7503,7 +7669,12 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -7541,7 +7712,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
 /// name a different receiver's members; none of them may confirm.
 #[test]
 fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "trackLogin".to_string(),
         file: PathBuf::from("src/tracker.ts"),
         start_line: 1,
@@ -7550,6 +7721,7 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     // The observed expression names the owner (so the side-channel arm does
     // not fire) but only "confirms" via the substring `includes` — which is
@@ -7575,7 +7747,12 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/tracker".to_string(),
+            imported: Some("trackLogin".to_string()),
+            local: "trackLogin".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: SideEffect member call — the effect never escapes.
     let finding = classify_change(
@@ -7658,7 +7835,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
     let alias_map =
         alias_map.ok_or_else(|| "tsconfig.json should parse with a baseUrl".to_string())?;
 
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owner.ts"),
         start_line: 1,
@@ -7667,6 +7844,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "applyDiscount returns correct value".to_string(),
@@ -7725,7 +7903,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
 /// BUT the `typescript_path_alias_unresolved` disclosure limitation IS emitted.
 #[test]
 fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owner.ts"),
         start_line: 1,
@@ -7734,6 +7912,7 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "applyDiscount returns correct value".to_string(),
@@ -7815,7 +7994,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
     let alias_map =
         load_alias_map(&root).ok_or_else(|| "tsconfig.json should parse".to_string())?;
 
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owner.ts"),
         start_line: 1,
@@ -7824,6 +8003,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "applyDiscount test".to_string(),
@@ -7876,7 +8056,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
 /// → NO `typescript_path_alias_unresolved` limitation emitted.
 #[test]
 fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owner.ts"),
         start_line: 1,
@@ -7885,6 +8065,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     // Test only imports `cloneDeep` from lodash — unrelated to the owner name.
     let test = TypeScriptTest {
@@ -7931,7 +8112,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
 /// import from any non-relative package false-fired this limitation.
 #[test]
 fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owner.ts"),
         start_line: 1,
@@ -7940,6 +8121,7 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     // Test only imports the React default binding — unrelated to the owner.
     let test = TypeScriptTest {
@@ -7984,7 +8166,7 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
 /// the owner, so the limitation MUST still fire when resolution fails.
 #[test]
 fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owner.ts"),
         start_line: 1,
@@ -7993,6 +8175,7 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "default import test".to_string(),
@@ -8049,7 +8232,7 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
 #[test]
 fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam()
 -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -8058,6 +8241,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     // Test A: error-path observer — toThrow(DiscountError) — Strong, ExactErrorVariant.
     // This test does NOT match the ReturnValue seam family.
@@ -8082,7 +8266,12 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             oracle_confidence: OracleConfidence::Medium,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     // Test B: return-value observer — toBeGreaterThan(0) — Weak, RelationalCheck.
     // This test DOES match the ReturnValue seam family, but only weakly.
@@ -8107,7 +8296,12 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             oracle_confidence: OracleConfidence::Low,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: the gold-tier return value (ReturnValue seam).
     let finding = classify_change(
@@ -8149,7 +8343,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
 /// MUST stay `Exposed` (ExactValue matches ReturnValue).
 #[test]
 fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -8158,6 +8352,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let exact_value_test = TypeScriptTest {
         name: "applyDiscount gold rate".to_string(),
@@ -8180,7 +8375,12 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -8211,7 +8411,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
 #[test]
 fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
 -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -8220,6 +8420,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let throw_test = TypeScriptTest {
         name: "applyDiscount throws on negative amount".to_string(),
@@ -8242,7 +8443,12 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -8281,7 +8487,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
 #[test]
 fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays_exposed()
 -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -8290,6 +8496,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     // ONE test with TWO assertions:
     //   1. `.toThrow(DiscountError)` — ExactErrorVariant, Strong — wrong-family for ReturnValue.
@@ -8338,7 +8545,12 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
             },
         ],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: the gold-tier return value (ReturnValue seam).
     let finding = classify_change(
@@ -8883,7 +9095,7 @@ fn remove_field_from_missing_list_unit() {
 }
 
 fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest) {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "parseLimit".to_string(),
         file: PathBuf::from("src/limiter.ts"),
         start_line: 1,
@@ -8892,6 +9104,7 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let test = TypeScriptTest {
         name: "parseLimit parses".to_string(),
@@ -8914,7 +9127,12 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/limiter".to_string(),
+            imported: Some("parseLimit".to_string()),
+            local: "parseLimit".to_string(),
+            namespace: false,
+        }],
     };
     (owner, test)
 }
@@ -9006,7 +9224,12 @@ fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScr
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some(owner_name.to_string()),
+            local: owner_name.to_string(),
+            namespace: false,
+        }],
     }
 }
 
@@ -9176,7 +9399,7 @@ fn spec_0027_same_named_method_on_other_receiver_does_not_witness() -> Result<()
 /// would have falsely downgraded.
 #[test]
 fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), String> {
-    let owner = TypeScriptOwner {
+    let owner = TypeScriptOwner  {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -9185,6 +9408,7 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         class_name: None,
         decorated: false,
         imports: Vec::new(),
+        params: Vec::new(),
     };
     let mut test = exact_value_test("applyDiscount", "pricing.applyDiscount(100, 100)", "90");
     test.file = PathBuf::from("tests/pricing.test.ts");
@@ -9354,18 +9578,404 @@ fn spec_0027_boundary_witness_leaves_return_value_family_exposed() -> Result<(),
     Ok(())
 }
 
+// ── #4102/#4103 over-credit controls: predicate boundary witness shapes ─────
+// ── and relation-gate shapes (issues #4102, #4103) ──────────────────────────
+
+/// Owner with parameter facts for the #4102 position-aware boundary witness:
+/// `applyDiscount(total)` in `src/pricing.ts`.
+fn priced_owner() -> TypeScriptOwner {
+    TypeScriptOwner {
+        params: vec!["total".to_string()],
+        ..test_owner("applyDiscount", "src/pricing.ts")
+    }
+}
+
+/// Strong exact-value test importing `owner_name` from the owner's own module
+/// (`../src/pricing`), so the #4103 declaration-anchor gate is satisfied and
+/// only the shape under test can decide the classification.
+fn priced_test(owner_name: &str, observed: &str, expected: &str) -> TypeScriptTest {
+    let mut test = exact_value_test(owner_name, observed, expected);
+    test.imports_in_file = vec![TypeScriptImport {
+        source: "../src/pricing".to_string(),
+        imported: Some(owner_name.to_string()),
+        local: owner_name.to_string(),
+        namespace: false,
+    }];
+    test
+}
+
+fn classify_pricing_line(
+    owner: &TypeScriptOwner,
+    line_text: &str,
+    tests: &[TypeScriptTest],
+) -> Result<Finding, String> {
+    classify_change(
+        Path::new("src/pricing.ts"),
+        2,
+        line_text,
+        std::slice::from_ref(owner),
+        tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| format!("expected a finding for `{line_text}`"))
+}
+
+/// #4102 shape 1: a boundary literal parked in an argument position at or
+/// beyond the owner's declared arity never reaches the changed comparison
+/// (`applyDiscount(150, 100)` against `applyDiscount(total)` — the owner
+/// never reads `100`), so it must not witness the boundary. The same literal
+/// in the live parameter position still witnesses.
+#[test]
+fn overcredit_4102_dead_argument_position_does_not_witness_boundary() -> Result<(), String> {
+    let owner = priced_owner();
+    let dead = [priced_test("applyDiscount", "applyDiscount(150, 100)", "90")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &dead)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("changed predicate boundary `total == 100`")),
+        "boundary limitation must be named: {:?}",
+        finding.missing
+    );
+
+    let live = [priced_test("applyDiscount", "applyDiscount(100)", "90")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &live)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// #4102 shape 2: only a whole-argument literal witnesses the boundary — a
+/// literal token nested inside a larger expression (`price + 100` evaluates
+/// to 160, not 100) never does.
+#[test]
+fn overcredit_4102_nested_literal_expression_does_not_witness_boundary() -> Result<(), String> {
+    let owner = priced_owner();
+    let nested = [priced_test("applyDiscount", "applyDiscount(price + 100)", "160")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &nested)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a literal nested in a larger expression must not witness the boundary"
+    );
+
+    let whole = [priced_test("applyDiscount", "applyDiscount(100)", "160")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &whole)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// #4102 shape 3 (receiver-qualified; landed in #4092 and pinned here): a
+/// same-named method on a TEST-LOCAL object
+/// (`const pricing = { applyDiscount: (t) => 200 }`) never witnesses the
+/// owner's boundary, even when its argument carries the boundary literal.
+/// The test also fails the owner-reference heuristic (object-literal keys and
+/// foreign member calls do not reference the owner), so the honest outcome is
+/// `no_static_path`, not a downgraded weak finding.
+#[test]
+fn overcredit_4102_test_local_receiver_method_does_not_witness_boundary() -> Result<(), String> {
+    let owner = priced_owner();
+    let mut local = priced_test("applyDiscount", "pricing.applyDiscount(100)", "200");
+    local.body_text = "const pricing = { applyDiscount: (t: number) => 200 };\n\
+                       expect(pricing.applyDiscount(100)).toBe(200);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &[local])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::NoStaticPath,
+        "a test-local receiver method must not witness the owner's boundary"
+    );
+    Ok(())
+}
+
+/// #4102 shape 4: a body-local declaration of the owner name shadows the bare
+/// call — `expect(applyDiscount(100)).toBe(42)` observing a body-local
+/// function never reaches the owner, so it must not witness the boundary.
+/// The shadowed test also fails the owner-reference heuristic, so the honest
+/// outcome is `no_static_path`. Without the local declaration the same call
+/// witnesses.
+#[test]
+fn overcredit_4102_body_local_shadow_blocks_bare_call_witness() -> Result<(), String> {
+    let owner = priced_owner();
+    let mut shadowed = priced_test("applyDiscount", "applyDiscount(100)", "42");
+    shadowed.body_text = "function applyDiscount(x: number) { return 42; }\n\
+                          expect(applyDiscount(100)).toBe(42);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &[shadowed])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::NoStaticPath,
+        "a body-local shadow of the owner name must not witness the boundary"
+    );
+
+    let direct = [priced_test("applyDiscount", "applyDiscount(100)", "90")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &direct)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// #4102 shape 5: the expected side of a boundary assertion must pin a
+/// statically resolvable value. A self-comparing tautology
+/// (`expect(applyDiscount(100)).toBe(applyDiscount(100))`) and a dynamically
+/// resolved expectation both pass under either side of the changed
+/// comparison and must not witness; a pinned literal does.
+#[test]
+fn overcredit_4102_unpinned_expected_side_does_not_witness_boundary() -> Result<(), String> {
+    let owner = priced_owner();
+
+    let tautology = [priced_test("applyDiscount", "applyDiscount(100)", "applyDiscount(100)")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &tautology)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a self-comparing assertion cannot discriminate the changed comparison"
+    );
+
+    let mut dynamic = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    for assertion in &mut dynamic.assertions {
+        assertion.expected_value_or_variant = None;
+        assertion.has_dynamic_matcher_arg = true;
+    }
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &[dynamic])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a dynamically resolved expected side cannot discriminate the changed comparison"
+    );
+
+    let pinned = [priced_test("applyDiscount", "applyDiscount(100)", "90")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &pinned)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// #4102 shape 5 residual (disclosed typed limitation): a pinned expected
+/// literal that contradicts the real owner output (`toBe(999)`) is
+/// indistinguishable from a strict expectation without runtime facts, so the
+/// static adapter keeps crediting it. This control pins that residual
+/// over-credit boundary so a future change must address it deliberately.
+#[test]
+fn overcredit_4102_dead_expected_literal_stays_credited_known_residual() -> Result<(), String> {
+    let owner = priced_owner();
+    let dead_expected = [priced_test("applyDiscount", "applyDiscount(100)", "999")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &dead_expected)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "pinned-literal credit is kept; contradicting expectations need runtime facts (disclosed limitation)"
+    );
+    Ok(())
+}
+
+/// #4103 shape 1: a bare `ownerName(...)` call with no declaration anchoring
+/// the name to the owner (not the owner's own file, no import of the owner
+/// from the owner's module) must not be credited `DirectOwnerCall`; the
+/// heuristic fallback keeps the test advisory at most. With the import
+/// anchor, the same call is a genuine `DirectOwnerCall` and exposes a
+/// return-value change.
+#[test]
+fn overcredit_4103_unanchored_bare_call_is_not_a_direct_owner_call() -> Result<(), String> {
+    let owner = priced_owner();
+    let mut unanchored = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    unanchored.file = PathBuf::from("tests/helper.test.ts");
+    unanchored.imports_in_file = Vec::new();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[unanchored])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "an unanchored bare call must fall back to the heuristic relation"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: direct_owner_call")),
+        "no direct_owner_call relation may be disclosed: {:?}",
+        finding.evidence
+    );
+
+    let anchored = [priced_test("applyDiscount", "applyDiscount(100)", "90")];
+    let finding = classify_pricing_line(&owner, "  return 0;", &anchored)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// #4103 shape 1 (relation side of #4102 shape 4): a body-local function
+/// declaration of the owner name blocks the trusted relation even when an
+/// import anchor exists — the bare call reaches the local, not the owner.
+/// The shadowed test also fails the owner-reference heuristic, so the honest
+/// outcome is `no_static_path`.
+#[test]
+fn overcredit_4103_body_local_declaration_blocks_direct_owner_call() -> Result<(), String> {
+    let owner = priced_owner();
+    let mut shadowed = priced_test("applyDiscount", "applyDiscount(100)", "42");
+    shadowed.body_text = "function applyDiscount(x: number) { return 42; }\n\
+                          expect(applyDiscount(100)).toBe(42);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[shadowed])?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: direct_owner_call")),
+        "a body-local shadow must not be credited as a direct owner call: {:?}",
+        finding.evidence
+    );
+
+    let direct = [priced_test("applyDiscount", "applyDiscount(100)", "90")];
+    let finding = classify_pricing_line(&owner, "  return 0;", &direct)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// #4103 shape 1: destructuring the owner name out of an unrelated module
+/// (`const { applyDiscount } = require("../src/factory")`) binds the bare
+/// call to that module's export, not the owner. Destructuring from the
+/// owner's own module stays a genuine owner call.
+#[test]
+fn overcredit_4103_unrelated_destructure_blocks_direct_owner_call() -> Result<(), String> {
+    let owner = priced_owner();
+    let mut foreign = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    foreign.body_text = "const { applyDiscount } = require(\"../src/factory\");\n\
+                         expect(applyDiscount(100)).toBe(90);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[foreign])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a destructure from an unrelated source must not be credited as an owner call"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: direct_owner_call")),
+        "an unrelated destructure must not be credited as a direct owner call: {:?}",
+        finding.evidence
+    );
+
+    let mut owned = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    owned.body_text = "const { applyDiscount } = require(\"../src/pricing\");\n\
+                       expect(applyDiscount(100)).toBe(90);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[owned])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "destructuring from the owner's own module is a genuine owner call"
+    );
+    Ok(())
+}
+
+/// #4103 shapes 2/3: `jest.doMock(...)` and `describe`-nested `vi.mock(...)`
+/// are hoisted mock registrations the extractor must collect into
+/// `mocks_in_file`; with the owner module mocked the finding stays
+/// `weakly_exposed` under the `mocked_module` static limit instead of
+/// promoting on fabricated evidence.
+#[test]
+fn overcredit_4103_domock_and_describe_nested_mock_are_collected() -> Result<(), String> {
+    let tests = extract_tests(
+        Path::new("tests/pricing.test.ts"),
+        r#"import { applyDiscount } from "../src/pricing";
+
+jest.doMock("../src/pricing");
+
+test("applies discount", () => {
+    expect(applyDiscount(100)).toBe(90);
+});
+
+describe("pricing", () => {
+    vi.mock("../src/pricing");
+    it("applies inside describe", () => {
+        expect(applyDiscount(100)).toBe(90);
+    });
+});
+"#,
+    );
+    assert_eq!(tests.len(), 2, "fixture must parse both tests");
+    assert!(
+        tests.iter().all(|test| test
+            .mocks_in_file
+            .iter()
+            .any(|mock| mock == "../src/pricing")),
+        "doMock and describe-nested vi.mock must be collected into every test, got {:?}",
+        tests
+            .iter()
+            .map(|test| &test.mocks_in_file)
+            .collect::<Vec<_>>()
+    );
+
+    let owner = priced_owner();
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &tests)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::MockedModule)
+    );
+    Ok(())
+}
+
+/// #4103 shape 4: `vi.spyOn(module, 'applyDiscount').mockReturnValue(42)`
+/// replaces the owner implementation — the observed value is the fabrication,
+/// not the changed sink — so no trusted owner-call relation may be credited
+/// and the finding must name the `typescript_spy_fabricated_observer`
+/// limitation. A bare call-through spyOn is unaffected.
+#[test]
+fn overcredit_4103_spy_fabrication_blocks_owner_credit_and_names_limitation()
+-> Result<(), String> {
+    let owner = priced_owner();
+    let mut spied = priced_test("applyDiscount", "applyDiscount(100)", "42");
+    spied.body_text = "const spy = vi.spyOn(pricing, 'applyDiscount').mockReturnValue(42);\n\
+                       expect(applyDiscount(100)).toBe(42);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[spied])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a fabricated spy observes the fabrication, not the changed sink"
+    );
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_spy_fabricated_observer",
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: direct_owner_call")),
+        "a fabricated spy must not be credited as a direct owner call: {:?}",
+        finding.evidence
+    );
+
+    let mut through = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    through.body_text = "const spy = vi.spyOn(pricing, 'applyDiscount');\n\
+                         expect(applyDiscount(100)).toBe(90);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[through])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a bare call-through spyOn still observes the owner"
+    );
+    Ok(())
+}
+
 // ── F5-9: a test is related to an owner only when it references the owner ────
 
 /// Owners from the F5-9 re-walk shape: `discountedTotal` (tested) and a new
 /// `loyaltyPrice` (no test references it) in the same `src/pricing.ts`.
 fn f5_9_owners() -> Vec<TypeScriptOwner> {
     vec![
-        TypeScriptOwner {
+        TypeScriptOwner  {
             start_line: 3,
             end_line: 8,
             ..test_owner("discountedTotal", "src/pricing.ts")
         },
-        TypeScriptOwner {
+        TypeScriptOwner  {
             start_line: 10,
             end_line: 15,
             ..test_owner("loyaltyPrice", "src/pricing.ts")

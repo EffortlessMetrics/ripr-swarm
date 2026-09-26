@@ -15,6 +15,15 @@ pub(crate) struct TypeScriptOwner {
     pub(crate) class_name: Option<String>,
     pub(crate) decorated: bool,
     pub(crate) imports: Vec<TypeScriptImport>,
+    /// Positional parameter names of the owner function, in declaration
+    /// order. Empty means the adapter recorded no parameter facts: either the
+    /// owner is not a callable with a fixed positional signature (module
+    /// initializer, computed method) or the signature uses patterns the
+    /// syntax-first extractor refuses to summarize (destructuring, rest).
+    /// The predicate boundary witness uses these facts for
+    /// position/arity-aware literal matching (#4102); with no facts it keeps
+    /// the previous position-blind behaviour.
+    pub(crate) params: Vec<String>,
 }
 
 impl TypeScriptOwner {
