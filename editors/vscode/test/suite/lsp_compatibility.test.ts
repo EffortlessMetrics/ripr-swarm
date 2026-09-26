@@ -9,6 +9,19 @@ import { probeServerVersion } from '../../src/serverResolver';
 suite('Standard LSP compatibility probe', () => {
   const fakeProbeTimeoutMs = 8000;
   const temporaryRoots: string[] = [];
+  let advertisedCapabilities: Readonly<Record<string, unknown>>;
+
+  suiteSetup(async () => {
+    const server = process.env.RIPR_TEST_SERVER_PATH;
+    assert.ok(server, 'LSP compatibility tests require the server built by cargo xtask vscode-test-e2e');
+    let observed: Readonly<Record<string, unknown>> | undefined;
+    const result = await probeStandardLspCompatibility(server, false, 10_000, (capabilities) => {
+      observed = capabilities;
+    });
+    assert.strictEqual(result.status, 'compatible', JSON.stringify(result));
+    assert.ok(observed, 'the real server did not provide an initialize capability result');
+    advertisedCapabilities = observed;
+  });
 
   teardown(() => {
     for (const root of temporaryRoots.splice(0)) {
@@ -61,7 +74,7 @@ suite('Standard LSP compatibility probe', () => {
     }
   });
 
-  for (const mode of ['missing-diagnostics', 'missing-workspace-folders', 'missing-command'] as const) {
+  for (const mode of ['unsupported-sync', 'missing-diagnostics', 'missing-workspace-folders', 'missing-command'] as const) {
     test(`rejects the active-client baseline omission ${mode}`, async () => {
       const fake = fakeServer(mode);
       const result = await probeStandardLspCompatibility(fake.command, fake.useShell, fakeProbeTimeoutMs);
@@ -220,7 +233,7 @@ suite('Standard LSP compatibility probe', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-lsp-probe-'));
     temporaryRoots.push(root);
     const script = path.join(root, 'server.js');
-    fs.writeFileSync(script, fakeServerSource(mode, descendantPath));
+    fs.writeFileSync(script, fakeServerSource(mode, advertisedCapabilities, descendantPath));
     if (process.platform === 'win32') {
       const command = path.join(root, 'ripr.cmd');
       fs.writeFileSync(command, `@echo off\r\n"${process.execPath}" "${script}" %*\r\nexit /b %errorlevel%\r\n`);
@@ -251,12 +264,17 @@ async function assertDescendantStopped(pidPath: string): Promise<void> {
   assert.fail(`probe descendant ${pid} remained after process-tree cleanup`);
 }
 
-function fakeServerSource(mode: string, descendantPidPath?: string): string {
+function fakeServerSource(
+  mode: string,
+  advertisedCapabilities: Readonly<Record<string, unknown>>,
+  descendantPidPath?: string
+): string {
   return `
 const cp = require('child_process');
 const fs = require('fs');
 const mode = ${JSON.stringify(mode)};
 const descendantPidPath = ${JSON.stringify(descendantPidPath)};
+const advertisedCapabilities = ${JSON.stringify(advertisedCapabilities)};
 function spawnDescendant() {
   const descendant = cp.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
     detached: process.platform === 'win32',
@@ -296,8 +314,15 @@ function consume() {
     const length = Number(match[1]); const start = end + 4; if (input.length < start + length) return;
     const message = JSON.parse(input.subarray(start, start + length).toString()); input = input.subarray(start + length);
     if (message.method === 'initialize') {
-      const commands = ['ripr.refresh','ripr.collectContext','ripr.collectEvidenceContext','ripr.collectWorkspaceStatus','ripr.collectRepairPacket','ripr.collectTopLimitation','ripr.collectReceiptStatus'];
-      const capabilities = { textDocumentSync: 1, hoverProvider: true, codeActionProvider: true, diagnosticProvider: {}, executeCommandProvider: { commands }, workspace: { workspaceFolders: { supported: true } }, positionEncoding: mode === 'utf8' ? 'utf-8' : 'utf-16' };
+      const capabilities = JSON.parse(JSON.stringify(advertisedCapabilities));
+      if (mode === 'unsupported-sync') capabilities.textDocumentSync = 0;
+      if (mode === 'utf8') capabilities.positionEncoding = 'utf-8';
+      if (mode === 'valid') {
+        // Deliberately omit optional support while retaining the real server's
+        // required fields. This is a negative fixture, not a server claim.
+        capabilities.codeActionProvider = true;
+        capabilities.hoverProvider = true;
+      }
       if (mode === 'missing-hover') delete capabilities.hoverProvider;
       if (mode === 'missing-diagnostics') delete capabilities.diagnosticProvider;
       if (mode === 'missing-workspace-folders') delete capabilities.workspace;
