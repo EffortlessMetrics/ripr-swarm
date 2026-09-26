@@ -617,13 +617,10 @@ pub(crate) fn test_spies_owner_with_fabrication(test: &TypeScriptTest, owner_nam
     if !body.contains("spyOn(") {
         return false;
     }
-    let spies_owner = ["vi.spyOn(", "jest.spyOn(", "spyOn("]
-        .iter()
-        .any(|needle| {
-            body.match_indices(needle).any(|(idx, _)| {
-                spy_call_targets_name(&body[idx + needle.len()..], owner_name)
-            })
-        });
+    let spies_owner = ["vi.spyOn(", "jest.spyOn(", "spyOn("].iter().any(|needle| {
+        body.match_indices(needle)
+            .any(|(idx, _)| spy_call_targets_name(&body[idx + needle.len()..], owner_name))
+    });
     if !spies_owner {
         return false;
     }

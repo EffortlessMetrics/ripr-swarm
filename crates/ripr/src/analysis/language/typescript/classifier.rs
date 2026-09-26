@@ -510,7 +510,14 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
     let operand_key = [left, right]
         .iter()
         .find(|operand| !is_boundary_literal(operand))
-        .map(|operand| operand.rsplit('.').next().unwrap_or(operand).trim().to_string());
+        .map(|operand| {
+            operand
+                .rsplit('.')
+                .next()
+                .unwrap_or(operand)
+                .trim()
+                .to_string()
+        });
 
     for candidate in candidates {
         if !candidate.relation.uses_oracle() {
@@ -540,12 +547,9 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
             if assertion_is_self_comparing(assertion, observed) {
                 continue;
             }
-            for arguments in owner_call_arguments(
-                observed,
-                &owner.name,
-                &owner_receivers,
-                bare_calls_shadowed,
-            ) {
+            for arguments in
+                owner_call_arguments(observed, &owner.name, &owner_receivers, bare_calls_shadowed)
+            {
                 let witnessed = if literals.is_empty() {
                     call_has_identical_arguments(&arguments, &owner.params)
                         || object_argument_pins_operands_equal(
@@ -590,9 +594,8 @@ fn assertion_is_self_comparing(assertion: &TypeScriptAssertion, observed: &str) 
     let Some(expected) = assertion.expected_value_or_variant.as_deref() else {
         return false;
     };
-    let normalize = |text: &str| -> String {
-        text.chars().filter(|ch| !ch.is_whitespace()).collect()
-    };
+    let normalize =
+        |text: &str| -> String { text.chars().filter(|ch| !ch.is_whitespace()).collect() };
     normalize(expected) == normalize(observed)
 }
 

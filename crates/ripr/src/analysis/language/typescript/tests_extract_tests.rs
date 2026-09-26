@@ -202,7 +202,7 @@ test.only("discount boundary", () => {
     );
     assert_eq!(tests.len(), 1);
 
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,

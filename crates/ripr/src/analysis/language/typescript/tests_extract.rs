@@ -61,7 +61,7 @@ pub(crate) fn extract_mocks_from_statements(
 /// (blocks, if/else, loops, try/catch, switch) and function-bodied call
 /// arguments (describe/it/beforeAll callbacks) are walked; everything else
 /// is ignored. Deduplication preserves first-seen order.
-fn collect_mock_paths(statements: &[Statement<'_>>, out: &mut Vec<String>) {
+fn collect_mock_paths(statements: &[Statement<'_>], out: &mut Vec<String>) {
     for stmt in statements {
         match stmt {
             Statement::BlockStatement(block) => collect_mock_paths(&block.body, out),
@@ -98,7 +98,7 @@ fn collect_mock_paths(statements: &[Statement<'_>>, out: &mut Vec<String>) {
                     collect_mock_paths(&handler.body.body, out);
                 }
                 if let Some(finalizer) = &try_stmt.finalizer {
-                    collect_mock_paths(&finalizer.body.body, out);
+                    collect_mock_paths(&finalizer.body, out);
                 }
             }
             Statement::SwitchStatement(switch_stmt) => {

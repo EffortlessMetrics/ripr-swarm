@@ -11,7 +11,7 @@ fn changed(path: &str) -> ChangedFile {
     }
 }
 
-fn test_owner(name: &str, file: &str) -> TypeScriptOwner  {
+fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
     TypeScriptOwner {
         name: name.to_string(),
         file: PathBuf::from(file),
@@ -1661,7 +1661,7 @@ it("beta", () => { expect(otherHelper()).toBe(true); });
 
 #[test]
 fn find_related_tests_matches_by_call_name() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -1705,7 +1705,7 @@ fn find_related_tests_matches_by_call_name() {
 
 #[test]
 fn find_related_tests_ignores_object_method_calls_for_function_owners() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -1735,7 +1735,7 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
 
 #[test]
 fn find_related_tests_matches_bounded_method_receiver_calls() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "total".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 5,
@@ -1773,7 +1773,7 @@ test("cart total observes receiver", () => {
 
 #[test]
 fn find_related_tests_keeps_factory_receiver_calls_unrelated_for_method_owners() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "total".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 5,
@@ -1802,7 +1802,7 @@ test("cart total through factory stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_keeps_dynamic_method_receiver_calls_unrelated() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "total".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 5,
@@ -1832,7 +1832,7 @@ test("cart total through dynamic method stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "total".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 5,
@@ -1867,7 +1867,7 @@ fn find_related_tests_keeps_mocked_function_owner_call_at_proximity() {
     // must NOT be credited `DirectOwnerCall` — the owner call executes the
     // mock, not the changed code. Only the advisory same-file-stem proximity
     // heuristic may link the test.
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 1,
@@ -1912,7 +1912,7 @@ fn find_related_tests_keeps_mocked_arrow_function_owner_call_at_proximity() {
     // both Function and ArrowFunction owner kinds — an arrow-function owner
     // call under its own module's mock executes the mock, not the changed
     // code, so only the advisory proximity heuristic may link the test.
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 1,
@@ -1962,7 +1962,7 @@ fn find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity() {
     // `find_related_tests_namespace_import_unchanged_imported_owner_call`.
     // Under an owner-module mock it must fall back to the advisory
     // same-file-stem proximity link only.
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 1,
@@ -2005,7 +2005,7 @@ test("mocked namespace applyDiscount stays ambiguous", () => {
 fn find_related_tests_credits_unmocked_function_owner_call() {
     // Positive control for the #2269 guard: the same scenario WITHOUT the
     // owner-module mock keeps the `DirectOwnerCall` credit.
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 1,
@@ -2040,7 +2040,7 @@ test("unmocked applyDiscount observes the owner", () => {
 fn classify_change_stays_weakly_exposed_when_test_mocks_owner_module() -> Result<(), String> {
     // issue #2269: mocked owner module + strong exact-value oracle must not
     // classify `exposed`; the `mocked_module` static limit stays disclosed.
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -2102,7 +2102,7 @@ test("mocked applyDiscount stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_matches_bounded_class_method_calls() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "build".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 10,
@@ -2139,7 +2139,7 @@ test("static build observes class method", () => {
 
 #[test]
 fn find_related_tests_keeps_shadowed_class_method_calls_unrelated() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "build".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 10,
@@ -2168,7 +2168,7 @@ test("shadowed static build stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_matches_same_file_class_method_calls() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "build".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 10,
@@ -2204,7 +2204,7 @@ fn find_related_tests_matches_same_file_class_method_calls() {
 
 #[test]
 fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "build".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 10,
@@ -2232,7 +2232,7 @@ test("namespace static build stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "build".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 10,
@@ -2262,7 +2262,7 @@ test("mocked static build stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_requires_class_name_for_class_method_calls() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "build".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 10,
@@ -2290,7 +2290,7 @@ test("unknown class static build stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_matches_module_initializer_named_import_observer() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "DEFAULT_RATE".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 15,
@@ -2327,7 +2327,7 @@ test("rate value observes initializer", () => {
 
 #[test]
 fn find_related_tests_matches_module_initializer_namespace_observer() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "DEFAULT_RATE".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 15,
@@ -2357,7 +2357,7 @@ test("rate value observes namespace initializer", () => {
 
 #[test]
 fn find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_unrelated() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "DEFAULT_RATE".to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 15,
@@ -2395,7 +2395,7 @@ test("string mention stays ambiguous", () => {
 
 #[test]
 fn find_related_tests_matches_named_import_alias_calls() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2444,7 +2444,7 @@ test("alias import observes threshold", () => {
 /// otherFn != owner) must NOT be credited as ImportAliasOwnerCall.
 #[test]
 fn find_related_tests_alias_wrong_name_not_credited() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2480,7 +2480,7 @@ test("wrong-name alias", () => {
 /// not the owner.  Must NOT be credited at High confidence.
 #[test]
 fn find_related_tests_alias_shadowed_local_not_credited_high() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "computeValue".to_string(),
         file: PathBuf::from("src/compute.ts"),
         start_line: 1,
@@ -2516,7 +2516,7 @@ test("shadow guard", () => {
 /// still produces DirectOwnerCall via the existing path.
 #[test]
 fn find_related_tests_non_alias_import_still_direct_owner_call() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "computeValue".to_string(),
         file: PathBuf::from("src/compute.ts"),
         start_line: 1,
@@ -2560,7 +2560,7 @@ test("non-alias direct call", () => {
 /// produces ImportedOwnerCall (out of scope for alias upgrade) → import_path_affinity/medium.
 #[test]
 fn find_related_tests_namespace_import_unchanged_imported_owner_call() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "computeValue".to_string(),
         file: PathBuf::from("src/compute.ts"),
         start_line: 1,
@@ -2604,7 +2604,7 @@ test("namespace import member call", () => {
 
 #[test]
 fn find_related_tests_matches_namespace_import_member_calls() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2633,7 +2633,7 @@ test("namespace import observes threshold", () => {
 
 #[test]
 fn find_related_tests_ignores_unrelated_and_type_only_import_aliases() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2671,7 +2671,7 @@ test("type only import", () => {
 
 #[test]
 fn find_related_tests_ignores_call_shaped_string_mentions() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -2701,7 +2701,7 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
 
 #[test]
 fn find_related_tests_ignores_call_shaped_comment_mentions() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -2744,7 +2744,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
 
 #[test]
 fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2816,7 +2816,7 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
 
 #[test]
 fn related_test_name_proximity_ignores_partial_tokens() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2844,7 +2844,7 @@ fn related_test_name_proximity_ignores_partial_tokens() {
 
 #[test]
 fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -2895,7 +2895,7 @@ fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<
 
 #[test]
 fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -3225,7 +3225,7 @@ fn typescript_preview_mock_payload_guidance_names_literal_payload_without_repair
 
 #[test]
 fn classify_change_labels_javascript_sources_separately() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.js"),
         start_line: 1,
@@ -3268,7 +3268,7 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
 #[test]
 fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> {
     let owners = vec![
-        TypeScriptOwner  {
+        TypeScriptOwner {
             name: "alphaScore".to_string(),
             file: PathBuf::from("src/a.ts"),
             start_line: 1,
@@ -3279,7 +3279,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             imports: Vec::new(),
             params: Vec::new(),
         },
-        TypeScriptOwner  {
+        TypeScriptOwner {
             name: "betaScore".to_string(),
             file: PathBuf::from("src/b.ts"),
             start_line: 1,
@@ -4005,7 +4005,7 @@ fn oracle_for_matcher_covers_canonical_jest_vitest_set() {
 
 #[test]
 fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -4076,7 +4076,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
 
 #[test]
 fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -4143,7 +4143,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
 
 #[test]
 fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -4176,7 +4176,7 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
 
 #[test]
 fn classify_change_returns_none_when_line_is_outside_any_owner() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 10,
@@ -5229,6 +5229,28 @@ test("alpha", () => {
 }
 
 #[test]
+fn extract_tests_collects_mock_paths_in_try_finally() {
+    // Every try-statement arm (block, handler, finalizer) must be walked:
+    // a `jest.mock` hoisted into a `finally` block still counts (#4103).
+    let source = r#"
+test("alpha", () => {
+    try {
+        jest.mock("./repository");
+    } finally {
+        jest.mock("./service");
+    }
+    expect(applyDiscount(50, 100)).toBe(50);
+});
+"#;
+    let tests = extract_tests(Path::new("tests/lib.test.ts"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(
+        tests[0].mocks_in_file,
+        vec!["./repository".to_string(), "./service".to_string()]
+    );
+}
+
+#[test]
 fn extract_tests_returns_empty_mock_list_when_no_mock_call() {
     let source = r#"
 test("alpha", () => {
@@ -5242,7 +5264,7 @@ test("alpha", () => {
 
 #[test]
 fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -5293,7 +5315,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
 
 #[test]
 fn collect_related_mock_paths_ignores_unrelated_tests() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -5321,7 +5343,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
 
 #[test]
 fn collect_related_mock_paths_ignores_object_method_mentions() {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -5350,7 +5372,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
 #[test]
 fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
 -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -5425,7 +5447,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
     let _ = fs::write(pkg_a.join("package.json"), r#"{"name":"pkg-a"}"#);
     let _ = fs::write(pkg_b.join("package.json"), r#"{"name":"pkg-b"}"#);
 
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "doWork".to_string(),
         file: pkg_a.join("src").join("work.ts"),
         start_line: 1,
@@ -5479,7 +5501,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
     // Removal/known-wrong control: without the package-local filter (the
     // single-package path), the same fixtures DO credit the test and surface
     // the limit — proving the negative control exercises the real producer.
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "doWork".to_string(),
         file: pkg_a.join("src").join("work.ts"),
         start_line: 1,
@@ -5525,7 +5547,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
 #[test]
 fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() -> Result<(), String>
 {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
         start_line: 1,
@@ -5604,7 +5626,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
 #[test]
 fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -> Result<(), String>
 {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "LabelView".to_string(),
         file: PathBuf::from("src/label.jsx"),
         start_line: 1,
@@ -5613,12 +5635,12 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         class_name: None,
         decorated: false,
         imports: vec![TypeScriptImport {
-        params: Vec::new(),
             source: "./labels".to_string(),
             imported: Some("normalizeLabel".to_string()),
             local: "normalizeLabel".to_string(),
             namespace: false,
         }],
+        params: Vec::new(),
     };
     let tests = vec![TypeScriptTest {
         name: "LabelView smoke".to_string(),
@@ -6491,7 +6513,7 @@ fn package_local_filter_selects_same_package_test() {
         r#"{"name":"pkg-a","devDependencies":{"jest":"^29"}}"#,
     );
 
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "doWork".to_string(),
         file: pkg_a.join("src").join("work.ts"),
         start_line: 1,
@@ -6558,7 +6580,7 @@ fn package_local_filter_rejects_cross_package_test() {
     let _ = fs::write(pkg_a.join("package.json"), r#"{"name":"pkg-a"}"#);
     let _ = fs::write(pkg_b.join("package.json"), r#"{"name":"pkg-b"}"#);
 
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "doWork".to_string(),
         file: pkg_a.join("src").join("work.ts"),
         start_line: 1,
@@ -6702,7 +6724,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         r#"{"name":"pkg-b","devDependencies":{"jest":"^29"}}"#,
     );
 
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: pkg_a.join("src").join("discount.ts"),
         start_line: 1,
@@ -6836,7 +6858,7 @@ fn named_limitation_target_unresolved_not_emitted_for_same_package() -> Result<(
 /// `propagation_unknown` limitation and `discriminate != yes`.
 #[test]
 fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -6940,7 +6962,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
 /// downgrades a genuine whole-value return discriminator will fail here.
 #[test]
 fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -7017,7 +7039,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
 /// `propagation_unknown` limitation.
 #[test]
 fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -7096,7 +7118,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
 /// finding stays `class:exposed, discriminate:yes`.
 #[test]
 fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -7171,7 +7193,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
 /// `class:exposed, discriminate:yes` (no repair packet, no receipt command).
 #[test]
 fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -7246,7 +7268,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
 /// `weakly_exposed`.
 #[test]
 fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -7325,7 +7347,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
 /// assertion is asserting something other than the owner return value.
 #[test]
 fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -7412,7 +7434,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
 /// MUST stay `class:exposed`.
 #[test]
 fn ts_field_construction_observed_control() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "buildConfig".to_string(),
         file: PathBuf::from("src/config.ts"),
         start_line: 1,
@@ -7489,7 +7511,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
 /// `ts_returnvalue_unrelated_strong_assertion_downgrades`.
 #[test]
 fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "buildConfig".to_string(),
         file: PathBuf::from("src/config.ts"),
         start_line: 1,
@@ -7633,7 +7655,7 @@ fn ts_swallowed_console_log_downgrade_live_extractor() -> Result<(), String> {
 /// the fail-closed downgrade.
 #[test]
 fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -7712,7 +7734,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
 /// name a different receiver's members; none of them may confirm.
 #[test]
 fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "trackLogin".to_string(),
         file: PathBuf::from("src/tracker.ts"),
         start_line: 1,
@@ -7835,7 +7857,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
     let alias_map =
         alias_map.ok_or_else(|| "tsconfig.json should parse with a baseUrl".to_string())?;
 
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owner.ts"),
         start_line: 1,
@@ -7903,7 +7925,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
 /// BUT the `typescript_path_alias_unresolved` disclosure limitation IS emitted.
 #[test]
 fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owner.ts"),
         start_line: 1,
@@ -7994,7 +8016,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
     let alias_map =
         load_alias_map(&root).ok_or_else(|| "tsconfig.json should parse".to_string())?;
 
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owner.ts"),
         start_line: 1,
@@ -8056,7 +8078,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
 /// → NO `typescript_path_alias_unresolved` limitation emitted.
 #[test]
 fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owner.ts"),
         start_line: 1,
@@ -8112,7 +8134,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
 /// import from any non-relative package false-fired this limitation.
 #[test]
 fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owner.ts"),
         start_line: 1,
@@ -8166,7 +8188,7 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
 /// the owner, so the limitation MUST still fire when resolution fails.
 #[test]
 fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/owner.ts"),
         start_line: 1,
@@ -8232,7 +8254,7 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
 #[test]
 fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam()
 -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -8343,7 +8365,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
 /// MUST stay `Exposed` (ExactValue matches ReturnValue).
 #[test]
 fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -8411,7 +8433,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
 #[test]
 fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
 -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -8487,7 +8509,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
 #[test]
 fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays_exposed()
 -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/discount.ts"),
         start_line: 1,
@@ -9095,7 +9117,7 @@ fn remove_field_from_missing_list_unit() {
 }
 
 fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest) {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "parseLimit".to_string(),
         file: PathBuf::from("src/limiter.ts"),
         start_line: 1,
@@ -9399,7 +9421,7 @@ fn spec_0027_same_named_method_on_other_receiver_does_not_witness() -> Result<()
 /// would have falsely downgraded.
 #[test]
 fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), String> {
-    let owner = TypeScriptOwner  {
+    let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/pricing.ts"),
         start_line: 1,
@@ -9630,7 +9652,11 @@ fn classify_pricing_line(
 #[test]
 fn overcredit_4102_dead_argument_position_does_not_witness_boundary() -> Result<(), String> {
     let owner = priced_owner();
-    let dead = [priced_test("applyDiscount", "applyDiscount(150, 100)", "90")];
+    let dead = [priced_test(
+        "applyDiscount",
+        "applyDiscount(150, 100)",
+        "90",
+    )];
     let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &dead)?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert!(
@@ -9654,7 +9680,11 @@ fn overcredit_4102_dead_argument_position_does_not_witness_boundary() -> Result<
 #[test]
 fn overcredit_4102_nested_literal_expression_does_not_witness_boundary() -> Result<(), String> {
     let owner = priced_owner();
-    let nested = [priced_test("applyDiscount", "applyDiscount(price + 100)", "160")];
+    let nested = [priced_test(
+        "applyDiscount",
+        "applyDiscount(price + 100)",
+        "160",
+    )];
     let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &nested)?;
     assert_eq!(
         finding.class,
@@ -9726,7 +9756,11 @@ fn overcredit_4102_body_local_shadow_blocks_bare_call_witness() -> Result<(), St
 fn overcredit_4102_unpinned_expected_side_does_not_witness_boundary() -> Result<(), String> {
     let owner = priced_owner();
 
-    let tautology = [priced_test("applyDiscount", "applyDiscount(100)", "applyDiscount(100)")];
+    let tautology = [priced_test(
+        "applyDiscount",
+        "applyDiscount(100)",
+        "applyDiscount(100)",
+    )];
     let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &tautology)?;
     assert_eq!(
         finding.class,
@@ -9925,8 +9959,8 @@ describe("pricing", () => {
 /// and the finding must name the `typescript_spy_fabricated_observer`
 /// limitation. A bare call-through spyOn is unaffected.
 #[test]
-fn overcredit_4103_spy_fabrication_blocks_owner_credit_and_names_limitation()
--> Result<(), String> {
+fn overcredit_4103_spy_fabrication_blocks_owner_credit_and_names_limitation() -> Result<(), String>
+{
     let owner = priced_owner();
     let mut spied = priced_test("applyDiscount", "applyDiscount(100)", "42");
     spied.body_text = "const spy = vi.spyOn(pricing, 'applyDiscount').mockReturnValue(42);\n\
@@ -9970,12 +10004,12 @@ fn overcredit_4103_spy_fabrication_blocks_owner_credit_and_names_limitation()
 /// `loyaltyPrice` (no test references it) in the same `src/pricing.ts`.
 fn f5_9_owners() -> Vec<TypeScriptOwner> {
     vec![
-        TypeScriptOwner  {
+        TypeScriptOwner {
             start_line: 3,
             end_line: 8,
             ..test_owner("discountedTotal", "src/pricing.ts")
         },
-        TypeScriptOwner  {
+        TypeScriptOwner {
             start_line: 10,
             end_line: 15,
             ..test_owner("loyaltyPrice", "src/pricing.ts")
