@@ -42,7 +42,6 @@ pub(crate) use diff::{
 /// consumed by the analysis route and the xtask badge route alike. Neither
 /// route may hardcode a base ref or rebuild the diff argv inline.
 pub use diff::{load_diff_range, resolve_default_base_commit};
-pub use seam_cache::cache_layer_names;
 pub(crate) use facts::validated_file_wide_harness_targets;
 pub(crate) use language::{
     DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
@@ -53,6 +52,7 @@ pub use language::{
     PartialDiffStopReason,
 };
 pub(crate) use probes::{fingerprint_probe_id, normalize_expression};
+pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
 pub(crate) use seam_classification::SeamGripClassCounts;

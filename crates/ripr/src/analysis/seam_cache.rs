@@ -111,6 +111,10 @@ pub fn cache_layer_names() -> &'static [&'static str] {
     CACHE_LAYER_NAMES
 }
 
+fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathBuf {
+    cache_base_dir(workspace_root).join(layer.name())
+}
+
 /// On-disk representation of seam-limit metadata embedded in the cache envelope.
 /// Mirrors `SeamLimitInfo` but lives in the cache module to avoid a circular dep.
 /// `#[serde(default)]` ensures old cache entries without this field deserialize
@@ -968,8 +972,7 @@ pub(crate) struct RepoCorpusFingerprintCache {
 impl RepoCorpusFingerprintCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         Self {
-            dir: cache_base_dir(workspace_root)
-                .join(CacheLayer::CorpusFingerprint.name())
+            dir: cache_layer_dir(workspace_root, CacheLayer::CorpusFingerprint)
                 .join(CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION),
         }
     }
@@ -1074,7 +1077,11 @@ pub(crate) struct CacheStoreStatus {
 impl RepoSeamFactCache {
     /// Construct a cache rooted at the workspace's `target/ripr/cache/...`.
     pub(crate) fn at(workspace_root: &Path) -> Self {
-        Self::at_named(workspace_root, ClassifiedCacheFamily::SeamFacts, CACHE_SCHEMA_VERSION)
+        Self::at_named(
+            workspace_root,
+            ClassifiedCacheFamily::SeamFacts,
+            CACHE_SCHEMA_VERSION,
+        )
     }
 
     /// Construct the separate compact-classified cache used by repo badge
@@ -1088,13 +1095,15 @@ impl RepoSeamFactCache {
         )
     }
 
-    fn at_named(workspace_root: &Path, family: ClassifiedCacheFamily, schema_version: &str) -> Self {
-        let cache_root = cache_base_dir(workspace_root);
+    fn at_named(
+        workspace_root: &Path,
+        family: ClassifiedCacheFamily,
+        schema_version: &str,
+    ) -> Self {
         let (layer, sharded_layer) = family.layers();
         Self {
-            dir: cache_root.join(layer.name()).join(schema_version),
-            sharded_dir: cache_root
-                .join(sharded_layer.name())
+            dir: cache_layer_dir(workspace_root, layer).join(schema_version),
+            sharded_dir: cache_layer_dir(workspace_root, sharded_layer)
                 .join(schema_version)
                 .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
         }
@@ -1554,8 +1563,7 @@ pub(crate) struct RepoFileFactCache {
 impl RepoFileFactCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         Self {
-            dir: cache_base_dir(workspace_root)
-                .join(CacheLayer::FileFacts.name())
+            dir: cache_layer_dir(workspace_root, CacheLayer::FileFacts)
                 .join(FILE_FACT_CACHE_SCHEMA_VERSION),
         }
     }
@@ -1651,8 +1659,7 @@ impl RepoSeamCountCache {
     /// `target/ripr/cache/...` (or `RIPR_CACHE_DIR` when set).
     pub(crate) fn at(workspace_root: &Path) -> Self {
         Self {
-            dir: cache_base_dir(workspace_root)
-                .join(CacheLayer::SeamCounts.name())
+            dir: cache_layer_dir(workspace_root, CacheLayer::SeamCounts)
                 .join(COUNT_CACHE_SCHEMA_VERSION),
         }
     }
@@ -3026,7 +3033,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn producer_directories_match_the_maintenance_inventory() {
+    fn producer_directories_match_the_maintenance_inventory() -> Result<(), String> {
         let root = Path::new("/workspace");
         let base = cache_base_dir(root);
         let full = RepoSeamFactCache::at(root);
@@ -3047,18 +3054,42 @@ mod tests {
             .into_iter()
             .map(|path| {
                 path.strip_prefix(&base)
-                    .expect("producer stays under cache root")
+                    .map_err(|error| format!("producer stays under cache root: {error}"))?
                     .components()
                     .next()
-                    .expect("producer has a layer")
+                    .ok_or_else(|| "producer has no layer".to_string())?
                     .as_os_str()
                     .to_str()
-                    .expect("layer is UTF-8")
+                    .ok_or_else(|| "layer is not UTF-8".to_string())
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         let expected: BTreeSet<_> = cache_layer_names().iter().copied().collect();
-        assert_eq!(actual, expected, "every produced layer must be maintainable");
-        assert_eq!(expected.len(), cache_layer_names().len(), "duplicate layer name");
+        assert_eq!(
+            actual, expected,
+            "every produced layer must be maintainable"
+        );
+        assert_eq!(
+            expected.len(),
+            cache_layer_names().len(),
+            "duplicate layer name"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn producer_cannot_bypass_the_registered_layer_path() {
+        let source = include_str!("seam_cache.rs");
+        let production = source
+            .split_once("#[cfg(test)]\nmod tests {")
+            .map(|(production, _)| production)
+            .unwrap_or(source);
+        // One definition and one call in cache_layer_dir. A new producer that
+        // calls cache_base_dir directly would skip the shared inventory.
+        assert_eq!(
+            production.matches("cache_base_dir(").count(),
+            2,
+            "cache producers must construct direct children through cache_layer_dir"
+        );
     }
 
     /// Cache-bump pin: composed source roles change every cached
