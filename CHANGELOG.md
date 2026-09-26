@@ -536,6 +536,11 @@ are scoped or reviewed.
   (`foo..bar`, `..hidden`) stay ordinary local paths. This refuses the read;
   it is not a claim that a client can disclose the bytes
   ([#4145](https://github.com/EffortlessMetrics/ripr-swarm/issues/4145)).
+- `check-file-policy` builds test binaries before it lists `covered_by`
+  subjects. A cold compile is no longer charged against the five-minute
+  list cap, and a timeout is reported as an instrument failure rather than
+  an unresolved pointer
+  ([#4141](https://github.com/EffortlessMetrics/ripr-swarm/issues/4141)).
 - `ripr init --ci github` encodes PR guidance annotations inside jq. The
   previous TSV round-trip rewrote backslash, tab, CR, and LF before GitHub
   workflow-command escaping, so a path or message could display transport
