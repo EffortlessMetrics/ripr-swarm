@@ -1945,9 +1945,14 @@ fn dir_contains_typescript_source(dir: &Path) -> bool {
 }
 
 fn is_typescript_source_file(path: &Path) -> bool {
+    // #4116: consume the shared TS/JS extension authority so .mts/.cts
+    // first-use sources are detected exactly like .ts/.tsx.
     path.extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| matches!(extension, "ts" | "tsx"))
+        .is_some_and(|extension| {
+            crate::analysis::ts_js_source_kind(extension)
+                == Some(crate::analysis::TsJsSourceKind::TypeScript)
+        })
 }
 
 fn regenerate_repo_exposure_command(root: &str) -> String {
@@ -2098,6 +2103,37 @@ fn repo_root() -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn is_typescript_source_file_recognizes_modern_ts_extensions() {
+        // #4116: first-use TypeScript-source detection consumes the shared
+        // extension authority; .mts/.cts join .ts/.tsx, JavaScript-family
+        // and near-miss extensions stay excluded, and `.d.ts` keeps its
+        // accepted declaration-file routing via the "ts" extension.
+        let cases = [
+            ("src/a.ts", true),
+            ("src/a.tsx", true),
+            ("src/a.mts", true),
+            ("src/a.cts", true),
+            ("src/a.d.ts", true),
+            ("src/a.js", false),
+            ("src/a.jsx", false),
+            ("src/a.mjs", false),
+            ("src/a.cjs", false),
+            ("src/a.mt", false),
+            ("src/a.mjsx", false),
+            ("src/a.ctsx", false),
+            ("Makefile", false),
+        ];
+
+        for (path, expected) in cases {
+            assert_eq!(
+                super::is_typescript_source_file(Path::new(path)),
+                expected,
+                "{path}"
+            );
+        }
+    }
+
     #[test]
     fn resolve_path_drops_the_roots_own_cur_dir() {
         // `--root .` used to render every emitted artifact as

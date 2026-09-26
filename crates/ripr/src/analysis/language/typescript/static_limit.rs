@@ -216,10 +216,17 @@ pub(crate) fn named_limitations_for_unresolved_ownership(
 /// `related` (i.e. resolution succeeded); in that case we must NOT emit the
 /// limitation for the same import (we would be disclosing a gap that isn't
 /// there).
+///
+/// `alias_map` carries the same map the resolver used (None when the opt-in
+/// flag is off); its typed `unresolve_cause_for` keeps the advice honest by
+/// naming the actual fail-closed cause (no map / absolute baseUrl / no
+/// patterns / unmatched pattern / unresolved candidate) instead of a
+/// generic message.
 pub(crate) fn named_limitations_for_alias_unresolved(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
     owner_was_credited: impl Fn(&TypeScriptTest) -> bool,
+    alias_map: Option<&TsAliasMap>,
 ) -> Vec<TypeScriptNamedLimitation> {
     let mut limitations: Vec<TypeScriptNamedLimitation> = Vec::new();
     let mut saw = false;
@@ -265,6 +272,11 @@ pub(crate) fn named_limitations_for_alias_unresolved(
                 continue;
             }
             // This import is name-matched and non-relative and did not credit the owner.
+            let cause = match alias_map {
+                None => TsAliasUnresolveCause::MapUnavailable,
+                Some(map) => map.unresolve_cause_for(&import.source),
+            };
+            let (cause_text, recovery_hint) = cause.parts();
             let sample_source = format!("{}:{}", normalized_path(&test.file), test.line);
             limitations.push(TypeScriptNamedLimitation {
                 name: "typescript_path_alias_unresolved",
@@ -273,8 +285,7 @@ pub(crate) fn named_limitations_for_alias_unresolved(
                     "test `{}` imports `{}` from non-relative specifier `{}` \
                      which plausibly targets owner `{}` in `{}`, but the adapter \
                      could not resolve the specifier to a unique workspace file \
-                     without a tsconfig.json alias map; enable `[typescript] \
-                     resolve_tsconfig_paths = true` for credit",
+                     because {cause_text}; {recovery_hint}",
                     test.name,
                     import.imported.as_deref().unwrap_or(&owner.name),
                     import.source,

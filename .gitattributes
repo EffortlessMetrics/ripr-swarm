@@ -14,3 +14,7 @@
 *.vsix binary
 *.woff  binary
 *.woff2 binary
+
+# A unified diff encodes an empty context line as one space.
+# That byte is patch syntax, not source trailing whitespace.
+fixtures/*/diff.patch whitespace=-blank-at-eol

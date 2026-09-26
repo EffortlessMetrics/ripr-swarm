@@ -2101,6 +2101,13 @@ tests = [
   "crates/ripr/src/analysis/pipeline.rs::tests::repo_pipeline_dispatches_enabled_preview_feature_adapters",
   "crates/ripr/src/config.rs::tests::languages_section",
   "crates/ripr/src/config.rs::tests::languages_section_rejects_unavailable_perl_adapter",
+  "crates/ripr/src/analysis/language/router.rs::tests::ts_js_extension_authority_classifies_exactly_the_routed_surface",
+  "crates/ripr/src/cli/rerun.rs::tests::typescript_rerun_covers_every_accepted_extension",
+  "crates/ripr/src/analysis/repair_route.rs::tests::external_language_test_extensions_cover_bridge_language_families",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::external_language_labels_cover_modern_ts_js_extensions",
+  "crates/ripr/src/output/first_pr.rs::tests::is_typescript_source_file_recognizes_modern_ts_extensions",
+  "crates/ripr/src/lsp/actions.rs::tests::path_matches_diagnostic_language_covers_modern_ts_js_extensions",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::detect_languages_treats_modern_ts_js_extensions_as_language_markers",
   "crates/ripr/src/output/json/mod.rs",
 ]
 fixtures = [
@@ -2113,7 +2120,14 @@ code = [
   "crates/ripr/src/domain/language.rs",
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/language/mod.rs",
+  "crates/ripr/src/analysis/language/router.rs",
   "crates/ripr/src/analysis/pipeline.rs",
+  "crates/ripr/src/analysis/repair_route.rs",
+  "crates/ripr/src/cli/rerun.rs",
+  "crates/ripr/src/cli/commands/doctor.rs",
+  "crates/ripr/src/lsp/actions.rs",
+  "crates/ripr/src/output/agent_seam_packets.rs",
+  "crates/ripr/src/output/first_pr.rs",
   "crates/ripr/src/output/json/report.rs",
   "crates/ripr/src/output/perl_preview_card.rs",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
@@ -9190,4 +9204,32 @@ outputs = [
 metrics = [
   "python_repair_trust_check_verdict",
   "python_repair_verification_check_verdict",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0177"
+name = "TypeScript parse-depth budget and large-stack parse worker"
+spec = "docs/specs/RIPR-SPEC-0177-typescript-parse-depth-budget.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::nesting_estimate_counts_recursive_expression_shapes",
+  "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::nesting_estimate_ignores_lexical_shells",
+  "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::nesting_budget_refuses_over_budget_source_with_typed_reason",
+  "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::nesting_budget_admits_deep_legitimate_source_on_worker_stack",
+  "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::previously_aborting_depth_now_parses_and_classifies",
+  "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::unsupported_syntax_finding_carries_budget_reason",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::parse_error_reason_reports_parser_errors",
+]
+fixtures = [
+  "fixtures/ts_parse_depth_budget",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/parse.rs",
+  "crates/ripr/src/analysis/language/typescript/owners.rs",
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+]
+outputs = [
+]
+metrics = [
+  "typescript_parse_aborts",
+  "typescript_parse_refusal_disclosure_parity",
 ]

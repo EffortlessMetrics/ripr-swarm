@@ -4591,6 +4591,63 @@ fn analyze_diff_surfaces_over_limit_tsconfig_read_as_named_limitation() -> Resul
 }
 
 #[test]
+fn analyze_diff_surfaces_absolute_base_url_as_named_limitation() -> Result<(), String> {
+    // An absolute compilerOptions.baseUrl cannot be anchored to the
+    // workspace root by single-hop resolution. Alias lookup must fail
+    // closed AND surface the named limitation
+    // `typescript_base_url_absolute_unsupported` instead of silently
+    // trimming the leading slash into a wrong in-root path.
+    let root = ts_unique_tempdir("absolute-base-url")?;
+    ts_write_file(&root.join("src/ok.ts"), "export const ok = 1;\n")?;
+    ts_write_file(
+        &root.join("tsconfig.json"),
+        r#"{"compilerOptions":{"baseUrl":"/abs/base","paths":{"@/*":["src/*"]}}}"#,
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: true,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    let limited = result.limitations.iter().find(|limitation| {
+        limitation
+            .bounded_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("typescript_base_url_absolute_unsupported"))
+    });
+    let limited = limited.ok_or_else(|| {
+        format!(
+            "expected the absolute-baseUrl named limitation; got {:?}",
+            result
+                .limitations
+                .iter()
+                .map(|limitation| limitation.bounded_detail.clone())
+                .collect::<Vec<_>>()
+        )
+    })?;
+    assert_eq!(limited.path.as_deref(), Some("tsconfig.json"));
+    assert!(matches!(
+        limited.kind,
+        AnalysisLimitationKind::LanguageScopeUnsupported
+    ));
+    Ok(())
+}
+
+#[test]
 fn analyze_repo_discloses_partial_run_instead_of_silent_empty() -> Result<(), String> {
     let adapter = TypeScriptAdapter;
     let options = AnalysisOptions {
@@ -8237,6 +8294,277 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         &finding,
         "typescript_limitation: typescript_path_alias_unresolved",
     );
+    Ok(())
+}
+
+/// #4106-B remainder: the alias-unresolved advice must name the actual
+/// fail-closed cause. Flag OFF → the cause is the missing alias map.
+#[test]
+fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/owner.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "applyDiscount test".to_string(),
+        local_name: "applyDiscount test".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("src/owner.test.ts"),
+        line: 1,
+        body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
+        assertions: vec![strong_be_assertion()],
+        mocks_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "@/owner".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
+    };
+    let all_owners = [owner];
+    let all_tests = [test];
+
+    let finding = classify_change(
+        Path::new("src/owner.ts"),
+        1,
+        "return a - b;",
+        &all_owners,
+        &all_tests,
+        None,
+        &ReExportIndex::empty(),
+        None, // flag OFF → no alias map
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_evidence_contains(
+        &finding,
+        "no tsconfig.json/jsconfig.json alias map was available",
+    );
+    Ok(())
+}
+
+/// #4106-B remainder: flag ON with a parsed map whose `paths` keys do NOT
+/// match the specifier → the advice names the unmatched-pattern cause.
+#[test]
+fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!("ripr-tscfg-unmatched-{stamp}"));
+    fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    // The map only owns `@/lib`; the test imports `@/owner`.
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{"compilerOptions":{"baseUrl":".","paths":{"@/lib":["src/lib"]}}}"#,
+    )
+    .map_err(|e| e.to_string())?;
+    let alias_map =
+        load_alias_map(&root).ok_or_else(|| "tsconfig.json should parse".to_string())?;
+
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/owner.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "applyDiscount test".to_string(),
+        local_name: "applyDiscount test".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("src/owner.test.ts"),
+        line: 1,
+        body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
+        assertions: vec![strong_be_assertion()],
+        mocks_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "@/owner".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
+    };
+    let all_owners = [owner];
+    let all_tests = [test];
+
+    let finding = classify_change(
+        Path::new("src/owner.ts"),
+        1,
+        "return a - b;",
+        &all_owners,
+        &all_tests,
+        None,
+        &ReExportIndex::empty(),
+        Some(&alias_map),
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_evidence_contains(
+        &finding,
+        "no compilerOptions.paths key (literal or single-`*`) matches this specifier",
+    );
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #4106-B remainder: flag ON, pattern matches, but the candidate file does
+/// not exist → the advice names the unresolved-candidate cause.
+#[test]
+fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String> {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!("ripr-tscfg-nocand-{stamp}"));
+    fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    // `@/*` owns the specifier, but src/owner.ts does not exist.
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+    )
+    .map_err(|e| e.to_string())?;
+    let alias_map =
+        load_alias_map(&root).ok_or_else(|| "tsconfig.json should parse".to_string())?;
+
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/owner.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "applyDiscount test".to_string(),
+        local_name: "applyDiscount test".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("src/owner.test.ts"),
+        line: 1,
+        body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
+        assertions: vec![strong_be_assertion()],
+        mocks_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "@/owner".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
+    };
+    let all_owners = [owner];
+    let all_tests = [test];
+
+    let finding = classify_change(
+        Path::new("src/owner.ts"),
+        1,
+        "return a - b;",
+        &all_owners,
+        &all_tests,
+        None,
+        &ReExportIndex::empty(),
+        Some(&alias_map),
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_evidence_contains(
+        &finding,
+        "the matched pattern's candidate did not resolve to exactly one in-root workspace file",
+    );
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #4106-B remainder: flag ON with an absolute baseUrl → the advice names
+/// the absolute-baseUrl cause (typed limitation
+/// `typescript_base_url_absolute_unsupported` owns the map side).
+#[test]
+fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!("ripr-tscfg-absadv-{stamp}"));
+    fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{"compilerOptions":{"baseUrl":"/abs/base","paths":{"@/*":["src/*"]}}}"#,
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        root.join("src").join("owner.ts"),
+        "export function applyDiscount() {}",
+    )
+    .map_err(|e| e.to_string())?;
+    let alias_map =
+        load_alias_map(&root).ok_or_else(|| "tsconfig.json should parse".to_string())?;
+    assert!(
+        alias_map.base_url_absolute(),
+        "absolute baseUrl must be flagged on the map"
+    );
+
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/owner.ts"),
+        start_line: 1,
+        end_line: 1,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "applyDiscount test".to_string(),
+        local_name: "applyDiscount test".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("src/owner.test.ts"),
+        line: 1,
+        body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
+        assertions: vec![strong_be_assertion()],
+        mocks_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "@/owner".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
+    };
+    let all_owners = [owner];
+    let all_tests = [test];
+
+    let finding = classify_change(
+        Path::new("src/owner.ts"),
+        1,
+        "export function applyDiscount() {}",
+        &all_owners,
+        &all_tests,
+        None,
+        &ReExportIndex::empty(),
+        Some(&alias_map),
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_evidence_contains(
+        &finding,
+        "compilerOptions.baseUrl is absolute or non-normal",
+    );
+    let _ = fs::remove_dir_all(&root);
     Ok(())
 }
 

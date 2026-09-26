@@ -1568,9 +1568,12 @@ pub(crate) fn classify_change(
         .map(|c| c.test.file.clone())
         .collect();
     let named_limitations_from_alias: Vec<TypeScriptNamedLimitation> =
-        named_limitations_for_alias_unresolved(owner, all_tests, |test| {
-            credited_test_files.contains(&test.file)
-        });
+        named_limitations_for_alias_unresolved(
+            owner,
+            all_tests,
+            |test| credited_test_files.contains(&test.file),
+            alias_map,
+        );
     // Oracle-based limitations fire from oracle-eligible candidates even when
     // there is no static_limit. We always compute them; they are empty when there
     // are no oracle-eligible candidates or no qualifying assertions.

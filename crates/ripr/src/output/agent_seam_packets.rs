@@ -2522,19 +2522,22 @@ fn explicit_external_observer_target(test: &RelatedTestGrip) -> bool {
 }
 
 fn external_language_for_related_test(test: &RelatedTestGrip) -> Option<&'static str> {
-    match test
+    let extension = test
         .file
         .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("ts" | "tsx") => Some("typescript"),
-        Some("js" | "jsx" | "mjs" | "cjs") => Some("javascript"),
-        Some("py") => Some("python"),
-        Some("rb") => Some("ruby"),
-        Some("java") => Some("java"),
-        _ => None,
+        .and_then(|extension| extension.to_str())?;
+    // #4116: the TS/JS family consumes the shared extension authority, so
+    // .mts/.cts label typescript and .mjs/.cjs label javascript instead of
+    // falling through to unlabeled.
+    match crate::analysis::ts_js_source_kind(&extension.to_ascii_lowercase()) {
+        Some(crate::analysis::TsJsSourceKind::TypeScript) => Some("typescript"),
+        Some(crate::analysis::TsJsSourceKind::JavaScript) => Some("javascript"),
+        None => match extension.to_ascii_lowercase().as_str() {
+            "py" => Some("python"),
+            "rb" => Some("ruby"),
+            "java" => Some("java"),
+            _ => None,
+        },
     }
 }
 
@@ -3423,6 +3426,41 @@ mod tests {
             return Err(format!(
                 "cross-language-unresolved entry must not enter the packet queue: {json}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn external_language_labels_cover_modern_ts_js_extensions() -> Result<(), String> {
+        // #4116: .mts/.cts must label typescript and .mjs/.cjs javascript
+        // through the shared extension authority; near-misses stay
+        // unlabeled. The expected labels are pinned here as a removal
+        // control, not read back from the authority.
+        let base_test = weakly_gripped_classified().evidence.related_tests[0].clone();
+        let cases = [
+            ("ts", Some("typescript")),
+            ("tsx", Some("typescript")),
+            ("mts", Some("typescript")),
+            ("cts", Some("typescript")),
+            ("js", Some("javascript")),
+            ("jsx", Some("javascript")),
+            ("mjs", Some("javascript")),
+            ("cjs", Some("javascript")),
+            ("py", Some("python")),
+            ("mt", None),
+            ("mjsx", None),
+            ("ctsx", None),
+        ];
+
+        for (extension, expected) in cases {
+            let mut test = base_test.clone();
+            test.file = PathBuf::from(format!("tests/pricing.{extension}"));
+            let actual = external_language_for_related_test(&test);
+            if actual != expected {
+                return Err(format!(
+                    ".{extension}: expected language {expected:?}, got {actual:?}"
+                ));
+            }
         }
         Ok(())
     }
