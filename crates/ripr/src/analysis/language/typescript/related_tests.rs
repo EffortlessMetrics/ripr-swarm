@@ -30,6 +30,11 @@ pub(crate) struct ReExportIndex {
 impl ReExportIndex {
     /// Construct an empty index (no re-export tracing).
     /// Used by unit-test callers that do not exercise the re-export path.
+    ///
+    /// Test-only: production callers (the live pipeline and the mock-path
+    /// collector) always thread the real index through, so an empty index is
+    /// never constructed outside `cfg(test)`.
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self::default()
     }
@@ -42,16 +47,21 @@ impl ReExportIndex {
     /// star-re-exports (`export * from`) and non-relative sources are ignored
     /// (fail-closed).
     ///
+    /// `sources` is the Phase-1 workspace source cache: every file is read at
+    /// most once per analysis run. Files absent from the cache (unreadable or
+    /// over the read caps) are skipped here; their limitation disclosure is
+    /// owned by the read pipeline.
+    ///
     /// `alias_map` is forwarded to `normalized_relative_import_module` so that
     /// tsconfig.json-aliased sources (e.g. `@/owner`) can be followed through
     /// re-exports when `resolve_tsconfig_paths` is enabled.
     pub(crate) fn build(
         workspace_files: &[PathBuf],
+        sources: &HashMap<PathBuf, String>,
         workspace_root: &Path,
         alias_map: Option<&TsAliasMap>,
         is_test: impl Fn(&Path) -> bool,
     ) -> Self {
-        use oxc_allocator::Allocator;
         use oxc_parser::Parser;
 
         let mut entries: HashMap<(String, String), (String, String)> = HashMap::new();
@@ -59,54 +69,69 @@ impl ReExportIndex {
             if is_test(relative) {
                 continue;
             }
-            let absolute = workspace_root.join(relative);
-            let Ok(source) = std::fs::read_to_string(&absolute) else {
+            let Some(source) = sources.get(relative) else {
                 continue;
             };
-            let allocator = Allocator::default();
-            let ret = Parser::new(&allocator, &source, source_type_for(relative)).parse();
-            if !ret.errors.is_empty() {
-                continue;
-            }
-            // intermediate module path (normalized, no extension)
-            let intermediate_module = normalized_module_path(relative);
-            for stmt in &ret.program.body {
-                let Statement::ExportNamedDeclaration(export) = stmt else {
-                    continue;
-                };
-                if export.declaration.is_some() {
-                    continue;
-                }
-                let Some(re_source) = &export.source else {
-                    continue;
-                };
-                let source_str = re_source.value.to_string();
-                // Resolve the source module relative to the intermediate file's dir.
-                // Pass alias_map so tsconfig-aliased paths can be followed.
-                let Some(resolved) = normalized_relative_import_module(
-                    relative,
-                    &source_str,
-                    alias_map,
-                    Some(workspace_root),
-                ) else {
-                    continue;
-                };
-                for specifier in &export.specifiers {
-                    if specifier.export_kind == ImportOrExportKind::Type {
-                        continue;
+            // Parse on the guarded large-stack worker (#4101): the recursive
+            // oxc parser must not run on the caller's stack, and an
+            // over-budget source is skipped exactly like a parse error.
+            let worker_root = workspace_root.to_path_buf();
+            let worker_alias = alias_map.cloned();
+            let Ok(file_entries) = parse_on_worker(
+                relative.as_path(),
+                source.as_str(),
+                move |relative, source, allocator| {
+                    let ret = Parser::new(allocator, source, source_type_for(relative)).parse();
+                    if !ret.errors.is_empty() {
+                        return Vec::new();
                     }
-                    let Some(original_name) = module_export_name_text(&specifier.local) else {
-                        continue;
-                    };
-                    let exported_name = module_export_name_text(&specifier.exported)
-                        .unwrap_or_else(|| original_name.clone());
-                    // key: what the test would import from the intermediate file
-                    let key = (intermediate_module.clone(), exported_name);
-                    // value: what the owner file exports under its original name
-                    entries
-                        .entry(key)
-                        .or_insert_with(|| (original_name, resolved.clone()));
-                }
+                    // intermediate module path (normalized, no extension)
+                    let intermediate_module = normalized_module_path(relative);
+                    let mut file_entries = Vec::new();
+                    for stmt in &ret.program.body {
+                        let Statement::ExportNamedDeclaration(export) = stmt else {
+                            continue;
+                        };
+                        if export.declaration.is_some() {
+                            continue;
+                        }
+                        let Some(re_source) = &export.source else {
+                            continue;
+                        };
+                        let source_str = re_source.value.to_string();
+                        // Resolve the source module relative to the intermediate file's dir.
+                        // Pass alias_map so tsconfig-aliased paths can be followed.
+                        let Some(resolved) = normalized_relative_import_module(
+                            relative,
+                            &source_str,
+                            worker_alias.as_ref(),
+                            Some(worker_root.as_path()),
+                        ) else {
+                            continue;
+                        };
+                        for specifier in &export.specifiers {
+                            if specifier.export_kind == ImportOrExportKind::Type {
+                                continue;
+                            }
+                            let Some(original_name) = module_export_name_text(&specifier.local)
+                            else {
+                                continue;
+                            };
+                            let exported_name = module_export_name_text(&specifier.exported)
+                                .unwrap_or_else(|| original_name.clone());
+                            // key: what the test would import from the intermediate file
+                            let key = (intermediate_module.clone(), exported_name);
+                            // value: what the owner file exports under its original name
+                            file_entries.push((key, (original_name, resolved.clone())));
+                        }
+                    }
+                    file_entries
+                },
+            ) else {
+                continue;
+            };
+            for (key, value) in file_entries {
+                entries.entry(key).or_insert_with(|| value);
             }
         }
         Self { entries }
@@ -806,10 +831,18 @@ pub(crate) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
 }
 
 fn has_call_boundary(body_text: &str, idx: usize) -> bool {
-    body_text[..idx]
-        .chars()
-        .next_back()
-        .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+    let prefix = &body_text[..idx];
+    let Some(ch) = prefix.chars().next_back() else {
+        return true;
+    };
+    if is_javascript_identifier_char(ch) {
+        return false;
+    }
+    if ch != '.' {
+        return true;
+    }
+    // `...name(` is a spread call. `obj.name(` and `obj?.name(` stay member access.
+    prefix.ends_with("...")
 }
 
 fn owner_name_shadowed_by_unrelated_import(
@@ -860,7 +893,7 @@ fn import_references_owner_call(
         && contains_call_name(body_text, &import.local)
 }
 
-fn import_source_matches_owner(
+pub(crate) fn import_source_matches_owner(
     import: &TypeScriptImport,
     test_file: &Path,
     owner: &TypeScriptOwner,
@@ -921,7 +954,7 @@ fn normalized_module_path(path: &Path) -> String {
 }
 
 fn strip_typescript_module_extension(path: &str) -> String {
-    for suffix in [".tsx", ".ts", ".jsx", ".js"] {
+    for suffix in [".tsx", ".mts", ".cts", ".ts", ".jsx", ".mjs", ".cjs", ".js"] {
         if let Some(stripped) = path.strip_suffix(suffix) {
             return stripped.to_string();
         }
@@ -1158,4 +1191,30 @@ fn similarity_key_contains(haystack: &str, needle: &str) -> bool {
             .strip_suffix(needle)
             .is_some_and(|prefix| prefix.ends_with('_'))
         || haystack.contains(&format!("_{needle}_"))
+}
+
+#[cfg(test)]
+mod spread_call_boundary_tests {
+    use super::contains_call_name;
+
+    #[test]
+    fn spread_is_a_call_and_member_access_is_not() -> Result<(), String> {
+        let cases = [
+            ("[...steps(4)]", true),
+            ("Array.from(steps(4))", true),
+            ("steps(4)", true),
+            ("obj.steps(4)", false),
+            ("obj?.steps(4)", false),
+            ("notsteps(4)", false),
+            ("// steps(4)", false),
+            ("const steps = 1; steps(4)", true),
+        ];
+        for (text, expected) in cases {
+            let actual = contains_call_name(text, "steps");
+            if actual != expected {
+                return Err(format!("{text}: expected call={expected}, got {actual}"));
+            }
+        }
+        Ok(())
+    }
 }

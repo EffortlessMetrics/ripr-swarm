@@ -787,6 +787,11 @@ fn create_external_doctor_fixture(root: &Path) -> Result<PathBuf, String> {
         "pub fn fixture_marker() -> &'static str { \"ok\" }\n",
     )
     .map_err(|err| format!("write external doctor fixture source failed: {err}"))?;
+    // Since #3988/#4007 `ripr doctor` fails outside a Git work tree instead
+    // of passing, the external fixture must be one: a bare `git init` (no
+    // commit needed for work-tree detection) with the same hardened git
+    // environment the other external-fixture commands use.
+    run_git_output_in_dir(root, &["init", "--quiet"])?;
     Ok(root.to_path_buf())
 }
 
@@ -3052,12 +3057,12 @@ fn run_command_path(program: &Path, args: &[&str]) -> Result<CommandResult, Stri
 mod tests {
     use super::{
         EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
-        ReleaseReadinessCheck, ReleaseReadinessReport, extension_version_check_from,
-        extract_packaged_crate, missing_required_needles, package_version,
-        parse_release_readiness_args, read_crate_version, readiness_check, release_readiness_json,
-        release_readiness_markdown, release_readiness_status, validate_binary_identity,
-        validate_doctor_result, validate_installed_version, validate_package_entry,
-        vsix_start_current_repair_command_present,
+        ReleaseReadinessCheck, ReleaseReadinessReport, create_external_doctor_fixture,
+        extension_version_check_from, extract_packaged_crate, missing_required_needles,
+        package_version, parse_release_readiness_args, read_crate_version, readiness_check,
+        release_readiness_json, release_readiness_markdown, release_readiness_status,
+        validate_binary_identity, validate_doctor_result, validate_installed_version,
+        validate_package_entry, vsix_start_current_repair_command_present,
     };
     use serde_json::Value;
     use std::fs;
@@ -4152,5 +4157,23 @@ mod tests {
             return Err("expected check id in markdown".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn external_doctor_fixture_is_a_git_work_tree() -> Result<(), String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("clock error: {err}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-doctor-fixture-{stamp}"));
+        let fixture = create_external_doctor_fixture(&root)?;
+        let git_head = fixture.join(".git").join("HEAD");
+        let result = if git_head.is_file() {
+            Ok(())
+        } else {
+            Err("external doctor fixture must be a git work tree since #3988/#4007 makes doctor fail outside one".to_string())
+        };
+        let _ = fs::remove_dir_all(&root);
+        result
     }
 }

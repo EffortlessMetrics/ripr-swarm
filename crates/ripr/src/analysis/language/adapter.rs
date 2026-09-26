@@ -31,7 +31,8 @@ pub(crate) struct LanguageDiffResult {
     pub(crate) candidate_line_count: usize,
     /// Per-output-language breakdown of `changed_files` for adapters that
     /// cover more than one output language — the TypeScript adapter handles
-    /// `.ts/.tsx` (typescript) and `.js/.jsx` (javascript) (#2103 review).
+    /// `.ts/.tsx/.mts/.cts` (typescript) and `.js/.jsx/.mjs/.cjs`
+    /// (javascript) (#2103 review).
     /// Empty when the adapter covers exactly one language; the pipeline then
     /// attributes `changed_files` to the adapter's own language.
     pub(crate) changed_files_by_language: Vec<(super::LanguageId, usize)>,

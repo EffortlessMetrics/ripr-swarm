@@ -415,7 +415,10 @@ fn invoke_perl_lsp_producer(
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
-    let mut child = command.spawn().map_err(|e| {
+    // The shared owned-subprocess authority (#3803) owns containment: on
+    // Windows the exporter is assigned to a Job Object before its user code
+    // runs, so the timeout/cancellation kill below terminates the whole tree.
+    let mut child = crate::process_owner::OwnedProcess::spawn(command).map_err(|e| {
         format!(
             "failed to spawn Perl facts exporter at `{}`: {e}. Configure [perl].executable or \
              put `perl-ripr-facts` on PATH.",
@@ -474,6 +477,14 @@ fn invoke_perl_lsp_producer(
         crate::git::ChildWait::WaitFailed(err) => {
             // The shared wait already terminated + reaped the child.
             Err(format!("Perl facts exporter failed while waiting: {err}"))
+        }
+        crate::git::ChildWait::CleanupFailed(cleanup) => {
+            // The wait ended abnormally and the terminate-and-reap could
+            // not be confirmed: the exporter or its tree may still be
+            // running, so the partial packet is discarded and never
+            // renamed.
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(cleanup)
         }
     }
 }

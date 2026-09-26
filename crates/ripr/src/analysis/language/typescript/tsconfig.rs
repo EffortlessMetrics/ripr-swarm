@@ -5,7 +5,8 @@
 //! - Only `compilerOptions.baseUrl` and `compilerOptions.paths` are read.
 //! - `extends` and `references` are NOT followed.
 //! - Resolution succeeds ONLY when a specifier matches a SINGLE existing
-//!   workspace file (.ts/.tsx/.js/.jsx).  Zero or >1 matches → `None`.
+//!   workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/.mjs/.cjs).
+//!   Zero or >1 matches → `None`.
 //! - Exact keys win; otherwise the longest matching prefix before `*` wins.
 //! - Tied longest prefixes and unsupported winning templates → `None`.
 //! - Multi-entry value arrays (more than one candidate template) → `None`.
@@ -21,6 +22,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+
+use super::bounded_read::read_config_capped;
 
 // ── Wire types for parsing ────────────────────────────────────────────────────
 
@@ -87,7 +90,8 @@ impl TsAliasMap {
     /// 3. The matched value array has exactly one entry.
     /// 4. The value template has at most one `*`.
     /// 5. After substituting the captured `*`, the candidate path resolves to
-    ///    EXACTLY ONE existing workspace file (.ts/.tsx/.js/.jsx).
+    ///    EXACTLY ONE existing workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/
+    ///    .mjs/.cjs).
     pub(crate) fn resolve(&self, specifier: &str) -> Option<PathBuf> {
         if specifier.starts_with("./") || specifier.starts_with("../") {
             return None; // relative paths are handled by the normal resolver
@@ -136,7 +140,7 @@ impl TsAliasMap {
     /// Returns `None` if zero files or more than one file match.
     fn unique_file_for(&self, candidate_base: &str) -> Option<PathBuf> {
         let base_dir = self.root.join(self.base_url.trim_matches('/'));
-        let extensions = [".ts", ".tsx", ".js", ".jsx"];
+        let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
         let mut found: Vec<PathBuf> = Vec::new();
         for ext in &extensions {
             let candidate = base_dir.join(format!("{candidate_base}{ext}"));
@@ -166,16 +170,42 @@ impl TsAliasMap {
 /// - `compilerOptions` absent.
 /// - `baseUrl` absent.
 /// - `extends` or `references` present (single-hop only — do NOT follow).
+///
+/// Test-only convenience over [`load_alias_map_with_read_error`] for the
+/// existing fixture callers; production surfaces read outcomes through the
+/// `_with_read_error` variant.
+#[cfg(test)]
 pub(crate) fn load_alias_map(root: &Path) -> Option<TsAliasMap> {
+    load_alias_map_with_read_error(root).0
+}
+
+/// Like [`load_alias_map`], but also reports the config path and read error
+/// when reading the first existing config file fails.
+///
+/// The error is preserved so `analyze_diff` can surface size-limit outcomes
+/// (`OverFileLimit` / `OverWorkspaceBudget`) as named limitations instead of
+/// failing silently closed. Plain IO failures stay in the second slot too;
+/// disclosure for those is owned by the read-error lane, which filters on
+/// `CappedReadError::is_size_limit`.
+pub(crate) fn load_alias_map_with_read_error(
+    root: &Path,
+) -> (
+    Option<TsAliasMap>,
+    Option<(PathBuf, super::bounded_read::CappedReadError)>,
+) {
     for filename in &["tsconfig.json", "jsconfig.json"] {
         let path = root.join(filename);
         if !path.is_file() {
             continue;
         }
-        let text = std::fs::read_to_string(&path).ok()?;
-        return parse_alias_map(root, &text);
+        // Capped read: a read failure fail-closes the alias map; size-limit
+        // outcomes are disclosed by the caller through the second slot.
+        return match read_config_capped(&path) {
+            Ok(text) => (parse_alias_map(root, &text), None),
+            Err(err) => (None, Some((path, err))),
+        };
     }
-    None
+    (None, None)
 }
 
 fn parse_alias_map(root: &Path, text: &str) -> Option<TsAliasMap> {
@@ -233,7 +263,7 @@ fn parse_alias_map(root: &Path, text: &str) -> Option<TsAliasMap> {
 
 /// Strip the file extension from a path string, preserving the rest.
 fn strip_ts_ext(s: &str) -> String {
-    for ext in &[".tsx", ".ts", ".jsx", ".js"] {
+    for ext in &[".tsx", ".mts", ".cts", ".ts", ".jsx", ".mjs", ".cjs", ".js"] {
         if let Some(stripped) = s.strip_suffix(ext) {
             return stripped.to_string();
         }
@@ -297,6 +327,25 @@ mod tests {
             r#"{"extends":"./base","compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
         );
         assert!(load_alias_map(&root).is_none());
+    }
+
+    #[test]
+    fn malformed_tsconfig_returns_none_and_blocks_jsconfig_fallback() {
+        // A malformed tsconfig.json fails closed: `load_alias_map` returns
+        // None and must NOT fall through to a well-formed jsconfig.json —
+        // silently honoring a different config than the one the project
+        // declares would manufacture alias evidence.
+        let root = temp_dir("malformed-tsconfig");
+        write(&root, "tsconfig.json", "{ not valid json");
+        write(
+            &root,
+            "jsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        assert!(
+            load_alias_map(&root).is_none(),
+            "malformed tsconfig.json must fail closed and block the jsconfig.json fallback"
+        );
     }
 
     #[test]

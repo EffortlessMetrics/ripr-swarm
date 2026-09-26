@@ -946,6 +946,14 @@ The evidence-first fields are additive in schema `0.2`:
       confirms the cross-package exclusion by comparing candidates with vs.
       without the package-local filter. Only emitted when `workspace_root` is
       `Some` (i.e. in production, not in unit tests without a workspace root).
+    - `typescript_path_alias_unresolved` — fired (RIPR-SPEC-0099) when a related
+      test imports a symbol name-matched to the owner from a NON-RELATIVE
+      specifier (`@/...`, `#...`, bare package name) that the adapter could not
+      resolve to a unique workspace file, so no credit was given. The real
+      producer is `static_limit.rs::named_limitations_for_alias_unresolved`;
+      it requires all three conditions (non-relative import, imported name
+      matches the owner name, and the import did not credit the owner) and is
+      classification-neutral (additive disclosure only).
   - `typescript_limitation_sample: <name> at <file>:<line>` — additive; the
     `file:line` of the real AST evidence that triggered the named limitation.
   - `typescript_limitation_why: <name> — <why>` — additive; human-readable
@@ -1194,7 +1202,7 @@ JSON fields:
   `typescript_preview_card.repair_packet_ready == true` (i.e., the full RIPR-SPEC-0087
   contract is satisfied). It is an advisory repair-work packet projected via the shared
   renderer from the GapRecord computed by `typescript_gap_record_for`. It carries
-  `schema_version` (`"0.3"`), `source` (`"typescript_preview_projection"`),
+  `schema_version` (`"0.4"`), `source` (`"typescript_preview_projection"`),
   `gap_id`, `canonical_gap_id`, `language`, `language_status` (`"preview"`),
   `authority_boundary` (`"preview_advisory_only"`), optional `file`, optional `line`,
   optional `owner`, `verify_command`, optional `receipt_command`, `allowed_edit_surface[]`,
@@ -1208,6 +1216,21 @@ JSON fields:
   When absent, the human output contains a named `status: not actionable` limitation
   section instead. This field is RIPR-SPEC-0088 §2.2. It is not a gate, badge, or
   public repair authority; authority boundary remains `preview_advisory_only`.
+  `assertion_shape` derivation (issue #4105): the shape reuses the observed
+  oracle expression (`typescript_oracle_observed`) only when the observed call
+  input reaches the named missing discriminator, or when that reachability is
+  not statically decidable (non-literal boundaries such as `amount >= threshold`,
+  multi-argument calls without signature evidence, escaped string literals, or
+  callees that do not resolve to the owner). When the observed call input
+  provably does NOT reach the boundary — for example the discriminator is
+  `user.length == 3` while the observed call is `login('alice')` (length 5) —
+  the shape becomes an explicit boundary placeholder,
+  `login(/* boundary input for user.length == 3 */)`, and the packet fails
+  closed: `repair_packet_ready` stays `false`, `typescript_repair_packet` is
+  not emitted, and the human limitation section shows the shape as
+  `target shape (not delegatable)` together with a stop condition forbidding
+  reuse of the observed call input. A complete packet must not instruct a
+  duplicate of a non-discriminating assertion.
 - `perl_preview_card` is an additive optional object for Perl preview findings
   that already have strict fact-packet evidence, canonical gap identity,
   related-test evidence, missing discriminator evidence, verify-command
@@ -1614,6 +1637,13 @@ suppression.
 - `unknown`
 
 `static_limit_kind` values:
+
+TypeScript exception: a TypeScript static limit sets `gap_state:
+static_limitation` and blocks the repair packet (`repair_packet_ready:
+false`) but does NOT suppress exposure classification — the finding keeps
+its independently-derived classification (e.g. `exposed` with
+`typescript_dynamic_assertion_unresolved` coexisting, as pinned by
+fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 
 - `dynamic_dispatch`
 - `metaprogramming`
@@ -6967,7 +6997,10 @@ Field contract:
   `null` for one-sided new/resolved gaps.
 - `seam.grip_class` - one-sided grip class for `new` or `resolved` gaps, or
   `null` for matched seams.
-- `test_changed` - optional focused test name supplied by the caller.
+- `test_changed` - optional focused test the edit changed. `ripr agent receipt`
+  takes it from `--test-changed`. The after phase of `ripr agent repair` sets it
+  to the attempt's selected test file when the edit cage is compliant and
+  recorded that file changing, and leaves it null otherwise.
 - `verification.commands_run` - optional commands supplied by the caller. The
   receipt records them; it does not run them.
 - `summary.remaining_gap` / `summary.next_recommendation` - static advisory

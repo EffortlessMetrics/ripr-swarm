@@ -534,6 +534,43 @@
         "no support-tier promotion"
       ],
       "reason": "Computed dispatch syntax is a named limitation until the target behavior is resolved safely."
+    },
+    {
+      "id": "exposed_with_dynamic_assertion_named_limitation",
+      "source_fixture": "fixtures/ts_dynamic_oracle",
+      "source_finding_id": "probe:src_pricing.ts:typescript_preview:0335115b",
+      "language": "typescript",
+      "language_status": "preview",
+      "risk_class": "exposed finding coexisting with a named oracle limitation",
+      "evidence_kind": "named_oracle_limitation",
+      "oracle_kind": "exact_value",
+      "gap_state": "already_observed",
+      "actionability_category": "strong_oracle_observed",
+      "static_limit_kind": null,
+      "disposition": "candidate_future_support",
+      "repair_packet_ready": false,
+      "authority_boundary": "preview_advisory_only",
+      "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted",
+      "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
+      "future_support": "dynamic-argument resolution must bind the non-literal matcher argument to a concrete expected value before the named limitation can clear",
+      "must_remain_non_actionable": true,
+      "required_evidence_fragment": "typescript_limitation: typescript_dynamic_assertion_unresolved",
+      "raw_evidence_refs": [
+        "fixtures/ts_dynamic_oracle/expected/check.json#probe:src_pricing.ts:typescript_preview:0335115b"
+      ],
+      "non_claims": [
+        "no provider calls",
+        "no source edits",
+        "no generated tests",
+        "no runtime Jest/Vitest execution",
+        "no mutation execution",
+        "no default gates",
+        "no public badge contribution",
+        "no baseline authority",
+        "no RIPR Zero authority",
+        "no support-tier promotion"
+      ],
+      "reason": "An exposed classification may coexist with a named oracle limitation; the limitation blocks the repair packet but does not suppress the independently-derived exposure classification."
     }
   ]
 }

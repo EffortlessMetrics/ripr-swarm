@@ -43,7 +43,10 @@ pub(crate) use diff::{
 /// route may hardcode a base ref or rebuild the diff argv inline.
 pub use diff::{load_diff_range, resolve_default_base_commit};
 pub(crate) use facts::validated_file_wide_harness_targets;
-pub(crate) use language::{DIFF_SCOPE_OVERSIZED_PREFIX, is_diff_scope_oversized};
+pub(crate) use language::{
+    DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
+    TsJsSourceKind, is_diff_scope_oversized, is_ts_js_source_extension, ts_js_source_kind,
+};
 pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
     PartialDiffStopReason,

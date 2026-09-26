@@ -61,8 +61,20 @@ mod windows_paths {
     }
 }
 
+/// Encode a local path as a `file:` URI. The inverse of
+/// [`normalized_file_uri_path`], so every admitted `Ok` round-trips through the
+/// shared decoder. A UNC, extended-length (`\\?\...`), or device (`\\.\...`)
+/// spelling normalizes to a doubled leading separator, which this local-only
+/// decoder rejects; refuse it here at emission rather than publishing a URI
+/// that would later read as no file at all.
 pub(super) fn file_uri_for_path(path: &Path) -> Result<Uri, String> {
     let normalized = path.to_string_lossy().replace('\\', "/");
+    if normalized.starts_with("//") {
+        return Err(format!(
+            "refusing to build a local file URI for the network-share path {}",
+            path.display()
+        ));
+    }
     let encoded = encode_uri_path(&normalized);
     let uri = if encoded.starts_with('/') {
         format!("file://{encoded}")
@@ -81,7 +93,15 @@ pub(super) fn path_from_file_uri(uri: &Uri) -> Option<PathBuf> {
 /// Existing paths are canonicalized so symlink/junction escapes are rejected;
 /// missing paths fall back to normalized lexical containment for diagnostics
 /// and command payloads that refer to a future file.
+///
+/// A relative candidate that is really raw URI text is refused outright. When
+/// [`normalized_file_uri_path`] rejects a URI, `state::document_path` keeps the
+/// wire string as the document's path; that string begins with a scheme, so it
+/// is relative and would otherwise join under every root and read as contained.
 pub(super) fn path_is_within_root(root: &Path, path: &Path) -> bool {
+    if !path.is_absolute() && carries_uri_separator(path) {
+        return false;
+    }
     let candidate = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -90,6 +110,20 @@ pub(super) fn path_is_within_root(root: &Path, path: &Path) -> bool {
     let root = canonical_or_normalized(root);
     let candidate = canonical_or_normalized(&candidate);
     paths_equal_or_below(&root, &candidate)
+}
+
+/// Whether a relative candidate's first component ends in a URI scheme
+/// separator (`file:`). That is the shape of a raw-wire URI fallback, not of a
+/// file path: `:` cannot appear in a Windows filename at all, and a
+/// scheme-shaped first segment names a URI the decoder refused rather than a
+/// file under the root. Unix does permit `:` inside a filename, so this is a
+/// deliberate fail-closed lexical guard rather than a portable statement about
+/// Unix path syntax.
+fn carries_uri_separator(path: &Path) -> bool {
+    match path.components().next() {
+        Some(Component::Normal(value)) => value.to_string_lossy().ends_with(':'),
+        _ => false,
+    }
 }
 
 pub(super) fn file_uri_is_within_root(root: &Path, uri: &Uri) -> bool {
@@ -119,6 +153,14 @@ pub(super) fn file_uris_match(left: &Uri, right: &Uri) -> bool {
 /// An empty authority and `localhost` identify the same local path. Other
 /// authorities are unsupported here: never reinterpret a host as a relative
 /// path under the workspace, and never perform DNS or network-share discovery.
+///
+/// This is the single admission authority for the LSP side: workspace-root
+/// selection, file identity ([`file_uris_match`]), containment
+/// ([`file_uri_is_within_root`]), and the display path kept by
+/// `state::document_path` all resolve through it. `None` therefore means "not a
+/// local file this server supports", and callers must fail closed rather than
+/// re-derive a path from the wire string. [`file_uri_for_path`] is the matching
+/// encoder and refuses the paths whose encoding this decoder would reject.
 fn normalized_file_uri_path(uri: &Uri) -> Option<String> {
     let (scheme, rest) = uri.as_str().split_once(':')?;
     if !scheme.eq_ignore_ascii_case("file") || rest.contains(['?', '#']) {
@@ -577,6 +619,68 @@ mod tests {
             assert!(!file_uri_is_within_root(&root, &uri), "{value}");
         }
         Ok(())
+    }
+
+    #[test]
+    fn file_uri_for_path_round_trips_local_paths_and_refuses_network_shares() -> Result<(), String>
+    {
+        // The no-network-share policy is enforced at emission too: a doubled
+        // leading separator has no admitted local `file:` form, so the encoder
+        // must refuse it instead of emitting a URI the shared decoder rejects.
+        for path in [
+            r"\\remote.example\share\src\lib.rs",
+            r"//remote.example/share/src/lib.rs",
+            r"\\?\UNC\remote.example\share\src\lib.rs",
+            r"\\.\UNC\remote.example\share\src\lib.rs",
+        ] {
+            assert!(
+                file_uri_for_path(Path::new(path)).is_err(),
+                "network-share path must be refused, not encoded: {path}"
+            );
+        }
+        // Every local path the encoder accepts must still decode through the
+        // shared authority, on drive-absolute, rooted, and relative spellings.
+        let drive_absolute = ["C:", "workspace", "ripr", "src", "lib.rs"].join("/");
+        let drive_absolute_lower = drive_absolute.to_ascii_lowercase();
+        for path in [
+            "/workspace/ripr/src/lib.rs",
+            drive_absolute.as_str(),
+            drive_absolute_lower.as_str(),
+            "workspace/ripr/src/lib.rs",
+            "/workspace/ripr fixtures/a#b?.rs",
+        ] {
+            let uri = file_uri_for_path(Path::new(path))
+                .map_err(|err| format!("expected a local file URI for {path}: {err}"))?;
+            assert!(
+                path_from_file_uri(&uri).is_some(),
+                "encoder emitted a URI the shared decoder rejects: {path} -> {}",
+                uri.as_str()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn path_is_within_root_refuses_relative_uri_text_fallbacks() {
+        let root = Path::new("/workspace/ripr");
+        for fallback in [
+            "file://remote.example/workspace/ripr/src/lib.rs",
+            "FILE://LOCALHOST/workspace/ripr/src/lib.rs?revision=1",
+            "file:/workspace/ripr/src/lib.rs#symbol",
+            "file:////remote.example/share/lib.rs",
+        ] {
+            let path = Path::new(fallback);
+            assert!(
+                path.is_relative(),
+                "expected a relative fallback: {fallback}"
+            );
+            assert!(
+                !path_is_within_root(root, path),
+                "rejected-URI fallback must not read as contained: {fallback}"
+            );
+        }
+        // A genuine workspace-relative source path still resolves under the root.
+        assert!(path_is_within_root(root, Path::new("src/lib.rs")));
     }
 
     #[test]

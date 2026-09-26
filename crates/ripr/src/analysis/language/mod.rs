@@ -37,7 +37,10 @@ pub(crate) use id::LanguageId;
 pub(crate) use perl::PerlAdapter;
 #[cfg(feature = "lang-python")]
 pub(crate) use python::{PythonAdapter, detect_python_test_framework};
-pub(crate) use router::route;
+pub(crate) use router::{
+    JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS, TsJsSourceKind,
+    is_ts_js_source_extension, route, ts_js_source_kind,
+};
 pub(crate) use rust::{
     DIFF_SCOPE_OVERSIZED_PREFIX, RustAdapter, changed_let_binding, is_diff_scope_oversized,
     mask_rust_comments_and_strings,
@@ -88,6 +91,23 @@ mod tests {
         );
         assert_eq!(
             route(Path::new("src/index.jsx")),
+            Some(LanguageId::TypeScript)
+        );
+        // Modern ESM/CJS extensions route to the TypeScript adapter.
+        assert_eq!(
+            route(Path::new("src/index.mts")),
+            Some(LanguageId::TypeScript)
+        );
+        assert_eq!(
+            route(Path::new("src/index.cts")),
+            Some(LanguageId::TypeScript)
+        );
+        assert_eq!(
+            route(Path::new("src/index.mjs")),
+            Some(LanguageId::TypeScript)
+        );
+        assert_eq!(
+            route(Path::new("src/index.cjs")),
             Some(LanguageId::TypeScript)
         );
         assert_eq!(route(Path::new("scripts/run.py")), Some(LanguageId::Python));

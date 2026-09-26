@@ -1715,6 +1715,13 @@ fn gate_evaluate_exception_policy_missing_ledger_is_config_error() -> Result<(),
         &out.display().to_string(),
     ]);
     assert_failure(&output);
+    // A config error means the evaluation could not complete: exit 2, the
+    // same code as any other usage or operational failure.
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a config error must exit with code 2"
+    );
 
     let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
     assert!(
@@ -1746,6 +1753,13 @@ fn gate_evaluate_complete_gap_ledger_blocks_only_in_explicit_blocking_mode() -> 
         &out.display().to_string(),
     ]);
     assert_failure(&output);
+    // A blocked gate decision is a successful evaluation reaching its blocking
+    // decision: the process exits 3, never the could-not-complete code 2.
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "a blocked gate decision must exit with code 3"
+    );
 
     let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
     let value: serde_json::Value = serde_json::from_str(&decision)
@@ -3837,6 +3851,7 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         receipt["repair_attempt"]["edit_cage_verdict"]["status"],
         "compliant"
     );
+    assert_eq!(receipt["test_changed"], "tests/pricing.rs");
     let attempts = std::fs::read_dir(root.join("target/ripr/repair-attempts"))?
         .filter_map(Result::ok)
         .filter(|entry| entry.path().is_dir())
@@ -4719,6 +4734,11 @@ fn agent_repair_admits_a_focused_test_committed_between_the_phases()
     );
     let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
     assert_failure(&after);
+    assert_eq!(
+        after.status.code(),
+        Some(3),
+        "a diverged HEAD is a typed refusal, not an operational failure"
+    );
     let stderr = String::from_utf8_lossy(&after.stderr);
     assert!(stderr.contains("does not descend from"), "{stderr}");
     assert!(
@@ -4734,6 +4754,45 @@ fn agent_repair_admits_a_focused_test_committed_between_the_phases()
     let rerun = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
     assert_success(&rerun);
     assert_eq!(repair_receipt(&root)?["status"], "advisory");
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// An operational error after the after phase selected its attempt (here the
+/// retained packet is missing) is an ordinary failure, not a typed refusal:
+/// it maps to exit code 2 even though the attempt was already selected.
+#[test]
+fn agent_repair_operational_error_after_attempt_selection_stays_failure()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unbuilt_repair_fixture("agent-repair-missing-retained-packet")?;
+    let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
+    assert_success(&before);
+    let (attempt_id, manifest) = sole_repair_attempt(&root)?;
+    let packet_rel = manifest["artifacts"]
+        .as_array()
+        .and_then(|artifacts| {
+            artifacts
+                .iter()
+                .find(|artifact| artifact["role"] == "agent_packet")
+        })
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("attempt manifest has no agent_packet artifact")?;
+    std::fs::remove_file(root.join(packet_rel))?;
+
+    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
+    assert_failure(&after);
+    assert_eq!(
+        after.status.code(),
+        Some(2),
+        "an unreadable retained packet is operational, not a typed refusal"
+    );
+    let stderr = String::from_utf8_lossy(&after.stderr);
+    assert!(
+        stderr.contains("canonicalize artifact") && stderr.contains("agent-packet.json"),
+        "precondition: the retained packet is unreadable:\n{stderr}"
+    );
+    let (_, manifest) = sole_repair_attempt(&root)?;
+    assert_eq!(manifest["state"], "awaiting_edit", "{manifest}");
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -13635,6 +13694,11 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
     // No test edit yet: agent verify refuses a pair without movement.
     let refused = repair_route_after(&root, &attempt_id);
     assert!(!refused.status.success(), "{refused:?}");
+    assert_eq!(
+        refused.status.code(),
+        Some(3),
+        "a no-movement verify refusal is a typed refusal, not an operational failure"
+    );
     let refused_stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
         refused_stderr.contains("no repository movement"),
@@ -14201,6 +14265,11 @@ fn agent_status_reports_the_after_phase_recovery_for_rewritten_history()
     // The after phase gives the same recovery.
     let refused = repair_route_after(&root, &attempt_id);
     assert_failure(&refused);
+    assert_eq!(
+        refused.status.code(),
+        Some(3),
+        "a diverged HEAD is a typed refusal, not an operational failure"
+    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains(&reset_sentence), "{stderr}");
     assert_eq!(
@@ -14243,6 +14312,11 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
 
     let refused = repair_route_after(&root, &attempt_id);
     assert_failure(&refused);
+    assert_eq!(
+        refused.status.code(),
+        Some(3),
+        "drifted analysis inputs are a typed refusal, not an operational failure"
+    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
         stderr.contains("ripr: analysis inputs changed after the before phase: Cargo.toml."),
@@ -14824,7 +14898,7 @@ fn producer_verify_packet(
 fn verify_execute_disposition(
     root: &Path,
     argv: &[&str],
-) -> Result<(serde_json::Value, bool), Box<dyn std::error::Error>> {
+) -> Result<(serde_json::Value, Option<i32>), Box<dyn std::error::Error>> {
     let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(root), argv)?;
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|err| {
         format!(
@@ -14833,7 +14907,7 @@ fn verify_execute_disposition(
             String::from_utf8_lossy(&output.stderr)
         )
     })?;
-    Ok((parsed, output.status.success()))
+    Ok((parsed, output.status.code()))
 }
 
 /// The end-to-end contract: a producer-generated packet executes through the
@@ -15131,11 +15205,12 @@ fn agent_verify_execute_refusals_are_typed_dispositions() -> Result<(), Box<dyn 
         ),
     ];
     for (label, argv, expected) in cases {
-        let (parsed, succeeded) = verify_execute_disposition(&root, &argv)?;
+        let (parsed, exit_code) = verify_execute_disposition(&root, &argv)?;
         assert_eq!(parsed["disposition"], expected, "{label}: {parsed}");
         assert_eq!(parsed["executed"], false, "{label} must not execute");
         assert_eq!(parsed["result_committed"], false, "{label}");
-        assert!(!succeeded, "{label} must exit nonzero");
+        // A typed refusal ran successfully to a blocking answer: exit 3, not 2.
+        assert_eq!(exit_code, Some(3), "{label} must exit with code 3");
     }
     // No refusal left a result behind.
     for name in [
@@ -15158,7 +15233,7 @@ fn agent_verify_execute_refusals_are_typed_dispositions() -> Result<(), Box<dyn 
 fn agent_verify_execute_reports_result_write_failure() -> Result<(), Box<dyn std::error::Error>> {
     let (root, _) = producer_verify_packet("verify-execute-write-failed")?;
     std::fs::write(root.join("result.json"), "existing-artifact")?;
-    let (parsed, succeeded) = verify_execute_disposition(
+    let (parsed, exit_code) = verify_execute_disposition(
         &root,
         &[
             "agent",
@@ -15177,7 +15252,12 @@ fn agent_verify_execute_reports_result_write_failure() -> Result<(), Box<dyn std
     // The observation happened; only the commit failed. Both facts are reported.
     assert_eq!(parsed["executed"], true);
     assert_eq!(parsed["result_committed"], false);
-    assert!(!succeeded, "an uncommitted result must exit nonzero");
+    // An uncommitted observation could not complete: it stays on exit code 2.
+    assert_eq!(
+        exit_code,
+        Some(2),
+        "an uncommitted result must exit with code 2"
+    );
     assert_eq!(
         std::fs::read_to_string(root.join("result.json"))?,
         "existing-artifact",
@@ -15273,7 +15353,7 @@ fn agent_verify_execute_refuses_a_coherent_whole_packet_forgery()
         serde_json::to_vec_pretty(&forged)?,
     )?;
 
-    let (parsed, succeeded) = verify_execute_disposition(
+    let (parsed, exit_code) = verify_execute_disposition(
         &root,
         &[
             "agent",
@@ -15293,7 +15373,8 @@ fn agent_verify_execute_refuses_a_coherent_whole_packet_forgery()
         "a coherent forgery must be refused: {parsed}"
     );
     assert_eq!(parsed["executed"], false);
-    assert!(!succeeded);
+    // A typed refusal maps to the decision exit code 3.
+    assert_eq!(exit_code, Some(3));
     assert!(!root.join("forged-result.json").exists());
     std::fs::remove_dir_all(&root)?;
     Ok(())
