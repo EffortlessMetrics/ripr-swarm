@@ -1226,10 +1226,11 @@ impl DocumentStore {
 ///   display string. It does not reach code actions, apply-edit, or any spawned
 ///   command payload; those are built from admitted `file_uri_for_path` output.
 ///
-/// The decoder also does not reject `..` segments, so an *admitted* absolute URI
-/// can still carry them and the read follows them. That route is pre-existing at
-/// the merge base and is tracked separately; this fallback's guard does not
-/// address it and is not claimed to.
+/// A `..` segment is refused by that decoder after percent-decoding, so an
+/// admitted absolute URI cannot carry one and the saved-content read cannot
+/// follow it. A URI that does carry `..` takes this same relative wire-string
+/// fallback. Containment still refuses that fallback; this function does not
+/// claim the fallback read itself is rooted in the workspace.
 fn document_path(uri: &Uri) -> PathBuf {
     path_from_file_uri(uri).unwrap_or_else(|| PathBuf::from(uri.as_str()))
 }
@@ -1524,6 +1525,84 @@ mod tests {
     }
 
     #[test]
+    fn parent_directory_uri_does_not_seed_saved_digest_from_traversed_bytes() -> Result<(), String>
+    {
+        let stamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("ripr-state-dotdot-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(dir.join("a"))
+            .map_err(|err| format!("create temp dir failed: {err}"))?;
+        std::fs::write(dir.join("secret.txt"), "secret-bytes")
+            .map_err(|err| format!("write secret failed: {err}"))?;
+        let keep_path = dir.join("a").join("keep.txt");
+        std::fs::write(&keep_path, "keep-bytes")
+            .map_err(|err| format!("write keep failed: {err}"))?;
+        let keep_uri = crate::lsp::uri::file_uri_for_path(&keep_path)
+            .map_err(|err| format!("keep URI failed: {err}"))?;
+        // `%2e%2e` decodes to `..`. The `a` directory exists, so a decoder that
+        // admits the segment lets `std::fs::read` resolve it to secret.txt.
+        let display = dir.to_string_lossy().replace('\\', "/");
+        let rooted = if display.starts_with('/') {
+            display
+        } else {
+            format!("/{display}")
+        };
+        let traversal = format!("file://{rooted}/a/%2e%2e/secret.txt");
+        let traversal_uri = test_uri(&traversal)?;
+        let mut store = DocumentStore::default();
+        store.open(DidOpenTextDocumentParams {
+            text_document: tower_lsp_server::ls_types::TextDocumentItem::new(
+                keep_uri.clone(),
+                "rust".to_string(),
+                1,
+                "client-keep".to_string(),
+            ),
+        });
+        store.open(DidOpenTextDocumentParams {
+            text_document: tower_lsp_server::ls_types::TextDocumentItem::new(
+                traversal_uri.clone(),
+                "rust".to_string(),
+                1,
+                "client-secret".to_string(),
+            ),
+        });
+        let result = (|| {
+            let Some(keep) = store.documents.get(&keep_uri) else {
+                return Err("missing admitted document".to_string());
+            };
+            if keep.saved_digest.as_deref() != Some(digest_of("keep-bytes").as_str()) {
+                return Err(
+                    "an admitted sibling must still seed its digest from its own bytes".to_string(),
+                );
+            }
+            if path_from_file_uri(&traversal_uri).is_some() {
+                return Err("parent-segment URI must not be admitted as a local path".to_string());
+            }
+            let Some(state) = store.documents.get(&traversal_uri) else {
+                return Err("missing traversal document".to_string());
+            };
+            if state.saved_digest.is_some() {
+                return Err(format!(
+                    "refused parent-segment URI must not seed a saved digest: {:?}",
+                    state.saved_digest
+                ));
+            }
+            let (pending, _) = store.pending_analyzed_digests();
+            if matches!(pending.get(&traversal_uri), Some(Some(_))) {
+                return Err(
+                    "pending analyzed digest must not read through a parent segment".to_string(),
+                );
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    #[test]
     fn rejected_uri_document_path_fallback_is_never_contained() -> Result<(), String> {
         // `document_path` keeps the wire string when the shared URI decoder
         // refuses the URI. That text is relative, so without the containment
@@ -1536,6 +1615,9 @@ mod tests {
             "file:////remote.example/share/workspace/ripr/src/lib.rs",
             "FILE://LOCALHOST/workspace/ripr/src/lib.rs?revision=1",
             "file:/workspace/ripr/src/lib.rs#symbol",
+            "file:///a/../../etc/passwd",
+            "file://localhost/tmp/%2e%2e/etc/passwd",
+            "file:///workspace/src/../lib.rs",
         ] {
             let uri = test_uri(value)?;
             let fallback = document_path(&uri);

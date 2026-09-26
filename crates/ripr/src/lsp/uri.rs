@@ -65,13 +65,20 @@ mod windows_paths {
 /// [`normalized_file_uri_path`], so every admitted `Ok` round-trips through the
 /// shared decoder. A UNC, extended-length (`\\?\...`), or device (`\\.\...`)
 /// spelling normalizes to a doubled leading separator, which this local-only
-/// decoder rejects; refuse it here at emission rather than publishing a URI
-/// that would later read as no file at all.
+/// decoder rejects; a `..` segment is the same class of refusal. Refuse both
+/// here at emission rather than publishing a URI that would later read as no
+/// file at all.
 pub(super) fn file_uri_for_path(path: &Path) -> Result<Uri, String> {
     let normalized = path.to_string_lossy().replace('\\', "/");
     if normalized.starts_with("//") {
         return Err(format!(
             "refusing to build a local file URI for the network-share path {}",
+            path.display()
+        ));
+    }
+    if has_parent_directory_segment(&normalized) {
+        return Err(format!(
+            "refusing to build a local file URI for a path with a parent-directory segment {}",
             path.display()
         ));
     }
@@ -188,6 +195,12 @@ fn normalized_file_uri_path(uri: &Uri) -> Option<String> {
         // filesystem access.
         return None;
     }
+    // Checked after percent-decoding and backslash normalization, so
+    // `%2e%2e` and `..\` are the same parent segment the saved-content
+    // read would follow. `foo..bar` and `..hidden` are filenames.
+    if has_parent_directory_segment(&decoded) {
+        return None;
+    }
     if windows_paths::is_windows_drive_uri_path(&decoded) {
         // `/C:relative` must not become a drive-relative filesystem path.
         if decoded.as_bytes().get(3) != Some(&b'/') {
@@ -197,6 +210,11 @@ fn normalized_file_uri_path(uri: &Uri) -> Option<String> {
     } else {
         Some(decoded)
     }
+}
+
+/// True when a `/`-separated path has a segment that is exactly `..`.
+fn has_parent_directory_segment(path: &str) -> bool {
+    path.split('/').any(|segment| segment == "..")
 }
 
 /// Render a path with forward slashes for LSP display (diagnostic messages,
@@ -619,6 +637,66 @@ mod tests {
             assert!(!file_uris_match(&uri, &uri), "{value}");
             assert!(!file_uri_is_within_root(&root, &uri), "{value}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn file_uri_rejects_parent_directory_segments() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr-uri-parent-segment-root");
+        for value in [
+            "file:///a/../../etc/passwd",
+            "file:///tmp/../etc/passwd",
+            "file://localhost/a/../../etc/passwd",
+            "file:/a/../../etc/passwd",
+            "file:///a/%2e%2e/etc/passwd",
+            "file:///a/%2E%2E/%2e%2e/etc/passwd",
+            "file:///a/..%2f..%2fetc/passwd",
+            "file:///a/..%5c..%5cetc/passwd",
+            "file:///workspace/src/../lib.rs",
+            "file:///C:/Windows/../system.ini",
+            "file:///C:/Windows/%2e%2e/system.ini",
+            "file://localhost/C:/Windows/../system.ini",
+        ] {
+            let uri = parse_uri(value)?;
+            assert_eq!(path_from_file_uri(&uri), None, "{value}");
+            assert!(!file_uris_match(&uri, &uri), "{value}");
+            assert!(!file_uri_is_within_root(&root, &uri), "{value}");
+        }
+        // Two dots inside a filename, a dotfile, and a `.` segment are not
+        // parent-directory traversal. Removing the exact-segment check and
+        // rejecting every `..` substring would fail these.
+        for (value, path) in [
+            ("file:///workspace/foo..bar.rs", "/workspace/foo..bar.rs"),
+            ("file:///workspace/..hidden.rs", "/workspace/..hidden.rs"),
+            ("file:///workspace/./lib.rs", "/workspace/./lib.rs"),
+            ("file:///workspace/.../lib.rs", "/workspace/.../lib.rs"),
+        ] {
+            let uri = parse_uri(value)?;
+            assert_eq!(
+                path_from_file_uri(&uri),
+                Some(PathBuf::from(path)),
+                "{value}"
+            );
+        }
+        let drive = ["C:", "Windows", "..", "system.ini"].join("/");
+        for path in [
+            "/a/../../etc/passwd",
+            "../outside.rs",
+            "foo/../bar",
+            drive.as_str(),
+            r"C:\Windows\..\system.ini",
+        ] {
+            assert!(
+                file_uri_for_path(Path::new(path)).is_err(),
+                "parent segment must be refused at emission: {path}"
+            );
+        }
+        let lookalike = file_uri_for_path(Path::new("/workspace/foo..bar.rs"))
+            .map_err(|err| format!("lookalike filename must still encode: {err}"))?;
+        assert_eq!(
+            path_from_file_uri(&lookalike),
+            Some(PathBuf::from("/workspace/foo..bar.rs"))
+        );
         Ok(())
     }
 
