@@ -5,8 +5,8 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde_json::{Value, json};
 use ripr::cache_layers::OWNED_CACHE_LAYERS;
+use serde_json::{Value, json};
 
 const DEFAULT_MAX_SIZE_GB: u64 = 20;
 const DEFAULT_TTL_DAYS: u64 = 14;
