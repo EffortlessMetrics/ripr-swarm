@@ -5,8 +5,11 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use ripr::analysis::CacheLayer;
 use serde_json::{Value, json};
+
+#[path = "../../crates/ripr/src/analysis/cache_layers.rs"]
+mod cache_layers;
+use cache_layers::CacheLayer;
 
 const DEFAULT_MAX_SIZE_GB: u64 = 20;
 const DEFAULT_TTL_DAYS: u64 = 14;

@@ -1,6 +1,5 @@
-use crate::analysis::CacheLayer;
 use crate::analysis::seam_cache::{
-    CACHE_DIR_ENV, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
+    CACHE_DIR_ENV, CacheLayer, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
 };
 use crate::cli::suggest::unknown_argument;
 use serde_json::json;

@@ -59,36 +59,9 @@ use crate::config::{
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-// The cache producers and both cache-management commands share this registry.
-// Adding a producer layer here also adds it to the clear/report ownership set.
-macro_rules! cache_layers {
-    ($($variant:ident => $name:literal),+ $(,)?) => {
-        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-        pub enum CacheLayer {
-            $($variant),+
-        }
-
-        impl CacheLayer {
-            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
-
-            pub const fn name(self) -> &'static str {
-                match self {
-                    $(Self::$variant => $name),+
-                }
-            }
-        }
-    };
-}
-
-cache_layers! {
-    SeamFacts => "repo-seam-facts",
-    SeamFactsSharded => "repo-seam-facts-sharded",
-    CompactClassifiedSeams => "repo-compact-classified-seams",
-    CompactClassifiedSeamsSharded => "repo-compact-classified-seams-sharded",
-    CorpusFingerprint => "repo-corpus-fingerprint",
-    FileFacts => "repo-file-facts",
-    SeamCounts => "repo-seam-counts",
-}
+#[path = "cache_layers.rs"]
+mod cache_layers;
+pub(crate) use cache_layers::CacheLayer;
 
 /// On-disk representation of seam-limit metadata embedded in the cache envelope.
 /// Mirrors `SeamLimitInfo` but lives in the cache module to avoid a circular dep.
