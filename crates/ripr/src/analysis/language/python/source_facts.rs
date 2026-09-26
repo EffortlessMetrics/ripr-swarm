@@ -176,6 +176,9 @@ fn ini_section_present(path: &Path, section: &str) -> bool {
 }
 
 pub(super) fn parse_module_result(path: &Path, source: &str) -> Result<Mod, String> {
+    if let Some(reason) = super::parse_budget::nesting_budget_reason(source) {
+        return Err(reason);
+    }
     let source_path = path.to_string_lossy();
     let module = parse(source, Mode::Module, source_path.as_ref())
         .map_err(|err| format!("parse_error: {err}"))?;
