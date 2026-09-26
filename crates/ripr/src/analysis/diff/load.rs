@@ -574,9 +574,10 @@ fn run_git_diff_bytes(
     // changes, textconv can invent source coordinates, and ambient context
     // can expand a one-line edit into a full-file payload (#3850). Git's
     // source/destination prefixes are also parser identity syntax: ambient
-    // diff.noprefix or diff.mnemonicPrefix can remove/change them, so a real
-    // path such as b/identity.rs can collapse onto identity.rs after the
-    // parser strips the expected b/ side prefix (#4086). Append canonical
+    // diff.noprefix can remove them, so a real path such as b/identity.rs
+    // can collapse onto identity.rs after the parser strips the expected b/
+    // side prefix (#4086). (diff.mnemonicPrefix only rewrites worktree/index
+    // comparisons, never the <base>...HEAD range form issued here.) Append canonical
     // side prefixes after caller extras so neither repository config nor a
     // conflicting presentation extra can change file identity.
     // The context-line count is the one caller-selected presentation knob
@@ -650,7 +651,9 @@ mod tests {
         // #4086: the parser strips Git's ordinary a/ and b/ side prefixes.
         // Without explicit loader pins, diff.noprefix=true turns b/identity.rs
         // into a marker that is indistinguishable from identity.rs after that
-        // strip. mnemonicPrefix changes the same syntax to i/ and w/.
+        // strip. diff.mnemonicPrefix is deliberately not in this matrix: it
+        // only rewrites worktree/index comparisons, so a <base>...HEAD range
+        // diff keeps canonical prefixes and the leg could never discriminate.
         let dir = unique_fixture_root("diff-side-prefix-identity")?;
         init_git_repo(&dir, "main")?;
         fs::create_dir_all(dir.join("b"))?;
@@ -670,7 +673,7 @@ mod tests {
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "change paths", "--quiet"])?;
 
-        for (setting, value) in [("diff.noprefix", "true"), ("diff.mnemonicPrefix", "true")] {
+        for (setting, value) in [("diff.noprefix", "true")] {
             run_git_checked(&dir, &["config", setting, value])?;
 
             let raw = Command::new("git")
