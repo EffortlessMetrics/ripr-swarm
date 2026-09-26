@@ -440,6 +440,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
         let ts_guidance =
             output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
+        let python_guidance =
+            output::render::detect_python_repo_exposure_guidance_pub(&input.root, &classified);
         let artifact_context =
             crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
                 input.root.clone(),
@@ -453,6 +455,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             &classified,
             limit_info.as_ref(),
             ts_guidance.as_ref(),
+            python_guidance.as_ref(),
             &artifact_context,
             &mut handle,
         )?;

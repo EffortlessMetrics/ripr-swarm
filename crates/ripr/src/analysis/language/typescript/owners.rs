@@ -206,8 +206,32 @@ pub(crate) fn owner_from_variable_declarator(
             imports: imports.to_vec(),
             method_kind: TypeScriptMethodKind::Ordinary,
             default_export: false,
+            // Non-function initializers carry no resolvable signature facts.
+            arity: None,
+            parameters: Vec::new(),
+            source_text: None,
         }),
     }
+}
+
+/// Parameter facts for the owner signature (issue #4102): `(Some(n), names)`
+/// when every parameter is a plain binding identifier and there is no rest
+/// parameter; `(None, [])` otherwise (destructuring, rest, or empty list is
+/// still resolvable — a zero-parameter function is `Some(0)`).
+fn parameter_facts(params: &FormalParameters<'_>) -> (Option<usize>, Vec<String>) {
+    if params.rest.is_some() {
+        return (None, Vec::new());
+    }
+    let mut names = Vec::with_capacity(params.items.len());
+    for item in &params.items {
+        match binding_identifier_name(&item.pattern) {
+            Some(name) => names.push(name.to_string()),
+            // Destructured / pattern parameters cannot be mapped to an
+            // argument position — fail closed to unknown arity.
+            None => return (None, Vec::new()),
+        }
+    }
+    (Some(names.len()), names)
 }
 
 pub(crate) fn owner_from_function(
@@ -219,6 +243,7 @@ pub(crate) fn owner_from_function(
     decorated: bool,
     imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
+    let (arity, parameters) = parameter_facts(&func.params);
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
@@ -230,6 +255,9 @@ pub(crate) fn owner_from_function(
         imports: imports.to_vec(),
         method_kind: TypeScriptMethodKind::Ordinary,
         default_export: false,
+        arity,
+        parameters,
+        source_text: Some(source[func.span.start as usize..func.span.end as usize].to_string()),
     }
 }
 
@@ -242,6 +270,7 @@ pub(crate) fn owner_from_arrow(
     decorated: bool,
     imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
+    let (arity, parameters) = parameter_facts(&arrow.params);
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
@@ -253,6 +282,9 @@ pub(crate) fn owner_from_arrow(
         imports: imports.to_vec(),
         method_kind: TypeScriptMethodKind::Ordinary,
         default_export: false,
+        arity,
+        parameters,
+        source_text: Some(source[arrow.span.start as usize..arrow.span.end as usize].to_string()),
     }
 }
 
@@ -297,6 +329,7 @@ pub(crate) fn owner_from_method(
         return None;
     }
     let name = property_key_name(&method.key)?;
+    let (arity, parameters) = parameter_facts(&method.value.params);
     Some(TypeScriptOwner {
         name,
         file: file.to_path_buf(),
@@ -317,6 +350,9 @@ pub(crate) fn owner_from_method(
             oxc_ast::ast::MethodDefinitionKind::Method => TypeScriptMethodKind::Ordinary,
         },
         default_export: false,
+        arity,
+        parameters,
+        source_text: Some(source[method.span.start as usize..method.span.end as usize].to_string()),
     })
 }
 

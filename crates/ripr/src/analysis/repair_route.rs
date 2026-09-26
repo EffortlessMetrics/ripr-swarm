@@ -522,7 +522,7 @@ fn fact_discriminator_key(
                 .strip_suffix(" (equality boundary)")
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .map(normalize_identifier)?;
+                .map(normalize_discriminator_text)?;
             Some(DiscriminatorCompatibilityKey::EqualityBoundary { right })
         }
         RequiredDiscriminator::ReturnValue { .. } => exact_key("return_value", fact),
@@ -542,8 +542,8 @@ fn exact_key(kind: &'static str, value: &str) -> Option<DiscriminatorCompatibili
 fn comparison_parts(value: &str) -> Option<(String, String, String)> {
     for operator in [" >= ", " <= ", " == ", " != ", " > ", " < "] {
         if let Some((left, right)) = value.split_once(operator) {
-            let left = normalize_identifier(left);
-            let right = normalize_identifier(right);
+            let left = normalize_discriminator_text(left);
+            let right = normalize_discriminator_text(right);
             if !left.is_empty() && !right.is_empty() {
                 return Some((left, operator.trim().to_string(), right));
             }
@@ -553,11 +553,9 @@ fn comparison_parts(value: &str) -> Option<(String, String, String)> {
 }
 
 fn normalize_discriminator_text(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
-}
-
-fn normalize_identifier(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
+    // Source identities are case-sensitive, including literal contents.
+    // Only surrounding formatting whitespace may be discarded.
+    value.trim().to_string()
 }
 
 fn direct_owner_related_test(evidence: &TestGripEvidence) -> Option<&RelatedTestGrip> {
@@ -767,6 +765,8 @@ fn text_has_cross_language_marker(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    mod case_identity;
+
     use super::{
         ClassifiedSeam, RepairPacketIneligibility, cross_language_oracle_visibility_unresolved,
         discriminator_fact_matches, is_safe_for_repair_packet, repair_packet_eligibility,

@@ -108,6 +108,19 @@ for the operator loop that reads `rust_ungripped_ts_discriminated`,
 `bridge_unknown` results, plus
 `public_reachable_panic_boundary_unrevealed` FFI limitation receipts.
 
+## What Diff Analysis Refuses
+
+Diff analysis refuses vendored, built, and generated TypeScript/JavaScript
+trees before they enter the changed-file count: `node_modules`, `dist`,
+`build`, `coverage`, `vendor`, `__generated__`, and the repository tooling
+directories already pruned from the workspace walk (`.git`, `target`, `.ripr`,
+`.direnv`). `*.generated.*` files are refused the same way. Near-misses such
+as `src/build.ts` and `generated.ts` stay ordinary source. Unlike Python, this
+adapter has no excluded-role ledger, so those trees are omitted entirely
+rather than counted as an excluded role. A repair packet may still name a
+Jest/Vitest, Node, Cypress, Jasmine, or `__tests__` test path as its edit
+target; a production file cannot.
+
 ## Run The Local Preview Loop
 
 Start with the normal first-run loop:
@@ -238,12 +251,13 @@ Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
 Rust/Perl seam inventory and do not render preview-language findings, so a
 Python-only or TypeScript-only workspace still shows zero seams in those
 formats — a known limitation, not a clean result. Repo-exposure emits a
-`typescript_diff_first` limitation entry for TS/JS-only workspaces pointing
-the user at diff-scoped analysis; Python-only runs do not currently carry an
-equivalent entry. Python's repo-mode evidence is consumed through the shared
-repo analysis result (`run_repo_analysis` / `check_workspace_repo`): its
+`typescript_diff_first` limitation entry for TS/JS-only workspaces and a
+`python_diff_first` limitation entry for Python-only workspaces, both
+pointing at diff-scoped `ripr check`. Neither entry fabricates seams.
+Python's repo-mode evidence is still consumed through the shared repo
+analysis result (`run_repo_analysis` / `check_workspace_repo`): its
 findings, per-language file counts, and `language_runs` partial-run
-disclosure — no renderer reconstructs Python semantics.
+disclosure — no seam renderer reconstructs Python semantics.
 
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |

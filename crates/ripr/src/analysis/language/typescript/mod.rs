@@ -19,7 +19,10 @@ pub(crate) use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
     AnalysisStage,
 };
-pub(crate) use crate::config::OraclePolicy;
+pub(crate) use crate::config::{
+    OraclePolicy, is_detectable_excluded_typescript_path, is_detectable_generated_typescript_path,
+    is_typescript_dir_pruned_from_discovery,
+};
 pub(crate) use crate::domain::{
     ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding,
     LanguageId as DomainLanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind,
@@ -30,9 +33,9 @@ pub(crate) use crate::domain::{FlowSinkFact, FlowSinkKind};
 pub(crate) use oxc_allocator::Allocator;
 pub(crate) use oxc_ast::ast::{
     Argument, ArrowFunctionExpression, BindingPattern, Class, ClassElement, Declaration,
-    ExportDefaultDeclarationKind, Expression, Function, ImportDeclarationSpecifier,
-    ImportOrExportKind, MethodDefinition, ModuleExportName, ObjectPropertyKind, PropertyKey,
-    Statement, VariableDeclaration, VariableDeclarator,
+    ExportDefaultDeclarationKind, Expression, FormalParameters, Function,
+    ImportDeclarationSpecifier, ImportOrExportKind, MethodDefinition, ModuleExportName,
+    ObjectPropertyKind, PropertyKey, Statement, VariableDeclaration, VariableDeclarator,
 };
 pub(crate) use oxc_parser::Parser;
 pub(crate) use oxc_span::{GetSpan, SourceType};
@@ -256,7 +259,15 @@ impl LanguageAdapter for TypeScriptAdapter {
                     findings.push(finding);
                 }
             }
-            if !self.accepts_path(&changed.path) {
+            // Excluded subtrees (node_modules, dist, build, coverage, vendor,
+            // __generated__) and `*.generated.*` files are skipped BEFORE
+            // counting (#3743). The workspace walk prunes the same trees, so
+            // no facts can back a changed file under one of them. Counting it
+            // would put an uninspected file in the report denominator.
+            if !self.accepts_path(&changed.path)
+                || is_detectable_generated_typescript_path(&changed.path)
+                || is_detectable_excluded_typescript_path(&changed.path)
+            {
                 continue;
             }
             changed_count += 1;
