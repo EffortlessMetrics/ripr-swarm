@@ -894,7 +894,13 @@ The evidence-first fields are additive in schema `0.2`:
     runner evidence; no verify command can be derived; strong fail-closed case),
     `typescript_test_runner_unresolved` (neither framework nor runner could be
     resolved to a bounded verify command; emitted when `verify_command_for_discovery`
-    returns `None`; fail-closed per RIPR-SPEC-0085 §"Fail-closed").
+    returns `None`; fail-closed per RIPR-SPEC-0085 §"Fail-closed"),
+    `typescript_test_runner_ambiguous` (two or more distinct framework signals
+    matched, e.g. `jest` + `vitest` devDeps; the reported runner is the first
+    match by fixed priority, so confidence is capped at `medium`),
+    `typescript_package_manifest_read_capped` (a `package.json` was found but
+    exceeded the capped read limit, so its manifest evidence could not be
+    inspected; fail-closed, no root and no fabricated values).
     When `typescript_package_root_unresolved` is present, no
     `typescript_package_root` line is emitted (fail-closed per RIPR-SPEC-0085).
   - `typescript_verify_command: <cmd>` — evidence-backed verify command for the
@@ -1216,6 +1222,21 @@ JSON fields:
   When absent, the human output contains a named `status: not actionable` limitation
   section instead. This field is RIPR-SPEC-0088 §2.2. It is not a gate, badge, or
   public repair authority; authority boundary remains `preview_advisory_only`.
+  `assertion_shape` derivation (issue #4105): the shape reuses the observed
+  oracle expression (`typescript_oracle_observed`) only when the observed call
+  input reaches the named missing discriminator, or when that reachability is
+  not statically decidable (non-literal boundaries such as `amount >= threshold`,
+  multi-argument calls without signature evidence, escaped string literals, or
+  callees that do not resolve to the owner). When the observed call input
+  provably does NOT reach the boundary — for example the discriminator is
+  `user.length == 3` while the observed call is `login('alice')` (length 5) —
+  the shape becomes an explicit boundary placeholder,
+  `login(/* boundary input for user.length == 3 */)`, and the packet fails
+  closed: `repair_packet_ready` stays `false`, `typescript_repair_packet` is
+  not emitted, and the human limitation section shows the shape as
+  `target shape (not delegatable)` together with a stop condition forbidding
+  reuse of the observed call input. A complete packet must not instruct a
+  duplicate of a non-discriminating assertion.
 - `perl_preview_card` is an additive optional object for Perl preview findings
   that already have strict fact-packet evidence, canonical gap identity,
   related-test evidence, missing discriminator evidence, verify-command
@@ -2833,6 +2854,14 @@ Field contract:
     `run_status` remains `"complete"` because the Rust repo-exposure scan
     completed. It carries `ts_file_count`, `repair_route`, and the optional
     nested `typescript_readiness` object.
+  - `category: "python_diff_first"` appears when a workspace has Python
+    files, no Rust files, and zero classified seams. `run_status` remains
+    `"complete"`. It carries `python_file_count`, `authority_boundary`
+    (`preview_advisory_only`), `analysis_model` (`diff_first`),
+    `non_claims`, and `repair_route`. The route points at diff-scoped
+    `ripr check`. This inventory still does not render Python findings, so
+    a zero-seam result is not a clean Python result. It does not claim that
+    full-repo Python analysis is unmodeled.
   - `typescript_readiness.source` is
     `"repo_exposure_typescript_readiness.v1"`.
   - `typescript_readiness.authority_boundary` is
@@ -14223,8 +14252,9 @@ Field contract:
   (`check_diff_first` or `unavailable_in_this_binary`), `command` (the diff-first
   `ripr check --root <root>`, which resolves the default base itself, or `null`),
   and `guidance_category`/`guidance`: the existing `typescript_diff_first`
-  repair route for TypeScript and JavaScript, the unavailable-adapter notice for
-  a language this binary cannot analyze, otherwise `null`.
+  repair route for TypeScript and JavaScript, the `python_diff_first` repair
+  route for Python, the unavailable-adapter notice for a language this binary
+  cannot analyze, otherwise `null`.
 - `next` — advisory follow-up commands. Complete summaries include the public
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam

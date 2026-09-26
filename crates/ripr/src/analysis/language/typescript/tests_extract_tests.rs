@@ -194,6 +194,8 @@ fn extracted_active_test_reaches_direct_owner_relation() {
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
         r#"
+import { applyDiscount } from "../src/pricing";
+
 test.only("discount boundary", () => {
     const result = applyDiscount(100, 100);
     expect(result).toBe(90);
@@ -210,8 +212,10 @@ test.only("discount boundary", () => {
         owner_kind: OwnerKind::Function,
         class_name: None,
         decorated: false,
-        imports: Vec::new(),
         params: Vec::new(),
+        arity: None,
+        source_text: None,
+        imports: Vec::new(),
     };
     let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
 

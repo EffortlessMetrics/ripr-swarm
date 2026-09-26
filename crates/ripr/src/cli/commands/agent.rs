@@ -1109,6 +1109,8 @@ fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), St
     let (classified, limit_info) =
         analysis::inventory_classified_seams_at_with_config(root, &config)?;
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(root, &classified);
+    let python_guidance =
+        output::render::detect_python_repo_exposure_guidance_pub(root, &classified);
     let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
         root.to_path_buf(),
         "ready".to_string(),
@@ -1131,6 +1133,7 @@ fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), St
             &classified,
             limit_info.as_ref(),
             ts_guidance.as_ref(),
+            python_guidance.as_ref(),
             &context,
             &mut writer,
         )?;

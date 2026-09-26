@@ -3,16 +3,24 @@
 use super::*;
 
 pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> {
-    let allocator = Allocator::default();
-    let ret = Parser::new(&allocator, source, source_type_for(file)).parse();
-    if !ret.errors.is_empty() {
+    // Parse (and walk) on the dedicated large-stack worker behind the
+    // nesting budget (#4101): a refused source or a failed worker yields no
+    // owners, exactly like the previous parse-error path, while the oxc
+    // recursion no longer runs on the caller's small stack.
+    let Ok(owners) = parse_on_worker(file, source, |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            return Vec::new();
+        }
+        let imports = extract_imports_from_statements(&ret.program.body);
+        let mut owners = Vec::new();
+        for stmt in &ret.program.body {
+            owners.extend(owners_from_statement(stmt, file, source, &imports));
+        }
+        owners
+    }) else {
         return Vec::new();
-    }
-    let imports = extract_imports_from_statements(&ret.program.body);
-    let mut owners = Vec::new();
-    for stmt in &ret.program.body {
-        owners.extend(owners_from_statement(stmt, file, source, &imports));
-    }
+    };
     owners
 }
 
@@ -190,11 +198,34 @@ pub(crate) fn owner_from_variable_declarator(
             class_name: None,
             decorated: false,
             imports: imports.to_vec(),
-            // A module initializer has no fixed positional signature the
-            // boundary witness could arity-check against.
+            // Non-function initializers carry no resolvable signature facts:
+            // no fixed positional signature the boundary witness could
+            // arity-check against.
             params: Vec::new(),
+            arity: None,
+            source_text: None,
         }),
     }
+}
+
+/// Parameter facts for the owner signature (issue #4102): `(Some(n), names)`
+/// when every parameter is a plain binding identifier and there is no rest
+/// parameter; `(None, [])` otherwise (destructuring, rest, or empty list is
+/// still resolvable — a zero-parameter function is `Some(0)`).
+fn parameter_facts(params: &FormalParameters<'_>) -> (Option<usize>, Vec<String>) {
+    if params.rest.is_some() {
+        return (None, Vec::new());
+    }
+    let mut names = Vec::with_capacity(params.items.len());
+    for item in &params.items {
+        match binding_identifier_name(&item.pattern) {
+            Some(name) => names.push(name.to_string()),
+            // Destructured / pattern parameters cannot be mapped to an
+            // argument position — fail closed to unknown arity.
+            None => return (None, Vec::new()),
+        }
+    }
+    (Some(names.len()), names)
 }
 
 pub(crate) fn owner_from_function(
@@ -206,6 +237,7 @@ pub(crate) fn owner_from_function(
     decorated: bool,
     imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
+    let (arity, params) = parameter_facts(&func.params);
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
@@ -215,7 +247,9 @@ pub(crate) fn owner_from_function(
         class_name: None,
         decorated,
         imports: imports.to_vec(),
-        params: positional_param_names(&func.params),
+        params,
+        arity,
+        source_text: Some(source[func.span.start as usize..func.span.end as usize].to_string()),
     }
 }
 
@@ -228,6 +262,7 @@ pub(crate) fn owner_from_arrow(
     decorated: bool,
     imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
+    let (arity, params) = parameter_facts(&arrow.params);
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
@@ -237,7 +272,9 @@ pub(crate) fn owner_from_arrow(
         class_name: None,
         decorated,
         imports: imports.to_vec(),
-        params: positional_param_names(&arrow.params),
+        params,
+        arity,
+        source_text: Some(source[arrow.span.start as usize..arrow.span.end as usize].to_string()),
     }
 }
 
@@ -282,6 +319,7 @@ pub(crate) fn owner_from_method(
         return None;
     }
     let name = property_key_name(&method.key)?;
+    let (arity, params) = parameter_facts(&method.value.params);
     Some(TypeScriptOwner {
         name,
         file: file.to_path_buf(),
@@ -295,31 +333,10 @@ pub(crate) fn owner_from_method(
         class_name: class_name.map(str::to_string),
         decorated: class_decorated || !method.decorators.is_empty(),
         imports: imports.to_vec(),
-        params: positional_param_names(&method.value.params),
+        params,
+        arity,
+        source_text: Some(source[method.span.start as usize..method.span.end as usize].to_string()),
     })
-}
-
-/// Summarize a formal parameter list into positional parameter names.
-///
-/// Returns the declared names in order when every parameter is a plain
-/// binding identifier (the only shape the boundary witness can soundly map
-/// to call argument positions). Returns an empty vec — "no facts" — when any
-/// parameter uses destructuring or a rest element: the arity/position rules
-/// in the predicate boundary witness would be unsound for those signatures,
-/// so the witness keeps its previous position-blind behaviour for them
-/// (fail-open positions, not fabricated facts).
-pub(crate) fn positional_param_names(params: &oxc_ast::ast::FormalParameters<'_>) -> Vec<String> {
-    if params.rest.is_some() {
-        return Vec::new();
-    }
-    let mut names = Vec::new();
-    for item in &params.items {
-        let Some(name) = binding_identifier_name(&item.pattern) else {
-            return Vec::new();
-        };
-        names.push(name.to_string());
-    }
-    names
 }
 
 pub(crate) fn binding_identifier_name<'a>(pattern: &'a BindingPattern<'a>) -> Option<&'a str> {

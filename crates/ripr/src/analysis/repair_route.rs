@@ -522,7 +522,7 @@ fn fact_discriminator_key(
                 .strip_suffix(" (equality boundary)")
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .map(normalize_identifier)?;
+                .map(normalize_discriminator_text)?;
             Some(DiscriminatorCompatibilityKey::EqualityBoundary { right })
         }
         RequiredDiscriminator::ReturnValue { .. } => exact_key("return_value", fact),
@@ -542,8 +542,8 @@ fn exact_key(kind: &'static str, value: &str) -> Option<DiscriminatorCompatibili
 fn comparison_parts(value: &str) -> Option<(String, String, String)> {
     for operator in [" >= ", " <= ", " == ", " != ", " > ", " < "] {
         if let Some((left, right)) = value.split_once(operator) {
-            let left = normalize_identifier(left);
-            let right = normalize_identifier(right);
+            let left = normalize_discriminator_text(left);
+            let right = normalize_discriminator_text(right);
             if !left.is_empty() && !right.is_empty() {
                 return Some((left, operator.trim().to_string(), right));
             }
@@ -553,11 +553,9 @@ fn comparison_parts(value: &str) -> Option<(String, String, String)> {
 }
 
 fn normalize_discriminator_text(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
-}
-
-fn normalize_identifier(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
+    // Source identities are case-sensitive, including literal contents.
+    // Only surrounding formatting whitespace may be discarded.
+    value.trim().to_string()
 }
 
 fn direct_owner_related_test(evidence: &TestGripEvidence) -> Option<&RelatedTestGrip> {
@@ -677,24 +675,14 @@ fn has_external_language_related_test(entry: &ClassifiedSeam) -> bool {
 }
 
 fn is_external_language_extension(extension: &str) -> bool {
-    matches!(
-        extension.to_ascii_lowercase().as_str(),
-        "ts" | "tsx"
-            | "js"
-            | "jsx"
-            | "mjs"
-            | "cjs"
-            | "py"
-            | "rb"
-            | "java"
-            | "c"
-            | "cc"
-            | "cpp"
-            | "cxx"
-            | "swift"
-            | "kt"
-            | "kts"
-    )
+    let extension = extension.to_ascii_lowercase();
+    // #4116: the TS/JS family consumes the shared extension authority; the
+    // remaining bridge languages keep their historical lowercase fold.
+    crate::analysis::is_ts_js_source_extension(&extension)
+        || matches!(
+            extension.as_str(),
+            "py" | "rb" | "java" | "c" | "cc" | "cpp" | "cxx" | "swift" | "kt" | "kts"
+        )
 }
 
 fn cross_language_surface_hint(entry: &ClassifiedSeam) -> bool {
@@ -777,6 +765,8 @@ fn text_has_cross_language_marker(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    mod case_identity;
+
     use super::{
         ClassifiedSeam, RepairPacketIneligibility, cross_language_oracle_visibility_unresolved,
         discriminator_fact_matches, is_safe_for_repair_packet, repair_packet_eligibility,
@@ -966,8 +956,8 @@ mod tests {
     #[test]
     fn external_language_test_extensions_cover_bridge_language_families() -> Result<(), String> {
         for extension in [
-            "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rb", "java", "c", "cc", "cpp", "cxx",
-            "swift", "kt", "kts",
+            "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "py", "rb", "java", "c", "cc",
+            "cpp", "cxx", "swift", "kt", "kts",
         ] {
             let mut related_test = external_related_test();
             related_test.file = PathBuf::from(format!("tests/bridge.{extension}"));
@@ -983,7 +973,7 @@ mod tests {
             );
         }
 
-        for extension in ["rs", "txt"] {
+        for extension in ["rs", "txt", "mt", "mjsx"] {
             let mut related_test = external_related_test();
             related_test.file = PathBuf::from(format!("tests/bridge.{extension}"));
             let entry = classified_with(

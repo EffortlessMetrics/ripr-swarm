@@ -23,8 +23,418 @@ use std::collections::BTreeMap;
 /// The authority-boundary string carried by all TypeScript preview packets.
 const TS_AUTHORITY_BOUNDARY: &str = "preview_advisory_only";
 
+/// The target assertion shape projected for a TypeScript repair packet,
+/// together with the static reachability verdict that produced it (#4105).
+///
+/// A complete packet must not present the observed call input as the shape for
+/// the missing discriminator when that input statically cannot reach the named
+/// boundary: an agent following the packet verbatim would duplicate a
+/// non-discriminating assertion while the packet claims "complete and
+/// delegatable".
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TargetAssertionShape {
+    /// The observed oracle shape stands: the observed call input either hits
+    /// the missing-discriminator boundary, or its reachability is not
+    /// statically decidable from the available evidence (fail-open is allowed
+    /// only where non-reach cannot be established).
+    Observed { shape: String },
+    /// The observed call input provably does NOT reach the named boundary.
+    /// `shape` carries an explicit boundary placeholder instead of the
+    /// observed input, and the packet must fail closed through the shared
+    /// validator.
+    Unreachable {
+        shape: String,
+        observed_call: String,
+        discriminator: String,
+    },
+}
+
+impl TargetAssertionShape {
+    fn shape(&self) -> &str {
+        match self {
+            Self::Observed { shape } => shape,
+            Self::Unreachable { shape, .. } => shape,
+        }
+    }
+
+    /// Shared-validator ineligibility reason when the observed call input
+    /// provably cannot reach the named boundary. `None` keeps the packet
+    /// eligible through the normal complete-contract projection.
+    fn packet_ineligibility_reason(&self) -> Option<String> {
+        match self {
+            Self::Observed { .. } => None,
+            Self::Unreachable {
+                observed_call,
+                discriminator,
+                ..
+            } => Some(format!(
+                "observed call input `{observed_call}` does not reach the missing \
+                 discriminator `{discriminator}`; derive an input that hits the \
+                 boundary before the packet is delegatable"
+            )),
+        }
+    }
+}
+
+/// Build the assertion the repair should add, from the borrowed call shape,
+/// gated by a static reachability verdict against the named discriminator
+/// (issue #4105).
+///
+/// The borrowed assertion supplies only the observed call (`applyDiscount(100,
+/// 100)`), which is what makes the target concrete. Its expected literal and
+/// matcher belong to a different, weaker check: the projection only runs for
+/// weakly-exposed findings, so by construction the borrowed assertion does not
+/// pin the changed behavior. Re-using its literal under `toBe` fabricated
+/// assertions such as `expect(result).toBe(50)` from `toBeGreaterThan(50)`.
+/// Static evidence cannot know the right expected value, so the shape uses the
+/// same `expected` placeholder as the Rust assertion shapes.
+///
+/// Reachability (#4105):
+/// - No parseable discriminator comparison, or no statically decidable
+///   verdict → the observed shape stands unchanged.
+/// - The observed call input hits the boundary → the observed shape stands
+///   (landed behavior for boundary-hitting fixtures).
+/// - The observed call input provably does NOT hit the boundary → a
+///   placeholder shape naming the boundary (repo convention
+///   `/* boundary input for <discriminator> */`) replaces the observed input;
+///   the caller fails the packet closed via the shared validator.
+pub(crate) fn typescript_target_assertion_shape(
+    family: &crate::domain::ProbeFamily,
+    observed: &str,
+    missing_discriminator: Option<&str>,
+    owner_name: Option<&str>,
+) -> TargetAssertionShape {
+    let expected_clause = match family {
+        crate::domain::ProbeFamily::ErrorPath => ".toThrow(expected)",
+        _ => ".toBe(expected)",
+    };
+    let observed_shape = TargetAssertionShape::Observed {
+        shape: format!("expect({observed}){expected_clause}"),
+    };
+    let Some(discriminator) = missing_discriminator
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+    else {
+        return observed_shape;
+    };
+    let Some(call) = parse_static_call_expression(observed) else {
+        return observed_shape;
+    };
+    if !call_callee_is_owner(&call.callee, owner_name) {
+        return observed_shape;
+    }
+    let Some(comparison) = parse_static_comparison(discriminator) else {
+        return observed_shape;
+    };
+    match static_argument_reaches_boundary(&call, &comparison) {
+        Some(true) | None => observed_shape,
+        Some(false) => TargetAssertionShape::Unreachable {
+            shape: format!(
+                "{}(/* boundary input for {discriminator} */){expected_clause}",
+                call.callee
+            ),
+            observed_call: observed.to_string(),
+            discriminator: discriminator.to_string(),
+        },
+    }
+}
+
+/// A statically parseable call expression: `callee(arg, ...)`.
+struct StaticCall {
+    callee: String,
+    args: Vec<String>,
+}
+
+/// Parse a plain call expression `name(a, b)` (dotted callee allowed).
+///
+/// Returns `None` for anything else — variables (`result`), member tails
+/// (`login('alice').length`), or wrapped calls (`wrap(login('alice'))`) — so
+/// reachability stays undecided instead of binding the wrong expression.
+fn parse_static_call_expression(expr: &str) -> Option<StaticCall> {
+    let expr = expr.trim();
+    let open = expr.find('(')?;
+    // Quote- and escape-aware scan for the first `(`'s matching close; the
+    // expression only counts as one static call when that close is the final
+    // character (rejects compounds like `login('a') + login('b')` and
+    // `login('ab')('c')`).
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut matching_close = None;
+    for (i, ch) in expr[open..].char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' | '`' => quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    matching_close = Some(open + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = matching_close?;
+    if close != expr.len() - 1 {
+        return None;
+    }
+    let callee = expr[..open].trim();
+    let mut callee_chars = callee.chars();
+    let first_ok = callee_chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$');
+    if !first_ok || !callee_chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '$'))
+    {
+        return None;
+    }
+    let inner = &expr[open + 1..close];
+    let args = if inner.trim().is_empty() {
+        Vec::new()
+    } else {
+        split_top_level_args(inner)
+    };
+    Some(StaticCall {
+        callee: callee.to_string(),
+        args,
+    })
+}
+
+/// Split call arguments on top-level commas, respecting nesting and quotes.
+fn split_top_level_args(inner: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut current = String::new();
+    for ch in inner.chars() {
+        match quote {
+            Some(q) => {
+                if ch == q {
+                    quote = None;
+                }
+                current.push(ch);
+            }
+            None => match ch {
+                '\'' | '"' | '`' => {
+                    quote = Some(ch);
+                    current.push(ch);
+                }
+                '(' | '[' | '{' => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                ')' | ']' | '}' => {
+                    depth = depth.saturating_sub(1);
+                    current.push(ch);
+                }
+                ',' if depth == 0 => {
+                    args.push(current.trim().to_string());
+                    current.clear();
+                }
+                _ => current.push(ch),
+            },
+        }
+    }
+    if !current.trim().is_empty() {
+        args.push(current.trim().to_string());
+    }
+    args
+}
+
+/// The observed oracle expression counts as owner evidence only when its
+/// callee resolves to the finding's owner short name (dotted callees compare
+/// by their last segment). Without an owner identity the reachability verdict
+/// is refused — never judged.
+fn call_callee_is_owner(callee: &str, owner_name: Option<&str>) -> bool {
+    let Some(owner) = owner_name.map(str::trim).filter(|o| !o.is_empty()) else {
+        return false;
+    };
+    callee
+        .rsplit('.')
+        .next()
+        .is_some_and(|short| short == owner)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StaticComparisonOp {
+    Equal,        // == / ===
+    NotEqual,     // != / !==
+    GreaterEqual, // >=
+    LessEqual,    // <=
+    Greater,      // >
+    Less,         // <
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum StaticLiteral {
+    Int(i64),
+    Str(String),
+}
+
+struct StaticComparison {
+    receiver_is_length: bool,
+    op: StaticComparisonOp,
+    boundary: StaticLiteral,
+}
+
+/// Parse a discriminator like `user.length == 3` into a static comparison.
+///
+/// Conservative: only `<ident>` / `<ident>.length` receivers and int or plain
+/// string boundary literals are recognized; anything else stays undecided.
+fn parse_static_comparison(discriminator: &str) -> Option<StaticComparison> {
+    const OPS: [(&str, StaticComparisonOp); 8] = [
+        ("===", StaticComparisonOp::Equal),
+        ("!==", StaticComparisonOp::NotEqual),
+        ("==", StaticComparisonOp::Equal),
+        ("!=", StaticComparisonOp::NotEqual),
+        (">=", StaticComparisonOp::GreaterEqual),
+        ("<=", StaticComparisonOp::LessEqual),
+        (">", StaticComparisonOp::Greater),
+        ("<", StaticComparisonOp::Less),
+    ];
+    let mut best: Option<(usize, usize, StaticComparisonOp)> = None;
+    for (symbol, op) in OPS {
+        if let Some(position) = discriminator.find(symbol) {
+            let better = match best {
+                None => true,
+                Some((best_position, best_len, _)) => {
+                    position < best_position
+                        || (position == best_position && symbol.len() > best_len)
+                }
+            };
+            if better {
+                best = Some((position, symbol.len(), op));
+            }
+        }
+    }
+    let (position, len, op) = best?;
+    let receiver = discriminator[..position].trim();
+    let boundary_raw = discriminator[position + len..].trim();
+    let receiver_is_length = parse_static_receiver(receiver)?;
+    let boundary = parse_static_literal(boundary_raw)?;
+    Some(StaticComparison {
+        receiver_is_length,
+        op,
+        boundary,
+    })
+}
+
+/// Recognize `<ident>` or `<ident>.length` receivers; other shapes (member
+/// chains, index expressions) are not statically decidable. Returns whether
+/// the receiver is a `.length` probe.
+fn parse_static_receiver(receiver: &str) -> Option<bool> {
+    if is_plain_identifier(receiver) {
+        return Some(false);
+    }
+    let stem = receiver.strip_suffix(".length")?;
+    if is_plain_identifier(stem) {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+fn is_plain_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let first_ok = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$');
+    first_ok && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+}
+
+/// A quoted string literal without escape sequences. Escapes make the static
+/// length and byte-for-byte equality unreliable, so they fail open instead.
+fn parse_plain_string_literal(raw: &str) -> Option<String> {
+    let quote = raw.chars().next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+    if raw.chars().count() < 2 || !raw.ends_with(quote) {
+        return None;
+    }
+    let inner = &raw[1..raw.len() - 1];
+    // Escapes and an inner matching quote make the static length and
+    // byte-for-byte equality unreliable, so they fail open instead.
+    if inner.contains('\\') || inner.contains(quote) {
+        return None;
+    }
+    Some(inner.to_string())
+}
+
+fn parse_static_literal(raw: &str) -> Option<StaticLiteral> {
+    if let Ok(value) = raw.parse::<i64>() {
+        return Some(StaticLiteral::Int(value));
+    }
+    parse_plain_string_literal(raw).map(StaticLiteral::Str)
+}
+
+fn apply_static_comparison(op: StaticComparisonOp, lhs: i64, rhs: i64) -> bool {
+    match op {
+        StaticComparisonOp::Equal => lhs == rhs,
+        StaticComparisonOp::NotEqual => lhs != rhs,
+        StaticComparisonOp::GreaterEqual => lhs >= rhs,
+        StaticComparisonOp::LessEqual => lhs <= rhs,
+        StaticComparisonOp::Greater => lhs > rhs,
+        StaticComparisonOp::Less => lhs < rhs,
+    }
+}
+
+/// Statically decide whether the observed call's argument satisfies the
+/// discriminator comparison: `Some(true)` reaches the boundary, `Some(false)`
+/// provably does not, `None` is undecided.
+///
+/// The discriminator receiver binds to the observed argument only when the
+/// call has exactly one argument: without signature evidence a multi-argument
+/// binding would be a guess, and a wrong "cannot reach" verdict is worse than
+/// no verdict.
+fn static_argument_reaches_boundary(
+    call: &StaticCall,
+    comparison: &StaticComparison,
+) -> Option<bool> {
+    if call.args.len() != 1 {
+        return None;
+    }
+    let argument = call.args[0].trim();
+    if comparison.receiver_is_length {
+        let text = parse_plain_string_literal(argument)?;
+        let StaticLiteral::Int(boundary) = comparison.boundary else {
+            return None;
+        };
+        // JavaScript `String.prototype.length` counts UTF-16 code units, not
+        // Unicode scalar values; the two differ outside the BMP (e.g. emoji).
+        let length = text.encode_utf16().count() as i64;
+        return Some(apply_static_comparison(comparison.op, length, boundary));
+    }
+    match &comparison.boundary {
+        StaticLiteral::Int(boundary) => {
+            let value = argument.parse::<i64>().ok()?;
+            Some(apply_static_comparison(comparison.op, value, *boundary))
+        }
+        StaticLiteral::Str(boundary) => {
+            let value = parse_plain_string_literal(argument)?;
+            match comparison.op {
+                StaticComparisonOp::Equal => Some(value == *boundary),
+                StaticComparisonOp::NotEqual => Some(value != *boundary),
+                // Relational comparisons over strings are not statically
+                // decided here.
+                _ => None,
+            }
+        }
+    }
+}
+
 /// Project a TypeScript preview finding into a `GapRecord` for validator
-/// consumption, applying all §1.2 preconditions (G-A through G-F).
+/// consumption, applying all §1.2 preconditions (G-A through G-G).
 ///
 /// Returns `None` whenever ANY precondition fails — the false case requires
 /// no positive proof. Only `Ok(())` from the shared validator leads to a flip.
@@ -36,6 +446,10 @@ const TS_AUTHORITY_BOUNDARY: &str = "preview_advisory_only";
 /// - G-D: oracle-eligible relation (not `ambiguous_related_test`; verified by G-A)
 /// - G-E: non-empty `missing_discriminators` list (a target shape exists)
 /// - G-F: no cross-language bridge limitation evidence present
+/// - G-G (#4105): the observed oracle call input must reach — or be statically
+///   undecidable against — the named discriminator boundary. A provably
+///   non-reaching input keeps the record projected with a boundary placeholder
+///   shape but fails the packet closed (`agent_packet` ineligible).
 pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> {
     // G-A: only the terminal `incomplete_repair_packet` branch is eligible.
     let category = evidence_value(finding, "actionability_category: ")?;
@@ -111,9 +525,43 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         .missing_discriminators
         .first()
         .map(|d| d.value.clone());
+    let owner_name = finding
+        .probe
+        .owner
+        .as_ref()
+        .and_then(|sym| sym.0.rsplit("::").next())
+        .or_else(|| evidence_value(finding, "owner: "))
+        .map(ToString::to_string);
     let route_kind = typescript_route_kind_for(&finding.probe.family);
-    let assertion_shape = evidence_value(finding, "typescript_oracle_observed: ")
-        .map(|observed| typescript_target_assertion_shape(&finding.probe.family, observed));
+    // Target shape + static reachability of the observed call input against
+    // the named discriminator boundary (#4105): a packet must not present a
+    // provably non-reaching observed input as the shape for the boundary —
+    // an agent following it verbatim would duplicate a non-discriminating
+    // assertion.
+    let target_shape = evidence_value(finding, "typescript_oracle_observed: ").map(|observed| {
+        typescript_target_assertion_shape(
+            &finding.probe.family,
+            observed,
+            missing_discriminator.as_deref(),
+            owner_name.as_deref(),
+        )
+    });
+    let assertion_shape = target_shape.as_ref().map(|shape| shape.shape().to_string());
+    let mut stop_conditions = vec![
+        "Stop if the gap record is no longer present or loses agent-packet eligibility."
+            .to_string(),
+        "Stop if the verification command cannot run from this workspace.".to_string(),
+    ];
+    if let Some(boundary_stop) = target_shape.as_ref().and_then(|shape| match shape {
+        TargetAssertionShape::Observed { .. } => None,
+        TargetAssertionShape::Unreachable { discriminator, .. } => Some(format!(
+            "Do not reuse the observed call input; it cannot reach the missing \
+             discriminator `{discriminator}`. Derive an input that hits the \
+             boundary first."
+        )),
+    }) {
+        stop_conditions.push(boundary_stop);
+    }
 
     let repair_route = GapRepairRoute {
         route_kind: route_kind.to_string(),
@@ -128,11 +576,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
             None
         },
         inspection_command: None,
-        stop_conditions: vec![
-            "Stop if the gap record is no longer present or loses agent-packet eligibility."
-                .to_string(),
-            "Stop if the verification command cannot run from this workspace.".to_string(),
-        ],
+        stop_conditions,
     };
 
     // Anchor: probe location + owner from the finding.
@@ -144,13 +588,6 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         .to_string()
         .replace('\\', "/");
     let probe_line = finding.probe.location.line as u64;
-    let owner_name = finding
-        .probe
-        .owner
-        .as_ref()
-        .and_then(|sym| sym.0.rsplit("::").next())
-        .or_else(|| evidence_value(finding, "owner: "))
-        .map(ToString::to_string);
     let anchor = GapAnchor {
         file: Some(probe_file),
         line: Some(probe_line),
@@ -158,13 +595,23 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         dedupe_fingerprint: Some(finding.id.clone()),
     };
 
-    // Projection eligibility: mark agent_packet eligible (validator cond. 1).
+    // Projection eligibility: agent_packet eligible through the normal
+    // complete-contract path, unless the observed call input provably does
+    // not reach the named discriminator boundary (#4105). Then the shared
+    // validator fails the packet closed while the placeholder shape still
+    // names the boundary — a complete packet must not instruct a duplicate
+    // of a non-discriminating assertion.
+    let boundary_ineligibility = target_shape
+        .as_ref()
+        .and_then(TargetAssertionShape::packet_ineligibility_reason);
     let mut projection_eligibility = BTreeMap::new();
     projection_eligibility.insert(
         "agent_packet".to_string(),
         ProjectionEligibility {
-            eligible: true,
-            reason: "TypeScript preview complete-contract projection (RIPR-SPEC-0087)".to_string(),
+            eligible: boundary_ineligibility.is_none(),
+            reason: boundary_ineligibility.unwrap_or_else(|| {
+                "TypeScript preview complete-contract projection (RIPR-SPEC-0087)".to_string()
+            }),
         },
     );
 
@@ -229,26 +676,6 @@ pub(crate) fn typescript_canonical_gap_id(finding_id: &str) -> String {
     } else {
         // Fallback: use the whole normalized id as a slug.
         format!("gap:typescript:{normalized}")
-    }
-}
-
-/// Build the assertion the repair should add, from the borrowed call shape.
-///
-/// The borrowed assertion supplies only the observed call (`applyDiscount(100,
-/// 100)`), which is what makes the target concrete. Its expected literal and
-/// matcher belong to a different, weaker check: the projection only runs for
-/// weakly-exposed findings, so by construction the borrowed assertion does not
-/// pin the changed behavior. Re-using its literal under `toBe` fabricated
-/// assertions such as `expect(result).toBe(50)` from `toBeGreaterThan(50)`.
-/// Static evidence cannot know the right expected value, so the shape uses the
-/// same `expected` placeholder as the Rust assertion shapes.
-fn typescript_target_assertion_shape(
-    family: &crate::domain::ProbeFamily,
-    observed: &str,
-) -> String {
-    match family {
-        crate::domain::ProbeFamily::ErrorPath => format!("expect({observed}).toThrow(expected)"),
-        _ => format!("expect({observed}).toBe(expected)"),
     }
 }
 
@@ -610,6 +1037,343 @@ mod tests {
         assert!(
             has_preview_clause,
             "F14: gap_record_packet_do_not_do must include preview clause for language_status=preview; got: {do_not_do:?}"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // #4105: observed-input vs discriminator-boundary reachability.
+    // A complete packet must not present an observed call input that provably
+    // cannot reach the named boundary as the shape for that boundary.
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// A complete finding shaped like the #4105 repro: owner `login` with the
+    /// changed boundary `user.length >= 3`, a related test asserting on
+    /// `login(<observed>)`, and the missing discriminator naming the boundary.
+    fn boundary_finding(observed: &str, expected: &str, discriminator: &str) -> Finding {
+        let mut finding = complete_finding();
+        finding.id = "probe:src_auth.ts:typescript_preview:23e9836b".to_string();
+        finding.probe.owner = Some(SymbolId("typescript:src/auth.ts::login".to_string()));
+        for line in finding.evidence.iter_mut() {
+            if line.starts_with("typescript_oracle_observed: ") {
+                *line = format!("typescript_oracle_observed: {observed}");
+            } else if line.starts_with("typescript_oracle_expected: ") {
+                *line = format!("typescript_oracle_expected: {expected}");
+            } else if line.starts_with("missing_discriminator: ") {
+                *line = format!("missing_discriminator: {discriminator}");
+            }
+        }
+        finding.activation.missing_discriminators[0].value = discriminator.to_string();
+        finding
+    }
+
+    /// Wrongfam: the observed input `'alice'` has length 5, so it provably
+    /// does NOT reach the `user.length == 3` boundary. The shape must become
+    /// an explicit boundary placeholder and the packet must fail closed.
+    #[test]
+    fn observed_input_not_reaching_boundary_downgrades_to_placeholder_and_fails_closed()
+    -> Result<(), String> {
+        let finding = boundary_finding("login('alice')", "'session-for-alice'", "user.length == 3");
+        let record = typescript_gap_record_for(&finding)
+            .ok_or_else(|| "record must still project for the wrongfam finding".to_string())?;
+        let route = record
+            .repair_route
+            .as_ref()
+            .ok_or_else(|| "repair route must be present".to_string())?;
+        let shape = route
+            .assertion_shape
+            .as_deref()
+            .ok_or_else(|| "shape must be present".to_string())?;
+        assert_eq!(
+            shape, "login(/* boundary input for user.length == 3 */).toBe(expected)",
+            "shape must name the boundary, not the observed input"
+        );
+        assert!(
+            !shape.contains("'alice'"),
+            "placeholder shape must not reuse the observed input: {shape}"
+        );
+        assert!(
+            route.stop_conditions.iter().any(|stop| {
+                stop.contains("Do not reuse the observed call input")
+                    && stop.contains("user.length == 3")
+            }),
+            "a stop condition must forbid reusing the observed input: {:?}",
+            route.stop_conditions
+        );
+        let error = match validate_agent_gap_record_packet(&record) {
+            Err(error) => error,
+            Ok(()) => {
+                return Err(
+                    "packet must fail closed when the observed input cannot reach the boundary"
+                        .to_string(),
+                );
+            }
+        };
+        assert!(
+            error.contains("user.length == 3") && error.contains("login('alice')"),
+            "validator reason must name the boundary and the observed input: {error}"
+        );
+        Ok(())
+    }
+
+    /// Hon-style control: an observed input that DOES hit the boundary
+    /// (`'abc'` has length 3) keeps today's derived shape and the packet
+    /// stays delegatable through the shared validator.
+    #[test]
+    fn observed_input_hitting_boundary_keeps_observed_shape_and_validator_pass()
+    -> Result<(), String> {
+        let finding = boundary_finding("login('abc')", "'session-for-alice'", "user.length == 3");
+        let record =
+            typescript_gap_record_for(&finding).ok_or_else(|| "record must project".to_string())?;
+        let route = record
+            .repair_route
+            .as_ref()
+            .ok_or_else(|| "repair route must be present".to_string())?;
+        assert_eq!(
+            route.assertion_shape.as_deref(),
+            Some("expect(login('abc')).toBe(expected)"),
+            "boundary-hitting observed input keeps the derived shape"
+        );
+        if let Err(error) = validate_agent_gap_record_packet(&record) {
+            return Err(format!(
+                "boundary-hitting input keeps the packet delegatable; got: {error}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Multi-argument call: without signature evidence the argument binding
+    /// would be a guess, so the observed shape stands (undecided, fail-open).
+    #[test]
+    fn undecidable_argument_binding_keeps_observed_shape_and_validator_pass() -> Result<(), String>
+    {
+        let finding = boundary_finding(
+            "login('alice', true)",
+            "'session-for-alice'",
+            "user.length == 3",
+        );
+        let record =
+            typescript_gap_record_for(&finding).ok_or_else(|| "record must project".to_string())?;
+        let route = record
+            .repair_route
+            .as_ref()
+            .ok_or_else(|| "repair route must be present".to_string())?;
+        assert_eq!(
+            route.assertion_shape.as_deref(),
+            Some("expect(login('alice', true)).toBe(expected)")
+        );
+        if let Err(error) = validate_agent_gap_record_packet(&record) {
+            return Err(format!(
+                "undecided reachability must not block the packet; got: {error}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A callee that does not resolve to the owner is never judged.
+    #[test]
+    fn non_owner_callee_is_not_judged_for_reachability() -> Result<(), String> {
+        let finding =
+            boundary_finding("helper('alice')", "'session-for-alice'", "user.length == 3");
+        let record =
+            typescript_gap_record_for(&finding).ok_or_else(|| "record must project".to_string())?;
+        let route = record
+            .repair_route
+            .as_ref()
+            .ok_or_else(|| "repair route must be present".to_string())?;
+        assert_eq!(
+            route.assertion_shape.as_deref(),
+            Some("expect(helper('alice')).toBe(expected)")
+        );
+        if let Err(error) = validate_agent_gap_record_packet(&record) {
+            return Err(format!(
+                "a non-owner callee must not be judged for reachability; got: {error}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn target_shape_numeric_boundary_miss_downgrades_to_placeholder() {
+        let shape = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "limit(5)",
+            Some("amount == 3"),
+            Some("limit"),
+        );
+        assert_eq!(
+            shape,
+            TargetAssertionShape::Unreachable {
+                shape: "limit(/* boundary input for amount == 3 */).toBe(expected)".to_string(),
+                observed_call: "limit(5)".to_string(),
+                discriminator: "amount == 3".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn target_shape_numeric_boundary_hit_keeps_observed() {
+        let shape = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "limit(3)",
+            Some("amount == 3"),
+            Some("limit"),
+        );
+        assert_eq!(
+            shape,
+            TargetAssertionShape::Observed {
+                shape: "expect(limit(3)).toBe(expected)".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn target_shape_string_equality_boundary_respects_operator() {
+        let miss = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "greet('bob')",
+            Some("name == 'admin'"),
+            Some("greet"),
+        );
+        assert!(matches!(miss, TargetAssertionShape::Unreachable { .. }));
+        let hit = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "greet('admin')",
+            Some("name == 'admin'"),
+            Some("greet"),
+        );
+        assert!(matches!(hit, TargetAssertionShape::Observed { .. }));
+        // `!=` flips both verdicts.
+        let ne_miss = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "greet('admin')",
+            Some("name != 'admin'"),
+            Some("greet"),
+        );
+        assert!(matches!(ne_miss, TargetAssertionShape::Unreachable { .. }));
+        let ne_hit = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "greet('bob')",
+            Some("name != 'admin'"),
+            Some("greet"),
+        );
+        assert!(matches!(ne_hit, TargetAssertionShape::Observed { .. }));
+    }
+
+    #[test]
+    fn target_shape_length_comparison_operators_are_evaluated() {
+        // `'ab'.length == 3` is false → downgrade.
+        let miss = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "pad('ab')",
+            Some("user.length == 3"),
+            Some("pad"),
+        );
+        assert!(matches!(miss, TargetAssertionShape::Unreachable { .. }));
+        // `'abcd'.length < 3` is false → downgrade.
+        let miss_lt = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "pad('abcd')",
+            Some("user.length < 3"),
+            Some("pad"),
+        );
+        assert!(matches!(miss_lt, TargetAssertionShape::Unreachable { .. }));
+        // `'ab'.length < 3` is true → keep the observed shape.
+        let hit_lt = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "pad('ab')",
+            Some("user.length < 3"),
+            Some("pad"),
+        );
+        assert!(matches!(hit_lt, TargetAssertionShape::Observed { .. }));
+    }
+
+    #[test]
+    fn target_shape_escaped_literal_is_undecided() {
+        // Escape sequences make the static length unreliable — fail open.
+        let shape = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "login('a\\t')",
+            Some("user.length == 3"),
+            Some("login"),
+        );
+        assert!(
+            matches!(shape, TargetAssertionShape::Observed { .. }),
+            "escaped literals must stay undecided: {shape:?}"
+        );
+    }
+
+    #[test]
+    fn target_shape_without_discriminator_or_owner_keeps_observed() {
+        let no_discriminator = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "login('alice')",
+            None,
+            Some("login"),
+        );
+        assert!(matches!(
+            no_discriminator,
+            TargetAssertionShape::Observed { .. }
+        ));
+        let no_owner = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "login('alice')",
+            Some("user.length == 3"),
+            None,
+        );
+        assert!(matches!(no_owner, TargetAssertionShape::Observed { .. }));
+        // Non-literal boundaries (e.g. `amount >= threshold`) are undecided.
+        let non_literal = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "applyDiscount(100, 100)",
+            Some("amount >= threshold"),
+            Some("applyDiscount"),
+        );
+        assert!(matches!(non_literal, TargetAssertionShape::Observed { .. }));
+    }
+
+    #[test]
+    fn compound_expression_is_not_one_static_call() {
+        // `login('a') + login('b')` and `login('ab')('c')` must not parse as a
+        // single static call, or reachability would be judged on fabricated
+        // arguments (review: reject compounds before static reachability).
+        for expr in ["login('a') + login('b')", "login('ab')('c')"] {
+            assert!(
+                parse_static_call_expression(expr).is_none(),
+                "compound expression must be refused: {expr}"
+            );
+        }
+    }
+
+    #[test]
+    fn string_literal_with_inner_matching_quote_is_undecided() {
+        // `login('ab' + 'c')`: the argument is not a plain string literal, so
+        // its length must not be judged statically.
+        let shape = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "login('ab' + 'c')",
+            Some("user.length == 3"),
+            Some("login"),
+        );
+        assert!(
+            matches!(shape, TargetAssertionShape::Observed { .. }),
+            "non-literal argument must stay undecided: {shape:?}"
+        );
+    }
+
+    #[test]
+    fn string_length_uses_utf16_code_units() {
+        // JavaScript `String.prototype.length` counts UTF-16 code units: an
+        // astral character (e.g. emoji) counts as 2, so `login('a😀')` has
+        // length 3 and hits a `user.length == 3` boundary.
+        let shape = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "login('a😀')",
+            Some("user.length == 3"),
+            Some("login"),
+        );
+        assert!(
+            matches!(shape, TargetAssertionShape::Observed { .. }),
+            "UTF-16 length 3 must reach the boundary: {shape:?}"
         );
     }
 }

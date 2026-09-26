@@ -62,7 +62,6 @@ impl ReExportIndex {
         alias_map: Option<&TsAliasMap>,
         is_test: impl Fn(&Path) -> bool,
     ) -> Self {
-        use oxc_allocator::Allocator;
         use oxc_parser::Parser;
 
         let mut entries: HashMap<(String, String), (String, String)> = HashMap::new();
@@ -73,50 +72,66 @@ impl ReExportIndex {
             let Some(source) = sources.get(relative) else {
                 continue;
             };
-            let allocator = Allocator::default();
-            let ret = Parser::new(&allocator, source, source_type_for(relative)).parse();
-            if !ret.errors.is_empty() {
-                continue;
-            }
-            // intermediate module path (normalized, no extension)
-            let intermediate_module = normalized_module_path(relative);
-            for stmt in &ret.program.body {
-                let Statement::ExportNamedDeclaration(export) = stmt else {
-                    continue;
-                };
-                if export.declaration.is_some() {
-                    continue;
-                }
-                let Some(re_source) = &export.source else {
-                    continue;
-                };
-                let source_str = re_source.value.to_string();
-                // Resolve the source module relative to the intermediate file's dir.
-                // Pass alias_map so tsconfig-aliased paths can be followed.
-                let Some(resolved) = normalized_relative_import_module(
-                    relative,
-                    &source_str,
-                    alias_map,
-                    Some(workspace_root),
-                ) else {
-                    continue;
-                };
-                for specifier in &export.specifiers {
-                    if specifier.export_kind == ImportOrExportKind::Type {
-                        continue;
+            // Parse on the guarded large-stack worker (#4101): the recursive
+            // oxc parser must not run on the caller's stack, and an
+            // over-budget source is skipped exactly like a parse error.
+            let worker_root = workspace_root.to_path_buf();
+            let worker_alias = alias_map.cloned();
+            let Ok(file_entries) = parse_on_worker(
+                relative.as_path(),
+                source.as_str(),
+                move |relative, source, allocator| {
+                    let ret = Parser::new(allocator, source, source_type_for(relative)).parse();
+                    if !ret.errors.is_empty() {
+                        return Vec::new();
                     }
-                    let Some(original_name) = module_export_name_text(&specifier.local) else {
-                        continue;
-                    };
-                    let exported_name = module_export_name_text(&specifier.exported)
-                        .unwrap_or_else(|| original_name.clone());
-                    // key: what the test would import from the intermediate file
-                    let key = (intermediate_module.clone(), exported_name);
-                    // value: what the owner file exports under its original name
-                    entries
-                        .entry(key)
-                        .or_insert_with(|| (original_name, resolved.clone()));
-                }
+                    // intermediate module path (normalized, no extension)
+                    let intermediate_module = normalized_module_path(relative);
+                    let mut file_entries = Vec::new();
+                    for stmt in &ret.program.body {
+                        let Statement::ExportNamedDeclaration(export) = stmt else {
+                            continue;
+                        };
+                        if export.declaration.is_some() {
+                            continue;
+                        }
+                        let Some(re_source) = &export.source else {
+                            continue;
+                        };
+                        let source_str = re_source.value.to_string();
+                        // Resolve the source module relative to the intermediate file's dir.
+                        // Pass alias_map so tsconfig-aliased paths can be followed.
+                        let Some(resolved) = normalized_relative_import_module(
+                            relative,
+                            &source_str,
+                            worker_alias.as_ref(),
+                            Some(worker_root.as_path()),
+                        ) else {
+                            continue;
+                        };
+                        for specifier in &export.specifiers {
+                            if specifier.export_kind == ImportOrExportKind::Type {
+                                continue;
+                            }
+                            let Some(original_name) = module_export_name_text(&specifier.local)
+                            else {
+                                continue;
+                            };
+                            let exported_name = module_export_name_text(&specifier.exported)
+                                .unwrap_or_else(|| original_name.clone());
+                            // key: what the test would import from the intermediate file
+                            let key = (intermediate_module.clone(), exported_name);
+                            // value: what the owner file exports under its original name
+                            file_entries.push((key, (original_name, resolved.clone())));
+                        }
+                    }
+                    file_entries
+                },
+            ) else {
+                continue;
+            };
+            for (key, value) in file_entries {
+                entries.entry(key).or_insert_with(|| value);
             }
         }
         Self { entries }
@@ -330,9 +345,10 @@ pub(crate) fn owner_call_relation(
     }
     if contains_call_name(&test.body_text, &owner.name)
         && !owner_name_shadowed_by_unrelated_import(test, owner, alias_map, workspace_root)
-        // #4103 shape 4 + #4102 shape 4: a body-local declaration of the
-        // owner name (function, binding, or destructured property) shadows
-        // the bare call — it reaches the local, not the owner.
+        // Shadow guard (#4102): a test body that declares its own
+        // `function <owner>(...)` / `const <owner> = ...` (or a destructured
+        // property binding of the name) calls the local declaration, not the
+        // imported owner — do not credit DirectOwnerCall.
         && !local_identifier_declared_in_test_body(&test.body_text, &owner.name)
         && !owner_name_destructured_from_unrelated_source(test, owner, alias_map, workspace_root)
         // #4103 shape 1: a bare `ownerName(...)` only counts when a
@@ -740,13 +756,13 @@ fn owner_name_destructured_from_unrelated_source(
         // `require("<path>")`: a shadow only when the path is NOT the owner's
         // own module.
         if let Some(source) = require_source_from_text(init) {
-            return !normalized_relative_import_module(
+            return normalized_relative_import_module(
                 &test.file,
                 &source,
                 alias_map,
                 workspace_root,
             )
-            .is_some_and(|module| module == normalized_module_path(&owner.file));
+            .is_none_or(|module| module != normalized_module_path(&owner.file));
         }
         // `<namespace>` where the namespace import binds the owner's module:
         // not a shadow. Anything else (factory call, dynamic import, an
@@ -1052,10 +1068,18 @@ pub(crate) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
 }
 
 fn has_call_boundary(body_text: &str, idx: usize) -> bool {
-    body_text[..idx]
-        .chars()
-        .next_back()
-        .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+    let prefix = &body_text[..idx];
+    let Some(ch) = prefix.chars().next_back() else {
+        return true;
+    };
+    if is_javascript_identifier_char(ch) {
+        return false;
+    }
+    if ch != '.' {
+        return true;
+    }
+    // `...name(` is a spread call. `obj.name(` and `obj?.name(` stay member access.
+    prefix.ends_with("...")
 }
 
 fn owner_name_shadowed_by_unrelated_import(
@@ -1104,6 +1128,10 @@ fn import_references_owner_call(
     }
     import.imported.as_deref() == Some(owner.name.as_str())
         && contains_call_name(body_text, &import.local)
+        // Shadow guard (#4102): the same test-body declaration guard the
+        // alias arm applies — a locally re-declared `local` reaches the
+        // shadow, not the owner.
+        && !local_identifier_declared_in_test_body(body_text, &import.local)
 }
 
 pub(crate) fn import_source_matches_owner(
@@ -1230,10 +1258,216 @@ fn expect_actual_slices(body_text: &str) -> Vec<&str> {
         .collect()
 }
 
+/// A local declaration of the shadow-checked identifier found by the lexical
+/// scope walk in `local_identifier_declared_in_test_body`.
+struct BodyDeclaration {
+    /// Byte offset of the declared name token, so the walk does not count the
+    /// declaration's own binding as a use of the identifier.
+    name_start: usize,
+    /// Enclosing block scope (index into the walk's scope table); `None` is
+    /// the test body's top level, which shadows every use in the body.
+    scope: Option<usize>,
+}
+
+/// Lexical states for the shadow-check walk.
+#[derive(Clone, Copy)]
+enum BodyScanState {
+    Code,
+    LineComment,
+    BlockComment,
+    SingleQuoted,
+    DoubleQuoted,
+    Template,
+}
+
+/// Whether a local declaration of `identifier` shadows one of its uses in the
+/// test body (#4102 shadow guard, scope-aware per the #4117 review): a
+/// declaration at the body's top level shadows every use (call or bare
+/// identifier reference), while a declaration inside a nested block shadows
+/// only the uses inside that same block — a `const owner` buried in a helper
+/// branch must not reject an imported-owner call made outside it. The walk is
+/// a conservative lexer that skips comments and string/template contents
+/// (template interpolations resume code tracking, and a multi-line comment
+/// counts as a statement break for the line-start check); regex literals are
+/// not modeled. Uses reuse the module's reference predicates: no member
+/// access (`x.owner`), no object-literal key. Every declaration kind shadows
+/// each use lexically inside its recorded scope regardless of textual order
+/// (#4117 review TDZ fix): `function` declarations hoist within their block,
+/// `var` hoists to the enclosing function, and `const`/`let` bind their whole
+/// block — a same-block use before the declaration sits in the temporal dead
+/// zone and can never reach an outer owner. Known conservatism: a nested-block
+/// `var` is recorded at its own block rather than the enclosing function, so
+/// a same-function use outside that block stays unshadowed (over-credit
+/// direction, retained under the cross-block interval rules).
 pub(crate) fn local_identifier_declared_in_test_body(body_text: &str, identifier: &str) -> bool {
-    body_text.lines().any(|line| {
-        let trimmed = line.trim_start();
-        !trimmed.starts_with("//") && declaration_line_declares_identifier(trimmed, identifier)
+    // Scope table: (open-brace offset, close-brace offset; `usize::MAX` while
+    // the scope is still open). Entries are kept after closing so a nested
+    // declaration can be tested for enclosing a specific use.
+    let mut scopes: Vec<(usize, usize)> = Vec::new();
+    let mut open_scopes: Vec<usize> = Vec::new();
+    let mut uses: Vec<usize> = Vec::new();
+    let mut declarations: Vec<BodyDeclaration> = Vec::new();
+    let mut state = BodyScanState::Code;
+    // Depths whose closing `}` returns the walk from a template
+    // interpolation (which opened a pseudo-scope) to its template literal.
+    let mut interpolation_returns: Vec<usize> = Vec::new();
+    let mut at_line_start = true;
+    let mut escaped = false;
+    let mut pending_dollar = false;
+    let mut block_comment_has_newline = false;
+    for (idx, ch) in body_text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '\n' {
+            match state {
+                BodyScanState::LineComment => state = BodyScanState::Code,
+                BodyScanState::SingleQuoted | BodyScanState::DoubleQuoted => {
+                    // Unterminated string: recover instead of mis-scoping the
+                    // remainder of the body.
+                    state = BodyScanState::Code;
+                    at_line_start = true;
+                }
+                BodyScanState::BlockComment => block_comment_has_newline = true,
+                BodyScanState::Template => pending_dollar = false,
+                BodyScanState::Code => at_line_start = true,
+            }
+            continue;
+        }
+        match state {
+            BodyScanState::Code => match ch {
+                c if c.is_whitespace() => {}
+                '/' if body_text[idx + 1..].starts_with('/') => state = BodyScanState::LineComment,
+                '/' if body_text[idx + 1..].starts_with('*') => state = BodyScanState::BlockComment,
+                '\'' => state = BodyScanState::SingleQuoted,
+                '"' => state = BodyScanState::DoubleQuoted,
+                '`' => state = BodyScanState::Template,
+                '{' => {
+                    scopes.push((idx, usize::MAX));
+                    open_scopes.push(scopes.len() - 1);
+                    at_line_start = false;
+                }
+                '}' => {
+                    if interpolation_returns.last() == Some(&open_scopes.len()) {
+                        // `}` closing a `${ ... }` interpolation.
+                        open_scopes.pop();
+                        interpolation_returns.pop();
+                        state = BodyScanState::Template;
+                    } else if let Some(frame) = open_scopes.pop() {
+                        scopes[frame].1 = idx;
+                    }
+                    at_line_start = false;
+                }
+                _ => {
+                    if at_line_start
+                        && let Some(keyword) = ["const ", "let ", "var ", "function "]
+                            .into_iter()
+                            .find(|keyword| body_text[idx..].starts_with(*keyword))
+                    {
+                        let line_end = body_text[idx..]
+                            .find('\n')
+                            .map_or(body_text.len(), |relative| idx + relative);
+                        let line = &body_text[idx..line_end];
+                        if declaration_line_declares_identifier(line, identifier) {
+                            // Skip the declaration's own name token when
+                            // collecting uses (leading whitespace after the
+                            // keyword included).
+                            let name_start = body_text[idx + keyword.len()..]
+                                .char_indices()
+                                .find(|(_, ch)| !ch.is_whitespace())
+                                .map_or(idx + keyword.len(), |(relative, _)| {
+                                    idx + keyword.len() + relative
+                                });
+                            declarations.push(BodyDeclaration {
+                                name_start,
+                                scope: open_scopes.last().copied(),
+                            });
+                        }
+                    }
+                    // A use of the identifier: a call or bare reference with
+                    // the module's reference boundaries — never a member
+                    // access (`x.owner`), object-literal key, or the declared
+                    // name token itself. Comment/string occurrences cannot
+                    // reach this arm (the state machine skips them).
+                    if body_text[idx..].starts_with(identifier)
+                        && has_member_call_boundary(body_text, idx)
+                        && body_text[idx + identifier.len()..]
+                            .chars()
+                            .next()
+                            .is_none_or(|ch| !is_javascript_identifier_char(ch))
+                        && !is_object_literal_key(body_text, idx, idx + identifier.len())
+                        && declarations
+                            .last()
+                            .is_none_or(|declaration| declaration.name_start != idx)
+                    {
+                        uses.push(idx);
+                    }
+                    at_line_start = false;
+                }
+            },
+            BodyScanState::LineComment => {}
+            BodyScanState::BlockComment => {
+                if ch == '*' && body_text[idx + 1..].starts_with('/') {
+                    // A multi-line comment counts as a statement break for the
+                    // line-start check (ASI), so a declaration following it is
+                    // still recognized as leading its line.
+                    state = BodyScanState::Code;
+                    at_line_start = block_comment_has_newline;
+                }
+            }
+            BodyScanState::SingleQuoted => {
+                if ch == '\'' {
+                    state = BodyScanState::Code;
+                    at_line_start = false;
+                }
+            }
+            BodyScanState::DoubleQuoted => {
+                if ch == '"' {
+                    state = BodyScanState::Code;
+                    at_line_start = false;
+                }
+            }
+            BodyScanState::Template => {
+                if ch == '`' {
+                    state = BodyScanState::Code;
+                    at_line_start = false;
+                    pending_dollar = false;
+                } else if ch == '$' {
+                    pending_dollar = true;
+                } else if ch == '{' && pending_dollar {
+                    interpolation_returns.push(open_scopes.len() + 1);
+                    scopes.push((idx, usize::MAX));
+                    open_scopes.push(scopes.len() - 1);
+                    state = BodyScanState::Code;
+                    pending_dollar = false;
+                } else {
+                    pending_dollar = false;
+                }
+            }
+        }
+    }
+    uses.iter().any(|use_offset| {
+        declarations
+            .iter()
+            .any(|declaration| match declaration.scope {
+                // Top-level declarations shadow every use in the body.
+                None => true,
+                // Otherwise the declaration shadows a use exactly when the use is
+                // lexically inside the declaration's own scope: same-block
+                // position is irrelevant (`function` hoists; `var` hoists to the
+                // enclosing function; `const`/`let` bind block-wide, so a
+                // pre-declaration same-block use sits in the temporal dead zone
+                // and can never reach an outer binding), while a use outside the
+                // recorded block still reaches the owner.
+                Some(frame) => scopes
+                    .get(frame)
+                    .is_some_and(|(start, end)| *start <= *use_offset && *use_offset < *end),
+            })
     })
 }
 
@@ -1404,4 +1638,30 @@ fn similarity_key_contains(haystack: &str, needle: &str) -> bool {
             .strip_suffix(needle)
             .is_some_and(|prefix| prefix.ends_with('_'))
         || haystack.contains(&format!("_{needle}_"))
+}
+
+#[cfg(test)]
+mod spread_call_boundary_tests {
+    use super::contains_call_name;
+
+    #[test]
+    fn spread_is_a_call_and_member_access_is_not() -> Result<(), String> {
+        let cases = [
+            ("[...steps(4)]", true),
+            ("Array.from(steps(4))", true),
+            ("steps(4)", true),
+            ("obj.steps(4)", false),
+            ("obj?.steps(4)", false),
+            ("notsteps(4)", false),
+            ("// steps(4)", false),
+            ("const steps = 1; steps(4)", true),
+        ];
+        for (text, expected) in cases {
+            let actual = contains_call_name(text, "steps");
+            if actual != expected {
+                return Err(format!("{text}: expected call={expected}, got {actual}"));
+            }
+        }
+        Ok(())
+    }
 }

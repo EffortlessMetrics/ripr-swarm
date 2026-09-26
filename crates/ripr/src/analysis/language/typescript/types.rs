@@ -15,15 +15,27 @@ pub(crate) struct TypeScriptOwner {
     pub(crate) class_name: Option<String>,
     pub(crate) decorated: bool,
     pub(crate) imports: Vec<TypeScriptImport>,
-    /// Positional parameter names of the owner function, in declaration
-    /// order. Empty means the adapter recorded no parameter facts: either the
-    /// owner is not a callable with a fixed positional signature (module
-    /// initializer, computed method) or the signature uses patterns the
-    /// syntax-first extractor refuses to summarize (destructuring, rest).
-    /// The predicate boundary witness uses these facts for
-    /// position/arity-aware literal matching (#4102); with no facts it keeps
-    /// the previous position-blind behaviour.
+    /// Positional parameter names of the owner function, in signature order
+    /// (issue #4102). The single parameter-name list shared by the boundary
+    /// witness, shadow guards, and relation guards. Empty means the adapter
+    /// recorded no parameter facts: either the owner is not a callable with a
+    /// fixed positional signature (module initializer, computed method) or
+    /// the signature uses patterns the syntax-first extractor refuses to
+    /// summarize (destructuring, rest). Fail-closed pairing with `arity`:
+    /// non-empty exactly when `arity` is `Some`, with `params.len()` equal to
+    /// it; with no facts the position checks keep the position-blind
+    /// behaviour.
     pub(crate) params: Vec<String>,
+    /// Parameter-count half of the same signature facts (issue #4102).
+    /// `Some(n)` only when every parameter is a plain binding identifier and
+    /// there is no rest parameter; `None` when the list could not be resolved
+    /// (destructuring, rest, or extraction unavailable). A boundary witness
+    /// may only credit an argument position a parameter could actually read.
+    pub(crate) arity: Option<usize>,
+    /// The owner's own source text from its declaration start to its end, when
+    /// extraction had the containing source. Enables expected-semantics checks
+    /// that need the owner body (predicate expected-side liveness, #4102).
+    pub(crate) source_text: Option<String>,
 }
 
 impl TypeScriptOwner {

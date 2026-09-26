@@ -18,23 +18,30 @@ impl TestDeclarationRoot {
 }
 
 pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
-    let allocator = Allocator::default();
-    let ret = Parser::new(&allocator, source, source_type_for(file)).parse();
-    if !ret.errors.is_empty() {
+    // Same guard as owner extraction (#4101): a file under the nesting
+    // budget can still overflow the caller stack, so the second parse must
+    // not run on the main thread.
+    let Ok(tests) = parse_on_worker(file, source, |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            return Vec::new();
+        }
+        let imports = extract_imports_from_statements(&ret.program.body);
+        let mocks = extract_mocks_from_statements(&ret.program.body);
+        let mut tests = Vec::new();
+        collect_tests_from_statements(
+            &ret.program.body,
+            file,
+            source,
+            &mocks,
+            &imports,
+            &mut Vec::new(),
+            &mut tests,
+        );
+        tests
+    }) else {
         return Vec::new();
-    }
-    let imports = extract_imports_from_statements(&ret.program.body);
-    let mocks = extract_mocks_from_statements(&ret.program.body);
-    let mut tests = Vec::new();
-    collect_tests_from_statements(
-        &ret.program.body,
-        file,
-        source,
-        &mocks,
-        &imports,
-        &mut Vec::new(),
-        &mut tests,
-    );
+    };
     tests
 }
 
@@ -391,27 +398,33 @@ pub(crate) fn detect_partial_test_extraction(
     source: &str,
     extracted: &[TypeScriptTest],
 ) -> Option<TypeScriptTestExtractionGap> {
-    let allocator = Allocator::default();
-    let ret = Parser::new(&allocator, source, source_type_for(file)).parse();
-    if !ret.errors.is_empty() {
-        // Parse-error disclosure owns this case; do not double-report.
-        return None;
-    }
+    // Span starts are pure string search. Compute them before the worker:
+    // the parse closure is `'static` and cannot borrow `extracted`.
     let extracted_starts = extracted_span_starts(source, extracted);
-    let mut finder = UnextractedTestFinder {
-        source,
-        extracted_starts: &extracted_starts,
-        gap: None,
+    let Ok(gap) = parse_on_worker(file, source, move |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            // Parse-error disclosure owns this case; do not double-report.
+            return None;
+        }
+        let mut finder = UnextractedTestFinder {
+            source,
+            extracted_starts: &extracted_starts,
+            gap: None,
+        };
+        finder.visit_statements(&ret.program.body);
+        finder.gap.map(
+            |(sample_line, shape, snippet)| TypeScriptTestExtractionGap {
+                file: file.to_path_buf(),
+                sample_line,
+                shape,
+                snippet,
+            },
+        )
+    }) else {
+        return None;
     };
-    finder.visit_statements(&ret.program.body);
-    finder.gap.map(
-        |(sample_line, shape, snippet)| TypeScriptTestExtractionGap {
-            file: file.to_path_buf(),
-            sample_line,
-            shape,
-            snippet,
-        },
-    )
+    gap
 }
 
 /// Recover the byte-offset span start for every extracted test from its
