@@ -7001,7 +7001,8 @@ fn doctor_passes_typescript_root_without_rust_toolchain() -> Result<(), String> 
 /// a Cargo.toml still fail the Cargo.toml check.
 #[test]
 #[cfg(unix)]
-fn doctor_distinguishes_installed_analysis_from_source_build_and_missing_manifest() -> Result<(), String> {
+fn doctor_distinguishes_installed_analysis_from_source_build_and_missing_manifest()
+-> Result<(), String> {
     let workspace = unique_temp_workspace("doctor-rust-no-toolchain");
     let path = doctor_path_without_rust_toolchain(&workspace)?;
 
@@ -7024,15 +7025,25 @@ fn doctor_distinguishes_installed_analysis_from_source_build_and_missing_manifes
         || doctor_check_status(&report, "tool_cargo") != "advisory"
         || doctor_check_status(&report, "tool_rustc") != "advisory"
     {
-        Err(format!("installed analysis must remain available without cargo: {report}"))
+        Err(format!(
+            "installed analysis must remain available without cargo: {report}"
+        ))
     } else {
         Ok(())
     };
     let source_build = run_command_with_env(
-        env!("CARGO_BIN_EXE_ripr"), &with_manifest,
-        &["doctor", "--root", with_manifest.to_str().ok_or("non-UTF8 workspace path")?, "--source-build", "--json"],
+        env!("CARGO_BIN_EXE_ripr"),
+        &with_manifest,
+        &[
+            "doctor",
+            "--root",
+            with_manifest.to_str().ok_or("non-UTF8 workspace path")?,
+            "--source-build",
+            "--json",
+        ],
         &[("PATH", path.as_str())],
-    ).map_err(|error| format!("run source-build doctor: {error}"))?;
+    )
+    .map_err(|error| format!("run source-build doctor: {error}"))?;
     let source_report: serde_json::Value = serde_json::from_slice(&source_build.stdout)
         .map_err(|error| format!("source-build doctor JSON did not parse: {error}"))?;
     if source_build.status.success()
@@ -7041,7 +7052,9 @@ fn doctor_distinguishes_installed_analysis_from_source_build_and_missing_manifes
         || doctor_check_status(&source_report, "tool_cargo") != "fail"
         || doctor_check_status(&source_report, "tool_rustc") != "fail"
     {
-        return Err(format!("source build must fail without cargo/rustc: {source_report}"));
+        return Err(format!(
+            "source build must fail without cargo/rustc: {source_report}"
+        ));
     }
 
     let sources_only = workspace.join("sources-only");

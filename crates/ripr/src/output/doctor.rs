@@ -1218,7 +1218,9 @@ mod tests {
             ));
         }
         if parsed["checks"][0]["status"] != "advisory" {
-            return Err(format!("rustc build-only limitation must render as advisory: {parsed}"));
+            return Err(format!(
+                "rustc build-only limitation must render as advisory: {parsed}"
+            ));
         }
         let evidence = parsed["checks"][0]["evidence"]
             .as_str()
@@ -1603,18 +1605,26 @@ mod tests {
         for tool in ["tool_cargo", "tool_rustc"] {
             let advisory = check(&report, tool)?;
             if advisory.status != DoctorCheckStatus::Advisory {
-                return Err(format!("{tool} must be advisory for analysis: {advisory:?}"));
+                return Err(format!(
+                    "{tool} must be advisory for analysis: {advisory:?}"
+                ));
             }
         }
         // The fixture is not a Git repository, so Git still fails this
         // report. Toolchain checks themselves must not add a failure.
         let source_report = evaluate_doctor_core_with_probe_profile(
-            &root, &[LanguageId::Rust], DoctorProfile::SourceBuild,
+            &root,
+            &[LanguageId::Rust],
+            DoctorProfile::SourceBuild,
             |tool, _| (DoctorStatus::Fail, format!("{tool} not available")),
-        ).report;
+        )
+        .report;
         for tool in ["tool_cargo", "tool_rustc"] {
             if check(&source_report, tool)?.status != DoctorCheckStatus::Fail {
-                return Err(format!("source-build must fail {tool}: {:?}", source_report.checks));
+                return Err(format!(
+                    "source-build must fail {tool}: {:?}",
+                    source_report.checks
+                ));
             }
         }
         let _ = std::fs::remove_dir_all(&root);
@@ -1622,7 +1632,8 @@ mod tests {
     }
 
     #[test]
-    fn old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build() -> Result<(), String> {
+    fn old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build() -> Result<(), String>
+    {
         let root = doctor_scope_root(
             "scope-old-rustc",
             &[("Cargo.toml", "[package]\nname = \"probe\"\n")],
@@ -1636,13 +1647,18 @@ mod tests {
             return Err(format!("initialize doctor fixture returned {initialized}"));
         }
         let below = below_minimum_rustc_output()?;
-        let evaluate = |profile| evaluate_doctor_core_with_probe_profile(
-            &root, &[LanguageId::Rust], profile,
-            |tool, _| match tool {
-                "rustc" => doctor_tool_check_success(tool, below.as_bytes()).into_public(),
-                _ => (DoctorStatus::Pass, format!("{tool} version 1.0")),
-            },
-        ).report;
+        let evaluate = |profile| {
+            evaluate_doctor_core_with_probe_profile(
+                &root,
+                &[LanguageId::Rust],
+                profile,
+                |tool, _| match tool {
+                    "rustc" => doctor_tool_check_success(tool, below.as_bytes()).into_public(),
+                    _ => (DoctorStatus::Pass, format!("{tool} version 1.0")),
+                },
+            )
+            .report
+        };
         let analysis = evaluate(DoctorProfile::Analysis);
         let source = evaluate(DoctorProfile::SourceBuild);
         let _ = std::fs::remove_dir_all(&root);
@@ -1651,7 +1667,9 @@ mod tests {
             || check(&source, "tool_rustc")?.status != DoctorCheckStatus::Fail
             || source.status != DoctorStatus::Fail
         {
-            return Err(format!("profile boundary lost: analysis={analysis:?}, source={source:?}"));
+            return Err(format!(
+                "profile boundary lost: analysis={analysis:?}, source={source:?}"
+            ));
         }
         Ok(())
     }
@@ -1660,7 +1678,8 @@ mod tests {
     /// excuse a missing Rust toolchain.
     #[test]
     #[cfg(feature = "lang-python")]
-    fn mixed_rust_and_python_root_reports_missing_rust_toolchain_as_advisory() -> Result<(), String> {
+    fn mixed_rust_and_python_root_reports_missing_rust_toolchain_as_advisory() -> Result<(), String>
+    {
         let root = doctor_scope_root(
             "scope-mixed",
             &[
@@ -1671,8 +1690,7 @@ mod tests {
         let (report, _probed) =
             evaluate_without_rust_toolchain(&root, &[LanguageId::Rust, LanguageId::Python]);
         let _ = std::fs::remove_dir_all(&root);
-        if check(&report, "tool_cargo")?.status != DoctorCheckStatus::Advisory
-        {
+        if check(&report, "tool_cargo")?.status != DoctorCheckStatus::Advisory {
             return Err(format!(
                 "mixed root must report missing cargo: {:?}",
                 report.checks
