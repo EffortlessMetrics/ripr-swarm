@@ -65,9 +65,14 @@ mod windows_paths {
 /// [`normalized_file_uri_path`], so every admitted `Ok` round-trips through the
 /// shared decoder. A UNC, extended-length (`\\?\...`), or device (`\\.\...`)
 /// spelling normalizes to a doubled leading separator, which this local-only
-/// decoder rejects; a `..` segment is the same class of refusal. Refuse both
-/// here at emission rather than publishing a URI that would later read as no
-/// file at all.
+/// decoder rejects; refuse that at emission rather than publishing a URI that
+/// would later read as no file at all.
+///
+/// A `..` segment in a path this process built is collapsed before encoding.
+/// Callers join real files that way (`crates/ripr/../../fixtures/...`). The
+/// decoder still refuses a client URI that contains `..`. A relative path
+/// whose `..` escapes its own prefix cannot be collapsed without a root, so
+/// it is refused instead of emitted with a parent segment.
 pub(super) fn file_uri_for_path(path: &Path) -> Result<Uri, String> {
     let normalized = path.to_string_lossy().replace('\\', "/");
     if normalized.starts_with("//") {
@@ -76,13 +81,13 @@ pub(super) fn file_uri_for_path(path: &Path) -> Result<Uri, String> {
             path.display()
         ));
     }
-    if has_parent_directory_segment(&normalized) {
+    let Some(collapsed) = collapse_parent_segments(&normalized) else {
         return Err(format!(
-            "refusing to build a local file URI for a path with a parent-directory segment {}",
+            "refusing to build a local file URI for a relative path that escapes its prefix {}",
             path.display()
         ));
-    }
-    let encoded = encode_uri_path(&normalized);
+    };
+    let encoded = encode_uri_path(&collapsed);
     let uri = if encoded.starts_with('/') {
         format!("file://{encoded}")
     } else {
@@ -215,6 +220,58 @@ fn normalized_file_uri_path(uri: &Uri) -> Option<String> {
 /// True when a `/`-separated path has a segment that is exactly `..`.
 fn has_parent_directory_segment(path: &str) -> bool {
     path.split('/').any(|segment| segment == "..")
+}
+
+/// Collapse `.` and `..` so an emitted URI has no parent segment.
+/// Absolute `..` at the root is a no-op (`/..` stays `/`, `C:/..` stays on
+/// that drive). A relative `..` that escapes the path's own prefix is `None`.
+/// An empty relative result is the relative root; the encoder roots that at
+/// `/`, matching how relative paths are already published.
+pub(super) fn collapse_parent_segments(path: &str) -> Option<String> {
+    if !has_parent_directory_segment(path) {
+        return Some(path.to_string());
+    }
+    let bytes = path.as_bytes();
+    let (mut collapsed, absolute, body) = if let Some(body) = path.strip_prefix('/') {
+        ("/".to_string(), true, body)
+    } else if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && bytes[2] == b'/'
+    {
+        (path[..2].to_string(), true, &path[3..])
+    } else {
+        (String::new(), false, path)
+    };
+    let mut stack = Vec::new();
+    for segment in body.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            if stack.pop().is_none() && !absolute {
+                return None;
+            }
+            continue;
+        }
+        stack.push(segment);
+    }
+    if stack.is_empty() {
+        if absolute && collapsed.ends_with(':') {
+            collapsed.push('/');
+        }
+        return Some(collapsed);
+    }
+    if absolute && collapsed.ends_with(':') {
+        collapsed.push('/');
+    }
+    if collapsed.is_empty() || collapsed.ends_with('/') {
+        collapsed.push_str(&stack.join("/"));
+    } else {
+        collapsed.push('/');
+        collapsed.push_str(&stack.join("/"));
+    }
+    Some(collapsed)
 }
 
 /// Render a path with forward slashes for LSP display (diagnostic messages,
@@ -680,19 +737,33 @@ mod tests {
         }
         let drive = ["C:", "Windows", "..", "system.ini"].join("/");
         // Built at runtime so the source does not contain a local absolute
-        // Windows path token. The backslash spelling is what `file_uri_for_path`
-        // normalizes before the parent-segment check.
+        // Windows path token. The backslash spelling is normalized before
+        // the parent segment is collapsed.
         let drive_backslash = ["C:", "Windows", "..", "system.ini"].join(r"\");
-        for path in [
-            "/a/../../etc/passwd",
-            "../outside.rs",
-            "foo/../bar",
-            drive.as_str(),
-            drive_backslash.as_str(),
+        let drive_collapsed = ["C:", "system.ini"].join("/");
+        for (path, decoded) in [
+            ("/a/../../etc/passwd", "/etc/passwd"),
+            ("foo/../bar", "/bar"),
+            (
+                "/work/repo/crates/ripr/../../fixtures/boundary_gap/input/src/lib.rs",
+                "/work/repo/fixtures/boundary_gap/input/src/lib.rs",
+            ),
+            (drive.as_str(), drive_collapsed.as_str()),
+            (drive_backslash.as_str(), drive_collapsed.as_str()),
         ] {
+            let uri = file_uri_for_path(Path::new(path)).map_err(|err| {
+                format!("server-built parent segment must collapse: {path}: {err}")
+            })?;
+            assert_eq!(
+                path_from_file_uri(&uri),
+                Some(PathBuf::from(decoded)),
+                "{path}"
+            );
+        }
+        for path in ["../outside.rs", "foo/../../outside.rs"] {
             assert!(
                 file_uri_for_path(Path::new(path)).is_err(),
-                "parent segment must be refused at emission: {path}"
+                "a relative path that escapes its prefix must not be emitted: {path}"
             );
         }
         let lookalike = file_uri_for_path(Path::new("/workspace/foo..bar.rs"))

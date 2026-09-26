@@ -534,9 +534,11 @@ are scoped or reviewed.
   admitting it as an absolute path. Saved-content digest reads use only an
   admitted path, so a refused URI's display fallback is not opened even when
   the working directory contains a `file:` directory that would let that
-  relative string follow `..`. Filenames that only contain two dots
-  (`foo..bar`, `..hidden`) stay ordinary local paths. This refuses the read;
-  it is not a claim that a client can disclose the bytes
+  relative string follow `..`. A path this process builds may still contain
+  `..` from a relative join, and that spelling is collapsed before a `file:`
+  URI is emitted. Filenames that only contain two dots (`foo..bar`,
+  `..hidden`) stay ordinary local paths. This refuses the client-supplied
+  read; it is not a claim that a client can disclose the bytes
   ([#4145](https://github.com/EffortlessMetrics/ripr-swarm/issues/4145)).
 - `check-file-policy` builds test binaries before it lists `covered_by`
   subjects. A cold compile is no longer charged against the five-minute
