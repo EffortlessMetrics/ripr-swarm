@@ -3632,15 +3632,17 @@ fn closed_gap_ledger_record_is_not_described_as_configured_off() -> Result<(), S
     let rendered_json: Value = serde_json::from_str(&render_gate_decision_json(&report)?)
         .map_err(|error| format!("gate decision JSON should parse: {error}"))?;
     assert_eq!(rendered_json["decisions"][0]["decision"], "not_applicable");
-    assert_eq!(rendered_json["decisions"][0]["evidence"]["configured_off"], false);
+    assert_eq!(
+        rendered_json["decisions"][0]["evidence"]["configured_off"],
+        false
+    );
     let markdown = render_gate_decision_markdown(&report);
     assert!(markdown.contains("already_observed"));
     assert!(!markdown.contains("configured-hidden"));
 
     // An explicit disabled policy target remains distinguishable from a
     // closed gap, even when both are non-blocking.
-    value["gap_records"][0]["safe_gate_predicate"] =
-        json!({"policy_target_enabled": false});
+    value["gap_records"][0]["safe_gate_predicate"] = json!({"policy_target_enabled": false});
     write_temp_json(&dir, "gap-ledger.json", &value.to_string())?;
     let disabled = build_gate_decision_report(&input)?;
     assert_eq!(disabled.decisions[0].decision, "suppressed");
