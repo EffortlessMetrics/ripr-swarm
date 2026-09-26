@@ -4072,25 +4072,26 @@ mod tests {
     }
 
     #[test]
-    fn reports_ts_limitations_fails_closed_on_unreadable_check_output() {
+    fn reports_ts_limitations_fails_closed_on_unreadable_check_output() -> Result<(), String> {
         // Per docs/EXIT_CODES.md an unreadable input means the command could
         // not complete: the CLI must return the read error (exit 2 at the
         // process boundary) instead of writing a `blocked` report and
         // exiting 0.
-        let missing =
-            unique_command_test_dir("ts-limitations-missing").join("definitely-missing-check.json");
+        let missing = unique_command_test_dir("ts-limitations-missing")
+            .join("definitely-missing-check.json");
         let result = reports(&args(&[
             "ts-limitations",
             "--check-output",
             &missing.display().to_string(),
         ]));
-        let err = result.err().unwrap_or_else(|| {
-            panic!("unreadable check output must fail closed, not exit cleanly")
-        });
+        let err = result
+            .err()
+            .ok_or_else(|| "unreadable check output must fail closed, not exit cleanly".to_string())?;
         assert!(
             err.contains("read check output") && err.contains("failed"),
             "error must name the unreadable input, got: {err}"
         );
+        Ok(())
     }
 
     #[test]
@@ -4153,7 +4154,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_ts_false_actionable_fails_closed_on_unreadable_corpus() {
+    fn reports_ts_false_actionable_fails_closed_on_unreadable_corpus() -> Result<(), String> {
         // Per docs/EXIT_CODES.md an unreadable input means the command could
         // not complete: the CLI must return the read error (exit 2 at the
         // process boundary) instead of writing a `blocked` report and
@@ -4167,11 +4168,12 @@ mod tests {
         ]));
         let err = result
             .err()
-            .unwrap_or_else(|| panic!("unreadable corpus must fail closed, not exit cleanly"));
+            .ok_or_else(|| "unreadable corpus must fail closed, not exit cleanly".to_string())?;
         assert!(
             err.contains("read TypeScript false-actionable audit corpus") && err.contains("failed"),
             "error must name the unreadable input, got: {err}"
         );
+        Ok(())
     }
 
     #[test]
