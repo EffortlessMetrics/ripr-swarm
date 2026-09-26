@@ -214,8 +214,13 @@ fn direct_and_barrel_relations_do_not_borrow_a_same_named_fallback_owner() -> Re
         }))?;
         // Force the old implementation's wrong winning order.
         map.glob_entries.sort_by_key(|entry| entry.prefix.len());
+        let barrel_source = fs::read_to_string(workspace.0.join("src/barrel.ts"))
+            .map_err(|err| format!("read barrel fixture: {err}"))?;
+        let mut sources = std::collections::HashMap::new();
+        sources.insert(PathBuf::from("src/barrel.ts"), barrel_source);
         let index = ReExportIndex::build(
             &[PathBuf::from("src/barrel.ts")],
+            &sources,
             &workspace.0,
             Some(&map),
             |_| false,

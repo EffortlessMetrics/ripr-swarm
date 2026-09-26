@@ -82,50 +82,188 @@ fn has_directory_component(path: &Path, names: &[&str]) -> bool {
     })
 }
 
-pub(crate) fn collect_workspace_typescript_files(root: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    visit_workspace(root, root, &mut out);
-    out.sort();
-    out
+/// Directory names never descended into during workspace discovery.
+///
+/// VCS/build/dependency/tooling noise plus the conventional generated-output
+/// directories (`dist`, `build`, `out`, `coverage`, `.next`, `.cache`,
+/// `vendor`) where multi-megabyte minified bundles live. Mirrors the Python
+/// discovery exclusions in `config/python.rs` (`dist`/`build`) extended with
+/// the TypeScript/JavaScript toolchain conventions.
+const EXCLUDED_DIRECTORY_NAMES: &[&str] = &[
+    ".git",
+    "target",
+    "node_modules",
+    ".ripr",
+    ".direnv",
+    "dist",
+    "build",
+    "out",
+    "coverage",
+    ".next",
+    ".cache",
+    "vendor",
+];
+
+/// Env override for [`DEFAULT_TS_MAX_WORKSPACE_FILES`].
+pub(crate) const TS_MAX_WORKSPACE_FILES_ENV: &str = "RIPR_TS_MAX_WORKSPACE_FILES";
+/// Default ceiling on directory entries visited during workspace discovery.
+const DEFAULT_TS_MAX_WORKSPACE_FILES: usize = 20_000;
+
+/// Parse a positive workspace file-count limit, failing closed to the error
+/// string on invalid input (mirrors `rust.rs::positive_limit_from_env`).
+pub(crate) fn ts_workspace_file_limit_from_env(
+    value: Result<String, std::env::VarError>,
+) -> Result<usize, String> {
+    match value {
+        Ok(raw) => {
+            let parsed = raw.trim().parse::<usize>().map_err(|err| {
+                format!("{TS_MAX_WORKSPACE_FILES_ENV} must be a positive integer: {err}")
+            })?;
+            if parsed == 0 {
+                return Err(format!(
+                    "{TS_MAX_WORKSPACE_FILES_ENV} must be a positive integer"
+                ));
+            }
+            Ok(parsed)
+        }
+        Err(std::env::VarError::NotPresent) => Ok(DEFAULT_TS_MAX_WORKSPACE_FILES),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{TS_MAX_WORKSPACE_FILES_ENV} must be a positive integer"
+        )),
+    }
 }
 
-pub(crate) fn visit_workspace(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        if name == ".git"
-            || name == "target"
-            || name == "node_modules"
-            || name == ".ripr"
-            || name == ".direnv"
-        {
+/// Resolved max-visited-files limit, failing closed to the default so a
+/// malformed operator override cannot abort analysis.
+pub(crate) fn ts_workspace_file_limit() -> usize {
+    ts_workspace_file_limit_from_env(std::env::var(TS_MAX_WORKSPACE_FILES_ENV))
+        .unwrap_or(DEFAULT_TS_MAX_WORKSPACE_FILES)
+}
+
+/// Workspace file discovery result: the accepted source files plus whether
+/// the max-visited-files cap tripped (making `files` a partial set).
+pub(crate) struct WorkspaceScan {
+    pub(crate) files: Vec<PathBuf>,
+    pub(crate) truncated: bool,
+}
+
+pub(crate) fn collect_workspace_typescript_files(root: &Path) -> WorkspaceScan {
+    let max_entries = ts_workspace_file_limit_from_env(std::env::var(TS_MAX_WORKSPACE_FILES_ENV))
+        .unwrap_or(DEFAULT_TS_MAX_WORKSPACE_FILES);
+    visit_workspace(root, max_entries)
+}
+
+/// Iterative workspace walk over an explicit work stack.
+///
+/// Recursion was replaced by a loop so pathologically deep directory trees
+/// cannot overflow the call stack (a hard abort). Every visited entry counts
+/// against `max_entries`; exceeding the cap stops the walk and reports
+/// `truncated: true` so the adapter can disclose the bound instead of
+/// silently analyzing a partial workspace.
+pub(crate) fn visit_workspace(root: &Path, max_entries: usize) -> WorkspaceScan {
+    let mut out = Vec::new();
+    let mut visited = 0usize;
+    let mut truncated = false;
+    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
-        }
-        let file_type = match entry.file_type() {
-            Ok(file_type) => file_type,
-            Err(_) => continue,
         };
-        if file_type.is_dir() {
-            visit_workspace(root, &path, out);
-        } else if file_type.is_file() {
-            let adapter = TypeScriptAdapter;
-            if adapter.accepts_path(&path) {
-                let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
-                out.push(relative);
+        let mut stop = false;
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > max_entries {
+                truncated = true;
+                stop = true;
+                break;
+            }
+            let path = entry.path();
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            if EXCLUDED_DIRECTORY_NAMES.contains(&name) {
+                continue;
+            }
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(_) => continue,
+            };
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file() {
+                let adapter = TypeScriptAdapter;
+                if adapter.accepts_path(&path) {
+                    let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+                    out.push(relative);
+                }
             }
         }
+        if stop {
+            stack.clear();
+            break;
+        }
+    }
+    out.sort();
+    WorkspaceScan {
+        files: out,
+        truncated,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempWorkspace(PathBuf);
+
+    impl TempWorkspace {
+        fn new(label: &str) -> Self {
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            let root = std::env::temp_dir().join(format!(
+                "ripr-ts-discovery-{label}-{}-{stamp}",
+                std::process::id()
+            ));
+            let created = fs::create_dir_all(&root);
+            assert!(
+                created.is_ok(),
+                "create temp workspace {}: {:?}",
+                root.display(),
+                created.err()
+            );
+            Self(root)
+        }
+
+        fn write(&self, relative: &str, source: &str) {
+            let absolute = self.0.join(relative);
+            let parent = absolute.parent().unwrap_or(Path::new("."));
+            let created = fs::create_dir_all(parent);
+            assert!(
+                created.is_ok(),
+                "create fixture dir {}: {:?}",
+                parent.display(),
+                created.err()
+            );
+            let written = fs::write(&absolute, source);
+            assert!(
+                written.is_ok(),
+                "write fixture file {}: {:?}",
+                absolute.display(),
+                written.err()
+            );
+        }
+    }
+
+    impl Drop for TempWorkspace {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn test_file_names_cover_supported_runner_conventions() {
@@ -249,5 +387,90 @@ mod tests {
                 "expected one extracted test for {display}"
             );
         }
+    }
+
+    #[test]
+    fn nested_source_files_are_still_discovered() {
+        let workspace = TempWorkspace::new("nested");
+        workspace.write("src/main.ts", "export const a = 1;\n");
+        workspace.write("packages/core/src/index.tsx", "export const b = 2;\n");
+        workspace.write("packages/core/README.md", "not source\n");
+        let scan = visit_workspace(&workspace.0, 10_000);
+        assert!(!scan.truncated, "scan must not trip the cap");
+        assert_eq!(
+            scan.files,
+            vec![
+                PathBuf::from("packages/core/src/index.tsx"),
+                PathBuf::from("src/main.ts"),
+            ]
+        );
+    }
+
+    #[test]
+    fn generated_output_directories_are_not_discovered() {
+        let workspace = TempWorkspace::new("generated-dirs");
+        workspace.write("src/keep.ts", "export const kept = 1;\n");
+        for generated in [
+            "dist/bundle.ts",
+            "build/output.ts",
+            "out/tsc.ts",
+            "coverage/lcov.ts",
+            ".next/server.ts",
+            ".cache/sw.ts",
+            "vendor/lib.ts",
+            "node_modules/pkg/index.ts",
+            "target/debug/build.ts",
+        ] {
+            workspace.write(generated, "export const generated = 1;\n");
+        }
+        let scan = visit_workspace(&workspace.0, 10_000);
+        assert!(!scan.truncated, "scan must not trip the cap");
+        assert_eq!(
+            scan.files,
+            vec![PathBuf::from("src/keep.ts")],
+            "generated/vendor dirs must be excluded; got {:?}",
+            scan.files
+        );
+    }
+
+    #[test]
+    fn workspace_file_limit_trips_truncation_disclosure() {
+        let workspace = TempWorkspace::new("file-limit");
+        workspace.write("a/one.ts", "export const a = 1;\n");
+        workspace.write("b/two.ts", "export const b = 2;\n");
+        workspace.write("c/three.ts", "export const c = 3;\n");
+        // Cap below the number of visited entries: each of the three
+        // subdirectory entries plus the three files exceeds a limit of 4.
+        let scan = visit_workspace(&workspace.0, 4);
+        assert!(scan.truncated, "cap must trip the truncated flag");
+        assert!(
+            scan.files.len() < 3,
+            "partial scan must not report the full set; got {:?}",
+            scan.files
+        );
+        // Without a cap the same workspace scans clean.
+        let full = visit_workspace(&workspace.0, 10_000);
+        assert!(!full.truncated);
+        assert_eq!(full.files.len(), 3);
+    }
+
+    #[test]
+    fn workspace_file_limit_env_parsing_matches_repo_conventions() {
+        assert_eq!(
+            ts_workspace_file_limit_from_env(Err(std::env::VarError::NotPresent)),
+            Ok(DEFAULT_TS_MAX_WORKSPACE_FILES)
+        );
+        assert_eq!(
+            ts_workspace_file_limit_from_env(Ok(" 42 ".to_string())),
+            Ok(42)
+        );
+        assert!(
+            ts_workspace_file_limit_from_env(Ok("0".to_string())).is_err(),
+            "zero limit must be rejected"
+        );
+        assert!(
+            ts_workspace_file_limit_from_env(Ok("nope".to_string())).is_err(),
+            "non-numeric limit must be rejected"
+        );
     }
 }
